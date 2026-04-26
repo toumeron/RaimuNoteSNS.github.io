@@ -4,6 +4,11 @@ on:
   push:
     branches: [ main ] # あなたのメインブランチ名に合わせて変更
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
