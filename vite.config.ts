@@ -5,6 +5,8 @@ import { componentTagger } from "lovable-tagger";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
+  // GitHub Pages用のベースパス設定（リポジトリ名と同じにする）
+  base: "/RaimuNoteSNS.github.io/",
   server: {
     host: "::",
     port: 8080,
