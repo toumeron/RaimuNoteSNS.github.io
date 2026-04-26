@@ -12,7 +12,6 @@ export default function Feed() {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <h1 className="inline-flex items-center gap-2 font-display text-2xl font-black">
-          <Heart className="h-5 w-5 fill-primary text-primary" />
           タイムライン
         </h1>
         <span className="ribbon-tag">
