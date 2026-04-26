@@ -101,21 +101,47 @@ export async function getPostById(id: string): Promise<PostWithAuthor | null> {
 
 export async function createPost(input: {
   content: string;
-  imageUrls: string[];
+  imageUrls: string[]; // ここに blob: URL が入ってきていると想定
 }): Promise<PostWithAuthor> {
   const userId = await getCurrentUserId();
-
-  // ── 根本原因 ──────────────────────────────────────────────────────────────
-  // posts.image_urls は text[] 型。INSERT に .select() を連鎖させると
-  // PostgREST が RETURNING 句を生成する際に内部で
-  //   substring(image_urls, 1)  ← text[] には存在しない関数
-  // を呼び出し PostgreSQL エラー 42883 が発生する。
-  // ─────────────────────────────────────────────────────────────────────────
-  // 対策: クライアント側で UUID を生成し INSERT を RETURNING なし(bare insert)に。
-  //       .select() を一切連鎖しないことで RETURNING 句を完全に排除する。
-  //       挿入後は通常の SELECT (getPostById) で取得する。
-  // ─────────────────────────────────────────────────────────────────────────
   const newId = crypto.randomUUID();
+
+  // --- 追加：画像を本物のURLに変換する処理 ---
+  const finalImageUrls = await Promise.all(
+    input.imageUrls.map(async (url) => {
+      // blob: で始まっていない（既に https: 等の）場合はそのまま返す
+      if (!url.startsWith('blob:')) return url;
+
+      try {
+        // 1. blob URL から実際のデータ(Blob)を取得
+        const response = await fetch(url);
+        const blob = await response.blob();
+        
+        // 2. ファイル名を生成 (例: user_id/unique_id.png)
+        const fileExt = blob.type.split('/')[1] || 'png';
+        const fileName = `${userId}/${crypto.randomUUID()}.${fileExt}`;
+
+        // 3. Supabase Storage の 'posts' バケットにアップロード
+        // ※予め Supabase 側で 'posts' バケットを Public で作成しておく必要があります
+        const { error: uploadError } = await supabase.storage
+          .from('posts')
+          .upload(fileName, blob);
+
+        if (uploadError) throw uploadError;
+
+        // 4. 公開用URLを取得して返す
+        const { data } = supabase.storage.from('posts').getPublicUrl(fileName);
+        return data.publicUrl;
+      } catch (err) {
+        console.error('Image upload failed:', err);
+        return null; // 失敗した場合は除外するか、エラーにする
+      }
+    })
+  );
+
+  // null（失敗した画像）を除外
+  const filteredUrls = finalImageUrls.filter((url): url is string => url !== null);
+  // ----------------------------------------
 
   const { error } = await supabase
     .from('posts')
@@ -123,7 +149,7 @@ export async function createPost(input: {
       id:         newId,
       user_id:    userId,
       content:    input.content,
-      image_urls: input.imageUrls,
+      image_urls: filteredUrls, // 本物のURL配列を入れる
     });
 
   if (error) throw new Error(error.message ?? '投稿に失敗しました');
