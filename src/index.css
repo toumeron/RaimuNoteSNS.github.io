@@ -1,0 +1,150 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ムリムリSNS デザインシステム
+   配色は「わたなれ」公式サイトを踏襲（ピンク × ティール × クリーム）
+   全色HSL定義 */
+
+@layer base {
+  :root {
+    /* ベース */
+    --background: 45 60% 97%;
+    --foreground: 25 30% 20%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 25 30% 20%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 25 30% 20%;
+
+    /* ホットピンク（恋人のピンク） */
+    --primary: 340 85% 62%;
+    --primary-foreground: 0 0% 100%;
+    --primary-soft: 340 90% 92%;
+
+    /* ペールピンク背景 */
+    --secondary: 345 100% 95%;
+    --secondary-foreground: 340 60% 35%;
+
+    --muted: 40 30% 94%;
+    --muted-foreground: 25 12% 50%;
+
+    /* ティール（ムリムリ！のティール） */
+    --accent: 185 70% 55%;
+    --accent-foreground: 0 0% 100%;
+    --accent-soft: 185 70% 92%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 345 50% 90%;
+    --input: 345 40% 92%;
+    --ring: 340 85% 62%;
+
+    --radius: 1rem;
+
+    /* グラデーション */
+    --gradient-primary: linear-gradient(135deg, hsl(340 90% 70%), hsl(340 85% 58%));
+    --gradient-accent: linear-gradient(135deg, hsl(185 75% 60%), hsl(195 70% 55%));
+    --gradient-cream: linear-gradient(180deg, hsl(45 70% 98%), hsl(345 80% 96%));
+
+    /* シャドウ */
+    --shadow-soft: 0 4px 14px -4px hsl(340 60% 75% / 0.25);
+    --shadow-card: 0 8px 24px -8px hsl(340 50% 70% / 0.18);
+    --shadow-pop: 0 12px 32px -8px hsl(340 70% 65% / 0.35);
+
+    --transition-bounce: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+
+    /* sidebar (legacy shadcn) */
+    --sidebar-background: 45 60% 97%;
+    --sidebar-foreground: 25 30% 20%;
+    --sidebar-primary: 340 85% 62%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 345 100% 95%;
+    --sidebar-accent-foreground: 340 60% 35%;
+    --sidebar-border: 345 50% 90%;
+    --sidebar-ring: 340 85% 62%;
+  }
+
+  .dark {
+    --background: 340 25% 10%;
+    --foreground: 45 30% 95%;
+    --card: 340 22% 14%;
+    --card-foreground: 45 30% 95%;
+    --popover: 340 22% 14%;
+    --popover-foreground: 45 30% 95%;
+    --primary: 340 85% 65%;
+    --primary-foreground: 0 0% 100%;
+    --primary-soft: 340 50% 25%;
+    --secondary: 340 20% 20%;
+    --secondary-foreground: 45 30% 95%;
+    --muted: 340 15% 18%;
+    --muted-foreground: 40 15% 65%;
+    --accent: 185 70% 55%;
+    --accent-foreground: 0 0% 100%;
+    --accent-soft: 185 50% 25%;
+    --destructive: 0 70% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 340 20% 22%;
+    --input: 340 20% 22%;
+    --ring: 340 85% 65%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    font-family: 'M PLUS Rounded 1c', system-ui, -apple-system, sans-serif;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "palt";
+    -webkit-font-smoothing: antialiased;
+    background-image:
+      radial-gradient(circle at 10% 0%, hsl(345 100% 95% / 0.6), transparent 40%),
+      radial-gradient(circle at 90% 100%, hsl(185 70% 92% / 0.5), transparent 40%);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: 'Zen Maru Gothic', 'M PLUS Rounded 1c', sans-serif;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+}
+
+@layer components {
+  /* ハート背景パターン */
+  .heart-bg {
+    background-image:
+      radial-gradient(circle at 20% 30%, hsl(340 80% 88% / 0.4) 0, transparent 8%),
+      radial-gradient(circle at 70% 60%, hsl(185 65% 88% / 0.4) 0, transparent 8%),
+      radial-gradient(circle at 40% 80%, hsl(340 80% 88% / 0.3) 0, transparent 6%),
+      radial-gradient(circle at 85% 20%, hsl(345 100% 90% / 0.5) 0, transparent 7%);
+  }
+
+  /* 紙吹雪装飾 */
+  .confetti-bg::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(45deg, hsl(340 85% 70% / 0.1) 25%, transparent 25%),
+      linear-gradient(-45deg, hsl(185 70% 65% / 0.08) 25%, transparent 25%);
+    background-size: 24px 24px;
+    pointer-events: none;
+  }
+
+  .ribbon-tag {
+    @apply inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold;
+    background: var(--gradient-primary);
+    color: hsl(var(--primary-foreground));
+    box-shadow: var(--shadow-soft);
+  }
+}
