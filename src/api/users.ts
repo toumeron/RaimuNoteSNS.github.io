@@ -1,8 +1,6 @@
 import type { User } from '@/types';
 import { supabase } from '@/lib/supabase';
 
-// Supabase の profiles テーブル行をアプリの User 型に変換
-// DB側: snake_case / アプリ側: camelCase
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function toUser(row: any): User {
   return {
@@ -38,16 +36,53 @@ export async function getUserById(id: string): Promise<User | null> {
   return toUser(data);
 }
 
+/**
+ * プロフィール更新（画像アップロード対応版）
+ */
 export async function updateProfile(
   id: string,
   patch: Partial<Pick<User, 'displayName' | 'bio' | 'avatarUrl' | 'coverUrl'>>,
 ): Promise<User> {
-  // アプリ側 camelCase → DB側 snake_case に変換してから送信
   const dbPatch: Record<string, unknown> = {};
   if (patch.displayName !== undefined) dbPatch.display_name = patch.displayName;
   if (patch.bio !== undefined) dbPatch.bio = patch.bio;
-  if (patch.avatarUrl !== undefined) dbPatch.avatar_url = patch.avatarUrl;
-  if (patch.coverUrl !== undefined) dbPatch.cover_url = patch.coverUrl;
+
+  // --- 画像アップロードの共通処理 ---
+  const uploadImage = async (url: string, bucket: string) => {
+    // blob: 形式でない（すでに https:// 等）ならそのまま返す
+    if (!url.startsWith('blob:')) return url;
+
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const fileExt = blob.type.split('/')[1] || 'png';
+      // ファイル名は重複しないように UUID を使用
+      const fileName = `${id}/${crypto.randomUUID()}.${fileExt}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from(bucket)
+        .upload(fileName, blob);
+
+      if (uploadError) throw uploadError;
+
+      // 公開 URL を取得
+      const { data } = supabase.storage.from(bucket).getPublicUrl(fileName);
+      return data.publicUrl;
+    } catch (err) {
+      console.error(`Upload failed to ${bucket}:`, err);
+      return url; // 失敗時はそのまま返してフォールバック
+    }
+  };
+
+  // avatarUrl があればアップロード（avatars バケットを使用）
+  if (patch.avatarUrl) {
+    dbPatch.avatar_url = await uploadImage(patch.avatarUrl, 'avatars');
+  }
+
+  // coverUrl があればアップロード（posts バケットを流用、または profiles バケットを作成）
+  if (patch.coverUrl) {
+    dbPatch.cover_url = await uploadImage(patch.coverUrl, 'posts');
+  }
 
   const { data, error } = await supabase
     .from('profiles')
