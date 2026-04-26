@@ -105,7 +105,6 @@ function AuthForm({ mode }: { mode: Mode }) {
         disabled={busy}
         className="w-full rounded-full bg-gradient-primary py-6 text-base font-bold shadow-soft transition hover:scale-[1.02] hover:shadow-pop"
       >
-        <Heart className="mr-2 h-4 w-4 fill-current" />
         {mode === 'login' ? 'ログインする' : '登録してはじめる'}
       </Button>
     </form>

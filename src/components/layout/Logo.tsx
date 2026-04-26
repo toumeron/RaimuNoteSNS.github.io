@@ -10,9 +10,6 @@ export function Logo({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
   const s = sizes[size];
   return (
     <Link to="/" className="inline-flex items-center gap-2 font-display font-black">
-      <span className="relative">
-        <Heart className={`${s.icon} fill-primary text-primary drop-shadow`} />
-      </span>
       <span className={`${s.text} bg-gradient-primary bg-clip-text text-transparent`}>
         Lime
       </span>
