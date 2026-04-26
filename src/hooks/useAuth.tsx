@@ -48,18 +48,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const meta = supabaseUser.user_metadata;
         const emailName = supabaseUser.email?.split('@')[0] ?? 'user';
 
-        // まず auth メタデータで即座にセット → 画面が真っ白にならない
-        setUser({
-          ...supabaseUser,
-          username:    meta?.username    ?? emailName,
-          displayName: meta?.display_name ?? meta?.displayName ?? emailName,
-          avatarUrl:   meta?.avatar_url  ?? meta?.avatarUrl  ?? '',
-          bio:         '',
-          coverUrl:    '',
+        // 1. まず現在の状態をチェックし、無闇に空文字で初期化しない
+        setUser(prev => {
+          if (prev && prev.id === supabaseUser.id) {
+            return prev; // すでにデータがあるなら保持
+          }
+          return {
+            ...supabaseUser,
+            username:    meta?.username    ?? emailName,
+            displayName: meta?.display_name ?? meta?.displayName ?? emailName,
+            avatarUrl:   meta?.avatar_url  ?? meta?.avatarUrl  ?? '',
+            bio:         '',
+            coverUrl:    '',
+          };
         });
+        
         setLoading(false);
 
-        // バックグラウンドで profiles テーブルを取得して上書き
+        // 2. DBから最新プロフィールを取得
         const { data: profile } = await supabase
           .from('profiles')
           .select('*')
@@ -67,18 +73,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           .single();
 
         if (profile) {
-          setUser(prev =>
-            prev
-              ? {
-                  ...prev,
-                  username:    profile.username     ?? prev.username,
-                  displayName: profile.display_name ?? prev.displayName,
-                  avatarUrl:   profile.avatar_url   ?? prev.avatarUrl,
-                  bio:         profile.bio          ?? '',
-                  coverUrl:    profile.cover_url    ?? '',
-                }
-              : null,
-          );
+          setUser({
+            ...supabaseUser,
+            username:    profile.username     ?? meta?.username ?? emailName,
+            displayName: profile.display_name ?? meta?.display_name ?? emailName,
+            avatarUrl:   profile.avatar_url   ?? meta?.avatar_url ?? '',
+            bio:         profile.bio          ?? '',
+            coverUrl:    profile.cover_url    ?? '',
+          });
         }
       },
     );
@@ -86,6 +88,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
+  // ここで AuthContext.Provider を返し、AuthProvider 関数を閉じます
   return (
     <AuthContext.Provider value={{ user, session, loading, logout }}>
       {!loading && children}
