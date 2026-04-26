@@ -48,11 +48,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const meta = supabaseUser.user_metadata;
         const emailName = supabaseUser.email?.split('@')[0] ?? 'user';
 
-        // 1. まず現在の状態をチェックし、無闇に空文字で初期化しない
+        // 1. 既存のユーザー情報がある場合は、それを維持する（勝手に初期化しない）
         setUser(prev => {
-          if (prev && prev.id === supabaseUser.id) {
-            return prev; // すでにデータがあるなら保持
-          }
+          if (prev && prev.id === supabaseUser.id) return prev;
           return {
             ...supabaseUser,
             username:    meta?.username    ?? emailName,
@@ -65,14 +63,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         
         setLoading(false);
 
-        // 2. DBから最新プロフィールを取得
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', supabaseUser.id)
-          .single();
+        // 2. プロフィール取得
+        try {
+          const { data: profile, error } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', supabaseUser.id)
+            .single();
 
-        if (profile) {
+          // 通信エラー（タイムアウト等）が起きたら、既存の表示を維持して終了
+          if (error || !profile) {
+            console.warn("Profile fetch failed, keeping current data:", error);
+            return;
+          }
+
+          // 3. 取得成功時のみ最新データで上書き
           setUser({
             ...supabaseUser,
             username:    profile.username     ?? meta?.username ?? emailName,
@@ -81,6 +86,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             bio:         profile.bio          ?? '',
             coverUrl:    profile.cover_url    ?? '',
           });
+        } catch (err) {
+          console.error("Auth flow error:", err);
         }
       },
     );
@@ -88,7 +95,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  // ここで AuthContext.Provider を返し、AuthProvider 関数を閉じます
   return (
     <AuthContext.Provider value={{ user, session, loading, logout }}>
       {!loading && children}
