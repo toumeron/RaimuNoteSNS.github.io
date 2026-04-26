@@ -10,7 +10,7 @@ import Feed from "./pages/Feed";
 import PostDetail from "./pages/PostDetail";
 import Profile from "./pages/Profile";
 import Settings from "./pages/Settings";
-import NotFound from "./pages/NotFound.tsx";
+import NotFound from "./pages/NotFound"; // .tsx は不要なので削除して安定させます
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -23,7 +23,11 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      {/* basename を追加することで、URLのズレを解消します */}
+      <BrowserRouter 
+        basename="/RaimuNoteSNS.github.io"
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
         <AuthProvider>
           <Routes>
             <Route path="/auth" element={<AuthPage />} />
