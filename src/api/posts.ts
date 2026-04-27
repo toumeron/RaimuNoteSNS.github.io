@@ -214,3 +214,5 @@ export async function deletePost(postId: string): Promise<void> {
 
   if (error) throw new Error(error.message ?? '削除に失敗しました');
 }
+
+//ねこ
