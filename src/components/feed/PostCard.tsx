@@ -51,23 +51,22 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 text-sm overflow-hidden w-full">
-              {/* 名前の横にバッジを表示 */}
-              <Link to={`/u/${post.author.username}`} className="flex items-center gap-1 truncate font-display font-bold text-foreground hover:underline shrink-0 max-w-[50%]">
-                <span className="truncate">{post.author.displayName}</span>
-                {post.author.isOfficial && (
-                  <img 
-                    src="/verified.png" 
-                    alt="Official" 
-                    className="h-4 w-4 shrink-0" 
-                    title="公式アカウント"
-                  />
-                )}
-              </Link>
-              <span className="truncate text-muted-foreground shrink">@{post.author.username}</span>
-              <span className="text-muted-foreground shrink-0">·</span>
-              <span className="text-muted-foreground whitespace-nowrap shrink-0">{formatRelative(post.createdAt)}</span>
-            </div>
+<div className="flex items-center gap-1.5 text-sm overflow-hidden w-full">
+  <Link 
+    to={`/u/${post.author.username}`} 
+    className="flex items-center gap-1 truncate font-display font-bold text-foreground hover:underline shrink-0"
+  >
+    <span className="truncate">{post.author.displayName}</span>
+    {post.author.isOfficial && (
+      <img 
+        src="/verified.png" 
+        alt="Official" 
+        className="h-4 w-4 shrink-0"
+      />
+    )}
+  </Link>
+  <span className="truncate text-muted-foreground shrink">@{post.author.username}</span>
+</div>
 
             {isMyPost && (
               <div className="relative ml-2 shrink-0">
