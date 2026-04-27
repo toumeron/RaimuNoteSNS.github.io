@@ -213,3 +213,18 @@ export async function toggleLike(postId: string): Promise<{ liked: boolean; like
 
   return { liked: !existing, likesCount };
 }
+
+/**
+ * 投稿を削除する
+ */
+export async function deletePost(postId: string): Promise<void> {
+  const userId = await getCurrentUserId();
+
+  const { error } = await supabase
+    .from('posts')
+    .delete()
+    .eq('id', postId)
+    .eq('user_id', userId); // 本人確認をクエリに含める（念のため）
+
+  if (error) throw new Error(error.message ?? '削除に失敗しました');
+}
