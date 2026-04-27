@@ -82,7 +82,7 @@ function AuthForm({ mode }: { mode: Mode }) {
           autoComplete="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          placeholder="hello@murimuri.app"
+          placeholder="メールアドレスを入力..."
           className="rounded-full bg-background"
         />
         {errors.email && <p className="text-xs text-destructive">{errors.email}</p>}
@@ -113,13 +113,12 @@ function AuthForm({ mode }: { mode: Mode }) {
 
 export default function AuthPage() {
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden p-4">
-      <div className="confetti-bg pointer-events-none absolute inset-0" />
-      <div className="pointer-events-none absolute -top-20 -left-20 h-72 w-72 rounded-full bg-primary/20 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-20 -right-20 h-72 w-72 rounded-full bg-accent/20 blur-3xl" />
-      <Heart className="pointer-events-none absolute left-10 top-24 h-6 w-6 fill-primary/40 text-primary/40" />
-      <Heart className="pointer-events-none absolute right-12 top-40 h-4 w-4 fill-accent/50 text-accent/50" />
-      <Heart className="pointer-events-none absolute bottom-16 left-20 h-5 w-5 fill-primary/30 text-primary/30" />
+    /* bg-white を追加し、全体の背景を白に固定 */
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden p-4 bg-white">
+      {/* ここにあった背景画像(confetti-bg)や、
+          ピンク/ブルーのボカシ(blur-3xl)、
+          浮いているハート(Heart)をすべて削除しました 
+      */}
 
       <div className="relative w-full max-w-md">
         <div className="mb-8 flex flex-col items-center text-center">
@@ -131,7 +130,10 @@ export default function AuthPage() {
           </p>
         </div>
 
-        <div className="rounded-3xl border border-border/60 bg-card/90 p-6 shadow-card-soft backdrop-blur-md sm:p-8">
+        {/* カード部分の bg-card/90 や backdrop-blur-md も
+            白背景なら不要なので、シンプルな border だけにしても綺麗です 
+        */}
+        <div className="rounded-3xl border border-border/60 bg-white p-6 shadow-card-soft sm:p-8">
           <Tabs defaultValue="login" className="w-full">
             <TabsList className="mb-6 grid w-full grid-cols-2 rounded-full bg-secondary p-1">
               <TabsTrigger value="login" className="rounded-full data-[state=active]:bg-gradient-primary data-[state=active]:text-primary-foreground">
