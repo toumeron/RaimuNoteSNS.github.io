@@ -74,7 +74,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
               </Link>
               
               {/* @ID と 時間も標準的な text-sm (14px) に */}
-              <span className="truncate text-sm text-muted-foreground shrink ml-1.5">@{post.author.username}</span>
+              <span className="truncate text-sm text-muted-foreground shrink ml-0.1">@{post.author.username}</span>
               <span className="text-muted-foreground mx-1">·</span>
               <span className="text-sm text-muted-foreground whitespace-nowrap">
                 {formatRelative(post.createdAt)}

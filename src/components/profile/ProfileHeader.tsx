@@ -38,26 +38,29 @@ export function ProfileHeader({ user }: { user: User }) {
         </div>
 
 <div className="mt-3">
-  {/* h1 のクラス名を修正 */}
-  <h1 className="font-display text-2xl font-black flex items-center gap-1.5 leading-none">
-    {/* 名前のテキストを span で囲む */}
-    <span className="truncate">{user.displayName}</span>
-    
-    {/* 公式バッジの判定とCSSを修正 */}
-    {user.isOfficial && (
-      <img 
-        src={`${import.meta.env.BASE_URL}verified.png`} 
-        alt="Official" 
-        className="h-[1.1em] w-[1.1em] shrink-0 inline-block align-middle"
-        style={{
-          // flexで整列させる場合、微妙なズレを margin で調整することがあります
-          // これでもダメなら、下の正直なアドバイスを試してください
-          marginTop: '-0.1em' 
-        }}
-      />
-    )}
-  </h1>
-  <p className="text-sm text-muted-foreground">@{user.username}</p>
+  {/* ヘッダー全体を flex column にして、名前行とID行を分ける */}
+  <div className="flex flex-col">
+    {/* 名前とバッジの行 */}
+    <div className="flex items-center gap-0.1">
+      <h1 className="font-display text-2xl font-black text-foreground truncate">
+        {user.displayName}
+      </h1>
+      
+      {user.isOfficial && (
+        <img 
+          src={`${import.meta.env.BASE_URL}verified.png`} 
+          alt="Official" 
+          /* バッジのサイズを文字に合わせて調整 (h-[0.9em]) 
+             translate-y で垂直方向の中央を微調整 */
+          className="h-[0.9em] w-[0.9em] shrink-0 transform translate-y-[2px]"
+          loading="eager"
+        />
+      )}
+    </div>
+
+    {/* @ユーザー名 (名前のすぐ下に配置) */}
+    <p className="text-[15px] text-muted-foreground">@{user.username}</p>
+  </div>
 </div>
 
         {user.bio && (

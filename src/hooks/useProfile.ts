@@ -51,7 +51,7 @@ export const useUpdateProfile = (userId: string) => {
     mutationFn: (patch: Parameters<typeof updateProfile>[1]) => updateProfile(userId, patch),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['profile'] });
-      toast.success('プロフィールを更新しました💗');
+      toast.success('プロフィールを更新しました');
     },
     onError: () => toast.error('プロフィールの更新に失敗しました'),
   });
