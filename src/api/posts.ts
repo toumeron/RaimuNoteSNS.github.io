@@ -108,7 +108,6 @@ export async function createPost(input: {
   const userId = await getCurrentUserId();
   const newId = crypto.randomUUID();
 
-  // 1. クライアント判定
   const getDetailedClient = () => {
     const ua = navigator.userAgent;
     const platform = (navigator as any).platform || '';
@@ -122,10 +121,11 @@ export async function createPost(input: {
 
   const clientSource = `RaimuNote for ${getDetailedClient()}`;
 
-  // 2. ここで finalImageUrls を定義（この関数のスコープ内）
+  // 画像アップロード処理
   const finalImageUrls = await Promise.all(
     input.imageUrls.map(async (url) => {
-      if (!url.startsWith('blob:')) return url;
+      // 既にhttpsならそのまま通す
+      if (url.startsWith('http')) return url;
 
       try {
         const response = await fetch(url);
@@ -136,25 +136,32 @@ export async function createPost(input: {
         formData.append('upload_preset', import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET);
 
         const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
+        
+        // デバッグ用：ここが undefined なら環境変数が読み込めていない
+        console.log('Uploading to Cloudinary:', cloudName);
+
         const res = await fetch(
           `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
           { method: 'POST', body: formData }
         );
 
-        if (!res.ok) throw new Error('Cloudinary upload failed');
+        if (!res.ok) {
+          const errData = await res.json();
+          console.error('Cloudinary Error Detail:', errData);
+          throw new Error('Cloudinary upload failed');
+        }
+        
         const data = await res.json();
         return data.secure_url;
       } catch (err) {
-        console.error('Cloudinary upload failed:', err);
+        console.error('Upload Process Error:', err);
         return null;
       }
     })
   );
 
-  // 3. ここで使う（finalImageUrls が定義されているのと同じ深さ）
   const filteredUrls = finalImageUrls.filter((url): url is string => url !== null);
 
-  // 4. Supabaseに保存
   const { error } = await supabase
     .from('posts')
     .insert({
@@ -171,6 +178,7 @@ export async function createPost(input: {
   if (!post) throw new Error('投稿に失敗しました');
   return post;
 }
+
 export async function toggleLike(postId: string): Promise<{ liked: boolean; likesCount: number }> {
   const userId = await getCurrentUserId();
 
