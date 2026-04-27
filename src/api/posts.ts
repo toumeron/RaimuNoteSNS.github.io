@@ -13,6 +13,7 @@ function rowToUser(profile: any): User {
     avatarUrl:   profile.avatar_url  ?? '',
     coverUrl:    profile.cover_url   ?? '',
     createdAt:   profile.created_at  ?? '',
+    isOfficial:  profile.is_official  ?? false,
   };
 }
 
@@ -48,7 +49,7 @@ export async function getFeed(): Promise<PostWithAuthor[]> {
 
   if (postsRes.error) throw postsRes.error;
 
-  const likedIds = new Set((likesRes.data ?? []).map((l) => l.post_id as string));
+  const likedIds = new Set<string>((likesRes.data ?? []).map((l: any) => l.post_id));
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (postsRes.data ?? []).map((row: any) => rowToPost(row, likedIds));
 }
@@ -71,7 +72,7 @@ export async function getPostsByUser(targetUserId: string): Promise<PostWithAuth
 
   if (postsRes.error) throw postsRes.error;
 
-  const likedIds = new Set((likesRes.data ?? []).map((l) => l.post_id as string));
+  const likedIds = new Set<string>((likesRes.data ?? []).map((l: any) => String(l.post_id)));
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (postsRes.data ?? []).map((row: any) => rowToPost(row, likedIds));
 }
