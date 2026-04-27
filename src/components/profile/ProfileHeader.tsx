@@ -52,7 +52,7 @@ export function ProfileHeader({ user }: { user: User }) {
           alt="Official" 
           /* バッジのサイズを文字に合わせて調整 (h-[0.9em]) 
              translate-y で垂直方向の中央を微調整 */
-          className="h-[0.9em] w-[0.9em] shrink-0 transform translate-y-[2px]"
+          className="h-[1.4em] w-[1.4em] shrink-0 transform translate-y-[2px]"
           loading="eager"
         />
       )}
