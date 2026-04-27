@@ -52,15 +52,18 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
 
         {/* 右側：メインコンテンツ */}
         <div className="min-w-0 flex-1">
-          {/* ヘッダー：名前、バッジ、ID */}
+        {/* ヘッダー：名前、バッジ、ID */}
           <div className="flex items-center justify-between mb-1">
-            <div className="flex items-center overflow-hidden w-full">
+            {/* 名前・ID・時間を包むコンテナ。min-w-0 を入れることで子要素の省略を可能にする */}
+            <div className="flex items-center overflow-hidden w-full min-w-0">
               <Link 
                 to={`/u/${post.author.username}`} 
-                className="flex items-center truncate font-display font-bold text-foreground hover:underline shrink-0"
+                /* 修正点: flex-1 を外し、min-w-0 と shrink を指定。
+                  これにより「必要な分だけ幅を取りつつ、溢れそうなら自分が縮む」挙動になります。
+                */
+                className="flex items-center min-w-0 shrink font-display font-bold text-foreground hover:underline"
               >
-                {/* 名前のサイズを確実に大きく(text-base: 16px) */}
-                <div className="flex items-center gap-0">
+                <div className="flex items-center gap-0.5 min-w-0">
                   <span className="truncate text-base">{post.author.displayName}</span>
                   {post.author.isOfficial && (
                     <img 
@@ -73,16 +76,24 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
                 </div>
               </Link>
               
-              {/* @ID と 時間も標準的な text-sm (14px) に */}
-              <span className="truncate text-sm text-muted-foreground shrink ml-0.1">@{post.author.username}</span>
-              <span className="text-muted-foreground mx-1">·</span>
-              <span className="text-sm text-muted-foreground whitespace-nowrap">
+              {/* @ID: shrink を指定して、名前との幅の取り合いが発生した際に
+                こちらも適切に省略されるように調整します。
+              */}
+              <span className="truncate text-sm text-muted-foreground ml-1.5 opacity-80 shrink">
+                @{post.author.username}
+              </span>
+              
+              {/* ドットと時間は「絶対に縮ませない(shrink-0)」ことで視認性を確保 */}
+              <span className="text-muted-foreground mx-1 shrink-0">·</span>
+              <span className="text-sm text-muted-foreground whitespace-nowrap shrink-0">
                 {formatRelative(post.createdAt)}
               </span>
             </div>
 
+            {/* 三点リーダー（省略） */}
             {isMyPost && (
               <div className="relative ml-2 shrink-0">
+                {/* ...既存のメニューボタン... */}
                 <button
                   onClick={() => setShowMenu(!showMenu)}
                   className="p-1 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
