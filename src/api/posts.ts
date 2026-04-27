@@ -28,7 +28,7 @@ function rowToPost(row: any, likedIds: Set<string>): PostWithAuthor & { clientNa
     commentsCount: row.comments_count ?? 0,
     likedByMe:     likedIds.has(row.id),
     author:        rowToUser(row.profiles),
-    clientName:    row.client_name  ?? 'RaimuNote for Web', // 追加
+    clientName:    row.client_name,
   };
 }
 
@@ -108,7 +108,7 @@ export async function createPost(input: {
   const newId = crypto.randomUUID();
 
 
-  
+
  const getDetailedClient = () => {
     const ua = navigator.userAgent;
     const platform = (navigator as any).platform || '';
