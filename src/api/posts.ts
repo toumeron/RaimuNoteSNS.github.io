@@ -109,16 +109,24 @@ export async function createPost(input: {
 
   // デバイス判定ロジック
   const getClientName = () => {
-    const ua = navigator.userAgent;
-    if (/iPhone/i.test(ua)) return "iPhone";
-    if (/iPad/i.test(ua)) return "iPad";
-    if (/Android/i.test(ua)) return "Android";
-    if (/Macintosh/i.test(ua)) return "Mac";
-    if (/Windows/i.test(ua)) return "Windows";
-    return "Web";
-  };
-  const clientSource = `RaimuNote for ${getClientName()}`;
+  const ua = navigator.userAgent;
+
+  // iPhone/iPad 判定
+  if (/iPhone/i.test(ua)) return "iPhone";
+  if (/iPad/i.test(ua)) return "iPad";
+
+  // Android 判定
+  if (/Android/i.test(ua)) return "Android";
+
+  // PC 判定
+  if (/Macintosh/i.test(ua)) return "Mac";
+  if (/Windows/i.test(ua)) return "Windows";
   
+  return "Web";
+};
+
+const clientSource = `RaimuNote for ${getClientName()}`;
+
   // --- 追加：画像を本物のURLに変換する処理 ---
   const finalImageUrls = await Promise.all(
     input.imageUrls.map(async (url) => {
