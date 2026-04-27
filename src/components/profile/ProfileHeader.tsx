@@ -37,16 +37,23 @@ export function ProfileHeader({ user }: { user: User }) {
           )}
         </div>
 
-        <div className="mt-3">
-  {/* flex items-center を追加して横並びにする */}
-  <h1 className="font-display text-2xl font-black flex items-center gap-1.5">
-    {user.displayName}
-    {/* 公式バッジの判定を追加 */}
+<div className="mt-3">
+  {/* h1 のクラス名を修正 */}
+  <h1 className="font-display text-2xl font-black flex items-center gap-1.5 leading-none">
+    {/* 名前のテキストを span で囲む */}
+    <span className="truncate">{user.displayName}</span>
+    
+    {/* 公式バッジの判定とCSSを修正 */}
     {user.isOfficial && (
       <img 
         src={`${import.meta.env.BASE_URL}verified.png`} 
         alt="Official" 
-        className="h-6 w-6 shrink-0" // 名前が大きいので、バッジも少し大きく(h-6)しています
+        className="h-[1.1em] w-[1.1em] shrink-0 inline-block align-middle"
+        style={{
+          // flexで整列させる場合、微妙なズレを margin で調整することがあります
+          // これでもダメなら、下の正直なアドバイスを試してください
+          marginTop: '-0.1em' 
+        }}
       />
     )}
   </h1>

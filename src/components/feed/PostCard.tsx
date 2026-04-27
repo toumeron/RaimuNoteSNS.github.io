@@ -42,12 +42,23 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
   return (
     <article className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft transition hover:shadow-card-soft relative">
       <div className="flex items-start gap-3">
-        <Link to={`/u/${post.author.username}`} className="shrink-0">
-          <Avatar className="h-11 w-11 border-2 border-primary/30">
-            <AvatarImage src={post.author.avatarUrl} alt={post.author.displayName} />
-            <AvatarFallback>{post.author.displayName.slice(0, 1)}</AvatarFallback>
-          </Avatar>
-        </Link>
+        <Link 
+  to={`/u/${post.author.username}`} 
+  className="flex items-center gap-1 truncate font-display font-bold text-foreground hover:underline shrink-0 max-w-[60%]"
+>
+  <span className="truncate">{post.author.displayName}</span>
+  {post.author.isOfficial && (
+    <img 
+      src={`${import.meta.env.BASE_URL}verified.png`}
+      alt="Official" 
+      /* translate-y-[0.5px] : ほんの少しだけ下に下げる 
+         もしこれでも高いなら [1px] に変更してください
+      */
+      className="h-3.5 w-3.5 shrink-0 transform translate-y-[0.5px]" 
+      loading="eager"
+    />
+  )}
+</Link>
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between">
