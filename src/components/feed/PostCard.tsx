@@ -1,32 +1,35 @@
-import { useState } from 'react'; // 追加
+import { useState, useEffect } from 'react'; 
 import { Link } from 'react-router-dom';
-import { MessageCircle, MoreHorizontal, Trash2 } from 'lucide-react'; // MoreHorizontal, Trash2 を追加
+import { MessageCircle, MoreHorizontal, Trash2 } from 'lucide-react'; 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { LikeButton } from '@/components/post/LikeButton';
 import { PostImages } from './PostImages';
 import { formatRelative } from '@/lib/format';
 import type { PostWithAuthor } from '@/types';
 import { deletePost } from '@/api/posts';
-import { getCurrentUserId } from '@/lib/currentUser'; // 現在のユーザーID取得（既存の仕組みに合わせて変更してください）
-import { useEffect } from 'react';
+import { getCurrentUserId } from '@/lib/currentUser';
+import { getYouTubeId } from '@/lib/utils'; // 追加
+import { YouTubeEmbed } from '@/components/YouTubeEmbed'; // 前の返信で作ったコンポーネント
 
 export function PostCard({ post }: { post: PostWithAuthor }) {
   const [showMenu, setShowMenu] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
-  // 現在のユーザーIDを取得（マウント時に一度だけ実行）
   useEffect(() => {
     getCurrentUserId().then(id => setCurrentUserId(id));
   }, []);
 
   const isMyPost = currentUserId === post.userId;
+  
+  // YouTube ID を抽出
+  const youtubeId = getYouTubeId(post.content);
 
   const handleDelete = async (e: React.MouseEvent) => {
-    e.preventDefault(); // 親のLinkイベントを止める
+    e.preventDefault();
     if (!confirm('投稿を削除しますか？')) return;
     try {
       await deletePost(post.id);
-      window.location.reload(); // 簡易的にリロード。理想はリストの再取得
+      window.location.reload();
     } catch (err) {
       alert('削除に失敗しました');
     }
@@ -53,7 +56,6 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
               <span className="text-muted-foreground whitespace-nowrap">{formatRelative(post.createdAt)}</span>
             </div>
 
-            {/* --- 自分の投稿のみ表示される三本線メニュー --- */}
             {isMyPost && (
               <div className="relative ml-2 shrink-0">
                 <button
@@ -65,9 +67,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
 
                 {showMenu && (
                   <>
-                    {/* メニューの外をクリックしたら閉じるための透明なカバー */}
                     <div className="fixed inset-0 z-10" onClick={() => setShowMenu(false)} />
-                    
                     <div className="absolute right-0 mt-1 w-32 rounded-xl border border-border bg-card p-1 shadow-lg z-20 overflow-hidden animate-in fade-in zoom-in duration-100">
                       <button
                         onClick={handleDelete}
@@ -87,6 +87,10 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
             <p className="mt-1 whitespace-pre-wrap break-words text-[15px] leading-relaxed text-foreground">
               {post.content}
             </p>
+            
+            {/* --- YouTube 埋め込み --- */}
+            {youtubeId && <YouTubeEmbed videoId={youtubeId} />}
+
             <PostImages urls={post.imageUrls} />
           </Link>
 
