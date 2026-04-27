@@ -175,6 +175,7 @@ export async function createPost(input: {
       user_id:    userId,
       content:    input.content,
       image_urls: filteredUrls, // 本物のURL配列を入れる
+      client_name: clientSource,
     });
 
   if (error) throw new Error(error.message ?? '投稿に失敗しました');
