@@ -25,15 +25,6 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
             <span className="truncate text-muted-foreground">@{post.author.username}</span>
             <span className="text-muted-foreground">·</span>
             <span className="text-muted-foreground">{formatRelative(post.createdAt)}</span>
-         
-         {post.clientName && (
-              <>
-                <span className="text-muted-foreground">·</span>
-                <span className="text-xs text-primary/70 font-medium bg-primary/5 px-2 py-0.5 rounded-full">
-                  {post.clientName}
-                </span>
-              </>
-            )}
             {/* ------------------------------------------- */}
           </div>
 

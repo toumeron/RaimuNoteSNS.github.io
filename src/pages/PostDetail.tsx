@@ -75,6 +75,14 @@ export default function PostDetail() {
 
           <p className="mt-4 text-xs text-muted-foreground" title={formatDate(data.createdAt)}>
             {formatDate(data.createdAt)} · {formatRelative(data.createdAt)}
+            {data.clientName && (
+              <>
+                <span className="mx-1">·</span>
+                <span className="text-primary/80 font-medium">
+                  {data.clientName}
+                </span>
+              </>
+            )}
           </p>
 
           <div className="mt-3 flex items-center gap-1 border-t border-border/60 pt-3">
