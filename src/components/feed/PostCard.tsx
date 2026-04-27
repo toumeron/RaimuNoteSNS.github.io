@@ -5,7 +5,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { LikeButton } from '@/components/post/LikeButton';
 import { PostImages } from './PostImages';
 import { formatRelative } from '@/lib/format';
-import type { PostWithAuthor } from '@/types'; // これを絶対に残す！
+import type { PostWithAuthor } from '@/types';
 import { deletePost } from '@/api/posts';
 import { getCurrentUserId } from '@/lib/currentUser';
 import { getYouTubeId } from '@/lib/utils';
@@ -42,7 +42,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
   return (
     <article className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft transition hover:shadow-card-soft relative">
       <div className="flex items-start gap-3">
-        {/* 左側：アバター。ここには名前を入れないことでレイアウト崩れを防ぐ */}
+        {/* 左側：アバター */}
         <Link to={`/u/${post.author.username}`} className="shrink-0">
           <Avatar className="h-11 w-11 border-2 border-primary/30">
             <AvatarImage src={post.author.avatarUrl} alt={post.author.displayName} />
@@ -50,32 +50,38 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
           </Avatar>
         </Link>
 
-        {/* 右側：メインコンテンツ */}
+        {/* 右側：メインコンテンツエリア */}
         <div className="min-w-0 flex-1">
-          {/* ヘッダー：名前、ID、メニュー */}
+          {/* ヘッダー：名前、ID、投稿時間 */}
           <div className="flex items-center justify-between mb-0.5">
-            <div className="flex items-center gap-1.5 text-sm overflow-hidden w-full">
+            <div className="flex items-center gap-1.5 overflow-hidden w-full">
               <Link 
                 to={`/u/${post.author.username}`} 
-                className="flex items-center gap-1 truncate font-display font-bold text-foreground hover:underline shrink-0 max-w-[70%]"
+                className="flex items-center gap-1 truncate font-display font-bold text-foreground hover:underline shrink-0"
               >
+                {/* font-bold text-foreground (サイズ指定なし) で親の 
+                  text-sm (14px) かデフォルト (16px) を継承させます
+                */}
                 <span className="truncate">{post.author.displayName}</span>
                 {post.author.isOfficial && (
                   <img 
                     src={`${import.meta.env.BASE_URL}verified.png`}
                     alt="Official" 
-                    /* translate-y-[1.5px] でバッジを少し下げて、視覚的な中央を合わせる */
-                    className="h-3.5 w-3.5 shrink-0 transform translate-y-[1.5px]"
+                    className="h-4 w-4 shrink-0 transform translate-y-[1px]"
                     loading="eager"
                   />
                 )}
               </Link>
               
-              <span className="truncate text-muted-foreground shrink">@{post.author.username}</span>
-              <span className="text-muted-foreground ml-1">·</span>
-              <span className="text-muted-foreground whitespace-nowrap text-xs">{formatRelative(post.createdAt)}</span>
+              {/* @ユーザーID と 時間（ここは text-sm で適切な小ささに） */}
+              <span className="truncate text-sm text-muted-foreground shrink">@{post.author.username}</span>
+              <span className="text-muted-foreground">·</span>
+              <span className="text-sm text-muted-foreground whitespace-nowrap">
+                {formatRelative(post.createdAt)}
+              </span>
             </div>
 
+            {/* 三点リーダー */}
             {isMyPost && (
               <div className="relative ml-2 shrink-0">
                 <button
@@ -103,7 +109,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
             )}
           </div>
 
-          {/* コンテンツエリア：本文、YouTube、画像 */}
+          {/* コンテンツエリア：本文のサイズを text-[15px] で維持 */}
           <Link to={`/post/${post.id}`} className="block">
             {displayContent && (
               <p className="mt-1 whitespace-pre-wrap break-words text-[15px] leading-relaxed text-foreground">
@@ -114,7 +120,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
             <PostImages urls={post.imageUrls} />
           </Link>
 
-          {/* 下部：いいね・コメント */}
+          {/* 下部アクションエリア */}
           <div className="mt-3 flex items-center gap-1 text-muted-foreground">
             <LikeButton postId={post.id} liked={post.likedByMe} count={post.likesCount} />
             <Link
