@@ -38,9 +38,20 @@ export function ProfileHeader({ user }: { user: User }) {
         </div>
 
         <div className="mt-3">
-          <h1 className="font-display text-2xl font-black">{user.displayName}</h1>
-          <p className="text-sm text-muted-foreground">@{user.username}</p>
-        </div>
+  {/* flex items-center を追加して横並びにする */}
+  <h1 className="font-display text-2xl font-black flex items-center gap-1.5">
+    {user.displayName}
+    {/* 公式バッジの判定を追加 */}
+    {user.isOfficial && (
+      <img 
+        src={`${import.meta.env.BASE_URL}verified.png`} 
+        alt="Official" 
+        className="h-6 w-6 shrink-0" // 名前が大きいので、バッジも少し大きく(h-6)しています
+      />
+    )}
+  </h1>
+  <p className="text-sm text-muted-foreground">@{user.username}</p>
+</div>
 
         {user.bio && (
           <p className="mt-3 whitespace-pre-wrap text-[15px] leading-relaxed">{user.bio}</p>
