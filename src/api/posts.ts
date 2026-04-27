@@ -107,25 +107,29 @@ export async function createPost(input: {
   const userId = await getCurrentUserId();
   const newId = crypto.randomUUID();
 
-  // デバイス判定ロジック
-  const getClientName = () => {
-  const ua = navigator.userAgent;
 
-  // iPhone/iPad 判定
-  if (/iPhone/i.test(ua)) return "iPhone";
-  if (/iPad/i.test(ua)) return "iPad";
-
-  // Android 判定
-  if (/Android/i.test(ua)) return "Android";
-
-  // PC 判定
-  if (/Macintosh/i.test(ua)) return "Mac";
-  if (/Windows/i.test(ua)) return "Windows";
   
-  return "Web";
-};
+ const getDetailedClient = () => {
+    const ua = navigator.userAgent;
+    const platform = (navigator as any).platform || '';
 
-const clientSource = `RaimuNote for ${getClientName()}`;
+    // 1. iPhone / iPad
+    if (/iPhone/i.test(ua)) return "iPhone";
+    if (/iPad/i.test(ua) || (platform === 'MacIntel' && navigator.maxTouchPoints > 1)) return "iPad";
+
+    // 2. Android
+    if (/Android/i.test(ua)) return "Android";
+
+    // 3. Mac (Macintosh かつ Touchがない)
+    if (/Macintosh|MacIntel|MacPPC|Mac68K/i.test(ua)) return "Mac";
+
+    // 4. Windows
+    if (/Win32|Win64|Windows|WinCE/i.test(ua)) return "Windows";
+
+    return "Web";
+  };
+
+  const clientSource = `RaimuNote for ${getDetailedClient()}`;
 
   // --- 追加：画像を本物のURLに変換する処理 ---
   const finalImageUrls = await Promise.all(
