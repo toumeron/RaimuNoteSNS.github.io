@@ -1,7 +1,6 @@
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, MessageCircle, RefreshCw } from 'lucide-react';
+import { ArrowLeft, MessageCircle } from 'lucide-react'; // RefreshCwを削除
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { LikeButton } from '@/components/post/LikeButton';
 import { CommentList } from '@/components/post/CommentList';
@@ -9,11 +8,21 @@ import { CommentForm } from '@/components/post/CommentForm';
 import { PostImages } from '@/components/feed/PostImages';
 import { usePost } from '@/hooks/useFeed';
 import { formatDate, formatRelative } from '@/lib/format';
+import { getYouTubeId } from '@/lib/utils'; // 追加
+import { YouTubeEmbed } from '@/components/YouTubeEmbed'; // 追加
 
 export default function PostDetail() {
   const { id = '' } = useParams();
   const { data, isLoading, isError } = usePost(id);
   const navigate = useNavigate();
+
+  // YouTube IDの抽出と本文の加工
+  const youtubeId = data ? getYouTubeId(data.content) : null;
+  const displayContent = (data && youtubeId)
+    ? data.content
+        .replace(/(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|embed\/|shorts\/)?([a-zA-Z0-9_-]{11})([^?\s\n]*)?(\S+)?/g, '')
+        .trim()
+    : data?.content;
 
   return (
     <div className="space-y-5">
@@ -38,10 +47,9 @@ export default function PostDetail() {
         </div>
       )}
       
-{isError && (
+      {isError && (
         <div className="rounded-3xl border border-destructive/40 bg-destructive/5 p-6 text-center">
           <p className="text-sm text-destructive">投稿の読み込みに失敗しました。</p>
-          {/* ボタンを削除しました */}
         </div>
       )}
 
@@ -68,7 +76,16 @@ export default function PostDetail() {
             </div>
           </div>
 
-          <p className="mt-4 whitespace-pre-wrap break-words text-base leading-relaxed">{data.content}</p>
+          {/* 加工した本文を表示 */}
+          {displayContent && (
+            <p className="mt-4 whitespace-pre-wrap break-words text-base leading-relaxed">
+              {displayContent}
+            </p>
+          )}
+
+          {/* YouTube埋め込みを追加 */}
+          {youtubeId && <YouTubeEmbed videoId={youtubeId} />}
+
           <PostImages urls={data.imageUrls} />
 
           <p className="mt-4 text-xs text-muted-foreground" title={formatDate(data.createdAt)}>

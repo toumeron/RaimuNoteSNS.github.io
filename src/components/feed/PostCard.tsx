@@ -8,8 +8,8 @@ import { formatRelative } from '@/lib/format';
 import type { PostWithAuthor } from '@/types';
 import { deletePost } from '@/api/posts';
 import { getCurrentUserId } from '@/lib/currentUser';
-import { getYouTubeId } from '@/lib/utils'; // 追加
-import { YouTubeEmbed } from '@/components/YouTubeEmbed'; // 前の返信で作ったコンポーネント
+import { getYouTubeId } from '@/lib/utils';
+import { YouTubeEmbed } from '@/components/YouTubeEmbed';
 
 export function PostCard({ post }: { post: PostWithAuthor }) {
   const [showMenu, setShowMenu] = useState(false);
@@ -21,8 +21,16 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
 
   const isMyPost = currentUserId === post.userId;
   
-  // YouTube ID を抽出
+  // 1. YouTube ID を抽出
   const youtubeId = getYouTubeId(post.content);
+
+  // 2. 表示用の本文を加工（YouTubeのURLが含まれていれば削除する）
+  // 通常のURL、短縮URL、ショート動画URLのすべてに対応し、その後の空白もトリミングします
+  const displayContent = youtubeId 
+    ? post.content
+        .replace(/(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|embed\/|shorts\/)?([a-zA-Z0-9_-]{11})([^?\s\n]*)?(\S+)?/g, '')
+        .trim()
+    : post.content;
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.preventDefault();
@@ -84,9 +92,12 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
           </div>
 
           <Link to={`/post/${post.id}`} className="block">
-            <p className="mt-1 whitespace-pre-wrap break-words text-[15px] leading-relaxed text-foreground">
-              {post.content}
-            </p>
+            {/* 3. 本文がある場合のみ表示（URLのみの投稿ならテキストエリア自体を隠す） */}
+            {displayContent && (
+              <p className="mt-1 whitespace-pre-wrap break-words text-[15px] leading-relaxed text-foreground">
+                {displayContent}
+              </p>
+            )}
             
             {/* --- YouTube 埋め込み --- */}
             {youtubeId && <YouTubeEmbed videoId={youtubeId} />}
