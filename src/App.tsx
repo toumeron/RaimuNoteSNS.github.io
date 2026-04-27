@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom"; // useLocationを追加
+import { useEffect } from "react"; // useEffectを追加
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -10,22 +11,23 @@ import Feed from "./pages/Feed";
 import PostDetail from "./pages/PostDetail";
 import Profile from "./pages/Profile";
 import Settings from "./pages/Settings";
-import NotFound from "./pages/NotFound"; // .tsx は不要なので削除して安定させます
+import NotFound from "./pages/NotFound";
+
+// スクロール位置をリセットするコンポーネント
+const ScrollToTop = () => {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pathname]);
+  return null;
+};
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: { 
-      // 30秒(1000 * 30)から、1時間(1000 * 60 * 60)に変更して、
-      // 勝手にバックグラウンドで再取得させないようにします。
       staleTime: 1000 * 60 * 60, 
-      
-      // 画面に戻った時に更新されるのを確実に防ぎます
       refetchOnWindowFocus: false, 
-      
-      // ネットワークが不安定なときのために、3回はリトライするようにします
       retry: 3,
-      
-      // ネットワークが切断されている間は再試行を待機します
       retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
     },
   },
@@ -36,11 +38,13 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      {/* basename を追加することで、URLのズレを解消します */}
       <BrowserRouter 
         basename="/RaimuNoteSNS.github.io"
         future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
       >
+        {/* ここに追加！ページ遷移のたびに一番上へ戻るようになります */}
+        <ScrollToTop />
+        
         <AuthProvider>
           <Routes>
             <Route path="/auth" element={<AuthPage />} />
