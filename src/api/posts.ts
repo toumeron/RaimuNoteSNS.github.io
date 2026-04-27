@@ -119,7 +119,7 @@ export async function createPost(input: {
     return "Web";
   };
 
-  const clientSource = `RaimuNote for ${getDetailedClient()}`;
+  const clientSource = `LaimeNote for ${getDetailedClient()}`;
 
   // 画像アップロード処理
   const finalImageUrls = await Promise.all(
