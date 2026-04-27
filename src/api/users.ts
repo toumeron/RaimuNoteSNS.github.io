@@ -11,6 +11,7 @@ function toUser(row: any): User {
     avatarUrl: (row.avatar_url ?? '') as string,
     coverUrl: (row.cover_url ?? '') as string,
     createdAt: (row.created_at ?? '') as string,
+    isOfficial:  (row.is_official  ?? false) as boolean,
   };
 }
 
