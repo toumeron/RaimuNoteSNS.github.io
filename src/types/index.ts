@@ -20,6 +20,7 @@ export type Post = {
   likesCount: number;
   commentsCount: number;
   likedByMe: boolean;
+　clientName?: string;     // ← これを追加！ (オプショナル型にしておくのが安全です)
 };
 
 export type Comment = {

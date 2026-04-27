@@ -17,7 +17,7 @@ function rowToUser(profile: any): User {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function rowToPost(row: any, likedIds: Set<string>): PostWithAuthor {
+function rowToPost(row: any, likedIds: Set<string>): PostWithAuthor & { clientName?: string } {
   return {
     id:            row.id,
     userId:        row.user_id,
@@ -28,6 +28,7 @@ function rowToPost(row: any, likedIds: Set<string>): PostWithAuthor {
     commentsCount: row.comments_count ?? 0,
     likedByMe:     likedIds.has(row.id),
     author:        rowToUser(row.profiles),
+    clientName:    row.client_name  ?? 'RaimuNote for Web', // 追加
   };
 }
 
@@ -101,11 +102,23 @@ export async function getPostById(id: string): Promise<PostWithAuthor | null> {
 
 export async function createPost(input: {
   content: string;
-  imageUrls: string[]; // ここに blob: URL が入ってきていると想定
+  imageUrls: string[];
 }): Promise<PostWithAuthor> {
   const userId = await getCurrentUserId();
   const newId = crypto.randomUUID();
 
+  // デバイス判定ロジック
+  const getClientName = () => {
+    const ua = navigator.userAgent;
+    if (/iPhone/i.test(ua)) return "iPhone";
+    if (/iPad/i.test(ua)) return "iPad";
+    if (/Android/i.test(ua)) return "Android";
+    if (/Macintosh/i.test(ua)) return "Mac";
+    if (/Windows/i.test(ua)) return "Windows";
+    return "Web";
+  };
+  const clientSource = `RaimuNote for ${getClientName()}`;
+  
   // --- 追加：画像を本物のURLに変換する処理 ---
   const finalImageUrls = await Promise.all(
     input.imageUrls.map(async (url) => {
