@@ -60,7 +60,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
                 className="flex items-center truncate font-display font-bold text-foreground hover:underline shrink-0"
               >
                 {/* 名前のサイズを確実に大きく(text-base: 16px) */}
-                <div className="flex items-center gap-0.5">
+                <div className="flex items-center gap-0">
                   <span className="truncate text-base">{post.author.displayName}</span>
                   {post.author.isOfficial && (
                     <img 
