@@ -79,7 +79,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
               {/* @ID: shrink を指定して、名前との幅の取り合いが発生した際に
                 こちらも適切に省略されるように調整します。
               */}
-              <span className="truncate text-sm text-muted-foreground ml-1.5 opacity-80 shrink">
+              <span className="truncate text-sm text-muted-foreground ml-1 opacity-80 shrink">
                 @{post.author.username}
               </span>
               
