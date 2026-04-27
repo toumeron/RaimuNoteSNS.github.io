@@ -1,14 +1,15 @@
 // ムリムリSNS 共通型定義
-// 後でSupabaseの型と差し替えやすいよう、最小プロパティで定義
 
 export type User = {
   id: string;
-  username: string;        // 半角英数字 (例: "hanako_03")
-  displayName: string;     // 表示名 (例: "ハナコ")
-  bio: string;             // 自己紹介
+  username: string;
+  displayName: string;
+  bio: string;
   avatarUrl: string;
   coverUrl: string;
-  createdAt: string;       // ISO
+  createdAt: string;
+  // --- ここを追加！ ---
+  isOfficial?: boolean; 
 };
 
 export type Post = {
@@ -16,13 +17,14 @@ export type Post = {
   userId: string;
   content: string;
   imageUrls: string[];
-  createdAt: string;       // ISO
+  createdAt: string;
   likesCount: number;
   commentsCount: number;
   likedByMe: boolean;
-　clientName?: string;     // ← これを追加！ (オプショナル型にしておくのが安全です)
+  clientName?: string;
 };
 
+// ...以下、Comment や Follow は変更なし
 export type Comment = {
   id: string;
   postId: string;

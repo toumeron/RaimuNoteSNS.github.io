@@ -20,12 +20,8 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
   }, []);
 
   const isMyPost = currentUserId === post.userId;
-  
-  // 1. YouTube ID を抽出
   const youtubeId = getYouTubeId(post.content);
 
-  // 2. 表示用の本文を加工（YouTubeのURLが含まれていれば削除する）
-  // 通常のURL、短縮URL、ショート動画URLのすべてに対応し、その後の空白もトリミングします
   const displayContent = youtubeId 
     ? post.content
         .replace(/(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|embed\/|shorts\/)?([a-zA-Z0-9_-]{11})([^?\s\n]*)?(\S+)?/g, '')
@@ -55,13 +51,22 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between">
-            <div className="flex items-baseline gap-1.5 text-sm overflow-hidden">
-              <Link to={`/u/${post.author.username}`} className="truncate font-display font-bold text-foreground hover:underline">
-                {post.author.displayName}
+            <div className="flex items-center gap-1.5 text-sm overflow-hidden w-full">
+              {/* 名前の横にバッジを表示 */}
+              <Link to={`/u/${post.author.username}`} className="flex items-center gap-1 truncate font-display font-bold text-foreground hover:underline shrink-0 max-w-[50%]">
+                <span className="truncate">{post.author.displayName}</span>
+                {post.author.isOfficial && (
+                  <img 
+                    src="/verified.png" 
+                    alt="Official" 
+                    className="h-4 w-4 shrink-0" 
+                    title="公式アカウント"
+                  />
+                )}
               </Link>
-              <span className="truncate text-muted-foreground">@{post.author.username}</span>
-              <span className="text-muted-foreground">·</span>
-              <span className="text-muted-foreground whitespace-nowrap">{formatRelative(post.createdAt)}</span>
+              <span className="truncate text-muted-foreground shrink">@{post.author.username}</span>
+              <span className="text-muted-foreground shrink-0">·</span>
+              <span className="text-muted-foreground whitespace-nowrap shrink-0">{formatRelative(post.createdAt)}</span>
             </div>
 
             {isMyPost && (
@@ -92,16 +97,12 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
           </div>
 
           <Link to={`/post/${post.id}`} className="block">
-            {/* 3. 本文がある場合のみ表示（URLのみの投稿ならテキストエリア自体を隠す） */}
             {displayContent && (
               <p className="mt-1 whitespace-pre-wrap break-words text-[15px] leading-relaxed text-foreground">
                 {displayContent}
               </p>
             )}
-            
-            {/* --- YouTube 埋め込み --- */}
             {youtubeId && <YouTubeEmbed videoId={youtubeId} />}
-
             <PostImages urls={post.imageUrls} />
           </Link>
 
