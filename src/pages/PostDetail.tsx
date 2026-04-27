@@ -12,7 +12,7 @@ import { formatDate, formatRelative } from '@/lib/format';
 
 export default function PostDetail() {
   const { id = '' } = useParams();
-  const { data, isLoading, isError, refetch } = usePost(id);
+  const { data, isLoading, isError } = usePost(id);
   const navigate = useNavigate();
 
   return (
@@ -37,13 +37,11 @@ export default function PostDetail() {
           </div>
         </div>
       )}
-
-      {isError && (
+      
+{isError && (
         <div className="rounded-3xl border border-destructive/40 bg-destructive/5 p-6 text-center">
-          <p className="mb-3 text-sm text-destructive">投稿の読み込みに失敗しました。</p>
-          <Button variant="outline" size="sm" onClick={() => refetch()} className="rounded-full">
-            <RefreshCw className="mr-1.5 h-4 w-4" /> もう一度試す
-          </Button>
+          <p className="text-sm text-destructive">投稿の読み込みに失敗しました。</p>
+          {/* ボタンを削除しました */}
         </div>
       )}
 

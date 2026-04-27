@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { RefreshCw } from 'lucide-react';
 
 export function CommentList({ postId }: { postId: string }) {
-  const { data, isLoading, isError, refetch } = useComments(postId);
+const { data, isLoading, isError } = useComments(postId);
 
   if (isLoading) {
     return (
@@ -25,13 +25,18 @@ export function CommentList({ postId }: { postId: string }) {
     );
   }
 
-  if (isError) {
+ if (isError) {
     return (
-      <div className="rounded-2xl border border-destructive/40 bg-destructive/5 p-4 text-center text-sm">
-        <p className="mb-2 text-destructive">コメントの読み込みに失敗しました</p>
-        <Button variant="outline" size="sm" onClick={() => refetch()} className="rounded-full">
-          <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> 再読み込み
-        </Button>
+      <div className="flex flex-col items-center justify-center py-10 text-center">
+        <p className="text-sm text-destructive">コメントの読み込みに失敗しました。</p>
+      </div>
+    );
+  }
+
+  if (!data || data.length === 0) {
+    return (
+      <div className="py-10 text-center text-sm text-muted-foreground">
+        まだコメントはありません。
       </div>
     );
   }

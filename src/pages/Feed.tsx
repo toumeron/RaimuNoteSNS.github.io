@@ -6,7 +6,7 @@ import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
 import { useFeed } from '@/hooks/useFeed';
 
 export default function Feed() {
-  const { data, isLoading, isError, refetch, isFetching } = useFeed();
+  const { data, isLoading, isError } = useFeed();
 
   return (
     <div className="space-y-5">
@@ -31,16 +31,12 @@ export default function Feed() {
           </>
         )}
 
-        {isError && (
+{isError && (
           <div className="rounded-3xl border border-destructive/40 bg-destructive/5 p-6 text-center">
-            <p className="mb-3 text-sm text-destructive">投稿の読み込みに失敗しました。</p>
-            <Button variant="outline" size="sm" onClick={() => refetch()} className="rounded-full">
-              <RefreshCw className="mr-1.5 h-4 w-4" />
-              もう一度試す
-            </Button>
+            <p className="text-sm text-destructive font-bold">投稿の読み込みに失敗しました。</p>
+            <p className="text-xs text-destructive/60 mt-1">しばらく時間を置いてから再度お試しください。</p>
           </div>
         )}
-
         {data && data.length === 0 && (
           <div className="rounded-3xl border border-dashed border-border bg-card/60 p-10 text-center text-muted-foreground">
             まだ投稿がありません。最初のポストをしてみよう
@@ -52,10 +48,6 @@ export default function Feed() {
             <PostCard post={post} />
           </div>
         ))}
-
-        {data && isFetching && (
-          <p className="text-center text-xs text-muted-foreground">更新中…</p>
-        )}
       </div>
     </div>
   );
