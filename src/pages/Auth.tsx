@@ -61,7 +61,7 @@ function AuthForm({ mode }: { mode: Mode }) {
           });
         }
 
-        toast.success('ようこそLimeNoteへ！');
+        toast.success('ようこそLaimeNoteへ！');
         navigate('/');
       }
     } catch (err: unknown) {

@@ -11,7 +11,7 @@ export function Logo({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
   return (
     <Link to="/" className="inline-flex items-center gap-2 font-display font-black">
       <span className={`${s.text} bg-gradient-primary bg-clip-text text-transparent`}>
-        Lime
+        Laime
       </span>
       <span className={`${s.text} text-accent`}>Note</span>
     </Link>
