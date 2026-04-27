@@ -108,74 +108,60 @@ export async function createPost(input: {
   const userId = await getCurrentUserId();
   const newId = crypto.randomUUID();
 
-
-
- const getDetailedClient = () => {
+  // 1. クライアント判定
+  const getDetailedClient = () => {
     const ua = navigator.userAgent;
     const platform = (navigator as any).platform || '';
-
-    // 1. iPhone / iPad
     if (/iPhone/i.test(ua)) return "iPhone";
     if (/iPad/i.test(ua) || (platform === 'MacIntel' && navigator.maxTouchPoints > 1)) return "iPad";
-
-    // 2. Android
     if (/Android/i.test(ua)) return "Android";
-
-    // 3. Mac (Macintosh かつ Touchがない)
     if (/Macintosh|MacIntel|MacPPC|Mac68K/i.test(ua)) return "Mac";
-
-    // 4. Windows
     if (/Win32|Win64|Windows|WinCE/i.test(ua)) return "Windows";
-
     return "Web";
   };
 
   const clientSource = `RaimuNote for ${getDetailedClient()}`;
 
-  // --- 追加：画像を本物のURLに変換する処理 ---
+  // 2. ここで finalImageUrls を定義（この関数のスコープ内）
   const finalImageUrls = await Promise.all(
     input.imageUrls.map(async (url) => {
-      // blob: で始まっていない（既に https: 等の）場合はそのまま返す
       if (!url.startsWith('blob:')) return url;
 
       try {
-        // 1. blob URL から実際のデータ(Blob)を取得
         const response = await fetch(url);
         const blob = await response.blob();
         
-        // 2. ファイル名を生成 (例: user_id/unique_id.png)
-        const fileExt = blob.type.split('/')[1] || 'png';
-        const fileName = `${userId}/${crypto.randomUUID()}.${fileExt}`;
+        const formData = new FormData();
+        formData.append('file', blob);
+        formData.append('upload_preset', import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET);
 
-        // 3. Supabase Storage の 'posts' バケットにアップロード
-        // ※予め Supabase 側で 'posts' バケットを Public で作成しておく必要があります
-        const { error: uploadError } = await supabase.storage
-          .from('posts')
-          .upload(fileName, blob);
+        const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
+        const res = await fetch(
+          `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
+          { method: 'POST', body: formData }
+        );
 
-        if (uploadError) throw uploadError;
-
-        // 4. 公開用URLを取得して返す
-        const { data } = supabase.storage.from('posts').getPublicUrl(fileName);
-        return data.publicUrl;
+        if (!res.ok) throw new Error('Cloudinary upload failed');
+        const data = await res.json();
+        return data.secure_url;
       } catch (err) {
-        console.error('Image upload failed:', err);
-        return null; // 失敗した場合は除外するか、エラーにする
+        console.error('Cloudinary upload failed:', err);
+        return null;
       }
     })
   );
 
-  // null（失敗した画像）を除外
+  // 3. ここで使う（finalImageUrls が定義されているのと同じ深さ）
   const filteredUrls = finalImageUrls.filter((url): url is string => url !== null);
-  // ----------------------------------------
 
+  // 4. Supabaseに保存
   const { error } = await supabase
     .from('posts')
     .insert({
       id:         newId,
       user_id:    userId,
       content:    input.content,
-      image_urls: filteredUrls, // 本物のURL配列を入れる
+      image_urls: filteredUrls, 
       client_name: clientSource,
     });
 
@@ -185,7 +171,6 @@ export async function createPost(input: {
   if (!post) throw new Error('投稿に失敗しました');
   return post;
 }
-
 export async function toggleLike(postId: string): Promise<{ liked: boolean; likesCount: number }> {
   const userId = await getCurrentUserId();
 
