@@ -3,6 +3,8 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 
 export default defineConfig({
+  // GitHub Pages のリポジトリ名を指定
+  base: '/RaimuNoteSNS.github.io/', 
   plugins: [react()],
   test: {
     environment: "jsdom",

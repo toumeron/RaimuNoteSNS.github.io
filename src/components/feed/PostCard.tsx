@@ -59,12 +59,11 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
     <span className="truncate">{post.author.displayName}</span>
 {post.author.isOfficial && (
   <img 
-    src="verified.png" 
+    src={`${import.meta.env.BASE_URL}verified.png`} // パスを動的に結合
     alt="Official" 
     className="h-4 w-4 shrink-0"
     onError={(e) => {
-      // これでもダメな場合のデバッグ用
-      console.log("Current Path Attempt:", (e.target as HTMLImageElement).src);
+      console.log("Failed path:", (e.target as HTMLImageElement).src);
     }}
   />
 )}
