@@ -5,7 +5,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { LikeButton } from '@/components/post/LikeButton';
 import { PostImages } from './PostImages';
 import { formatRelative } from '@/lib/format';
-import type { PostWithAuthor } from '@/types';
+import type { PostWithAuthor } from '@/types'; // 型定義は大文字始まり
 import { deletePost } from '@/api/posts';
 import { getCurrentUserId } from '@/lib/currentUser';
 import { getYouTubeId } from '@/lib/utils';
@@ -42,7 +42,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
   return (
     <article className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft transition hover:shadow-card-soft relative">
       <div className="flex items-start gap-3">
-        {/* 左側：アバター */}
+        {/* 左側：アバター（レイアウト固定） */}
         <Link to={`/u/${post.author.username}`} className="shrink-0">
           <Avatar className="h-11 w-11 border-2 border-primary/30">
             <AvatarImage src={post.author.avatarUrl} alt={post.author.displayName} />
@@ -52,36 +52,37 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
 
         {/* 右側：メインコンテンツエリア */}
         <div className="min-w-0 flex-1">
-          {/* ヘッダー：名前、ID、投稿時間 */}
+          {/* ヘッダー：名前、バッジ、ID、投稿時間 */}
           <div className="flex items-center justify-between mb-0.5">
-            <div className="flex items-center gap-1.5 overflow-hidden w-full">
+            <div className="flex items-center overflow-hidden w-full">
               <Link 
                 to={`/u/${post.author.username}`} 
-                className="flex items-center gap-1 truncate font-display font-bold text-foreground hover:underline shrink-0"
+                className="flex items-center truncate font-display font-bold text-foreground hover:underline shrink-0"
               >
-                {/* font-bold text-foreground (サイズ指定なし) で親の 
-                  text-sm (14px) かデフォルト (16px) を継承させます
-                */}
-                <span className="truncate">{post.author.displayName}</span>
-                {post.author.isOfficial && (
-                  <img 
-                    src={`${import.meta.env.BASE_URL}verified.png`}
-                    alt="Official" 
-                    className="h-4 w-4 shrink-0 transform translate-y-[1px]"
-                    loading="eager"
-                  />
-                )}
+                {/* 名前とバッジを密着させる (gap-0.5 = 2px) */}
+                <div className="flex items-center gap-0.5">
+                  <span className="truncate text-[16px]">{post.author.displayName}</span>
+                  {post.author.isOfficial && (
+                    <img 
+                      src={`${import.meta.env.BASE_URL}verified.png`}
+                      alt="Official" 
+                      /* 垂直方向の微調整 (1.5px下げ) */
+                      className="h-4 w-4 shrink-0 transform translate-y-[1.5px]"
+                      loading="eager"
+                    />
+                  )}
+                </div>
               </Link>
               
-              {/* @ユーザーID と 時間（ここは text-sm で適切な小ささに） */}
-              <span className="truncate text-sm text-muted-foreground shrink">@{post.author.username}</span>
-              <span className="text-muted-foreground">·</span>
-              <span className="text-sm text-muted-foreground whitespace-nowrap">
+              {/* ID、ドット、時間を適切なサイズと間隔で配置 */}
+              <span className="truncate text-[14px] text-muted-foreground shrink ml-1.5">@{post.author.username}</span>
+              <span className="text-muted-foreground mx-1">·</span>
+              <span className="text-[13px] text-muted-foreground whitespace-nowrap">
                 {formatRelative(post.createdAt)}
               </span>
             </div>
 
-            {/* 三点リーダー */}
+            {/* 三点リーダー（自分の投稿のみ） */}
             {isMyPost && (
               <div className="relative ml-2 shrink-0">
                 <button
@@ -109,10 +110,10 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
             )}
           </div>
 
-          {/* コンテンツエリア：本文のサイズを text-[15px] で維持 */}
+          {/* コンテンツエリア：本文サイズ text-[16px] で読みやすく */}
           <Link to={`/post/${post.id}`} className="block">
             {displayContent && (
-              <p className="mt-1 whitespace-pre-wrap break-words text-[15px] leading-relaxed text-foreground">
+              <p className="mt-1 whitespace-pre-wrap break-words text-[16px] leading-relaxed text-foreground">
                 {displayContent}
               </p>
             )}
@@ -120,7 +121,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
             <PostImages urls={post.imageUrls} />
           </Link>
 
-          {/* 下部アクションエリア */}
+          {/* 下部アクションボタン */}
           <div className="mt-3 flex items-center gap-1 text-muted-foreground">
             <LikeButton postId={post.id} liked={post.likedByMe} count={post.likesCount} />
             <Link
@@ -128,7 +129,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
               className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent"
             >
               <MessageCircle className="h-5 w-5" />
-              <span className="font-bold tabular-nums">{post.commentsCount}</span>
+              <span className="font-bold tabular-nums text-[14px]">{post.commentsCount}</span>
             </Link>
           </div>
         </div>
