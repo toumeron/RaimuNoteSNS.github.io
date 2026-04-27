@@ -57,14 +57,20 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
     className="flex items-center gap-1 truncate font-display font-bold text-foreground hover:underline shrink-0"
   >
     <span className="truncate">{post.author.displayName}</span>
-    {post.author.isOfficial && (
-      <img 
-        src="/verified.png" 
-        alt="Official" 
-        className="h-4 w-4 shrink-0"
-      />
-    )}
+{post.author.isOfficial && (
+  <img 
+    src="verified.png" 
+    alt="Official" 
+    className="h-4 w-4 shrink-0"
+    onError={(e) => {
+      // これでもダメな場合のデバッグ用
+      console.log("Current Path Attempt:", (e.target as HTMLImageElement).src);
+    }}
+  />
+)}
+
   </Link>
+  
   <span className="truncate text-muted-foreground shrink">@{post.author.username}</span>
 </div>
 
