@@ -51,18 +51,14 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
   const HoverStats = ({ userId }: { userId: string }) => {
     const { data: stats } = useFollowStats(userId);
     return (
-      <div className="mt-4 flex items-center gap-3 text-[10px] uppercase tracking-wider">
+      <div className="mt-3 flex items-center gap-2.5 text-[10px] leading-none">
         <div className="flex items-center gap-0.5">
-          <span className="font-bold text-foreground tabular-nums">
-            {stats?.following ?? 0}
-          </span>
-          <span className="text-muted-foreground/80">Following</span>
+          <span className="font-bold text-foreground tabular-nums">{stats?.following ?? 0}</span>
+          <span className="text-muted-foreground">フォロー中</span>
         </div>
         <div className="flex items-center gap-0.5">
-          <span className="font-bold text-foreground tabular-nums">
-            {stats?.followers ?? 0}
-          </span>
-          <span className="text-muted-foreground/80">Followers</span>
+          <span className="font-bold text-foreground tabular-nums">{stats?.followers ?? 0}</span>
+          <span className="text-muted-foreground">フォロワー</span>
         </div>
       </div>
     );
@@ -72,51 +68,53 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
     <HoverCardContent 
       side="bottom" 
       align="start" 
-      className="w-[260px] rounded-[28px] border border-border/50 bg-card p-5 shadow-2xl animate-in fade-in zoom-in duration-200"
+      className="w-[260px] rounded-[24px] border border-border/60 bg-card p-4 shadow-xl animate-in fade-in zoom-in duration-200 overflow-hidden"
     >
-      {/* 上部：アバターとボタンを横並びにし、絶対に衝突させない */}
-      <div className="flex items-start justify-between mb-4">
-        <Avatar className="h-14 w-14 shrink-0 border-2 border-primary/10 shadow-sm">
+      {/* 上部エリア：アバターとボタンを分離 */}
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <Avatar className="h-12 w-12 shrink-0 border border-primary/10 shadow-sm">
           <AvatarImage src={post.author.avatarUrl} alt={post.author.displayName} />
           <AvatarFallback>{post.author.displayName.slice(0, 1)}</AvatarFallback>
         </Avatar>
         
         {currentUserId !== post.author.id && (
-          /* ボタンエリアを80pxに固定し、中身が大きくてもscaleで強制的に収める */
-          <div className="w-[80px] shrink-0 transform scale-75 origin-top-right translate-y-1">
+          /* ボタンが絶対にはみ出ないための鉄壁のガード:
+            1. w-[85px] で親の幅を固定
+            2. [&_*] セレクタで子要素すべての幅を 100% (85px) に固定
+            3. scale-90 で全体のサイズ感を微調整
+          */
+          <div className="w-[85px] shrink-0 scale-90 origin-right [&_*]:w-full [&_button]:h-8 [&_button]:px-0 [&_button]:text-[11px] [&_button]:min-w-0">
             <FollowButton userId={post.author.id} />
           </div>
         )}
       </div>
 
-      {/* メイン情報：名前とIDを大きく強調 */}
+      {/* 名前とID：サイズを拡大 */}
       <div className="space-y-0.5">
         <div className="flex items-center gap-1 min-w-0">
-          <span className="font-display text-lg font-black text-foreground truncate">
+          <span className="font-display text-lg font-black text-foreground truncate leading-tight shrink">
             {post.author.displayName}
           </span>
           {post.author.isOfficial && (
             <img 
               src={`${import.meta.env.BASE_URL}verified.png`} 
               alt="Official" 
-              className="h-5 w-5 shrink-0"
+              className="h-[1.1em] w-[1.1em] shrink-0 transform translate-y-[0.5px]"
             />
           )}
         </div>
-        <p className="text-base text-muted-foreground leading-none truncate font-medium">
-          @{post.author.username}
-        </p>
+        <p className="text-[14px] text-muted-foreground leading-none truncate">@{post.author.username}</p>
       </div>
 
       {post.author.bio && (
-        <p className="mt-3 text-[13px] leading-relaxed line-clamp-3 text-foreground/80 font-medium">
+        <p className="mt-2.5 text-[12.5px] leading-relaxed line-clamp-2 text-foreground/90 font-medium">
           {post.author.bio}
         </p>
       )}
 
-      <div className="mt-3 flex items-center gap-1.5 text-[10px] text-muted-foreground/60 font-bold uppercase tracking-tighter">
+      <div className="mt-2.5 flex items-center gap-1.5 text-[9.5px] text-muted-foreground/80">
         <CalendarDays className="h-3 w-3" />
-        Joined {dayjs(post.author.createdAt).format('MMMM YYYY')}
+        {dayjs(post.author.createdAt).format('YYYY年M月')} から参加
       </div>
 
       <HoverStats userId={post.author.id} />
