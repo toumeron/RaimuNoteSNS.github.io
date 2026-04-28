@@ -49,16 +49,16 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
     }
   };
 
-  // --- プロフィールホバー内専用の統計表示コンポーネント ---
+  // --- 統計情報：サイズを text-xs (12px) で統一 ---
   const HoverStats = ({ userId }: { userId: string }) => {
     const { data: stats } = useFollowStats(userId);
     return (
-      <div className="mt-2.5 flex items-center gap-3 text-[11px]">
+      <div className="mt-3 flex items-center gap-4 text-xs">
         <div className="flex items-center gap-1">
           <span className="font-bold text-foreground tabular-nums">
             {stats?.following ?? 0}
           </span>
-          <span className="text-muted-foreground">フォロー</span>
+          <span className="text-muted-foreground">フォロー中</span>
         </div>
         <div className="flex items-center gap-1">
           <span className="font-bold text-foreground tabular-nums">
@@ -70,57 +70,53 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
     );
   };
 
-  // --- ホバーカードの中身 (w-50 = 200px 相当に最適化) ---
+  // --- ホバーカードの中身 (w-[260px] = 65相当) ---
   const ProfileHoverContent = () => (
     <HoverCardContent 
       side="bottom" 
       align="start" 
-      /* w-50 (200px) に合わせ、パディングを p-3.5 に縮小 */
-      className="w-[200px] rounded-2xl border border-border/60 bg-card p-3.5 shadow-xl animate-in fade-in zoom-in duration-200"
+      className="w-[260px] rounded-[24px] border border-border/60 bg-card p-4 shadow-xl animate-in fade-in zoom-in duration-200"
     >
-      <div className="flex justify-between items-start mb-2">
-        {/* アバターを 14 -> 10 (40px) に縮小 */}
-        <Avatar className="h-10 w-10 border border-primary/20">
+      <div className="flex justify-between items-start mb-3">
+        <Avatar className="h-12 w-12 shrink-0 border border-primary/15">
           <AvatarImage src={post.author.avatarUrl} alt={post.author.displayName} />
           <AvatarFallback>{post.author.displayName.slice(0, 1)}</AvatarFallback>
         </Avatar>
         
-        {/* FollowButton が大きい場合は、内部のスタイル調整が必要かもしれません */}
         {currentUserId !== post.author.id && (
-          <div className="scale-90 origin-right">
+          <div className="scale-90 origin-right shrink-0">
             <FollowButton userId={post.author.id} />
           </div>
         )}
       </div>
 
-      <div className="space-y-0.5">
-        <div className="flex items-center gap-0.5 min-w-0">
-          {/* 文字サイズを text-sm に統一し、均等感を出す */}
-          <span className="font-display text-sm font-black text-foreground truncate">
+      <div className="space-y-0.5 overflow-hidden">
+        {/* 名前とバッジ：サイズを均等化 */}
+        <div className="flex items-center gap-1 min-w-0">
+          <span className="font-display text-[15px] font-black text-foreground truncate shrink">
             {post.author.displayName}
           </span>
           {post.author.isOfficial && (
             <img 
               src={`${import.meta.env.BASE_URL}verified.png`} 
               alt="Official" 
-              className="h-[1em] w-[1em] shrink-0"
+              className="h-[1.15em] w-[1.15em] shrink-0"
             />
           )}
         </div>
-        <p className="text-[11px] text-muted-foreground leading-none">@{post.author.username}</p>
+        <p className="text-xs text-muted-foreground leading-none truncate">@{post.author.username}</p>
       </div>
 
       {post.author.bio && (
-        /* bioの文字サイズを text-[11px] にし、行間を詰める */
-        <p className="mt-2 text-[11px] leading-snug line-clamp-2 whitespace-pre-wrap text-foreground/90">
+        <p className="mt-2.5 text-[13px] leading-relaxed line-clamp-3 whitespace-pre-wrap text-foreground/90">
           {post.author.bio}
         </p>
       )}
 
-      {/* 参加日 */}
-      <div className="mt-2 flex items-center gap-1 text-[10px] text-muted-foreground opacity-80">
-        <CalendarDays className="h-3 w-3" />
-        {dayjs(post.author.createdAt).format('YYYY年M月')} から
+      {/* 参加日：他の要素と馴染むよう text-[11px] */}
+      <div className="mt-2.5 flex items-center gap-1.5 text-[11px] text-muted-foreground opacity-90">
+        <CalendarDays className="h-3.5 w-3.5" />
+        {dayjs(post.author.createdAt).format('YYYY年M月')} から参加
       </div>
 
       <HoverStats userId={post.author.id} />
