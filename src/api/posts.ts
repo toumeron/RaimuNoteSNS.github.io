@@ -177,7 +177,6 @@ export async function toggleRepost(postId: string): Promise<{ reposted: boolean;
   const userId = await getCurrentUserId();
   if (!userId) throw new Error("ログインが必要です");
 
-  // 1. 現在のボタン操作によるリポスト状態を確認
   const { data: existing } = await supabase
     .from('reposts')
     .select('post_id')
