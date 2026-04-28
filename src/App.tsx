@@ -11,7 +11,8 @@ import Feed from "./pages/Feed";
 import PostDetail from "./pages/PostDetail";
 import Profile from "./pages/Profile";
 import Settings from "./pages/Settings";
-import SearchPage from "./pages/SearchPage"; // 1. SearchPageをインポート
+import SearchPage from "./pages/SearchPage";
+import PostActivity from "./pages/PostActivity"; // 1. PostActivityをインポート
 import NotFound from "./pages/NotFound";
 
 const ScrollToTop = () => {
@@ -49,9 +50,10 @@ const App = () => (
             <Route path="/auth" element={<AuthPage />} />
             <Route element={<AppLayout />}>
               <Route path="/" element={<Feed />} />
-              {/* 2. ここに検索ページを追加！ */}
               <Route path="/search" element={<SearchPage />} />
               <Route path="/post/:id" element={<PostDetail />} />
+              {/* 2. ポストアクティビティ（いいね一覧）のルートを追加 */}
+              <Route path="/post/:postId/activity" element={<PostActivity />} />
               <Route path="/u/:username" element={<Profile />} />
               <Route path="/settings" element={<Settings />} />
             </Route>

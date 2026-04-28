@@ -1,22 +1,53 @@
-import { useRef, useState, type ChangeEvent } from 'react';
+import { useRef, useState, useEffect, type ChangeEvent } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { ImagePlus, Loader2, Send, X } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/hooks/useAuth';
 import { useCreatePost } from '@/hooks/useFeed';
+import { getPostById } from '@/api/posts';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import type { PostWithAuthor } from '@/types';
+import { formatRelative } from '@/lib/format';
 
 const MAX_LEN = 500;
 const MAX_IMAGES = 4;
 
-export function PostComposer() {
+// Propsの型を明示的に定義
+interface PostComposerProps {
+  initialQuotedPost?: PostWithAuthor | null;
+  onSuccess?: () => void;
+}
+
+export function PostComposer({ initialQuotedPost, onSuccess }: PostComposerProps) {
   const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const quoteId = searchParams.get('quote');
+  
   const { mutateAsync, isPending } = useCreatePost();
   const [content, setContent] = useState('');
   const [previews, setPreviews] = useState<string[]>([]);
+  const [quotedPost, setQuotedPost] = useState<PostWithAuthor | null>(initialQuotedPost || null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // URLパラメータ（?quote=ID）がある場合の処理
+  useEffect(() => {
+    if (quoteId && !initialQuotedPost) {
+      getPostById(quoteId).then(setQuotedPost).catch(() => {
+        toast.error('引用元の投稿が見つかりませんでした');
+        setSearchParams({});
+      });
+    }
+  }, [quoteId, initialQuotedPost, setSearchParams]);
+
+  // Propsが更新された場合に内部ステートを同期
+  useEffect(() => {
+    if (initialQuotedPost) {
+      setQuotedPost(initialQuotedPost);
+    }
+  }, [initialQuotedPost]);
 
   if (!user) return null;
 
@@ -39,6 +70,11 @@ export function PostComposer() {
     });
   };
 
+  const cancelQuote = () => {
+    setSearchParams({});
+    setQuotedPost(null);
+  };
+
   const submit = async () => {
     const trimmed = content.trim();
     if (!trimmed) {
@@ -50,13 +86,19 @@ export function PostComposer() {
       return;
     }
     try {
-      // TODO: Supabase Storage に画像アップロード後、公開URLを imageUrls に渡す
-      await mutateAsync({ content: trimmed, imageUrls: previews });
+      await mutateAsync({ 
+        content: trimmed, 
+        imageUrls: previews,
+        parentId: quotedPost?.id,
+        isQuote: !!quotedPost
+      });
       setContent('');
       previews.forEach(URL.revokeObjectURL);
       setPreviews([]);
+      cancelQuote();
+      if (onSuccess) onSuccess(); // モーダルを閉じる等の処理
     } catch {
-      /* toast は hook 側 */
+      /* エラーはHook側で処理 */
     }
   };
 
@@ -64,20 +106,52 @@ export function PostComposer() {
   const overLimit = remaining < 0;
 
   return (
-    <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
+    <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft transition-all duration-300">
       <div className="flex gap-3">
-        <Avatar className="h-11 w-11 border-2 border-primary/30">
+        <Avatar className="h-11 w-11 border-2 border-primary/30 shrink-0">
           <AvatarImage src={user.avatarUrl} alt={user.displayName} />
           <AvatarFallback>{user.displayName.slice(0, 1)}</AvatarFallback>
         </Avatar>
-        <div className="flex-1 space-y-3">
+        <div className="flex-1 min-w-0 space-y-3">
           <Textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
-            placeholder="いまどうしてる？"
+            placeholder={quotedPost ? "コメントを添えてリポスト" : "いまどうしてる？"}
             rows={3}
-            className="resize-none border-0 bg-transparent px-0 text-[15px] leading-relaxed shadow-none focus-visible:ring-0"
+            className="resize-none border-0 bg-transparent px-0 text-[15px] leading-relaxed shadow-none focus-visible:ring-0 w-full"
           />
+
+          {quotedPost && (
+            <div className="relative mt-2 overflow-hidden rounded-2xl border border-border/60 bg-muted/20 p-4 transition-all">
+              {!initialQuotedPost && ( // モーダル経由でない場合のみ削除ボタンを表示（任意）
+                <button
+                  type="button"
+                  onClick={cancelQuote}
+                  className="absolute right-2 top-2 z-10 rounded-full bg-background/80 p-1 backdrop-blur hover:bg-background"
+                >
+                  <X className="h-4 w-4 text-muted-foreground" />
+                </button>
+              )}
+              
+              <div className="flex items-center gap-2 mb-1.5">
+                <Avatar className="h-5 w-5">
+                  <AvatarImage src={quotedPost.author.avatarUrl} />
+                  <AvatarFallback>{quotedPost.author.displayName[0]}</AvatarFallback>
+                </Avatar>
+                <span className="text-sm font-bold text-foreground truncate">{quotedPost.author.displayName}</span>
+                <span className="text-xs text-muted-foreground">@{quotedPost.author.username}</span>
+                <span className="text-xs text-muted-foreground">· {formatRelative(quotedPost.createdAt)}</span>
+              </div>
+              <p className="text-[14px] text-foreground line-clamp-2 leading-snug whitespace-pre-wrap">
+                {quotedPost.content}
+              </p>
+              {quotedPost.imageUrls.length > 0 && (
+                <div className="mt-2 text-xs text-accent font-bold">
+                  [画像あり]
+                </div>
+              )}
+            </div>
+          )}
 
           {previews.length > 0 && (
             <div className="grid grid-cols-2 gap-2">
@@ -88,7 +162,6 @@ export function PostComposer() {
                     type="button"
                     onClick={() => removePreview(i)}
                     className="absolute right-1.5 top-1.5 rounded-full bg-background/80 p-1 backdrop-blur transition hover:bg-background"
-                    aria-label="画像を削除"
                   >
                     <X className="h-4 w-4" />
                   </button>
@@ -99,14 +172,7 @@ export function PostComposer() {
 
           <div className="flex items-center justify-between border-t border-border/60 pt-3">
             <div className="flex items-center gap-2">
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/*"
-                multiple
-                hidden
-                onChange={onFile}
-              />
+              <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={onFile} />
               <Button
                 type="button"
                 size="sm"
@@ -118,12 +184,7 @@ export function PostComposer() {
                 <ImagePlus className="mr-1.5 h-4 w-4" />
                 画像
               </Button>
-              <span
-                className={cn(
-                  'text-xs tabular-nums',
-                  overLimit ? 'font-bold text-destructive' : 'text-muted-foreground',
-                )}
-              >
+              <span className={cn('text-xs tabular-nums', overLimit ? 'font-bold text-destructive' : 'text-muted-foreground')}>
                 {remaining}
               </span>
             </div>
@@ -138,7 +199,7 @@ export function PostComposer() {
               ) : (
                 <>
                   <Send className="mr-1.5 h-4 w-4" />
-                  ポスト
+                  {quotedPost ? '引用ポスト' : 'ポスト'}
                 </>
               )}
             </Button>

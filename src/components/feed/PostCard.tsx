@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'; 
-import { Link } from 'react-router-dom';
-import { MessageCircle, MoreHorizontal, Trash2, CalendarDays } from 'lucide-react'; 
+import { Link, useNavigate } from 'react-router-dom'; // useNavigateを追加
+import { MessageCircle, MoreHorizontal, Trash2, CalendarDays, ChartBarBig } from 'lucide-react'; 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { LikeButton } from '@/components/post/LikeButton';
 import { PostImages } from './PostImages';
@@ -23,13 +23,13 @@ import { useFollowStats } from '@/hooks/useProfile';
 export function PostCard({ post }: { post: PostWithAuthor }) {
   const [showMenu, setShowMenu] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  // リアルタイム更新用のステート（1分ごとに更新）
+  const navigate = useNavigate();
+  // リアルタイム更新用のステート
   const [, setTick] = useState(0);
 
   useEffect(() => {
     getCurrentUserId().then(id => setCurrentUserId(id));
 
-    // 1分(60000ms)ごとに再レンダリングを強制して時間を更新
     const timer = setInterval(() => {
       setTick(tick => tick + 1);
     }, 60000);
@@ -48,6 +48,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     if (!confirm('投稿を削除しますか？')) return;
     try {
       await deletePost(post.id);
@@ -55,6 +56,14 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
     } catch (err) {
       alert('削除に失敗しました');
     }
+  };
+
+  const handleActivityClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // いいね一覧画面への遷移（パスは環境に合わせて調整してください）
+    navigate(`/post/${post.id}/activity`);
+    setShowMenu(false);
   };
 
   const HoverStats = ({ userId }: { userId: string }) => {
@@ -175,30 +184,42 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
               </span>
             </div>
             
-            {isMyPost && (
-              <div className="relative ml-2 shrink-0">
-                <button
-                  onClick={() => setShowMenu(!showMenu)}
-                  className="p-1 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                >
-                  <MoreHorizontal className="h-5 w-5" />
-                </button>
-                {showMenu && (
-                  <>
-                    <div className="fixed inset-0 z-10" onClick={() => setShowMenu(false)} />
-                    <div className="absolute right-0 mt-1 w-32 rounded-xl border border-border bg-card p-1 shadow-lg z-20 overflow-hidden animate-in fade-in zoom-in duration-100">
+            {/* メニューボタン：自分以外の投稿でも「アクティビティ」が見れるように常に表示（削除は内部で判定） */}
+            <div className="relative ml-2 shrink-0">
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  setShowMenu(!showMenu);
+                }}
+                className="p-1 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+              >
+                <MoreHorizontal className="h-5 w-5" />
+              </button>
+              {showMenu && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setShowMenu(false)} />
+                  <div className="absolute right-0 mt-1 w-44 rounded-xl border border-border bg-card p-1 shadow-lg z-20 overflow-hidden animate-in fade-in zoom-in duration-100">
+                    <button
+                      onClick={handleActivityClick}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
+                    >
+                      <ChartBarBig className="h-4 w-4" />
+                      ポストアクティビティー
+                    </button>
+                    
+                    {isMyPost && (
                       <button
                         onClick={handleDelete}
-                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-destructive hover:bg-destructive/10 transition-colors"
+                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-destructive hover:bg-destructive/10 transition-colors border-t border-border/50 mt-1"
                       >
                         <Trash2 className="h-4 w-4" />
                         削除
                       </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
 
           <Link to={`/post/${post.id}`} className="block mt-1">

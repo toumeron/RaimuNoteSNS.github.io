@@ -8,7 +8,6 @@ export type User = {
   avatarUrl: string;
   coverUrl: string;
   createdAt: string;
-  // --- ここを追加！ ---
   isOfficial?: boolean; 
 };
 
@@ -22,9 +21,13 @@ export type Post = {
   commentsCount: number;
   likedByMe: boolean;
   clientName?: string;
+  // --- リポスト機能用の追加 ---
+  parentId?: string | null;      // 親投稿のID
+  isQuote?: boolean;             // 引用リポストかどうか
+  repostsCount: number;          // リポスト数
+  repostedByMe: boolean;         // 自分がリポスト済みか
 };
 
-// ...以下、Comment や Follow は変更なし
 export type Comment = {
   id: string;
   postId: string;
@@ -41,6 +44,8 @@ export type Follow = {
 // 投稿カードに渡しやすくするための拡張型
 export type PostWithAuthor = Post & {
   author: User;
+  // 親投稿の情報（1階層分のみ保持）
+  parentPost?: (Post & { author: User }) | null;
 };
 
 export type CommentWithAuthor = Comment & {
