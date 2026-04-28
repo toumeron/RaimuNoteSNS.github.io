@@ -169,10 +169,7 @@ export async function toggleLike(postId: string): Promise<{ liked: boolean; like
   return { liked: !existing, likesCount };
 }
 
-/**
- * リポストの切り替え
- * 「repostsテーブルへの出し入れ」と「引用リポストを含めた合計値の算出」を同期させる
- */
+
 export async function toggleRepost(postId: string): Promise<{ reposted: boolean; repostsCount: number }> {
   const userId = await getCurrentUserId();
   if (!userId) throw new Error("ログインが必要です");
