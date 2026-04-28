@@ -10,7 +10,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/hooks/useAuth';
-import { LogOut, Settings as SettingsIcon, User as UserIcon } from 'lucide-react';
+// Search アイコンを追加
+import { LogOut, Settings as SettingsIcon, User as UserIcon, Search } from 'lucide-react';
 
 export function Header() {
   const { user, logout } = useAuth();
@@ -30,7 +31,14 @@ export function Header() {
                 </Avatar>
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuContent align="end" className="w-56 rounded-xl border-border/60 shadow-xl">
+              {/* --- 新設：検索メニュー --- */}
+              <DropdownMenuItem onClick={() => navigate('/search')}>
+                <Search className="mr-2 h-4 w-4" /> 検索
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              {/* ----------------------- */}
+              
               <DropdownMenuItem onClick={() => navigate(`/u/${user.username}`)}>
                 <UserIcon className="mr-2 h-4 w-4" /> プロフィール
               </DropdownMenuItem>
@@ -43,13 +51,14 @@ export function Header() {
                   logout();
                   navigate('/auth');
                 }}
+                className="text-destructive focus:bg-destructive/10 focus:text-destructive"
               >
                 <LogOut className="mr-2 h-4 w-4" /> ログアウト
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         ) : (
-          <Button asChild size="sm" className="rounded-full">
+          <Button asChild size="sm" className="rounded-full px-6 font-bold">
             <Link to="/auth">はじめる</Link>
           </Button>
         )}
