@@ -12,13 +12,12 @@ import { getYouTubeId } from '@/lib/utils';
 import { YouTubeEmbed } from '@/components/YouTubeEmbed';
 import dayjs from 'dayjs';
 
-// --- 追加インポート ---
 import {
   HoverCard,
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/ui/hover-card";
-import { FollowButton } from '../profile/FollowButton'; // パスは適宜調整してください
+import { FollowButton } from '../profile/FollowButton'; 
 import { useFollowStats } from '@/hooks/useProfile';
 
 export function PostCard({ post }: { post: PostWithAuthor }) {
@@ -49,84 +48,74 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
     }
   };
 
-  // --- プロフィールホバー内専用の統計表示コンポーネント (サイズをさらに縮小) ---
   const HoverStats = ({ userId }: { userId: string }) => {
     const { data: stats } = useFollowStats(userId);
     return (
-      <div className="mt-3 flex items-center gap-2.5 text-[10px] leading-none">
-        <div className="flex items-center gap-0.5">
-          <span className="font-bold text-foreground tabular-nums">
-            {stats?.following ?? 0}
-          </span>
+      <div className="mt-3 flex items-center gap-4 text-[14px]">
+        <div className="flex items-center gap-1">
+          <span className="font-bold text-foreground">{stats?.following ?? 0}</span>
           <span className="text-muted-foreground">フォロー中</span>
         </div>
-        <div className="flex items-center gap-0.5">
-          <span className="font-bold text-foreground tabular-nums">
-            {stats?.followers ?? 0}
-          </span>
+        <div className="flex items-center gap-1">
+          <span className="font-bold text-foreground">{stats?.followers ?? 0}</span>
           <span className="text-muted-foreground">フォロワー</span>
         </div>
       </div>
     );
   };
 
-  // --- ホバーカードの中身 (w-[260px]) ---
   const ProfileHoverContent = () => (
     <HoverCardContent 
       side="bottom" 
       align="start" 
-      /* w-[260px] (65相当) に設定し、余白を p-4 に広げる */
-      className="w-[260px] rounded-[24px] border border-border/60 bg-card p-4 shadow-xl animate-in fade-in zoom-in duration-200 overflow-hidden"
+      className="w-[280px] rounded-[20px] border border-border/60 bg-card p-4 shadow-xl animate-in fade-in zoom-in duration-200 overflow-hidden"
     >
-      <div className="flex justify-between items-center mb-2 gap-2">
-        {/* アバターを h-12 w-12 に拡大 */}
-        <Avatar className="h-12 w-12 shrink-0 border border-primary/10 shadow-sm">
+      <div className="flex justify-between items-start mb-3">
+        <Avatar className="h-14 w-14 border border-primary/5">
           <AvatarImage src={post.author.avatarUrl} alt={post.author.displayName} />
           <AvatarFallback>{post.author.displayName.slice(0, 1)}</AvatarFallback>
         </Avatar>
         
         {currentUserId !== post.author.id && (
-          /* 【重要】フォローボタンが絶対にはみ出ないための鉄壁のガード:
-            1. w-[85px] で親コンテナの幅を固定。
-            2. [&_*] セレクタで子要素すべての幅を 100% (85px) に強制固定。
-            3. scale-90 で全体のサイズ感を微調整。
-            4. `[&_button]` セレクタで内部のボタン要素のパディングを強制リサイズ (`!px-0`)。
+          /* 【強制オーバライドコンテナ】
+            外部コンポーネントの構造に依存せず、強制的に指定サイズ・色に書き換えます。
+            - [&>*] でFollowButtonのルート要素が何であれスタイルを適用
+            - [&_svg]:!hidden でレイアウトを崩す原因のアイコンを完全排除
+            - !bg-foreground / !text-background で強制的に色を反転（1枚目の画像準拠）
           */
-          <div className="w-[85px] shrink-0 scale-90 origin-right [&_*]:!w-full [&_button]:h-8 [&_button]:!px-0 [&_button]:!text-[11px] [&_button]:min-w-0">
-            <FollowButton userId={post.author.id} />
+          <div className="shrink-0 w-[85px] h-[36px]">
+            <div className="w-full h-full [&>*]:!w-full [&>*]:!h-full [&>*]:!min-w-0 [&>*]:!p-0 [&>*]:!flex [&>*]:!items-center [&>*]:!justify-center [&>*]:!bg-foreground [&>*]:!text-background [&>*]:!rounded-full [&>*]:!text-[14px] [&>*]:!font-bold [&>*]:!border-none [&_svg]:!hidden">
+              <FollowButton userId={post.author.id} />
+            </div>
           </div>
         )}
       </div>
 
-      <div className="space-y-0.5 overflow-hidden">
-        {/* 名前：サイズを大きく (text-lg) */}
+      <div className="space-y-0.5">
         <div className="flex items-center gap-1 min-w-0">
-          <span className="font-display text-lg font-black text-foreground truncate leading-tight shrink">
+          <span className="text-[18px] font-black text-foreground truncate leading-tight shrink">
             {post.author.displayName}
           </span>
           {post.author.isOfficial && (
             <img 
               src={`${import.meta.env.BASE_URL}verified.png`} 
               alt="Official" 
-              className="h-[1.1em] w-[1.1em] shrink-0 transform translate-y-[0.5px]"
+              className="h-[1.1em] w-[1.1em] shrink-0 transform translate-y-[1px]"
             />
           )}
         </div>
-        {/* ハンドルネーム：サイズを大きく (text-[14px]) */}
-        <p className="text-[14px] text-muted-foreground leading-none truncate">@{post.author.username}</p>
+        <p className="text-[15px] text-muted-foreground leading-none">@{post.author.username}</p>
       </div>
 
       {post.author.bio && (
-        /* bioの文字サイズを text-[12.5px] にし、行間を詰める */
-        <p className="mt-2.5 text-[12.5px] leading-relaxed line-clamp-2 text-foreground/90 font-medium whitespace-pre-wrap">
+        <p className="mt-3 text-[15px] leading-normal text-foreground whitespace-pre-wrap line-clamp-3">
           {post.author.bio}
         </p>
       )}
 
-      {/* 参加日 */}
-      <div className="mt-2.5 flex items-center gap-1.5 text-[9.5px] text-muted-foreground/80">
-        <CalendarDays className="h-3 w-3" />
-        {dayjs(post.author.createdAt).format('YYYY年M月')} から参加
+      <div className="mt-3 flex items-center gap-1.5 text-[14px] text-muted-foreground">
+        <CalendarDays className="h-4 w-4" />
+        <span>{dayjs(post.author.createdAt).format('YYYY年M月')} から参加</span>
       </div>
 
       <HoverStats userId={post.author.id} />
@@ -136,7 +125,6 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
   return (
     <article className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft transition hover:shadow-card-soft relative">
       <div className="flex items-start gap-3">
-        {/* アバターホバー */}
         <HoverCard openDelay={300}>
           <HoverCardTrigger asChild>
             <Link to={`/u/${post.author.username}`} className="shrink-0">
@@ -152,7 +140,6 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between mb-1">
             <div className="flex items-center overflow-hidden w-full min-w-0">
-              {/* 名前ホバー */}
               <HoverCard openDelay={300}>
                 <HoverCardTrigger asChild>
                   <Link 
