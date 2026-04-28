@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom"; // useLocationを追加
-import { useEffect } from "react"; // useEffectを追加
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { useEffect } from "react";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -11,9 +11,9 @@ import Feed from "./pages/Feed";
 import PostDetail from "./pages/PostDetail";
 import Profile from "./pages/Profile";
 import Settings from "./pages/Settings";
+import SearchPage from "./pages/SearchPage"; // 1. SearchPageをインポート
 import NotFound from "./pages/NotFound";
 
-// スクロール位置をリセットするコンポーネント
 const ScrollToTop = () => {
   const { pathname } = useLocation();
   useEffect(() => {
@@ -42,7 +42,6 @@ const App = () => (
         basename="/RaimuNoteSNS.github.io"
         future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
       >
-        {/* ここに追加！ページ遷移のたびに一番上へ戻るようになります */}
         <ScrollToTop />
         
         <AuthProvider>
@@ -50,6 +49,8 @@ const App = () => (
             <Route path="/auth" element={<AuthPage />} />
             <Route element={<AppLayout />}>
               <Route path="/" element={<Feed />} />
+              {/* 2. ここに検索ページを追加！ */}
+              <Route path="/search" element={<SearchPage />} />
               <Route path="/post/:id" element={<PostDetail />} />
               <Route path="/u/:username" element={<Profile />} />
               <Route path="/settings" element={<Settings />} />
