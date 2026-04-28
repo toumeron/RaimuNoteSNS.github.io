@@ -52,7 +52,7 @@ export default function UserCard({ user }: UserCardProps) {
 
             {user.isOfficial && (
               <img
-                src="/verified.png"
+                src="/RaimuNoteSNS.github.io/verified.png"
                 alt="認証済み"
                 className="h-[18px] w-[18px] shrink-0 object-contain"
               />
