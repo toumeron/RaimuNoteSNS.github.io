@@ -37,31 +37,27 @@ export function ProfileHeader({ user }: { user: User }) {
           )}
         </div>
 
-<div className="mt-3">
-  {/* ヘッダー全体を flex column にして、名前行とID行を分ける */}
-  <div className="flex flex-col">
-    {/* 名前とバッジの行 */}
-    <div className="flex items-center gap-0.1">
-      <h1 className="font-display text-2xl font-black text-foreground truncate">
-        {user.displayName}
-      </h1>
-      
-      {user.isOfficial && (
-        <img 
-          src={`${import.meta.env.BASE_URL}verified.png`} 
-          alt="Official" 
-          /* バッジのサイズを文字に合わせて調整 (h-[0.9em]) 
-             translate-y で垂直方向の中央を微調整 */
-          className="h-[1.4em] w-[1.4em] shrink-0 transform translate-y-[2px]"
-          loading="eager"
-        />
-      )}
-    </div>
+        <div className="mt-3">
+          <div className="flex flex-col">
+            {/* 名前が長すぎてもバッジを押し出さないよう min-w-0 を追加 */}
+            <div className="flex items-center gap-0.1 min-w-0">
+              <h1 className="font-display text-2xl font-black text-foreground truncate min-w-0">
+                {user.displayName}
+              </h1>
+              
+              {user.isOfficial && (
+                <img 
+                  src={`${import.meta.env.BASE_URL}verified.png`} 
+                  alt="Official" 
+                  className="h-[1.4em] w-[1.4em] shrink-0 transform translate-y-[2px]"
+                  loading="eager"
+                />
+              )}
+            </div>
 
-    {/* @ユーザー名 (名前のすぐ下に配置) */}
-    <p className="text-[15px] text-muted-foreground">@{user.username}</p>
-  </div>
-</div>
+            <p className="text-[15px] text-muted-foreground truncate">@{user.username}</p>
+          </div>
+        </div>
 
         {user.bio && (
           <p className="mt-3 whitespace-pre-wrap text-[15px] leading-relaxed">{user.bio}</p>

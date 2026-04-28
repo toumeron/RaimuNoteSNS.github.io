@@ -40,7 +40,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         if (!newSession?.user) {
           setUser(null);
-          setLoading(false);
+          setLoading(false); // ログインしていないなら即終了
           return;
         }
 
@@ -48,7 +48,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const meta = supabaseUser.user_metadata;
         const emailName = supabaseUser.email?.split('@')[0] ?? 'user';
 
-        // 1. 既存のユーザー情報がある場合は、それを維持する（勝手に初期化しない）
+        // 1. まずは Auth メタデータから最小限の情報をセットして「ログイン済み」にする
+        // これにより「画面が真っ白のまま止まる」のを防ぎます
         setUser(prev => {
           if (prev && prev.id === supabaseUser.id) return prev;
           return {
@@ -61,34 +62,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           };
         });
         
+        // ログイン状態は確定したので、ここで一旦 loading を外す
         setLoading(false);
 
-        // 2. プロフィール取得
-        try {
-          const { data: profile, error } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', supabaseUser.id)
-            .single();
+        // 2. プロフィール詳細は「裏側」で取得する（await で全体を止めない）
+        // .then() を使うことで、この関数の外側の処理（他の通信）を邪魔しません
+        supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', supabaseUser.id)
+          .single()
+          .then(({ data: profile, error }) => {
+            if (error || !profile) return;
 
-          // 通信エラー（タイムアウト等）が起きたら、既存の表示を維持して終了
-          if (error || !profile) {
-            console.warn("Profile fetch failed, keeping current data:", error);
-            return;
-          }
-
-          // 3. 取得成功時のみ最新データで上書き
-          setUser({
-            ...supabaseUser,
-            username:    profile.username     ?? meta?.username ?? emailName,
-            displayName: profile.display_name ?? meta?.display_name ?? emailName,
-            avatarUrl:   profile.avatar_url   ?? meta?.avatar_url ?? '',
-            bio:         profile.bio          ?? '',
-            coverUrl:    profile.cover_url    ?? '',
+            // 取得できたら、その時だけ表示を更新する
+            setUser(current => {
+              if (!current) return null;
+              return {
+                ...current,
+                username:    profile.username     ?? current.username,
+                displayName: profile.display_name ?? current.displayName,
+                avatarUrl:   profile.avatar_url   ?? current.avatarUrl,
+                bio:         profile.bio          ?? current.bio,
+                coverUrl:    profile.cover_url    ?? current.coverUrl,
+              };
+            });
           });
-        } catch (err) {
-          console.error("Auth flow error:", err);
-        }
       },
     );
 
