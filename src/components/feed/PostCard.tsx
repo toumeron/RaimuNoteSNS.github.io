@@ -23,9 +23,18 @@ import { useFollowStats } from '@/hooks/useProfile';
 export function PostCard({ post }: { post: PostWithAuthor }) {
   const [showMenu, setShowMenu] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  // リアルタイム更新用のステート（1分ごとに更新）
+  const [, setTick] = useState(0);
 
   useEffect(() => {
     getCurrentUserId().then(id => setCurrentUserId(id));
+
+    // 1分(60000ms)ごとに再レンダリングを強制して時間を更新
+    const timer = setInterval(() => {
+      setTick(tick => tick + 1);
+    }, 60000);
+
+    return () => clearInterval(timer);
   }, []);
 
   const isMyPost = currentUserId === post.userId;
@@ -77,12 +86,6 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
         </Avatar>
         
         {currentUserId !== post.author.id && (
-          /* 【強制オーバライドコンテナ】
-            外部コンポーネントの構造に依存せず、強制的に指定サイズ・色に書き換えます。
-            - [&>*] でFollowButtonのルート要素が何であれスタイルを適用
-            - [&_svg]:!hidden でレイアウトを崩す原因のアイコンを完全排除
-            - !bg-foreground / !text-background で強制的に色を反転（1枚目の画像準拠）
-          */
           <div className="shrink-0 w-[85px] h-[36px]">
             <div className="w-full h-full [&>*]:!w-full [&>*]:!h-full [&>*]:!min-w-0 [&>*]:!p-0 [&>*]:!flex [&>*]:!items-center [&>*]:!justify-center [&>*]:!bg-foreground [&>*]:!text-background [&>*]:!rounded-full [&>*]:!text-[14px] [&>*]:!font-bold [&>*]:!border-none [&_svg]:!hidden">
               <FollowButton userId={post.author.id} />
