@@ -1,87 +1,401 @@
-import { useState } from 'react';
-import { Search } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { Search, X, Clock, Loader2 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-
 import { PostCard } from '@/components/feed/PostCard';
-import { UserCard } from '@/components/search/UserCard';
+import UserCard from '@/components/search/UserCard';
+import { useFeed } from '@/hooks/useFeed';
+import { supabase } from '@/lib/supabase';
+import type { User } from '@/types';
+// @ts-ignore - tiny-segmenter has no bundled types
+import TinySegmenter from 'tiny-segmenter';
 
-// データファイル全体を一旦 import
-import * as PostData from '@/data/posts';
-import * as UserData from '@/data/users';
+/* ============================================================
+ * Text normalization & tokenization helpers
+ * ============================================================ */
+const segmenter = new TinySegmenter();
 
+const kataToHira = (s: string) =>
+  s.replace(/[\u30a1-\u30f6]/g, (c) =>
+    String.fromCharCode(c.charCodeAt(0) - 0x60)
+  );
+
+const normalize = (s: string) => {
+  if (!s) return '';
+  let n = s.normalize('NFKC').toLowerCase();
+  n = kataToHira(n);
+  return n;
+};
+
+const tokenizeQuery = (q: string): string[] => {
+  const norm = normalize(q);
+  if (!norm.trim()) return [];
+  const rough = norm.split(/[\s\u3000]+/).filter(Boolean);
+  const tokens: string[] = [];
+  for (const piece of rough) {
+    tokens.push(piece);
+    try {
+      const seg = segmenter.segment(piece) as string[];
+      for (const t of seg) {
+        const tt = t.trim();
+        if (tt && tt.length >= 1 && !tokens.includes(tt)) tokens.push(tt);
+      }
+    } catch { /* noop */ }
+  }
+  return tokens;
+};
+
+const buildPostHaystack = (post: any): string => {
+  const content = post?.content || '';
+  const displayName = post?.profiles?.display_name || post?.profiles?.displayName || '';
+  const username = post?.profiles?.username || '';
+  const tags = (content.match(/[#@][\w\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]+/g) || []).join(' ');
+  let segmented = '';
+  try {
+    segmented = (segmenter.segment(content) as string[]).join(' ');
+  } catch { segmented = ''; }
+  return normalize(`${displayName} ${username} ${content} ${tags} ${segmented}`);
+};
+
+const buildUserHaystack = (u: User): string =>
+  normalize(`${u.displayName} ${u.username} ${u.bio || ''}`);
+
+/* ============================================================
+ * History (localStorage)
+ * ============================================================ */
+const HISTORY_KEY = 'search:recent';
+const HISTORY_MAX = 8;
+
+const loadHistory = (): string[] => {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.slice(0, HISTORY_MAX) : [];
+  } catch { return []; }
+};
+const saveHistory = (list: string[]) => {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, HISTORY_MAX)));
+  } catch { /* noop */ }
+};
+
+/* ============================================================
+ * Skeleton
+ * ============================================================ */
+const RowSkeleton = () => (
+  <div className="flex gap-3 px-4 py-3 border-b border-black/[0.03] animate-pulse bg-transparent">
+    <div className="w-10 h-10 rounded-full bg-black/5 shrink-0" />
+    <div className="flex-1 space-y-2 pt-1">
+      <div className="h-3 w-1/3 bg-black/5 rounded" />
+      <div className="h-3 w-5/6 bg-black/5 rounded" />
+    </div>
+  </div>
+);
+
+/* ============================================================
+ * Main component
+ * ============================================================ */
 export default function SearchPage() {
-  const [query, setQuery] = useState("");
+  const [inputValue, setInputValue] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [isUsersLoading, setIsUsersLoading] = useState(false);
+  const [isInputFocused, setIsInputFocused] = useState(false);
+  const [history, setHistory] = useState<string[]>(() => loadHistory());
+  const [activeSuggestIdx, setActiveSuggestIdx] = useState<number>(-1);
+  const [isScrolled, setIsScrolled] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const suggestBoxRef = useRef<HTMLDivElement>(null);
 
-  // Record<string, any> として扱うことで、TSのプロパティ存在チェックを回避
-  const postSource = PostData as Record<string, any>;
-  const userSource = UserData as Record<string, any>;
+  const { data: postsData, isLoading: isPostsLoading } = useFeed();
+  const allPosts = postsData || [];
 
-  // ファイル内のエクスポート名を優先順位をつけて取得
-  // プロジェクトの実態に合わせて 'posts' や 'users' の名前が違う場合でも対応可能
-  const allPosts = (postSource.posts || postSource.default || postSource.DUMMY_POSTS || []) as any[];
-  const allUsers = (userSource.users || userSource.default || userSource.DUMMY_USERS || []) as any[];
+  // スクロール検知
+  useEffect(() => {
+    const handleScroll = () => {
+      setIsScrolled(window.scrollY > 60);
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
-  // フィルタリング処理（nullチェック付き）
-  const filteredPosts = allPosts.filter(post => 
-    post?.content?.toLowerCase().includes(query.toLowerCase())
-  );
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchUsers() {
+      setIsUsersLoading(true);
+      try {
+        const { data, error } = await supabase.from('profiles').select('*');
+        if (error) throw error;
+        if (cancelled) return;
+        setAllUsers((data || []).map((u: any) => ({
+          id: u.id,
+          username: u.username,
+          displayName: u.display_name || u.displayName || 'User',
+          avatarUrl: u.avatar_url || u.avatarUrl || '',
+          bio: u.bio || '',
+          isOfficial: !!(u.is_official || u.isOfficial),
+        })));
+      } catch (err) { console.error(err); }
+      finally { if (!cancelled) setIsUsersLoading(false); }
+    }
+    fetchUsers();
+    return () => { cancelled = true; };
+  }, []);
 
-  const filteredUsers = allUsers.filter(user => 
-    user?.displayName?.toLowerCase().includes(query.toLowerCase()) ||
-    user?.username?.toLowerCase().includes(query.toLowerCase())
-  );
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (suggestBoxRef.current && !suggestBoxRef.current.contains(e.target as Node) &&
+          inputRef.current && !inputRef.current.contains(e.target as Node)) {
+        setIsInputFocused(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  const commitSearch = useCallback((raw: string) => {
+    const q = raw.trim();
+    setInputValue(q);
+    setSearchQuery(q);
+    setIsInputFocused(false);
+    setActiveSuggestIdx(-1);
+    if (q) {
+      setHistory((prev) => {
+        const next = [q, ...prev.filter((h) => h !== q)].slice(0, HISTORY_MAX);
+        saveHistory(next);
+        return next;
+      });
+    }
+    inputRef.current?.blur();
+  }, []);
+
+  const liveSuggestions = useMemo(() => {
+    const q = normalize(inputValue.trim());
+    if (!q) return [];
+    return allUsers
+      .map((u) => {
+        const dn = normalize(u.displayName);
+        const un = normalize(u.username);
+        let score = 0;
+        if (dn === q || un === q) score = 100;
+        else if (dn.startsWith(q) || un.startsWith(q)) score = 50;
+        else if (dn.includes(q) || un.includes(q)) score = 20;
+        return { user: u, score };
+      })
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5)
+      .map((x) => x.user);
+  }, [inputValue, allUsers]);
+
+  const queryTokens = useMemo(() => tokenizeQuery(searchQuery), [searchQuery]);
+
+  const { filteredUsers, filteredPosts } = useMemo(() => {
+    if (!searchQuery || queryTokens.length === 0) return { filteredUsers: [], filteredPosts: [] };
+
+    const usersScored = allUsers.map((u) => {
+      const hay = buildUserHaystack(u);
+      const dn = normalize(u.displayName);
+      const un = normalize(u.username);
+      let score = 0;
+      let allMatch = true;
+      for (const t of queryTokens) {
+        if (!hay.includes(t)) { allMatch = false; break; }
+        if (dn === t || un === t) score += 5;
+        else if (dn.startsWith(t) || un.startsWith(t)) score += 3;
+        else if (dn.includes(t) || un.includes(t)) score += 2;
+        else score += 1;
+      }
+      return allMatch ? { u, score } : null;
+    }).filter(Boolean) as { u: User; score: number }[];
+
+    const postsScored = allPosts.map((p: any) => {
+      const hay = buildPostHaystack(p);
+      const dn = normalize(p?.profiles?.display_name || p?.profiles?.displayName || '');
+      const un = normalize(p?.profiles?.username || '');
+      let score = 0;
+      let allMatch = true;
+      for (const t of queryTokens) {
+        if (!hay.includes(t)) { allMatch = false; break; }
+        if (dn === t || un === t) score += 4;
+        else if (dn.includes(t) || un.includes(t)) score += 2;
+        else score += 1;
+      }
+      return allMatch ? { p, score } : null;
+    }).filter(Boolean) as { p: any; score: number }[];
+
+    return {
+      filteredUsers: usersScored.sort((a, b) => b.score - a.score).map((x) => x.u),
+      filteredPosts: postsScored.sort((a, b) => b.score - a.score).map((x) => x.p),
+    };
+  }, [searchQuery, queryTokens, allUsers, allPosts]);
+
+  const suggestionRows = useMemo(() => {
+    const rows: { type: 'search' | 'user'; value: string; user?: User }[] = [];
+    if (inputValue.trim()) {
+      rows.push({ type: 'search', value: inputValue.trim() });
+      for (const u of liveSuggestions) rows.push({ type: 'user', value: u.username, user: u });
+    } else {
+      for (const h of history) rows.push({ type: 'search', value: h });
+    }
+    return rows;
+  }, [inputValue, liveSuggestions, history]);
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!isInputFocused) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActiveSuggestIdx((i) => Math.min(suggestionRows.length - 1, i + 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActiveSuggestIdx((i) => Math.max(-1, i - 1));
+    } else if (e.key === 'Enter' && activeSuggestIdx >= 0) {
+      e.preventDefault();
+      commitSearch(suggestionRows[activeSuggestIdx].value);
+    }
+  };
+
+  const removeHistoryItem = (item: string) => {
+    setHistory((prev) => {
+      const next = prev.filter((h) => h !== item);
+      saveHistory(next);
+      return next;
+    });
+  };
+
+  const clearHistory = () => {
+    setHistory([]);
+    saveHistory([]);
+  };
 
   return (
-    <div className="mx-auto max-w-2xl min-h-screen pb-20">
-      {/* 検索バー */}
-      <div className="sticky top-16 z-20 bg-background/95 backdrop-blur-sm p-4 border-b border-border/60">
-        <div className="relative">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="キーワードや名前で検索"
-            className="w-full rounded-full bg-muted py-3 pl-12 pr-4 text-base outline-none ring-primary focus:ring-2 transition-all"
-            autoFocus
-          />
+    <div className="min-h-screen bg-transparent text-[rgb(15,20,25)]">
+      {/* ============ Header ============ */}
+      <div className={`sticky top-0 z-30 transition-all duration-300 ${
+        isScrolled 
+          ? 'max-sm:bg-[#fbf9f2]/70 max-sm:backdrop-blur-md' 
+          : 'bg-transparent'
+      }`}>
+        <div className="max-w-3xl mx-auto px-4 py-2">
+          <form onSubmit={(e) => { e.preventDefault(); commitSearch(inputValue); }} className="relative">
+            <div className={`relative flex items-center h-11 rounded-full transition-all ${
+              isInputFocused ? 'bg-white ring-2 ring-[#1d9bf0]' : 'bg-black/5'
+            }`}>
+              <Search className={`absolute left-4 w-[18px] h-[18px] ${isInputFocused ? 'text-[#1d9bf0]' : 'text-[rgb(83,100,113)]'}`} />
+              <input
+                ref={inputRef}
+                type="text"
+                value={inputValue}
+                onChange={(e) => { setInputValue(e.target.value); setActiveSuggestIdx(-1); }}
+                onFocus={() => setIsInputFocused(true)}
+                onKeyDown={onKeyDown}
+                placeholder="検索"
+                className="w-full h-full bg-transparent border-none pl-11 pr-11 text-[15px] outline-none"
+              />
+              {inputValue && (
+                <button type="button" onClick={() => { setInputValue(''); inputRef.current?.focus(); }} className="absolute right-3 w-5 h-5 flex items-center justify-center bg-[#1d9bf0] rounded-full">
+                  <X className="w-3 h-3 text-white" strokeWidth={3} />
+                </button>
+              )}
+            </div>
+
+            {/* Suggestion Panel */}
+            {isInputFocused && suggestionRows.length > 0 && (
+              <div ref={suggestBoxRef} className="absolute left-0 right-0 mt-2 bg-white/95 backdrop-blur-xl rounded-2xl shadow-[0_8px_30px_rgba(0,0,0,0.1)] border border-black/5 overflow-hidden max-h-[420px] overflow-y-auto">
+                {!inputValue.trim() && history.length > 0 && (
+                  <div className="flex items-center justify-between px-4 py-2.5">
+                    <span className="font-bold text-[15px]">最近の検索</span>
+                    <button type="button" onClick={clearHistory} className="text-[#1d9bf0] text-[13px] hover:underline">すべて消去</button>
+                  </div>
+                )}
+                {suggestionRows.map((row, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onMouseDown={(e) => { e.preventDefault(); commitSearch(row.value); }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 transition-colors ${idx === activeSuggestIdx ? 'bg-black/5' : 'hover:bg-black/[0.03]'}`}
+                  >
+                    {row.type === 'search' ? (
+                      <>
+                        {!inputValue.trim() ? <Clock className="w-[18px] h-[18px] text-[rgb(83,100,113)]" /> : <Search className="w-[18px] h-[18px] text-[rgb(83,100,113)]" />}
+                        <span className="flex-1 text-[15px] truncate text-left ml-3">{row.value}</span>
+                        {!inputValue.trim() && (
+                          <span role="button" onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); removeHistoryItem(row.value); }} className="p-1 rounded-full hover:bg-black/10">
+                            <X className="w-4 h-4 text-[rgb(83,100,113)]" />
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        {row.user?.avatarUrl ? <img src={row.user.avatarUrl} className="w-10 h-10 rounded-full object-cover" /> : <div className="w-10 h-10 rounded-full bg-black/5" />}
+                        <div className="flex flex-col text-left truncate ml-3">
+                          <span className="font-bold text-[15px]">{row.user?.displayName}</span>
+                          <span className="text-[13px] text-[rgb(83,100,113)]">@{row.user?.username}</span>
+                        </div>
+                      </>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </form>
         </div>
       </div>
 
-      <Tabs defaultValue="posts" className="w-full">
-        <TabsList className="w-full grid grid-cols-2 bg-transparent border-b border-border/60 rounded-none h-auto p-0">
-          <TabsTrigger value="posts" className="py-3 font-bold data-[state=active]:border-b-2 border-primary">
-            投稿
-          </TabsTrigger>
-          <TabsTrigger value="users" className="py-3 font-bold data-[state=active]:border-b-2 border-primary">
-            ユーザー
-          </TabsTrigger>
-        </TabsList>
+      {/* ============ Content Area ============ */}
+      <div className="max-w-3xl mx-auto">
+        <Tabs defaultValue="posts" className="w-full">
+          <TabsList className="w-full h-[53px] bg-transparent border-b border-black/[0.03] rounded-none p-0 grid grid-cols-2 relative z-20">
+            <TabsTrigger
+              value="posts"
+              className="relative h-full bg-transparent text-[15px] font-medium text-[rgb(83,100,113)] data-[state=active]:text-[rgb(15,20,25)] data-[state=active]:font-bold data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-black/[0.03] transition-colors data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:w-16 data-[state=active]:after:h-1 data-[state=active]:after:rounded-full data-[state=active]:after:bg-[#1d9bf0]"
+            >
+              話題のポスト
+            </TabsTrigger>
+            <TabsTrigger
+              value="users"
+              className="relative h-full bg-transparent text-[15px] font-medium text-[rgb(83,100,113)] data-[state=active]:text-[rgb(15,20,25)] data-[state=active]:font-bold data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-black/[0.03] transition-colors data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:w-16 data-[state=active]:after:h-1 data-[state=active]:after:rounded-full data-[state=active]:after:bg-[#1d9bf0]"
+            >
+              アカウント
+            </TabsTrigger>
+          </TabsList>
 
-        <TabsContent value="posts" className="m-0">
-          {query ? (
-            filteredPosts.length > 0 ? (
-              filteredPosts.map(post => <PostCard key={post.id} post={post} />)
-            ) : (
-              <p className="p-12 text-center text-muted-foreground">「{query}」に一致する投稿はありません</p>
-            )
-          ) : (
-            <p className="p-12 text-center text-muted-foreground">キーワードを入力してください</p>
-          )}
-        </TabsContent>
+          <TabsContent value="posts" className="mt-4 bg-transparent border-none outline-none">
+            {!searchQuery ? <EmptyHint title="検索してみよう" desc="キーワードを入力して、ポストやアカウントを見つけましょう。" /> :
+             isPostsLoading ? <div>{Array.from({ length: 5 }).map((_, i) => <RowSkeleton key={i} />)}</div> :
+             filteredPosts.length === 0 ? <EmptyHint title={`"${searchQuery}" に一致する結果はありません`} desc="キーワードを変えてみてください。" /> :
+             <div className="flex flex-col gap-4">
+               {filteredPosts.map((post: any) => (
+                 <div key={post.id} className="rounded-xl overflow-hidden hover:bg-black/[0.01] transition-colors">
+                   <PostCard post={post} />
+                 </div>
+               ))}
+             </div>}
+          </TabsContent>
 
-        <TabsContent value="users" className="m-0">
-          {query ? (
-            filteredUsers.length > 0 ? (
-              filteredUsers.map(user => <UserCard key={user.id} user={user} />)
-            ) : (
-              <p className="p-12 text-center text-muted-foreground">「{query}」に一致するユーザーは見つかりません</p>
-            )
-          ) : (
-            <p className="p-12 text-center text-muted-foreground">名前やIDを入力してください</p>
-          )}
-        </TabsContent>
-      </Tabs>
+          <TabsContent value="users" className="mt-4 bg-transparent border-none outline-none">
+            {!searchQuery ? <EmptyHint title="アカウントを探す" desc="名前または @ユーザー名 で検索できます。" /> :
+             isUsersLoading ? <div>{Array.from({ length: 5 }).map((_, i) => <RowSkeleton key={i} />)}</div> :
+             filteredUsers.length === 0 ? <EmptyHint title={`"${searchQuery}" に一致するアカウントはありません`} desc="別のキーワードでお試しください。" /> :
+             <div className="flex flex-col gap-2 px-4">
+               {filteredUsers.map((user) => (
+                 <div key={user.id} className="rounded-xl overflow-hidden hover:bg-black/[0.01] transition-colors">
+                   <UserCard user={user} />
+                 </div>
+               ))}
+             </div>}
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
+  );
+}
+
+function EmptyHint({ title, desc }: { title: string; desc: string }) {
+  return (
+    <div className="px-8 py-16 text-center max-w-[450px] mx-auto bg-transparent">
+      <h2 className="text-[31px] leading-tight font-extrabold text-[rgb(15,20,25)] mb-2">{title}</h2>
+      <p className="text-[15px] text-[rgb(83,100,113)]">{desc}</p>
     </div>
   );
 }
