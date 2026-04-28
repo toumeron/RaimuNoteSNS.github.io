@@ -147,7 +147,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
                     className="flex items-center min-w-0 shrink font-display font-bold text-foreground hover:underline"
                   >
                     <div className="flex items-center gap-0.5 min-w-0">
-                      <span className="truncate text-base">{post.author.displayName}</span>
+                      <span className="truncate text-[18px]">{post.author.displayName}</span>
                       {post.author.isOfficial && (
                         <img 
                           src={`${import.meta.env.BASE_URL}verified.png`}
@@ -162,7 +162,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
                 <ProfileHoverContent />
               </HoverCard>
               
-              <span className="truncate text-sm text-muted-foreground ml-1 opacity-80 shrink">
+              <span className="truncate text-base text-muted-foreground ml-1 opacity-80 shrink">
                 @{post.author.username}
               </span>
               
