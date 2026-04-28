@@ -350,7 +350,7 @@ export default function SearchPage() {
               value="posts"
               className="relative h-full bg-transparent text-[15px] font-medium text-[rgb(83,100,113)] data-[state=active]:text-[rgb(15,20,25)] data-[state=active]:font-bold data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-black/[0.03] transition-colors data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:w-16 data-[state=active]:after:h-1 data-[state=active]:after:rounded-full data-[state=active]:after:bg-[#1d9bf0]"
             >
-              話題のポスト
+              ポスト
             </TabsTrigger>
             <TabsTrigger
               value="users"
@@ -361,7 +361,7 @@ export default function SearchPage() {
           </TabsList>
 
           <TabsContent value="posts" className="mt-4 bg-transparent border-none outline-none">
-            {!searchQuery ? <EmptyHint title="検索してみよう" desc="キーワードを入力して、ポストやアカウントを見つけましょう。" /> :
+            {!searchQuery ? <EmptyHint title="LaimeSearch (ベータ版) " desc="キーワードを入力して、ポストやアカウントを見つけましょう。" /> :
              isPostsLoading ? <div>{Array.from({ length: 5 }).map((_, i) => <RowSkeleton key={i} />)}</div> :
              filteredPosts.length === 0 ? <EmptyHint title={`"${searchQuery}" に一致する結果はありません`} desc="キーワードを変えてみてください。" /> :
              <div className="flex flex-col gap-4">
