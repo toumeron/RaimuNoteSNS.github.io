@@ -184,7 +184,6 @@ export async function toggleRepost(postId: string): Promise<{ reposted: boolean;
     .eq('user_id', userId)
     .maybeSingle();
 
-  // 2. トグル処理（あれば消す、なければ足す）
   if (existing) {
     const { error: delErr } = await supabase.from('reposts').delete().eq('post_id', postId).eq('user_id', userId);
     if (delErr) throw delErr;
