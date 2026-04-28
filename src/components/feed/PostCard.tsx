@@ -93,7 +93,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
 
       <div className="space-y-0.5">
         <div className="flex items-center gap-1 min-w-0">
-          <span className="text-[18px] font-black text-foreground truncate leading-tight shrink">
+          <span className="text-[23px] font-black text-foreground truncate leading-tight shrink">
             {post.author.displayName}
           </span>
           {post.author.isOfficial && (
@@ -147,7 +147,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
                     className="flex items-center min-w-0 shrink font-display font-bold text-foreground hover:underline"
                   >
                     <div className="flex items-center gap-0.5 min-w-0">
-                      <span className="truncate text-[18px]">{post.author.displayName}</span>
+                      <span className="truncate text-[23px]">{post.author.displayName}</span>
                       {post.author.isOfficial && (
                         <img 
                           src={`${import.meta.env.BASE_URL}verified.png`}
