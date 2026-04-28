@@ -139,7 +139,6 @@ export async function createPost(input: {
 
   if (error) throw error;
 
-  // 引用リポストの場合のカウント更新
   if (input.parentId && input.isQuote) {
     const [rep, quo] = await Promise.all([
       supabase.from('reposts').select('*', { count: 'exact', head: true }).eq('post_id', input.parentId),
