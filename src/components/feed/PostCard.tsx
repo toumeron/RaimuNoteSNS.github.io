@@ -49,11 +49,11 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
     }
   };
 
-  // --- 統計情報：サイズを text-xs (12px) で統一 ---
+  // --- 統計情報：サイズをさらにコンパクトに (text-[11px]) ---
   const HoverStats = ({ userId }: { userId: string }) => {
     const { data: stats } = useFollowStats(userId);
     return (
-      <div className="mt-3 flex items-center gap-4 text-xs">
+      <div className="mt-3 flex items-center gap-3 text-[11px]">
         <div className="flex items-center gap-1">
           <span className="font-bold text-foreground tabular-nums">
             {stats?.following ?? 0}
@@ -70,30 +70,31 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
     );
   };
 
-  // --- ホバーカードの中身 (w-[260px] = 65相当) ---
+  // --- ホバーカードの中身 (w-[260px]) ---
   const ProfileHoverContent = () => (
     <HoverCardContent 
       side="bottom" 
       align="start" 
       className="w-[260px] rounded-[24px] border border-border/60 bg-card p-4 shadow-xl animate-in fade-in zoom-in duration-200"
     >
-      <div className="flex justify-between items-start mb-3">
-        <Avatar className="h-12 w-12 shrink-0 border border-primary/15">
+      <div className="flex justify-between items-start mb-2.5">
+        <Avatar className="h-12 w-12 shrink-0 border border-primary/15 shadow-sm">
           <AvatarImage src={post.author.avatarUrl} alt={post.author.displayName} />
           <AvatarFallback>{post.author.displayName.slice(0, 1)}</AvatarFallback>
         </Avatar>
         
         {currentUserId !== post.author.id && (
-          <div className="scale-90 origin-right shrink-0">
+          /* フォローボタンがはみ出ないよう、幅を制限しスケールで調整 */
+          <div className="max-w-[90px] shrink-0 scale-90 origin-right transform-gpu">
             <FollowButton userId={post.author.id} />
           </div>
         )}
       </div>
 
-      <div className="space-y-0.5 overflow-hidden">
-        {/* 名前とバッジ：サイズを均等化 */}
-        <div className="flex items-center gap-1 min-w-0">
-          <span className="font-display text-[15px] font-black text-foreground truncate shrink">
+      <div className="space-y-0 overflow-hidden">
+        {/* 名前：サイズを大きく (text-base) */}
+        <div className="flex items-center gap-0.5 min-w-0">
+          <span className="font-display text-base font-black text-foreground truncate shrink">
             {post.author.displayName}
           </span>
           {post.author.isOfficial && (
@@ -104,7 +105,8 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
             />
           )}
         </div>
-        <p className="text-xs text-muted-foreground leading-none truncate">@{post.author.username}</p>
+        {/* ハンドルネーム：サイズを少し大きく (text-sm) */}
+        <p className="text-[13.5px] text-muted-foreground leading-tight truncate">@{post.author.username}</p>
       </div>
 
       {post.author.bio && (
@@ -113,9 +115,9 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
         </p>
       )}
 
-      {/* 参加日：他の要素と馴染むよう text-[11px] */}
-      <div className="mt-2.5 flex items-center gap-1.5 text-[11px] text-muted-foreground opacity-90">
-        <CalendarDays className="h-3.5 w-3.5" />
+      {/* 参加日 */}
+      <div className="mt-2.5 flex items-center gap-1.5 text-[10.5px] text-muted-foreground opacity-70">
+        <CalendarDays className="h-3 w-3" />
         {dayjs(post.author.createdAt).format('YYYY年M月')} から参加
       </div>
 
