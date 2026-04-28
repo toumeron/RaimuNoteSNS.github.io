@@ -75,7 +75,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
     <HoverCardContent 
       side="bottom" 
       align="start" 
-      className="w-80 rounded-3xl border border-border/60 bg-card p-5 shadow-xl animate-in fade-in zoom-in duration-200"
+      className="w-40 rounded-3xl border border-border/60 bg-card p-5 shadow-xl animate-in fade-in zoom-in duration-200"
     >
       <div className="flex justify-between items-start mb-3">
         <Avatar className="h-14 w-14 border-2 border-primary/20">
