@@ -27,7 +27,7 @@ export const useCreatePost = () => {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: feedKey });
       qc.invalidateQueries({ queryKey: ['posts', 'user'] });
-      toast.success('投稿しました💗');
+      toast.success('投稿しました');
     },
     onError: () => toast.error('投稿に失敗しました。もう一度お試しください。'),
   });
