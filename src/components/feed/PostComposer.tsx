@@ -15,24 +15,32 @@ import { formatRelative } from '@/lib/format';
 const MAX_LEN = 500;
 const MAX_IMAGES = 4;
 
-// Propsの型を明示的に定義
 interface PostComposerProps {
   initialQuotedPost?: PostWithAuthor | null;
+  initialContent?: string; // ← 追加
   onSuccess?: () => void;
 }
 
-export function PostComposer({ initialQuotedPost, onSuccess }: PostComposerProps) {
+export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess }: PostComposerProps) {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const quoteId = searchParams.get('quote');
   
   const { mutateAsync, isPending } = useCreatePost();
-  const [content, setContent] = useState('');
+  
+  // ステートの初期値に initialContent を適用
+  const [content, setContent] = useState(initialContent);
   const [previews, setPreviews] = useState<string[]>([]);
   const [quotedPost, setQuotedPost] = useState<PostWithAuthor | null>(initialQuotedPost || null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // URLパラメータ（?quote=ID）がある場合の処理
+  // 外部から initialContent が変わった場合（共有データの読み込み遅延など）に同期
+  useEffect(() => {
+    if (initialContent) {
+      setContent(initialContent);
+    }
+  }, [initialContent]);
+
   useEffect(() => {
     if (quoteId && !initialQuotedPost) {
       getPostById(quoteId).then(setQuotedPost).catch(() => {
@@ -42,7 +50,6 @@ export function PostComposer({ initialQuotedPost, onSuccess }: PostComposerProps
     }
   }, [quoteId, initialQuotedPost, setSearchParams]);
 
-  // Propsが更新された場合に内部ステートを同期
   useEffect(() => {
     if (initialQuotedPost) {
       setQuotedPost(initialQuotedPost);
@@ -96,7 +103,7 @@ export function PostComposer({ initialQuotedPost, onSuccess }: PostComposerProps
       previews.forEach(URL.revokeObjectURL);
       setPreviews([]);
       cancelQuote();
-      if (onSuccess) onSuccess(); // モーダルを閉じる等の処理
+      if (onSuccess) onSuccess();
     } catch {
       /* エラーはHook側で処理 */
     }
@@ -123,7 +130,7 @@ export function PostComposer({ initialQuotedPost, onSuccess }: PostComposerProps
 
           {quotedPost && (
             <div className="relative mt-2 overflow-hidden rounded-2xl border border-border/60 bg-muted/20 p-4 transition-all">
-              {!initialQuotedPost && ( // モーダル経由でない場合のみ削除ボタンを表示（任意）
+              {!initialQuotedPost && (
                 <button
                   type="button"
                   onClick={cancelQuote}

@@ -12,7 +12,8 @@ import PostDetail from "./pages/PostDetail";
 import Profile from "./pages/Profile";
 import Settings from "./pages/Settings";
 import SearchPage from "./pages/SearchPage";
-import PostActivity from "./pages/PostActivity"; // 1. PostActivityをインポート
+import PostActivity from "./pages/PostActivity";
+import Share from "./pages/Share"; // 1. Shareページをインポート
 import NotFound from "./pages/NotFound";
 
 const ScrollToTop = () => {
@@ -52,10 +53,11 @@ const App = () => (
               <Route path="/" element={<Feed />} />
               <Route path="/search" element={<SearchPage />} />
               <Route path="/post/:id" element={<PostDetail />} />
-              {/* 2. ポストアクティビティ（いいね一覧）のルートを追加 */}
               <Route path="/post/:postId/activity" element={<PostActivity />} />
               <Route path="/u/:username" element={<Profile />} />
               <Route path="/settings" element={<Settings />} />
+              {/* 2. 共有受け取り用のルートを追加 */}
+              <Route path="/share" element={<Share />} />
             </Route>
             <Route path="/index" element={<Navigate to="/" replace />} />
             <Route path="*" element={<NotFound />} />
