@@ -8,9 +8,6 @@ import type { User, PostWithAuthor } from '@/types';
 // @ts-ignore - tiny-segmenter has no bundled types
 import TinySegmenter from 'tiny-segmenter';
 
-/* ============================================================
- * Text normalization & tokenization helpers
- * ============================================================ */
 const segmenter = new TinySegmenter();
 
 const kataToHira = (s: string) =>
@@ -34,9 +31,6 @@ const tokenizeQuery = (q: string): string[] => {
 const buildUserHaystack = (u: User): string =>
   normalize(`${u.displayName} ${u.username} ${u.bio || ''}`);
 
-/* ============================================================
- * History (localStorage)
- * ============================================================ */
 const HISTORY_KEY = 'search:recent';
 const HISTORY_MAX = 8;
 
@@ -54,9 +48,6 @@ const saveHistory = (list: string[]) => {
   } catch { /* noop */ }
 };
 
-/* ============================================================
- * Skeleton
- * ============================================================ */
 const RowSkeleton = () => (
   <div className="flex gap-3 px-4 py-3 border-b border-black/[0.03] animate-pulse bg-transparent">
     <div className="w-10 h-10 rounded-full bg-black/5 shrink-0" />
@@ -67,9 +58,6 @@ const RowSkeleton = () => (
   </div>
 );
 
-/* ============================================================
- * Main component
- * ============================================================ */
 export default function SearchPage() {
   const [inputValue, setInputValue] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -82,7 +70,6 @@ export default function SearchPage() {
   const [activeSuggestIdx, setActiveSuggestIdx] = useState<number>(-1);
   const [isScrolled, setIsScrolled] = useState(false);
   
-  // 無限スクロール用ステート
   const [hasMore, setHasMore] = useState(true);
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 20;
@@ -94,7 +81,8 @@ export default function SearchPage() {
 
   useEffect(() => {
     const handleScroll = () => {
-      setIsScrolled(window.scrollY > 60);
+      // 判定をシビアに（5px以上で即座に判定）
+      setIsScrolled(window.scrollY > 90);
     };
     window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
@@ -136,7 +124,6 @@ export default function SearchPage() {
     return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
 
-  // 検索・追加読み込み用コアロジック
   const fetchPosts = useCallback(async (q: string, targetPage: number) => {
     if (!q.trim()) return;
     if (targetPage === 0) setIsPostsLoading(true);
@@ -219,7 +206,6 @@ export default function SearchPage() {
     inputRef.current?.blur();
   }, [fetchPosts]);
 
-  // 無限スクロールの検知
   useEffect(() => {
     if (isPostsLoading) return;
     if (observerRef.current) observerRef.current.disconnect();
@@ -322,12 +308,13 @@ export default function SearchPage() {
 
   return (
     <div className="min-h-screen bg-transparent text-[rgb(15,20,25)]">
-      <div className={`sticky top-0 z-30 transition-all duration-300 ${
+      {/* 修正：pt-[6px]を削除、h-16(64px)に固定して垂直中央配置、shadow-smを削除 */}
+      <div className={`sticky top-0 z-50 transition-all duration-300 w-full h-16 flex items-center ${
         isScrolled 
           ? 'max-sm:bg-[#fbf9f2]/70 max-sm:backdrop-blur-md' 
           : 'bg-transparent'
       }`}>
-        <div className="max-w-3xl mx-auto px-4 py-2">
+        <div className="max-w-3xl mx-auto w-full px-4">
           <form onSubmit={(e) => { e.preventDefault(); commitSearch(inputValue); }} className="relative">
             <div className={`relative flex items-center h-11 rounded-full transition-all ${
               isInputFocused ? 'bg-white ring-2 ring-[#1d9bf0]' : 'bg-black/5'
@@ -414,7 +401,6 @@ export default function SearchPage() {
                  </div>
                ))}
                
-               {/* 無限スクロール検知用の要素 */}
                <div ref={lastElementRef} className="h-20 flex items-center justify-center">
                  {hasMore && searchQuery && <Loader2 className="w-6 h-6 text-[#1d9bf0] animate-spin" />}
                </div>
