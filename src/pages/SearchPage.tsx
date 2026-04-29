@@ -391,7 +391,7 @@ export default function SearchPage() {
           </TabsList>
 
           <TabsContent value="posts" className="mt-4 bg-transparent border-none outline-none">
-            {!searchQuery ? <EmptyHint title="LaimeSearch (ベータ版) " desc="キーワードを入力して、ポストやアカウントを見つけましょう。" /> :
+            {!searchQuery ? <EmptyHint title="LimeSearch (ベータ版) " desc="キーワードを入力して、ポストやアカウントを見つけましょう。" /> :
              isPostsLoading && page === 0 ? <div>{Array.from({ length: 5 }).map((_, i) => <RowSkeleton key={i} />)}</div> :
              searchedPosts.length === 0 ? <EmptyHint title={`"${searchQuery}" に一致する結果はありません`} desc="キーワードを変えてみてください。" /> :
              <div className="flex flex-col gap-4">

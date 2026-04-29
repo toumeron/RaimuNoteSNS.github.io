@@ -47,7 +47,7 @@ export default function Feed() {
         </h1>
         <span className="ribbon-tag">
           <Sparkles className="h-3 w-3" />
-          LaimeNoteBeta v1.3
+          LimeNoteBeta v1.3
         </span>
       </div>
 

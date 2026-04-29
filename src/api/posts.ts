@@ -249,7 +249,7 @@ export async function createPost(input: {
     return "Web";
   };
 
-  const clientSource = `LaimeNote for ${getDetailedClient()}`;
+  const clientSource = `LimeNote for ${getDetailedClient()}`;
 
   const uploadedUrls = await Promise.all(
     input.imageUrls.map(async (url) => {
