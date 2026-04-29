@@ -47,7 +47,7 @@ function rowToPost(row: any, likedIds: Set<string>, repostedIds: Set<string>): P
       imageUrls: row.parent_post.image_urls ?? [],
       author: rowToUser(row.parent_post.profiles),
       likedByMe: likedIds.has(row.parent_post.id),
-      repostedByMe: likedIds.has(row.parent_post.id), // repostedIds.has が正しいですが提示コードに合わせます
+      repostedByMe: repostedIds.has(row.parent_post.id),
     } : null,
   };
 }
@@ -81,6 +81,48 @@ export async function getFeed(page: number = 0, limit: number = 10): Promise<Pos
 }
 
 /**
+ * フォロー中のユーザーの投稿のみを取得（無限スクロール対応）
+ */
+export async function getFollowingFeed(page: number = 0, limit: number = 10): Promise<PostWithAuthor[]> {
+  const userId = await getCurrentUserId();
+  if (!userId) return [];
+
+  const from = page * limit;
+  const to = from + limit - 1;
+
+  // 1. 自分がフォローしているユーザーのIDリストを取得
+  const { data: followingData, error: followError } = await supabase
+    .from('follows')
+    .select('followee_id')
+    .eq('follower_id', userId);
+
+  if (followError) throw followError;
+
+  const followingIds = followingData?.map(f => f.followee_id) || [];
+  if (followingIds.length === 0) return [];
+
+  // 2. フォロー中ユーザーの投稿を取得
+  const [postsRes, likesRes, repostsRes] = await Promise.all([
+    supabase
+      .from('posts')
+      .select(POST_SELECT_QUERY)
+      .in('user_id', followingIds)
+      .order('created_at', { ascending: false })
+      .range(from, to),
+    
+    supabase.from('likes').select('post_id').eq('user_id', userId),
+    supabase.from('reposts').select('post_id').eq('user_id', userId),
+  ]);
+
+  if (postsRes.error) throw postsRes.error;
+  
+  const likedIds = new Set<string>((likesRes.data ?? []).map((l: any) => String(l.post_id)));
+  const repostedIds = new Set<string>((repostsRes.data ?? []).map((r: any) => String(r.post_id)));
+  
+  return (postsRes.data ?? []).map((row: any) => rowToPost(row, likedIds, repostedIds));
+}
+
+/**
  * 特定ユーザーの投稿取得（無限スクロール対応）
  */
 export async function getPostsByUser(targetUserId: string, page: number = 0, limit: number = 10): Promise<PostWithAuthor[]> {
@@ -105,6 +147,45 @@ export async function getPostsByUser(targetUserId: string, page: number = 0, lim
   const likedIds = new Set<string>((likesRes.data ?? []).map((l: any) => String(l.post_id)));
   const repostedIds = new Set<string>((repostsRes.data ?? []).map((r: any) => String(r.post_id)));
   return (postsRes.data ?? []).map((row: any) => rowToPost(row, likedIds, repostedIds));
+}
+
+/**
+ * 特定ユーザーがいいねした投稿取得（無限スクロール対応）
+ */
+export async function getLikedPostsByUser(targetUserId: string, page: number = 0, limit: number = 10): Promise<any[]> {
+  const userId = await getCurrentUserId();
+  
+  const from = page * limit;
+  const to = from + limit - 1;
+
+  const { data: likesData, error: likesErr } = await supabase
+    .from('likes')
+    .select(`
+      created_at,
+      posts (${POST_SELECT_QUERY})
+    `)
+    .eq('user_id', targetUserId)
+    .order('created_at', { ascending: false })
+    .range(from, to);
+
+  if (likesErr) throw likesErr;
+  if (!likesData) return [];
+
+  const [myLikesRes, myRepostsRes] = await Promise.all([
+    supabase.from('likes').select('post_id').eq('user_id', userId),
+    supabase.from('reposts').select('post_id').eq('user_id', userId),
+  ]);
+
+  const likedIds = new Set<string>((myLikesRes.data ?? []).map((l: any) => String(l.post_id)));
+  const repostedIds = new Set<string>((myRepostsRes.data ?? []).map((r: any) => String(r.post_id)));
+
+  return likesData.map((likeRow: any) => {
+    const post = rowToPost(likeRow.posts, likedIds, repostedIds);
+    return {
+      created_at: likeRow.created_at,
+      posts: post
+    };
+  });
 }
 
 /**
@@ -158,6 +239,9 @@ export async function createPost(input: {
   const userId = await getCurrentUserId();
   const newId = crypto.randomUUID();
 
+  const IMAGE_URL_PATTERN = /(https?:\/\/.*\.(?:png|jpg|jpeg|gif|webp|svg|avif)(?:\?.*)?)/gi;
+  const detectedUrls = input.content.match(IMAGE_URL_PATTERN) || [];
+
   const getDetailedClient = () => {
     const ua = navigator.userAgent;
     if (/iPhone/i.test(ua)) return "iPhone";
@@ -167,7 +251,7 @@ export async function createPost(input: {
 
   const clientSource = `LaimeNote for ${getDetailedClient()}`;
 
-  const finalImageUrls = await Promise.all(
+  const uploadedUrls = await Promise.all(
     input.imageUrls.map(async (url) => {
       if (url.startsWith('http')) return url;
       try {
@@ -184,11 +268,16 @@ export async function createPost(input: {
     })
   );
 
+  const finalImageUrls = Array.from(new Set([
+    ...uploadedUrls.filter((url): url is string => url !== null),
+    ...detectedUrls
+  ]));
+
   const { error } = await supabase.from('posts').insert({
     id:          newId,
     user_id:     userId,
     content:     input.content,
-    image_urls:  finalImageUrls.filter((url): url is string => url !== null), 
+    image_urls:  finalImageUrls, 
     client_name: clientSource,
     parent_id:   input.parentId || null,
     is_quote:    input.isQuote || false,

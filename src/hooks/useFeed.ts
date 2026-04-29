@@ -1,13 +1,14 @@
 import { 
   useMutation, 
   useQuery, 
-  useInfiniteQuery, // 追加
+  useInfiniteQuery, 
   useQueryClient,
   InfiniteData 
 } from '@tanstack/react-query';
 import { 
   createPost, 
   getFeed, 
+  getFollowingFeed, 
   getPostById, 
   getPostsByUser, 
   toggleLike, 
@@ -16,30 +17,59 @@ import {
 import type { PostWithAuthor } from '@/types';
 import { toast } from 'sonner';
 
+/**
+ * クエリキー定義
+ * 'feed' を親キーに持つことで、一括無効化を容易にします
+ */
 export const feedKey = ['feed'] as const;
+
+export const feedKeys = {
+  all: ['feed', 'all'] as const,
+  following: ['feed', 'following'] as const,
+};
+
 export const postKey = (id: string) => ['post', id] as const;
 export const userPostsKey = (userId: string) => ['posts', 'user', userId] as const;
 
-// 1ページあたりの件数
-const LIMIT = 5;
+const LIMIT = 10;
 
 /**
- * 無限スクロール対応版 useFeed
+ * タイムライン用フック
+ * tabの状態に応じてフェッチ先とキャッシュキーを動的に切り替えます
  */
-export const useFeed = () =>
+export const useFeed = (tab: 'all' | 'following' = 'all') =>
   useInfiniteQuery({
-    queryKey: feedKey,
-    queryFn: ({ pageParam = 0 }) => getFeed(pageParam as number, LIMIT),
+    queryKey: tab === 'all' ? feedKeys.all : feedKeys.following,
+    queryFn: ({ pageParam = 0 }) => {
+      return tab === 'all' 
+        ? getFeed(pageParam as number, LIMIT) 
+        : getFollowingFeed(pageParam as number, LIMIT);
+    },
     initialPageParam: 0,
     getNextPageParam: (lastPage, allPages) => {
-      // 取得したデータがLIMIT未満なら次のページはない
+      // 取得したデータがLIMIT未満なら次ページなし
       return lastPage.length < LIMIT ? undefined : allPages.length;
     },
+    // タブ切り替え時に以前のデータを保持することで、
+    // ローディング中の「ガタつき」や「表示消失」を防ぎます
+    placeholderData: (previousData) => previousData,
+    // キャッシュ保持時間の設定（必要に応じて）
+    staleTime: 1000 * 60, 
   });
 
+/**
+ * 個別投稿取得
+ */
 export const usePost = (id: string) =>
-  useQuery({ queryKey: postKey(id), queryFn: () => getPostById(id), enabled: !!id });
+  useQuery({ 
+    queryKey: postKey(id), 
+    queryFn: () => getPostById(id), 
+    enabled: !!id 
+  });
 
+/**
+ * 特定ユーザーの投稿一覧
+ */
 export const useUserPosts = (userId: string | undefined) =>
   useQuery({
     queryKey: userPostsKey(userId ?? ''),
@@ -47,11 +77,15 @@ export const useUserPosts = (userId: string | undefined) =>
     enabled: !!userId,
   });
 
+/**
+ * 投稿作成
+ */
 export const useCreatePost = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: createPost,
     onSuccess: () => {
+      // 'feed' から始まる全てのキャッシュ（最新・フォロー中両方）を無効化
       qc.invalidateQueries({ queryKey: feedKey });
       qc.invalidateQueries({ queryKey: ['posts', 'user'] });
       toast.success('投稿しました');
@@ -62,26 +96,28 @@ export const useCreatePost = () => {
 
 /**
  * キャッシュ内の投稿データを一括更新するためのヘルパー関数
- * 無限スクロール(InfiniteData)と通常の配列の両方に対応
+ * いいねやリポストの状態を即座にUIへ反映（Optimistic Update）させるために使用します
  */
 const updatePostInCache = (
   qc: ReturnType<typeof useQueryClient>,
   postId: string,
   flip: (p: PostWithAuthor) => PostWithAuthor
 ) => {
-  // 1. 無限スクロールのキャッシュ (feed) を更新
+  // 1. 全てのタイムライン（最新、フォロー中など 'feed' を含むもの全て）を更新
   qc.setQueriesData<InfiniteData<PostWithAuthor[]>>({ queryKey: feedKey }, (old) => {
     if (!old) return old;
     return {
       ...old,
-      pages: old.pages.map((page) => page.map((p) => (p.id === postId ? flip(p) : p))),
+      pages: old.pages.map((page) => 
+        page.map((p) => (p.id === postId ? flip(p) : p))
+      ),
     };
   });
 
-  // 2. 個別投稿のキャッシュを更新
+  // 2. 個別投稿詳細のキャッシュを更新
   qc.setQueryData<PostWithAuthor>(postKey(postId), (old) => (old ? flip(old) : old));
 
-  // 3. ユーザー投稿一覧のキャッシュを更新
+  // 3. 各ユーザーの投稿一覧キャッシュをスキャンして更新
   qc.getQueriesData<PostWithAuthor[]>({ queryKey: ['posts', 'user'] }).forEach(([key]) => {
     qc.setQueryData<PostWithAuthor[]>(key, (old) => 
       old ? old.map((p) => (p.id === postId ? flip(p) : p)) : old
@@ -89,14 +125,17 @@ const updatePostInCache = (
   });
 };
 
+/**
+ * いいねトグル
+ */
 export const useToggleLike = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (postId: string) => toggleLike(postId),
     onMutate: async (postId) => {
+      // 進行中のリフェッチをキャンセルして、楽観的更新と衝突しないようにする
       await qc.cancelQueries({ queryKey: feedKey });
-      const prevFeed = qc.getQueryData<InfiniteData<PostWithAuthor[]>>(feedKey);
-      const prevPost = qc.getQueryData<PostWithAuthor>(postKey(postId));
+      await qc.cancelQueries({ queryKey: postKey(postId) });
 
       const flip = (p: PostWithAuthor): PostWithAuthor => ({
         ...p,
@@ -105,25 +144,26 @@ export const useToggleLike = () => {
       });
 
       updatePostInCache(qc, postId, flip);
-
-      return { prevFeed, prevPost };
     },
-    onError: (_err, postId, ctx) => {
-      if (ctx?.prevFeed) qc.setQueryData(feedKey, ctx.prevFeed);
-      if (ctx?.prevPost) qc.setQueryData(postKey(postId), ctx.prevPost);
+    onError: (err, postId) => {
+      // 失敗時は整合性を保つためリフェッチを実行
+      qc.invalidateQueries({ queryKey: feedKey });
+      qc.invalidateQueries({ queryKey: postKey(postId) });
       toast.error('いいねの更新に失敗しました');
     },
   });
 };
 
+/**
+ * リポストトグル
+ */
 export const useToggleRepost = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (postId: string) => toggleRepost(postId),
     onMutate: async (postId) => {
       await qc.cancelQueries({ queryKey: feedKey });
-      const prevFeed = qc.getQueryData<InfiniteData<PostWithAuthor[]>>(feedKey);
-      const prevPost = qc.getQueryData<PostWithAuthor>(postKey(postId));
+      await qc.cancelQueries({ queryKey: postKey(postId) });
 
       const flip = (p: PostWithAuthor): PostWithAuthor => ({
         ...p,
@@ -132,15 +172,15 @@ export const useToggleRepost = () => {
       });
 
       updatePostInCache(qc, postId, flip);
-
-      return { prevFeed, prevPost };
     },
-    onSuccess: () => {
+    onSuccess: (_, postId) => {
+      // リポストは自身のフォロワーのタイムラインに影響するため、
+      // 成功後にバックグラウンドで最新状態を取得し直すのが安全
       qc.invalidateQueries({ queryKey: feedKey });
     },
-    onError: (_err, postId, ctx) => {
-      if (ctx?.prevFeed) qc.setQueryData(feedKey, ctx.prevFeed);
-      if (ctx?.prevPost) qc.setQueryData(postKey(postId), ctx.prevPost);
+    onError: (err, postId) => {
+      qc.invalidateQueries({ queryKey: feedKey });
+      qc.invalidateQueries({ queryKey: postKey(postId) });
       toast.error('リポストの更新に失敗しました');
     },
   });

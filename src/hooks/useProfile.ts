@@ -3,17 +3,16 @@ import {
   useQuery, 
   useInfiniteQuery, 
   useQueryClient,
-  InfiniteData 
 } from '@tanstack/react-query';
 import { getUserByUsername, updateProfile } from '@/api/users';
 import { getFollowStats, toggleFollow } from '@/api/follows';
-import { getPostsByUser } from '@/api/posts'; 
-import type { PostWithAuthor } from '@/types';
+import { getPostsByUser, getLikedPostsByUser } from '@/api/posts'; // getLikedPostsByUserを追加
 import { toast } from 'sonner';
 
 export const profileKey = (username: string) => ['profile', username] as const;
 export const followStatsKey = (userId: string) => ['follow-stats', userId] as const;
 export const userPostsKey = (userId: string) => ['posts', 'user', userId] as const;
+export const userLikesKey = (userId: string) => ['posts', 'likes', userId] as const; // 新規追加
 
 const LIMIT = 10;
 
@@ -34,6 +33,20 @@ export const useUserPostsInfinite = (userId: string | undefined) =>
   useInfiniteQuery({
     queryKey: userPostsKey(userId ?? ''),
     queryFn: ({ pageParam = 0 }) => getPostsByUser(userId!, pageParam as number, LIMIT),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) => {
+      return lastPage.length < LIMIT ? undefined : allPages.length;
+    },
+    enabled: !!userId,
+  });
+
+/**
+ * プロフィール画面用：いいねした投稿一覧（無限スクロール版）
+ */
+export const useUserLikesInfinite = (userId: string | undefined) =>
+  useInfiniteQuery({
+    queryKey: userLikesKey(userId ?? ''),
+    queryFn: ({ pageParam = 0 }) => getLikedPostsByUser(userId!, pageParam as number, LIMIT),
     initialPageParam: 0,
     getNextPageParam: (lastPage, allPages) => {
       // 取得件数がLIMIT未満なら次はない
@@ -74,7 +87,6 @@ export const useToggleFollow = (targetUserId: string) => {
       return { prev };
     },
     onSuccess: () => {
-      // フォロー状態が変わったので、ユーザーの投稿一覧も念のため再取得
       qc.invalidateQueries({ queryKey: ['posts', 'user', targetUserId] });
     },
     onError: (_e, _v, ctx) => {
@@ -92,7 +104,6 @@ export const useUpdateProfile = (userId: string) => {
   return useMutation({
     mutationFn: (patch: Parameters<typeof updateProfile>[1]) => updateProfile(userId, patch),
     onSuccess: () => {
-      // プロフィール情報と、そのユーザーに関連する投稿のキャッシュを更新
       qc.invalidateQueries({ queryKey: ['profile'] });
       qc.invalidateQueries({ queryKey: ['posts', 'user', userId] });
       toast.success('プロフィールを更新しました');

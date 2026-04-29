@@ -1,25 +1,35 @@
 import { useParams } from 'react-router-dom';
-import { useEffect } from 'react'; // 追加
-import { useInView } from 'react-intersection-observer'; // 追加
-import { Loader2 } from 'lucide-react'; // 追加
+import { useEffect, useState } from 'react';
+import { useInView } from 'react-intersection-observer';
+import { Loader2 } from 'lucide-react';
 import { ProfileHeader } from '@/components/profile/ProfileHeader';
 import { PostCard } from '@/components/feed/PostCard';
 import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useProfile, useUserPostsInfinite } from '@/hooks/useProfile'; // useUserPostsInfiniteに変更
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useProfile, useUserPostsInfinite, useUserLikesInfinite } from '@/hooks/useProfile';
 
 export default function Profile() {
   const { username = '' } = useParams();
+  const [activeTab, setActiveTab] = useState<'posts' | 'likes'>('posts');
+  
   const { data: user, isLoading: userLoading, isError: userError } = useProfile(username);
   
-  // 新しい無限スクロール用のフックに変更
+  // 通常の投稿用無限スクロール
+  const postsQuery = useUserPostsInfinite(user?.id);
+  
+  // いいねした投稿用無限スクロール
+  const likesQuery = useUserLikesInfinite(user?.id);
+
+  // 現在表示しているタブに合わせてクエリの結果を切り替える
+  const currentQuery = activeTab === 'posts' ? postsQuery : likesQuery;
   const { 
     data, 
-    isLoading: postsLoading, 
+    isLoading: contentLoading, 
     fetchNextPage, 
     hasNextPage, 
     isFetchingNextPage 
-  } = useUserPostsInfinite(user?.id);
+  } = currentQuery;
 
   // スクロール検知用
   const { ref, inView } = useInView();
@@ -31,13 +41,24 @@ export default function Profile() {
     }
   }, [inView, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  // 二次元配列になっている投稿データをフラットに変換
-  const allPosts = data?.pages.flatMap((page) => page) ?? [];
+  // データのフラット化処理
+  // activeTabが'likes'の場合、データ構造が like { posts: { ... } } になるため抽出が必要
+  const allPosts = data?.pages.flatMap((page) => {
+    if (activeTab === 'likes') {
+      // likesテーブル経由の場合、結合された投稿データを取り出す
+      return page.map((like: any) => like.posts).filter(Boolean);
+    }
+    return page;
+  }) ?? [];
 
   if (userLoading) {
     return (
       <div className="space-y-5">
         <Skeleton className="h-72 w-full rounded-3xl" />
+        <div className="flex gap-2">
+          <Skeleton className="h-10 w-1/2 rounded-xl" />
+          <Skeleton className="h-10 w-1/2 rounded-xl" />
+        </div>
         <PostCardSkeleton />
         <PostCardSkeleton />
       </div>
@@ -56,11 +77,25 @@ export default function Profile() {
     <div className="space-y-5">
       {user && <ProfileHeader user={user} />}
 
-      <h2 className="font-display text-lg font-bold">投稿</h2>
+      {/* タブ切り替えUI */}
+      <Tabs 
+        defaultValue="posts" 
+        className="w-full" 
+        onValueChange={(value) => setActiveTab(value as 'posts' | 'likes')}
+      >
+        <TabsList className="grid w-full grid-cols-2 rounded-2xl bg-muted/50 p-1">
+          <TabsTrigger value="posts" className="rounded-xl font-bold transition-all">
+            投稿
+          </TabsTrigger>
+          <TabsTrigger value="likes" className="rounded-xl font-bold transition-all">
+            いいね
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
 
       <div className="space-y-4">
         {/* 初回読み込み時のスケルトン */}
-        {postsLoading && (
+        {contentLoading && (
           <>
             <PostCardSkeleton />
             <PostCardSkeleton />
@@ -68,15 +103,15 @@ export default function Profile() {
         )}
 
         {/* 投稿ゼロの判定 */}
-        {!postsLoading && allPosts.length === 0 && (
-          <div className="rounded-3xl border border-dashed border-border bg-card/60 p-8 text-center text-sm text-muted-foreground">
-            まだ投稿がありません。
+        {!contentLoading && allPosts.length === 0 && (
+          <div className="rounded-3xl border border-dashed border-border bg-card/60 p-12 text-center text-sm text-muted-foreground animate-in fade-in zoom-in duration-300">
+            {activeTab === 'posts' ? 'まだ投稿がありません。' : 'いいねした投稿がありません。'}
           </div>
         )}
 
         {/* 投稿リスト */}
         {allPosts.map((p) => (
-          <div key={p.id} className="animate-float-up">
+          <div key={`${activeTab}-${p.id}`} className="animate-float-up">
             <PostCard post={p} />
           </div>
         ))}
@@ -92,7 +127,7 @@ export default function Profile() {
             <div className="h-10" />
           ) : allPosts.length > 0 ? (
             <p className="text-xs text-muted-foreground text-center">
-              すべての投稿を表示しました
+              すべての表示が完了しました
             </p>
           ) : null}
         </div>

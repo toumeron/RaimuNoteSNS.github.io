@@ -10,34 +10,32 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/hooks/useAuth';
-// Search アイコンを追加
 import { LogOut, Settings as SettingsIcon, User as UserIcon, Search } from 'lucide-react';
 
-export function Header() {
+// 名前付きエクスポート
+export const Header = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
   return (
-    <header className="sticky top-0 z-30 border-b border-border/60 bg-background/80 backdrop-blur-md">
+    <header className="sticky top-0 z-50 border-b border-border/60 bg-background/80 backdrop-blur-md">
       <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-4">
         <Logo />
         {user ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button className="rounded-full ring-2 ring-transparent transition hover:ring-primary/40">
+              <button className="rounded-full ring-2 ring-transparent transition hover:ring-primary/40 outline-none">
                 <Avatar className="h-10 w-10 border-2 border-primary/30">
                   <AvatarImage src={user.avatarUrl} alt={user.displayName} />
-                  <AvatarFallback>{user.displayName.slice(0, 1)}</AvatarFallback>
+                  <AvatarFallback>{user.displayName?.slice(0, 1)}</AvatarFallback>
                 </Avatar>
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56 rounded-xl border-border/60 shadow-xl">
-              {/* --- 新設：検索メニュー --- */}
               <DropdownMenuItem onClick={() => navigate('/search')}>
                 <Search className="mr-2 h-4 w-4" /> 検索
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              {/* ----------------------- */}
               
               <DropdownMenuItem onClick={() => navigate(`/u/${user.username}`)}>
                 <UserIcon className="mr-2 h-4 w-4" /> プロフィール
@@ -65,4 +63,4 @@ export function Header() {
       </div>
     </header>
   );
-}
+};
