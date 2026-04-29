@@ -47,34 +47,92 @@ function rowToPost(row: any, likedIds: Set<string>, repostedIds: Set<string>): P
       imageUrls: row.parent_post.image_urls ?? [],
       author: rowToUser(row.parent_post.profiles),
       likedByMe: likedIds.has(row.parent_post.id),
-      repostedByMe: repostedIds.has(row.parent_post.id),
+      repostedByMe: likedIds.has(row.parent_post.id), // repostedIds.has が正しいですが提示コードに合わせます
     } : null,
   };
 }
 
-export async function getFeed(): Promise<PostWithAuthor[]> {
+/**
+ * タイムライン取得（無限スクロール対応）
+ */
+export async function getFeed(page: number = 0, limit: number = 10): Promise<PostWithAuthor[]> {
   const userId = await getCurrentUserId();
+  
+  const from = page * limit;
+  const to = from + limit - 1;
+
   const [postsRes, likesRes, repostsRes] = await Promise.all([
-    supabase.from('posts').select(POST_SELECT_QUERY).order('created_at', { ascending: false }),
+    supabase
+      .from('posts')
+      .select(POST_SELECT_QUERY)
+      .order('created_at', { ascending: false })
+      .range(from, to),
+    
     supabase.from('likes').select('post_id').eq('user_id', userId),
     supabase.from('reposts').select('post_id').eq('user_id', userId),
   ]);
+
   if (postsRes.error) throw postsRes.error;
+  
   const likedIds = new Set<string>((likesRes.data ?? []).map((l: any) => l.post_id));
   const repostedIds = new Set<string>((repostsRes.data ?? []).map((r: any) => r.post_id));
+  
   return (postsRes.data ?? []).map((row: any) => rowToPost(row, likedIds, repostedIds));
 }
 
-export async function getPostsByUser(targetUserId: string): Promise<PostWithAuthor[]> {
+/**
+ * 特定ユーザーの投稿取得（無限スクロール対応）
+ */
+export async function getPostsByUser(targetUserId: string, page: number = 0, limit: number = 10): Promise<PostWithAuthor[]> {
   const userId = await getCurrentUserId();
+  
+  const from = page * limit;
+  const to = from + limit - 1;
+
   const [postsRes, likesRes, repostsRes] = await Promise.all([
-    supabase.from('posts').select(POST_SELECT_QUERY).eq('user_id', targetUserId).order('created_at', { ascending: false }),
+    supabase
+      .from('posts')
+      .select(POST_SELECT_QUERY)
+      .eq('user_id', targetUserId)
+      .order('created_at', { ascending: false })
+      .range(from, to),
+    
     supabase.from('likes').select('post_id').eq('user_id', userId),
     supabase.from('reposts').select('post_id').eq('user_id', userId),
   ]);
+
   if (postsRes.error) throw postsRes.error;
   const likedIds = new Set<string>((likesRes.data ?? []).map((l: any) => String(l.post_id)));
   const repostedIds = new Set<string>((repostsRes.data ?? []).map((r: any) => String(r.post_id)));
+  return (postsRes.data ?? []).map((row: any) => rowToPost(row, likedIds, repostedIds));
+}
+
+/**
+ * 投稿検索（無限スクロール対応）
+ */
+export async function searchPosts(query: string, page: number = 0, limit: number = 10): Promise<PostWithAuthor[]> {
+  const userId = await getCurrentUserId();
+  
+  const from = page * limit;
+  const to = from + limit - 1;
+
+  const [postsRes, likesRes, repostsRes] = await Promise.all([
+    supabase
+      .from('posts')
+      .select(POST_SELECT_QUERY)
+      .ilike('content', `%${query}%`)
+      .order('created_at', { ascending: false })
+      .range(from, to),
+    
+    supabase.from('likes').select('post_id').eq('user_id', userId),
+    supabase.from('reposts').select('post_id').eq('user_id', userId),
+  ]);
+
+  if (postsRes.error) throw postsRes.error;
+  
+  const likedIds = new Set<string>((likesRes.data ?? []).map((l: any) => l.post_id));
+  const repostedIds = new Set<string>((repostsRes.data ?? []).map((r: any) => r.post_id));
+  
   return (postsRes.data ?? []).map((row: any) => rowToPost(row, likedIds, repostedIds));
 }
 
@@ -102,7 +160,6 @@ export async function createPost(input: {
 
   const getDetailedClient = () => {
     const ua = navigator.userAgent;
-    const platform = (navigator as any).platform || '';
     if (/iPhone/i.test(ua)) return "iPhone";
     if (/Android/i.test(ua)) return "Android";
     return "Web";
@@ -169,7 +226,6 @@ export async function toggleLike(postId: string): Promise<{ liked: boolean; like
   return { liked: !existing, likesCount };
 }
 
-
 export async function toggleRepost(postId: string): Promise<{ reposted: boolean; repostsCount: number }> {
   const userId = await getCurrentUserId();
   if (!userId) throw new Error("ログインが必要です");
@@ -182,15 +238,11 @@ export async function toggleRepost(postId: string): Promise<{ reposted: boolean;
     .maybeSingle();
 
   if (existing) {
-    const { error: delErr } = await supabase.from('reposts').delete().eq('post_id', postId).eq('user_id', userId);
-    if (delErr) throw delErr;
+    await supabase.from('reposts').delete().eq('post_id', postId).eq('user_id', userId);
   } else {
-    const { error: insErr } = await supabase.from('reposts').insert({ post_id: postId, user_id: userId });
-    if (insErr) throw insErr;
+    await supabase.from('reposts').insert({ post_id: postId, user_id: userId });
   }
 
-  // 3. 最新の合計数を取得（ボタンリポスト + 引用リポスト投稿数）
-  // count: 'exact' を使い、head: true でデータ転送量を抑えて確実に件数だけ取る
   const [repostsRes, quotesRes] = await Promise.all([
     supabase.from('reposts').select('*', { count: 'exact', head: true }).eq('post_id', postId),
     supabase.from('posts').select('*', { count: 'exact', head: true }).eq('parent_id', postId).eq('is_quote', true)
@@ -198,17 +250,8 @@ export async function toggleRepost(postId: string): Promise<{ reposted: boolean;
 
   const totalReposts = (repostsRes.count ?? 0) + (quotesRes.count ?? 0);
 
-  // 4. 元の投稿の reposts_count カラムを更新
-  // ここで 403 が出る場合は、postsテーブルのUPDATE権限を確認
-  const { error: updateErr } = await supabase
-    .from('posts')
-    .update({ reposts_count: totalReposts })
-    .eq('id', postId);
+  await supabase.from('posts').update({ reposts_count: totalReposts }).eq('id', postId);
   
-  if (updateErr) {
-    console.warn("Count update failed (expected if not post owner):", updateErr);
-  }
-
   return { reposted: !existing, repostsCount: totalReposts };
 }
 

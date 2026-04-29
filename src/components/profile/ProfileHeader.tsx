@@ -24,7 +24,7 @@ export function ProfileHeader({ user }: { user: User }) {
 
       <div className="relative px-5 pb-5 sm:px-6">
         <div className="-mt-12 flex items-end justify-between gap-3 sm:-mt-14">
-          <Avatar className="h-24 w-24 border-4 border-card shadow-pop sm:h-28 sm:w-28">
+          <Avatar className="h-24 w-24 border-4 border-card sm:h-28 sm:w-28">
             <AvatarImage src={user.avatarUrl} alt={user.displayName} />
             <AvatarFallback>{user.displayName.slice(0, 1)}</AvatarFallback>
           </Avatar>

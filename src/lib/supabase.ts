@@ -4,7 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-// 1. すでに作成済みのインスタンスがあればそれを使う仕組み（シングルトン）
+// インスタンスを一度だけ作成する仕組みを維持
 let supabaseInstance: any = null;
 
 if (!supabaseInstance) {
@@ -13,7 +13,8 @@ if (!supabaseInstance) {
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
-      // 2. ロックを無効化しつつ、重複作成の影響を最小限にする
+      // これを削るとデッドロック（表示されない）、
+      // これがあると無限リクエスト（元々の問題）が発生する
       lock: (name, acquireTimeout, fn) => fn(),
     },
   });

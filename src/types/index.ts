@@ -1,4 +1,4 @@
-// ムリムリSNS 共通型定義
+// src/types/index.ts
 
 export type User = {
   id: string;
@@ -14,18 +14,21 @@ export type User = {
 export type Post = {
   id: string;
   userId: string;
+  authorId?: string; // DBの author_id をそのまま受け入れるために重要
   content: string;
+  imageUrl?: string | null; 
   imageUrls: string[];
   createdAt: string;
   likesCount: number;
   commentsCount: number;
   likedByMe: boolean;
   clientName?: string;
+  
   // --- リポスト機能用の追加 ---
-  parentId?: string | null;      // 親投稿のID
-  isQuote?: boolean;             // 引用リポストかどうか
-  repostsCount: number;          // リポスト数
-  repostedByMe: boolean;         // 自分がリポスト済みか
+  parentId?: string | null;
+  isQuote?: boolean;
+  repostsCount: number;
+  repostedByMe: boolean;
 };
 
 export type Comment = {
@@ -44,8 +47,9 @@ export type Follow = {
 // 投稿カードに渡しやすくするための拡張型
 export type PostWithAuthor = Post & {
   author: User;
-  // 親投稿の情報（1階層分のみ保持）
-  parentPost?: (Post & { author: User }) | null;
+  // 親投稿（リポスト元）も PostWithAuthor 型にすることで、
+  // ネストされた投稿でも author にアクセスできるようにします
+  parentPost?: PostWithAuthor | null; 
 };
 
 export type CommentWithAuthor = Comment & {

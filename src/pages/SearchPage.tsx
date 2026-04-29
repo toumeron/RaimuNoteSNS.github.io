@@ -3,9 +3,8 @@ import { Search, X, Clock, Loader2 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PostCard } from '@/components/feed/PostCard';
 import UserCard from '@/components/search/UserCard';
-import { useFeed } from '@/hooks/useFeed';
 import { supabase } from '@/lib/supabase';
-import type { User } from '@/types';
+import type { User, PostWithAuthor } from '@/types';
 // @ts-ignore - tiny-segmenter has no bundled types
 import TinySegmenter from 'tiny-segmenter';
 
@@ -29,31 +28,7 @@ const normalize = (s: string) => {
 const tokenizeQuery = (q: string): string[] => {
   const norm = normalize(q);
   if (!norm.trim()) return [];
-  const rough = norm.split(/[\s\u3000]+/).filter(Boolean);
-  const tokens: string[] = [];
-  for (const piece of rough) {
-    tokens.push(piece);
-    try {
-      const seg = segmenter.segment(piece) as string[];
-      for (const t of seg) {
-        const tt = t.trim();
-        if (tt && tt.length >= 1 && !tokens.includes(tt)) tokens.push(tt);
-      }
-    } catch { /* noop */ }
-  }
-  return tokens;
-};
-
-const buildPostHaystack = (post: any): string => {
-  const content = post?.content || '';
-  const displayName = post?.profiles?.display_name || post?.profiles?.displayName || '';
-  const username = post?.profiles?.username || '';
-  const tags = (content.match(/[#@][\w\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]+/g) || []).join(' ');
-  let segmented = '';
-  try {
-    segmented = (segmenter.segment(content) as string[]).join(' ');
-  } catch { segmented = ''; }
-  return normalize(`${displayName} ${username} ${content} ${tags} ${segmented}`);
+  return norm.split(/[\s\u3000]+/).filter(Boolean);
 };
 
 const buildUserHaystack = (u: User): string =>
@@ -99,18 +74,24 @@ export default function SearchPage() {
   const [inputValue, setInputValue] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [searchedPosts, setSearchedPosts] = useState<PostWithAuthor[]>([]);
   const [isUsersLoading, setIsUsersLoading] = useState(false);
+  const [isPostsLoading, setIsPostsLoading] = useState(false);
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [history, setHistory] = useState<string[]>(() => loadHistory());
   const [activeSuggestIdx, setActiveSuggestIdx] = useState<number>(-1);
   const [isScrolled, setIsScrolled] = useState(false);
+  
+  // 無限スクロール用ステート
+  const [hasMore, setHasMore] = useState(true);
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 20;
+
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestBoxRef = useRef<HTMLDivElement>(null);
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const lastElementRef = useRef<HTMLDivElement>(null);
 
-  const { data: postsData, isLoading: isPostsLoading } = useFeed();
-  const allPosts = postsData || [];
-
-  // スクロール検知
   useEffect(() => {
     const handleScroll = () => {
       setIsScrolled(window.scrollY > 60);
@@ -132,6 +113,8 @@ export default function SearchPage() {
           username: u.username,
           displayName: u.display_name || u.displayName || 'User',
           avatarUrl: u.avatar_url || u.avatarUrl || '',
+          coverUrl: u.cover_url || '',
+          createdAt: u.created_at || '',
           bio: u.bio || '',
           isOfficial: !!(u.is_official || u.isOfficial),
         })));
@@ -153,21 +136,108 @@ export default function SearchPage() {
     return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
 
-  const commitSearch = useCallback((raw: string) => {
+  // 検索・追加読み込み用コアロジック
+  const fetchPosts = useCallback(async (q: string, targetPage: number) => {
+    if (!q.trim()) return;
+    if (targetPage === 0) setIsPostsLoading(true);
+
+    try {
+      const from = targetPage * PAGE_SIZE;
+      const to = from + PAGE_SIZE - 1;
+
+      const { data, error } = await supabase
+        .from('posts')
+        .select(`id, content, image_urls, created_at, user_id, likes_count, reposts_count`)
+        .ilike('content', `%${q}%`)
+        .order('created_at', { ascending: false })
+        .range(from, to);
+
+      if (error) throw error;
+
+      if (data) {
+        const formatted: PostWithAuthor[] = data.map((p: any) => {
+          const user = allUsers.find(u => u.id === p.user_id);
+          return {
+            id: p.id,
+            userId: p.user_id,
+            authorId: p.user_id,
+            content: p.content,
+            imageUrl: p.image_urls?.[0] || null,
+            imageUrls: p.image_urls || [],
+            createdAt: p.created_at,
+            likesCount: p.likes_count || 0,
+            repostsCount: p.reposts_count || 0,
+            commentsCount: 0,
+            likedByMe: false,
+            repostedByMe: false,
+            author: {
+              id: user?.id || p.user_id,
+              username: user?.username || 'unknown',
+              displayName: user?.displayName || 'User',
+              avatarUrl: user?.avatarUrl || '',
+              coverUrl: user?.coverUrl || '',
+              createdAt: user?.createdAt || p.created_at,
+              bio: user?.bio || '',
+              isOfficial: user?.isOfficial || false
+            }
+          };
+        });
+
+        if (targetPage === 0) {
+          setSearchedPosts(formatted);
+        } else {
+          setSearchedPosts(prev => [...prev, ...formatted]);
+        }
+        
+        setHasMore(data.length === PAGE_SIZE);
+      }
+    } catch (err) {
+      console.error('Search query failed:', err);
+    } finally {
+      setIsPostsLoading(false);
+    }
+  }, [allUsers]);
+
+  const commitSearch = useCallback(async (raw: string) => {
     const q = raw.trim();
+    if (!q) return;
+
     setInputValue(q);
     setSearchQuery(q);
     setIsInputFocused(false);
     setActiveSuggestIdx(-1);
-    if (q) {
-      setHistory((prev) => {
-        const next = [q, ...prev.filter((h) => h !== q)].slice(0, HISTORY_MAX);
-        saveHistory(next);
-        return next;
-      });
-    }
+    setPage(0);
+    setHasMore(true);
+
+    setHistory((prev) => {
+      const next = [q, ...prev.filter((h) => h !== q)].slice(0, HISTORY_MAX);
+      saveHistory(next);
+      return next;
+    });
+
+    await fetchPosts(q, 0);
     inputRef.current?.blur();
-  }, []);
+  }, [fetchPosts]);
+
+  // 無限スクロールの検知
+  useEffect(() => {
+    if (isPostsLoading) return;
+    if (observerRef.current) observerRef.current.disconnect();
+
+    observerRef.current = new IntersectionObserver(entries => {
+      if (entries[0].isIntersecting && hasMore && searchQuery) {
+        const nextPage = page + 1;
+        setPage(nextPage);
+        fetchPosts(searchQuery, nextPage);
+      }
+    });
+
+    if (lastElementRef.current) {
+      observerRef.current.observe(lastElementRef.current);
+    }
+
+    return () => observerRef.current?.disconnect();
+  }, [isPostsLoading, hasMore, page, searchQuery, fetchPosts]);
 
   const liveSuggestions = useMemo(() => {
     const q = normalize(inputValue.trim());
@@ -190,10 +260,10 @@ export default function SearchPage() {
 
   const queryTokens = useMemo(() => tokenizeQuery(searchQuery), [searchQuery]);
 
-  const { filteredUsers, filteredPosts } = useMemo(() => {
-    if (!searchQuery || queryTokens.length === 0) return { filteredUsers: [], filteredPosts: [] };
+  const filteredUsers = useMemo(() => {
+    if (!searchQuery || queryTokens.length === 0) return [];
 
-    const usersScored = allUsers.map((u) => {
+    return allUsers.map((u) => {
       const hay = buildUserHaystack(u);
       const dn = normalize(u.displayName);
       const un = normalize(u.username);
@@ -203,32 +273,14 @@ export default function SearchPage() {
         if (!hay.includes(t)) { allMatch = false; break; }
         if (dn === t || un === t) score += 5;
         else if (dn.startsWith(t) || un.startsWith(t)) score += 3;
-        else if (dn.includes(t) || un.includes(t)) score += 2;
         else score += 1;
       }
       return allMatch ? { u, score } : null;
-    }).filter(Boolean) as { u: User; score: number }[];
-
-    const postsScored = allPosts.map((p: any) => {
-      const hay = buildPostHaystack(p);
-      const dn = normalize(p?.profiles?.display_name || p?.profiles?.displayName || '');
-      const un = normalize(p?.profiles?.username || '');
-      let score = 0;
-      let allMatch = true;
-      for (const t of queryTokens) {
-        if (!hay.includes(t)) { allMatch = false; break; }
-        if (dn === t || un === t) score += 4;
-        else if (dn.includes(t) || un.includes(t)) score += 2;
-        else score += 1;
-      }
-      return allMatch ? { p, score } : null;
-    }).filter(Boolean) as { p: any; score: number }[];
-
-    return {
-      filteredUsers: usersScored.sort((a, b) => b.score - a.score).map((x) => x.u),
-      filteredPosts: postsScored.sort((a, b) => b.score - a.score).map((x) => x.p),
-    };
-  }, [searchQuery, queryTokens, allUsers, allPosts]);
+    })
+    .filter(Boolean)
+    .sort((a: any, b: any) => b.score - a.score)
+    .map((x: any) => x.u) as User[];
+  }, [searchQuery, queryTokens, allUsers]);
 
   const suggestionRows = useMemo(() => {
     const rows: { type: 'search' | 'user'; value: string; user?: User }[] = [];
@@ -270,7 +322,6 @@ export default function SearchPage() {
 
   return (
     <div className="min-h-screen bg-transparent text-[rgb(15,20,25)]">
-      {/* ============ Header ============ */}
       <div className={`sticky top-0 z-30 transition-all duration-300 ${
         isScrolled 
           ? 'max-sm:bg-[#fbf9f2]/70 max-sm:backdrop-blur-md' 
@@ -299,7 +350,6 @@ export default function SearchPage() {
               )}
             </div>
 
-            {/* Suggestion Panel */}
             {isInputFocused && suggestionRows.length > 0 && (
               <div ref={suggestBoxRef} className="absolute left-0 right-0 mt-2 bg-white/95 backdrop-blur-xl rounded-2xl shadow-[0_8px_30px_rgba(0,0,0,0.1)] border border-black/5 overflow-hidden max-h-[420px] overflow-y-auto">
                 {!inputValue.trim() && history.length > 0 && (
@@ -342,34 +392,32 @@ export default function SearchPage() {
         </div>
       </div>
 
-      {/* ============ Content Area ============ */}
       <div className="max-w-3xl mx-auto">
         <Tabs defaultValue="posts" className="w-full">
           <TabsList className="w-full h-[53px] bg-transparent border-b border-black/[0.03] rounded-none p-0 grid grid-cols-2 relative z-20">
-            <TabsTrigger
-              value="posts"
-              className="relative h-full bg-transparent text-[15px] font-medium text-[rgb(83,100,113)] data-[state=active]:text-[rgb(15,20,25)] data-[state=active]:font-bold data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-black/[0.03] transition-colors data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:w-16 data-[state=active]:after:h-1 data-[state=active]:after:rounded-full data-[state=active]:after:bg-[#1d9bf0]"
-            >
+            <TabsTrigger value="posts" className="relative h-full bg-transparent text-[15px] font-medium text-[rgb(83,100,113)] data-[state=active]:text-[rgb(15,20,25)] data-[state=active]:font-bold data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-black/[0.03] transition-colors data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:w-16 data-[state=active]:after:h-1 data-[state=active]:after:rounded-full data-[state=active]:after:bg-[#1d9bf0]">
               ポスト
             </TabsTrigger>
-            <TabsTrigger
-              value="users"
-              className="relative h-full bg-transparent text-[15px] font-medium text-[rgb(83,100,113)] data-[state=active]:text-[rgb(15,20,25)] data-[state=active]:font-bold data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-black/[0.03] transition-colors data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:w-16 data-[state=active]:after:h-1 data-[state=active]:after:rounded-full data-[state=active]:after:bg-[#1d9bf0]"
-            >
+            <TabsTrigger value="users" className="relative h-full bg-transparent text-[15px] font-medium text-[rgb(83,100,113)] data-[state=active]:text-[rgb(15,20,25)] data-[state=active]:font-bold data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-black/[0.03] transition-colors data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:w-16 data-[state=active]:after:h-1 data-[state=active]:after:rounded-full data-[state=active]:after:bg-[#1d9bf0]">
               アカウント
             </TabsTrigger>
           </TabsList>
 
           <TabsContent value="posts" className="mt-4 bg-transparent border-none outline-none">
             {!searchQuery ? <EmptyHint title="LaimeSearch (ベータ版) " desc="キーワードを入力して、ポストやアカウントを見つけましょう。" /> :
-             isPostsLoading ? <div>{Array.from({ length: 5 }).map((_, i) => <RowSkeleton key={i} />)}</div> :
-             filteredPosts.length === 0 ? <EmptyHint title={`"${searchQuery}" に一致する結果はありません`} desc="キーワードを変えてみてください。" /> :
+             isPostsLoading && page === 0 ? <div>{Array.from({ length: 5 }).map((_, i) => <RowSkeleton key={i} />)}</div> :
+             searchedPosts.length === 0 ? <EmptyHint title={`"${searchQuery}" に一致する結果はありません`} desc="キーワードを変えてみてください。" /> :
              <div className="flex flex-col gap-4">
-               {filteredPosts.map((post: any) => (
+               {searchedPosts.map((post: PostWithAuthor) => (
                  <div key={post.id} className="rounded-xl overflow-hidden hover:bg-black/[0.01] transition-colors">
                    <PostCard post={post} />
                  </div>
                ))}
+               
+               {/* 無限スクロール検知用の要素 */}
+               <div ref={lastElementRef} className="h-20 flex items-center justify-center">
+                 {hasMore && searchQuery && <Loader2 className="w-6 h-6 text-[#1d9bf0] animate-spin" />}
+               </div>
              </div>}
           </TabsContent>
 
