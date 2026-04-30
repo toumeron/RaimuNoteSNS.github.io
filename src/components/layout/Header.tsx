@@ -18,7 +18,8 @@ export const Header = () => {
   const navigate = useNavigate();
 
   return (
-    <header className="sticky top-0 z-50 border-b border-border/40 bg-background/80 backdrop-blur-md max-sm:bg-[#fbf9f2]/70">
+    // bg-background/80 をベースにし、モバイル版(max-sm)でも背景色(var(--background))を使用するように修正
+    <header className="sticky top-0 z-50 border-b border-border/40 bg-background/80 backdrop-blur-md">
       <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-4">
         <Logo />
         {user ? (
@@ -31,16 +32,25 @@ export const Header = () => {
                 </Avatar>
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56 rounded-xl border-border/60 shadow-xl">
-              <DropdownMenuItem onClick={() => navigate('/search')}>
+            <DropdownMenuContent align="end" className="w-56 rounded-xl border-border/60 shadow-xl bg-popover text-popover-foreground">
+              <DropdownMenuItem 
+                onClick={() => navigate('/search')}
+                className="dark:focus:text-black"
+              >
                 <Search className="mr-2 h-4 w-4" /> 検索
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               
-              <DropdownMenuItem onClick={() => navigate(`/u/${user.username}`)}>
+              <DropdownMenuItem 
+                onClick={() => navigate(`/u/${user.username}`)}
+                className="dark:focus:text-black"
+              >
                 <UserIcon className="mr-2 h-4 w-4" /> プロフィール
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => navigate('/settings')}>
+              <DropdownMenuItem 
+                onClick={() => navigate('/settings')}
+                className="dark:focus:text-black"
+              >
                 <SettingsIcon className="mr-2 h-4 w-4" /> 設定
               </DropdownMenuItem>
               <DropdownMenuSeparator />
@@ -49,7 +59,7 @@ export const Header = () => {
                   logout();
                   navigate('/auth');
                 }}
-                className="text-destructive focus:bg-destructive/10 focus:text-destructive"
+                className="text-destructive focus:bg-destructive/10 dark:focus:bg-destructive dark:focus:text-white"
               >
                 <LogOut className="mr-2 h-4 w-4" /> ログアウト
               </DropdownMenuItem>

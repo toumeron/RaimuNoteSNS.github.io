@@ -17,7 +17,7 @@ const MAX_IMAGES = 4;
 
 interface PostComposerProps {
   initialQuotedPost?: PostWithAuthor | null;
-  initialContent?: string; // ← 追加
+  initialContent?: string;
   onSuccess?: () => void;
 }
 
@@ -28,13 +28,11 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
   
   const { mutateAsync, isPending } = useCreatePost();
   
-  // ステートの初期値に initialContent を適用
   const [content, setContent] = useState(initialContent);
   const [previews, setPreviews] = useState<string[]>([]);
   const [quotedPost, setQuotedPost] = useState<PostWithAuthor | null>(initialQuotedPost || null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // 外部から initialContent が変わった場合（共有データの読み込み遅延など）に同期
   useEffect(() => {
     if (initialContent) {
       setContent(initialContent);
@@ -113,7 +111,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
   const overLimit = remaining < 0;
 
   return (
-    <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft transition-all duration-300">
+    <div className="rounded-3xl bg-card p-5 shadow-soft transition-all duration-300">
       <div className="flex gap-3">
         <Avatar className="h-11 w-11 border-2 border-primary/30 shrink-0">
           <AvatarImage src={user.avatarUrl} alt={user.displayName} />
@@ -125,7 +123,8 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
             onChange={(e) => setContent(e.target.value)}
             placeholder={quotedPost ? "コメントを添えてリポスト" : "いまどうしてる？"}
             rows={3}
-            className="resize-none border-0 bg-transparent px-0 text-[15px] leading-relaxed shadow-none focus-visible:ring-0 w-full"
+            /* ring, outline, border すべてを強制的に無効化 */
+            className="resize-none border-0 bg-transparent px-0 text-[20px] leading-relaxed shadow-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:outline-none outline-none w-full"
           />
 
           {quotedPost && (

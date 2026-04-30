@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/hooks/useAuth";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { ThemeProvider } from "next-themes"; // 追加
 import AuthPage from "./pages/Auth";
 import Feed from "./pages/Feed";
 import PostDetail from "./pages/PostDetail";
@@ -13,7 +14,7 @@ import Profile from "./pages/Profile";
 import Settings from "./pages/Settings";
 import SearchPage from "./pages/SearchPage";
 import PostActivity from "./pages/PostActivity";
-import Share from "./pages/Share"; // 1. Shareページをインポート
+import Share from "./pages/Share";
 import NotFound from "./pages/NotFound";
 
 const ScrollToTop = () => {
@@ -37,34 +38,37 @@ const queryClient = new QueryClient({
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <BrowserRouter 
-        basename="/RaimuNoteSNS.github.io"
-        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
-      >
-        <ScrollToTop />
+    {/* ThemeProvider を追加。attribute="class" が必須です */}
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
         
-        <AuthProvider>
-          <Routes>
-            <Route path="/auth" element={<AuthPage />} />
-            <Route element={<AppLayout />}>
-              <Route path="/" element={<Feed />} />
-              <Route path="/search" element={<SearchPage />} />
-              <Route path="/post/:id" element={<PostDetail />} />
-              <Route path="/post/:postId/activity" element={<PostActivity />} />
-              <Route path="/u/:username" element={<Profile />} />
-              <Route path="/settings" element={<Settings />} />
-              {/* 2. 共有受け取り用のルートを追加 */}
-              <Route path="/share" element={<Share />} />
-            </Route>
-            <Route path="/index" element={<Navigate to="/" replace />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </AuthProvider>
-      </BrowserRouter>
-    </TooltipProvider>
+        <BrowserRouter 
+          basename="/RaimuNoteSNS.github.io"
+          future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+        >
+          <ScrollToTop />
+          
+          <AuthProvider>
+            <Routes>
+              <Route path="/auth" element={<AuthPage />} />
+              <Route element={<AppLayout />}>
+                <Route path="/" element={<Feed />} />
+                <Route path="/search" element={<SearchPage />} />
+                <Route path="/post/:id" element={<PostDetail />} />
+                <Route path="/post/:postId/activity" element={<PostActivity />} />
+                <Route path="/u/:username" element={<Profile />} />
+                <Route path="/settings" element={<Settings />} />
+                <Route path="/share" element={<Share />} />
+              </Route>
+              <Route path="/index" element={<Navigate to="/" replace />} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </AuthProvider>
+        </BrowserRouter>
+      </TooltipProvider>
+    </ThemeProvider>
   </QueryClientProvider>
 );
 

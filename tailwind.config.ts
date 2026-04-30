@@ -1,18 +1,14 @@
 import type { Config } from "tailwindcss";
+import tailwindcssAnimate from "tailwindcss-animate"; // 1. importを追加
 
 export default {
-  darkMode: ["class"],
+  darkMode: "class",
   content: ["./pages/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}", "./app/**/*.{ts,tsx}", "./src/**/*.{ts,tsx}"],
   prefix: "",
   theme: {
-    container: {
-      center: true,
-      padding: "2rem",
-      screens: {
-        "2xl": "1400px",
-      },
-    },
+    // ... (既存の theme 設定は一切いじらずそのまま)
     extend: {
+      // ... (既存の extend 設定もそのまま)
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
@@ -81,20 +77,12 @@ export default {
       },
       keyframes: {
         "accordion-down": {
-          from: {
-            height: "0",
-          },
-          to: {
-            height: "var(--radix-accordion-content-height)",
-          },
+          from: { height: "0" },
+          to: { height: "var(--radix-accordion-content-height)" },
         },
         "accordion-up": {
-          from: {
-            height: "var(--radix-accordion-content-height)",
-          },
-          to: {
-            height: "0",
-          },
+          from: { height: "var(--radix-accordion-content-height)" },
+          to: { height: "0" },
         },
         "heart-pop": {
           "0%": { transform: "scale(1)" },
@@ -114,5 +102,6 @@ export default {
       },
     },
   },
-  plugins: [require("tailwindcss-animate")],
+  // 2. require ではなく import した変数を使用する
+  plugins: [tailwindcssAnimate],
 } satisfies Config;

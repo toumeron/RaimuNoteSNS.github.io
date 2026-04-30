@@ -1,5 +1,5 @@
 import { useRef, useState, type ChangeEvent } from 'react';
-import { ImagePlus, Loader2, LogOut } from 'lucide-react';
+import { ImagePlus, Loader2, LogOut, Moon, Sun, Monitor } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,6 +11,7 @@ import { useUpdateProfile } from '@/hooks/useProfile';
 import { useNavigate } from 'react-router-dom';
 import { z } from 'zod';
 import { toast } from 'sonner';
+import { useTheme } from 'next-themes'; // テーマ切り替え用フック
 
 const schema = z.object({
   displayName: z.string().trim().min(1, '表示名を入力してください').max(30, '30文字以内で入力してください'),
@@ -19,6 +20,7 @@ const schema = z.object({
 
 export default function Settings() {
   const { user, logout } = useAuth();
+  const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
   const { mutateAsync, isPending } = useUpdateProfile(user?.id ?? '');
 
@@ -143,9 +145,43 @@ export default function Settings() {
 
       <Separator />
 
+      {/* 外観設定セクション */}
+      <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
+        <h2 className="font-display text-base font-bold">外観の設定</h2>
+        <p className="mt-1 text-sm text-muted-foreground">LimeNoteの表示を切り替えます</p>
+        
+        <div className="mt-4 grid grid-cols-3 gap-2 rounded-2xl bg-muted p-1">
+          <button
+            onClick={() => setTheme('light')}
+            className={`flex items-center justify-center gap-2 rounded-xl py-2 text-sm font-bold transition ${
+              theme === 'light' ? 'bg-background shadow-sm text-primary' : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Sun className="h-4 w-4" /> ライト
+          </button>
+          <button
+            onClick={() => setTheme('dark')}
+            className={`flex items-center justify-center gap-2 rounded-xl py-2 text-sm font-bold transition ${
+              theme === 'dark' ? 'bg-background shadow-sm text-primary' : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Moon className="h-4 w-4" /> ダーク
+          </button>
+          <button
+            onClick={() => setTheme('system')}
+            className={`flex items-center justify-center gap-2 rounded-xl py-2 text-sm font-bold transition ${
+              theme === 'system' ? 'bg-background shadow-sm text-primary' : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Monitor className="h-4 w-4" /> システム
+          </button>
+        </div>
+      </div>
+
+      {/* アカウントセクション */}
       <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
         <h2 className="font-display text-base font-bold">アカウント</h2>
-        <p className="mt-1 text-sm text-muted-foreground">ログアウトすると認証画面に戻ります。</p>
+        <p className="mt-1 text-sm text-muted-foreground">ログアウトすると認証画面に戻ります</p>
         <Button
           variant="outline"
           className="mt-4 rounded-full border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"

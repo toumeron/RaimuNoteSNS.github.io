@@ -4,7 +4,7 @@
 
 /* ムリムリSNS デザインシステム
    配色は「わたなれ」公式サイトを踏襲（ピンク × ティール × クリーム）
-   全色HSL定義 */
+   ダークモードを完全な黒から、モダンなダークグレー（夜明け）ベースに修正 */
 
 @layer base {
   :root {
@@ -65,30 +65,61 @@
     --sidebar-accent-foreground: 340 60% 35%;
     --sidebar-border: 345 50% 90%;
     --sidebar-ring: 340 85% 62%;
+
+    /* 装飾用透過カラー */
+    --decoration-pink: hsl(345 100% 95% / 0.6);
+    --decoration-teal: hsl(185 70% 92% / 0.5);
   }
 
   .dark {
-    --background: 340 25% 10%;
-    --foreground: 45 30% 95%;
-    --card: 340 22% 14%;
-    --card-foreground: 45 30% 95%;
-    --popover: 340 22% 14%;
-    --popover-foreground: 45 30% 95%;
+    /* Twitterのダーク（夜明け）を意識した深い紺色ベース */
+    --background: 0 0% 0%;
+    --foreground: 210 20% 98%;
+    
+    /* カード類は背景より少し明るいグレー。漆黒を避けています */
+    --card: 0 0% 9%;
+    --card-foreground: 210 20% 98%;
+    
+    --popover: 210 20% 18%;
+    --popover-foreground: 210 20% 98%;
+    
+    /* ピンクとティールは暗い背景で映えるように彩度を維持 */
     --primary: 340 85% 65%;
     --primary-foreground: 0 0% 100%;
-    --primary-soft: 340 50% 25%;
-    --secondary: 340 20% 20%;
-    --secondary-foreground: 45 30% 95%;
-    --muted: 340 15% 18%;
-    --muted-foreground: 40 15% 65%;
-    --accent: 185 70% 55%;
+    --primary-soft: 340 50% 20%;
+    
+    /* セカンダリは背景に馴染む深いトーン */
+    --secondary: 210 20% 18%;
+    --secondary-foreground: 340 80% 85%;
+    
+    --muted: 210 20% 20%;
+    --muted-foreground: 210 15% 70%;
+    
+    --accent: 185 80% 50%;
     --accent-foreground: 0 0% 100%;
-    --accent-soft: 185 50% 25%;
-    --destructive: 0 70% 55%;
+    --accent-soft: 185 60% 18%;
+    
+    --destructive: 0 85% 60%;
     --destructive-foreground: 0 0% 100%;
-    --border: 340 20% 22%;
-    --input: 340 20% 22%;
+    
+    /* 境界線はコントラストを抑えた設定 */
+    --border: 210 20% 22%;
+    --input: 210 20% 22%;
     --ring: 340 85% 65%;
+
+    /* ダークモード用の装飾カラー（紺背景に溶け込む透過） */
+    --decoration-pink: hsl(340 80% 25% / 0.2);
+    --decoration-teal: hsl(185 80% 25% / 0.15);
+    
+    /* ダークモードのシャドウ：黒すぎない背景に合わせ、より深い色の影を設定 */
+    --shadow-soft: 0 4px 20px -4px rgba(0, 0, 0, 0.4);
+    --shadow-card: 0 8px 30px -8px rgba(0, 0, 0, 0.5);
+
+    /* sidebar (dark) */
+    --sidebar-background: 210 20% 8%;
+    --sidebar-foreground: 210 20% 98%;
+    --sidebar-primary: 340 85% 65%;
+    --sidebar-border: 210 20% 18%;
   }
 }
 
@@ -105,9 +136,10 @@
     @apply bg-background text-foreground;
     font-feature-settings: "palt";
     -webkit-font-smoothing: antialiased;
+    /* 背景グラデーションの調整 */
     background-image:
-      radial-gradient(circle at 10% 0%, hsl(345 100% 95% / 0.6), transparent 40%),
-      radial-gradient(circle at 90% 100%, hsl(185 70% 92% / 0.5), transparent 40%);
+      radial-gradient(circle at 10% 0%, var(--decoration-pink), transparent 60%),
+      radial-gradient(circle at 90% 100%, var(--decoration-teal), transparent 60%);
     background-attachment: fixed;
     min-height: 100vh;
   }
@@ -120,16 +152,16 @@
 }
 
 @layer components {
-  /* ハート背景パターン */
+  /* ハート背景パターン - ダークモード対応 */
   .heart-bg {
     background-image:
-      radial-gradient(circle at 20% 30%, hsl(340 80% 88% / 0.4) 0, transparent 8%),
-      radial-gradient(circle at 70% 60%, hsl(185 65% 88% / 0.4) 0, transparent 8%),
-      radial-gradient(circle at 40% 80%, hsl(340 80% 88% / 0.3) 0, transparent 6%),
-      radial-gradient(circle at 85% 20%, hsl(345 100% 90% / 0.5) 0, transparent 7%);
+      radial-gradient(circle at 20% 30%, var(--decoration-pink) 0, transparent 10%),
+      radial-gradient(circle at 70% 60%, var(--decoration-teal) 0, transparent 10%),
+      radial-gradient(circle at 40% 80%, var(--decoration-pink) 0, transparent 8%),
+      radial-gradient(circle at 85% 20%, var(--decoration-teal) 0, transparent 9%);
   }
 
-  /* 紙吹雪装飾 */
+  /* 紙吹雪装飾 - 紺背景に合わせた透過度 */
   .confetti-bg::before {
     content: '';
     position: absolute;
