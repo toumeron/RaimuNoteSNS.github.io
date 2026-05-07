@@ -6,9 +6,10 @@ export function useOSNotification(currentUserId: string | null) {
   useEffect(() => {
     if (!currentUserId) return;
 
-    // --- 修正ポイント1: Notificationの存在チェック ---
+    // windowの中にNotificationが存在するかをチェック
     const isNotificationSupported = typeof window !== 'undefined' && 'Notification' in window;
 
+    // ブラウザが対応している場合のみ許可を求める
     if (isNotificationSupported && Notification.permission === 'default') {
       Notification.requestPermission();
     }
@@ -31,20 +32,24 @@ export function useOSNotification(currentUserId: string | null) {
           const iconUrl = actor_avatar_url || `${import.meta.env.BASE_URL}favicon.ico`;
 
           // 1. Sonner（アプリ内トースト）
-          // これはブラウザでも動くのでそのまま
+          // これは環境に依存せず動くのでそのまま
           toast(title, {
             description: message,
             icon: actor_avatar_url ? undefined : "🔔", 
           });
 
           // 2. OS通知
-          // --- 修正ポイント2: 実行時にも存在と許可を確認 ---
+          // 通知に対応しており、かつ許可されている場合のみ実行
           if (isNotificationSupported && Notification.permission === 'granted') {
-            new Notification(title, {
-              body: message,
-              icon: iconUrl,
-              tag: "mention",
-            });
+            try {
+              new Notification(title, {
+                body: message,
+                icon: iconUrl,
+                tag: "mention",
+              });
+            } catch (e) {
+              console.error("Notification creation failed:", e);
+            }
           }
         }
       )
