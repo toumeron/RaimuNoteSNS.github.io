@@ -13,6 +13,14 @@ export function ProfileHeader({ user }: { user: User }) {
   const { data: stats } = useFollowStats(user.id);
   const isMe = me?.id === user.id;
 
+  // 数値をフォーマットする関数
+  const formatDisplayCount = (count: number) => {
+    if (count >= 10000) {
+      return (count / 10000).toFixed(1).replace(/\.0$/, '') + '万';
+    }
+    return count.toLocaleString();
+  };
+
   return (
     <div className="overflow-hidden rounded-3xl border border-border/60 bg-card shadow-soft">
       <div className="relative h-40 bg-gradient-cream sm:h-48">
@@ -70,11 +78,15 @@ export function ProfileHeader({ user }: { user: User }) {
 
         <div className="mt-4 flex items-center gap-5 border-t border-border/60 pt-4 text-sm">
           <div>
-            <span className="font-display text-base font-bold tabular-nums">{stats?.following ?? 0}</span>
+            <span className="font-display text-base font-bold tabular-nums">
+              {stats ? formatDisplayCount(stats.following) : 0}
+            </span>
             <span className="ml-1 text-muted-foreground">フォロー中</span>
           </div>
           <div>
-            <span className="font-display text-base font-bold tabular-nums">{stats?.followers ?? 0}</span>
+            <span className="font-display text-base font-bold tabular-nums">
+              {stats ? formatDisplayCount(stats.followers) : 0}
+            </span>
             <span className="ml-1 text-muted-foreground">フォロワー</span>
           </div>
         </div>

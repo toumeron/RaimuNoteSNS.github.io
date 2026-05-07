@@ -1,5 +1,6 @@
+import { useState, useEffect } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, MessageCircle } from 'lucide-react'; // RefreshCwを削除
+import { ArrowLeft, MessageCircle, X } from 'lucide-react'; // RefreshCwを削除, Xを追加
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { LikeButton } from '@/components/post/LikeButton';
@@ -14,7 +15,33 @@ import { YouTubeEmbed } from '@/components/YouTubeEmbed'; // 追加
 export default function PostDetail() {
   const { id = '' } = useParams();
   const { data, isLoading, isError } = usePost(id);
+  const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null); // 拡大用
   const navigate = useNavigate();
+
+  // 数値をフォーマットする関数
+  const formatDisplayCount = (count: number) => {
+    if (count >= 10000) {
+      return (count / 10000).toFixed(1).replace(/\.0$/, '') + '万';
+    }
+    return count.toLocaleString();
+  };
+
+  // モーダル表示時にスクロールを固定
+  useEffect(() => {
+    if (selectedImageUrl) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+    return () => { document.body.style.overflow = 'unset'; };
+  }, [selectedImageUrl]);
+
+  // 画像クリック時の処理
+  const handleImageClick = (e: React.MouseEvent, url: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelectedImageUrl(url);
+  };
 
   // YouTube IDの抽出と本文の加工
   const youtubeId = data ? getYouTubeId(data.content) : null;
@@ -69,8 +96,16 @@ export default function PostDetail() {
               </Avatar>
             </Link>
             <div className="min-w-0">
-              <Link to={`/u/${data.author.username}`} className="block truncate font-display font-bold hover:underline">
-                {data.author.displayName}
+              <Link to={`/u/${data.author.username}`} className="flex items-center gap-0.5 min-w-0 font-display font-bold hover:underline">
+                <span className="truncate">{data.author.displayName}</span>
+                {data.author.isOfficial && (
+                  <img 
+                    src={`${import.meta.env.BASE_URL}verified.png`}
+                    alt="Official" 
+                    className="h-4 w-4 shrink-0 transform translate-y-[0.5px]"
+                    loading="eager"
+                  />
+                )}
               </Link>
               <p className="truncate text-xs text-muted-foreground">@{data.author.username}</p>
             </div>
@@ -86,7 +121,17 @@ export default function PostDetail() {
           {/* YouTube埋め込みを追加 */}
           {youtubeId && <YouTubeEmbed videoId={youtubeId} />}
 
-          <PostImages urls={data.imageUrls} />
+          <div 
+            className="cursor-zoom-in"
+            onClick={(e) => {
+              const target = e.target as HTMLElement;
+              if (target.tagName === 'IMG' && (target as HTMLImageElement).src) {
+                handleImageClick(e, (target as HTMLImageElement).src);
+              }
+            }}
+          >
+            <PostImages urls={data.imageUrls} />
+          </div>
 
           <p className="mt-4 text-xs text-muted-foreground" title={formatDate(data.createdAt)}>
             {formatDate(data.createdAt)} · {formatRelative(data.createdAt)}
@@ -101,10 +146,14 @@ export default function PostDetail() {
           </p>
 
           <div className="mt-3 flex items-center gap-1 border-t border-border/60 pt-3">
-            <LikeButton postId={data.id} liked={data.likedByMe} count={data.likesCount} />
+            <LikeButton 
+              postId={data.id} 
+              liked={data.likedByMe} 
+              count={formatDisplayCount(data.likesCount) as any} 
+            />
             <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm text-muted-foreground">
               <MessageCircle className="h-5 w-5" />
-              <span className="font-bold tabular-nums">{data.commentsCount}</span>
+              <span className="font-bold tabular-nums">{formatDisplayCount(data.commentsCount)}</span>
             </span>
           </div>
         </article>
@@ -118,6 +167,52 @@ export default function PostDetail() {
             <CommentList postId={data.id} />
           </div>
         </>
+      )}
+
+      {/* 画像拡大オーバーレイ（モーダル） */}
+      {selectedImageUrl && data && (
+        <div 
+          className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black/95 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={() => setSelectedImageUrl(null)}
+        >
+          {/* 閉じるボタン */}
+          <button 
+            className="absolute top-5 left-5 z-[110] p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
+            onClick={() => setSelectedImageUrl(null)}
+          >
+            <X className="h-6 w-6" />
+          </button>
+
+          {/* 画像本体 */}
+          <div className="relative flex max-h-full max-w-full items-center justify-center p-4">
+            <img 
+              src={selectedImageUrl} 
+              alt="Expanded view" 
+              className="max-h-[85vh] max-w-[95vw] object-contain shadow-2xl animate-in zoom-in-95 duration-200"
+              onClick={(e) => e.stopPropagation()} 
+            />
+          </div>
+
+          {/* 下部アクションエリア */}
+          <div 
+            className="absolute bottom-0 left-0 right-0 flex items-center justify-center bg-gradient-to-t from-black/80 to-transparent pb-8 pt-10"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-8 rounded-full bg-black/40 px-6 py-3 backdrop-blur-md border border-white/10">
+              <div className="scale-125">
+                <LikeButton 
+                  postId={data.id} 
+                  liked={data.likedByMe} 
+                  count={formatDisplayCount(data.likesCount) as any} 
+                />
+              </div>
+              <div className="inline-flex items-center gap-2 text-white/90">
+                <MessageCircle className="h-6 w-6" />
+                <span className="font-bold tabular-nums text-lg">{formatDisplayCount(data.commentsCount)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
