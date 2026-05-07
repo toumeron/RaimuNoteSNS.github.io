@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect, type ChangeEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ImagePlus, Loader2, Send, X } from 'lucide-react';
+import { ImagePlus, Loader2, Send, X, AtSign } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import type { PostWithAuthor } from '@/types';
 import { formatRelative } from '@/lib/format';
+import { supabase } from '@/lib/supabase';
 
 const MAX_LEN = 500;
 const MAX_IMAGES = 4;
@@ -19,6 +20,38 @@ interface PostComposerProps {
   initialQuotedPost?: PostWithAuthor | null;
   initialContent?: string;
   onSuccess?: () => void;
+}
+
+// テキストエリア内のカーソル座標を計算するためのヘルパー関数
+function getCaretCoordinates(element: HTMLTextAreaElement, position: number) {
+  const div = document.createElement('div');
+  const style = window.getComputedStyle(element);
+
+  ['width', 'height', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+   'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+   'fontSize', 'lineHeight', 'fontFamily', 'fontWeight', 'wordWrap', 'whiteSpace',
+   'letterSpacing', 'boxSizing'].forEach((prop) => {
+    (div.style as any)[prop] = style.getPropertyValue(prop);
+  });
+
+  div.style.position = 'absolute';
+  div.style.visibility = 'hidden';
+  div.style.whiteSpace = 'pre-wrap';
+  div.style.overflow = 'hidden';
+
+  div.textContent = element.value.substring(0, position);
+  const span = document.createElement('span');
+  span.textContent = element.value.substring(position) || '.';
+  div.appendChild(span);
+
+  document.body.appendChild(div);
+  const coordinates = {
+    top: span.offsetTop,
+    left: span.offsetLeft,
+    height: span.offsetHeight
+  };
+  document.body.removeChild(div);
+  return coordinates;
 }
 
 export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess }: PostComposerProps) {
@@ -32,6 +65,16 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
   const [previews, setPreviews] = useState<string[]>([]);
   const [quotedPost, setQuotedPost] = useState<PostWithAuthor | null>(initialQuotedPost || null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // メンション機能用ステートとRef
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionResults, setMentionResults] = useState<any[]>([]);
+  const [cursorPosition, setCursorPosition] = useState(0);
+  const [mentionPos, setMentionPos] = useState({ top: 0, left: 0 });
+  const [scrollTop, setScrollTop] = useState(0);
+  
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (initialContent) {
@@ -54,7 +97,84 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
     }
   }, [initialQuotedPost]);
 
+  // メンション候補の検索ロジック
+  useEffect(() => {
+    const fetchUsers = async () => {
+      if (!mentionQuery) {
+        setMentionResults([]);
+        return;
+      }
+      const { data } = await supabase
+        .from('profiles')
+        .select('id, username, display_name, avatar_url')
+        .ilike('username', `${mentionQuery}%`)
+        .limit(5);
+      
+      setMentionResults(data || []);
+    };
+    fetchUsers();
+  }, [mentionQuery]);
+
+  // 外側クリックでメンション候補を閉じる
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setMentionQuery(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   if (!user) return null;
+
+  const handleContentChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    const pos = e.target.selectionStart;
+    setContent(val);
+    setCursorPosition(pos);
+
+    // カーソル位置の直前の単語が @で始まっているか確認
+    const lastAtIdx = val.lastIndexOf('@', pos - 1);
+    if (lastAtIdx !== -1) {
+      const query = val.slice(lastAtIdx + 1, pos);
+      // 空白が含まれていない場合のみ検索対象とする
+      if (!query.includes(' ') && !query.includes('\n')) {
+        setMentionQuery(query);
+        // カーソル位置の座標を計算
+        if (textareaRef.current) {
+          const coords = getCaretCoordinates(textareaRef.current, pos);
+          setMentionPos({ 
+            top: coords.top + coords.height, 
+            left: Math.min(coords.left, 150) // 右端にはみ出さないよう制限
+          });
+        }
+      } else {
+        setMentionQuery(null);
+      }
+    } else {
+      setMentionQuery(null);
+    }
+  };
+
+  const handleScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
+    setScrollTop(e.currentTarget.scrollTop);
+  };
+
+  const selectMention = (username: string) => {
+    const lastAtIdx = content.lastIndexOf('@', cursorPosition - 1);
+    const beforeAt = content.slice(0, lastAtIdx);
+    const afterCursor = content.slice(cursorPosition);
+    const newContent = `${beforeAt}@${username} ${afterCursor}`;
+    setContent(newContent);
+    setMentionQuery(null);
+    setMentionResults([]);
+    
+    // 入力エリアにフォーカスを戻す
+    if (textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  };
 
   const onFile = (e: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
@@ -107,6 +227,18 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
     }
   };
 
+  // メンション部分のテキスト色付け描画
+  const renderHighlightedText = (text: string) => {
+    const regex = /(@[a-zA-Z0-9_]+)/g;
+    const parts = text.split(regex);
+    return parts.map((part, i) => {
+      if (part.match(regex)) {
+        return <span key={i} className="text-primary ">{part}</span>;
+      }
+      return <span key={i}>{part}</span>;
+    });
+  };
+
   const remaining = MAX_LEN - content.length;
   const overLimit = remaining < 0;
 
@@ -117,15 +249,74 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
           <AvatarImage src={user.avatarUrl} alt={user.displayName} />
           <AvatarFallback>{user.displayName.slice(0, 1)}</AvatarFallback>
         </Avatar>
-        <div className="flex-1 min-w-0 space-y-3">
-          <Textarea
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            placeholder={quotedPost ? "コメントを添えてリポスト" : "いまどうしてる？"}
-            rows={3}
-            /* ring, outline, border すべてを強制的に無効化 */
-            className="resize-none border-0 bg-transparent px-0 text-[20px] leading-relaxed shadow-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:outline-none outline-none w-full"
-          />
+        <div className="flex-1 min-w-0 space-y-3 relative" ref={containerRef}>
+          
+          <div className="relative w-full overflow-hidden">
+            {/* カスタムプレースホルダー */}
+            {!content && (
+              <div className="absolute inset-0 pointer-events-none px-0 py-2 text-[20px] leading-relaxed text-muted-foreground z-0">
+                {quotedPost ? "コメントを添えてリポスト" : "いまどうしてる？"}
+              </div>
+            )}
+
+            {/* バックドロップレイヤー（色付け用） */}
+            <div
+              aria-hidden="true"
+              className="absolute inset-0 pointer-events-none whitespace-pre-wrap break-words px-0 py-2 text-[20px] leading-relaxed text-foreground z-0"
+              style={{ transform: `translateY(-${scrollTop}px)` }}
+            >
+              {renderHighlightedText(content)}
+              {/* 最後の改行を正しくレンダリングするための処理 */}
+              {content.endsWith('\n') ? <br /> : null}
+            </div>
+
+            {/* 実際のテキストエリア（文字を透明化） */}
+            <Textarea
+              ref={textareaRef}
+              value={content}
+              onChange={handleContentChange}
+              onScroll={handleScroll}
+              rows={3}
+              spellCheck={false}
+              /* selection:bg-[#b4d7ff] (ライトモード) / dark:selection:bg-[#385474] (ダークモード) でハイライト背景色を指定。
+                selection:text-black (ライトモード) / dark:selection:text-white (ダークモード) で文字色を反転させ可視化。
+              */
+              className="relative z-10 resize-none border-0 bg-transparent px-0 py-2 text-[20px] leading-relaxed shadow-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:outline-none outline-none w-full text-transparent selection:bg-[#b4d7ff] selection:text-black dark:selection:bg-[#385474] dark:selection:text-white"
+              style={{ color: "transparent", caretColor: "hsl(var(--foreground))" }}
+            />
+          </div>
+
+          {/* メンション候補リスト（カーソル位置に追従） */}
+          {mentionResults.length > 0 && mentionQuery !== null && (
+            <div 
+              className="absolute z-[60] w-64 overflow-hidden rounded-xl border border-border/60 bg-popover shadow-xl backdrop-blur-md transition-all duration-150"
+              style={{ top: mentionPos.top - scrollTop, left: mentionPos.left }}
+            >
+              <div className="p-2 text-xs font-bold text-muted-foreground bg-muted/30 flex items-center gap-1">
+                <AtSign className="w-3 h-3" /> メンションします
+              </div>
+              {mentionResults.map((result) => (
+                <button
+                  key={result.id}
+                  onClick={() => selectMention(result.username)}
+                  className="flex w-full items-center gap-3 p-3 text-left transition hover:bg-accent focus:bg-accent outline-none"
+                >
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage src={result.avatar_url} />
+                    <AvatarFallback>{result.username[0]}</AvatarFallback>
+                  </Avatar>
+                  <div className="flex flex-col">
+                    <span className="text-sm font-bold truncate leading-none mb-1">
+                      {result.display_name || result.username}
+                    </span>
+                    <span className="text-xs text-muted-foreground leading-none">
+                      @{result.username}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
 
           {quotedPost && (
             <div className="relative mt-2 overflow-hidden rounded-2xl border border-border/60 bg-muted/20 p-4 transition-all">

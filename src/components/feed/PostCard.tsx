@@ -65,6 +65,32 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
         .trim()
     : post.content;
 
+  // --- メンションをリンク化する関数 ---
+  const renderContentWithMentions = (text: string) => {
+    if (!text) return null;
+    
+    // @username 形式にマッチさせる正規表現
+    const parts = text.split(/(@\w+)/g);
+    
+    return parts.map((part, index) => {
+      if (part.startsWith('@')) {
+        const username = part.substring(1);
+        return (
+          <Link
+            key={index}
+            to={`/u/${username}`}
+            className="text-pink-500 hover:underline transition-colors"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {part}
+          </Link>
+        );
+      }
+      return part;
+    });
+  };
+  // ------------------------------
+
   const handleDelete = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -269,7 +295,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
               <div onClick={(e) => { e.stopPropagation(); navigate(`/post/${post.id}`); }}>
                 {displayContent && (
                   <p className="whitespace-pre-wrap break-words text-base leading-relaxed text-foreground">
-                    {displayContent}
+                    {renderContentWithMentions(displayContent)}
                   </p>
                 )}
               </div>

@@ -273,6 +273,11 @@ export async function createPost(input: {
     ...detectedUrls
   ]));
 
+  // --- メンション抽出ロジックの追加 ---
+  const MENTION_PATTERN = /@(\w+)/g;
+  const mentionedUsernames = Array.from(new Set([...input.content.matchAll(MENTION_PATTERN)].map(match => match[1])));
+  // ---------------------------------
+
   const { error } = await supabase.from('posts').insert({
     id:          newId,
     user_id:     userId,
@@ -284,6 +289,23 @@ export async function createPost(input: {
   });
 
   if (error) throw error;
+
+  // --- メンション保存処理の実行 ---
+  if (mentionedUsernames.length > 0) {
+    const { data: mentionedUsers } = await supabase
+      .from('profiles')
+      .select('id, username')
+      .in('username', mentionedUsernames);
+
+    if (mentionedUsers && mentionedUsers.length > 0) {
+      const mentionInserts = mentionedUsers.map(user => ({
+        post_id: newId,
+        mentioned_user_id: user.id
+      }));
+      await supabase.from('mentions').insert(mentionInserts);
+    }
+  }
+  // ---------------------------------
 
   if (input.parentId && input.isQuote) {
     const [rep, quo] = await Promise.all([

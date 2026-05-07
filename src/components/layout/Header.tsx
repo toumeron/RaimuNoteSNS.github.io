@@ -10,7 +10,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/hooks/useAuth';
-import { LogOut, Settings as SettingsIcon, User as UserIcon, Search } from 'lucide-react';
+import { LogOut, Settings as SettingsIcon, User as UserIcon, Search, Bell } from 'lucide-react';
 
 // 名前付きエクスポート
 export const Header = () => {
@@ -39,6 +39,14 @@ export const Header = () => {
               >
                 <Search className="mr-2 h-4 w-4" /> 検索
               </DropdownMenuItem>
+              
+              <DropdownMenuItem 
+                onClick={() => navigate('/notifications')}
+                className="dark:focus:text-black"
+              >
+                <Bell className="mr-2 h-4 w-4" /> 通知
+              </DropdownMenuItem>
+
               <DropdownMenuSeparator />
               
               <DropdownMenuItem 

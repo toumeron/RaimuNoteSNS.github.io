@@ -4,9 +4,10 @@ import { useEffect } from "react";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { AuthProvider } from "@/hooks/useAuth";
+import { AuthProvider, useAuth } from "@/hooks/useAuth"; // useAuth を追加
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ThemeProvider } from "next-themes"; // 追加
+import { useOSNotification } from "@/hooks/useOSNotification"; // 追加
 import AuthPage from "./pages/Auth";
 import Feed from "./pages/Feed";
 import PostDetail from "./pages/PostDetail";
@@ -16,6 +17,7 @@ import SearchPage from "./pages/SearchPage";
 import PostActivity from "./pages/PostActivity";
 import Share from "./pages/Share";
 import NotFound from "./pages/NotFound";
+import Notifications from "./pages/Notifications"; // 追加
 
 const ScrollToTop = () => {
   const { pathname } = useLocation();
@@ -36,6 +38,13 @@ const queryClient = new QueryClient({
   },
 });
 
+// 通知監視用の中間コンポーネント
+const NotificationWatcher = () => {
+  const { user } = useAuth();
+  useOSNotification(user?.id ?? null);
+  return null;
+};
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     {/* ThemeProvider を追加。attribute="class" が必須です */}
@@ -51,10 +60,12 @@ const App = () => (
           <ScrollToTop />
           
           <AuthProvider>
+            <NotificationWatcher /> {/* 通知監視を追加 */}
             <Routes>
               <Route path="/auth" element={<AuthPage />} />
               <Route element={<AppLayout />}>
                 <Route path="/" element={<Feed />} />
+                <Route path="/notifications" element={<Notifications />} />
                 <Route path="/search" element={<SearchPage />} />
                 <Route path="/post/:id" element={<PostDetail />} />
                 <Route path="/post/:postId/activity" element={<PostActivity />} />
