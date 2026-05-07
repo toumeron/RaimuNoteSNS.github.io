@@ -6,7 +6,10 @@ export function useOSNotification(currentUserId: string | null) {
   useEffect(() => {
     if (!currentUserId) return;
 
-    if (Notification.permission === 'default') {
+    // --- 修正ポイント1: Notificationの存在チェック ---
+    const isNotificationSupported = typeof window !== 'undefined' && 'Notification' in window;
+
+    if (isNotificationSupported && Notification.permission === 'default') {
       Notification.requestPermission();
     }
 
@@ -25,21 +28,21 @@ export function useOSNotification(currentUserId: string | null) {
           
           const title = `${actor_name}さんからのメンション`;
           const message = content_preview || "ポストであなたをメンションしました";
-          // アバターがない場合のデフォルト画像
           const iconUrl = actor_avatar_url || `${import.meta.env.BASE_URL}favicon.ico`;
 
           // 1. Sonner（アプリ内トースト）
+          // これはブラウザでも動くのでそのまま
           toast(title, {
             description: message,
-            // ここにアバターを表示する設定を追加
             icon: actor_avatar_url ? undefined : "🔔", 
           });
 
           // 2. OS通知
-          if (Notification.permission === 'granted') {
+          // --- 修正ポイント2: 実行時にも存在と許可を確認 ---
+          if (isNotificationSupported && Notification.permission === 'granted') {
             new Notification(title, {
               body: message,
-              icon: iconUrl, // ここが相手のアイコンになる
+              icon: iconUrl,
               tag: "mention",
             });
           }
