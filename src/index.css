@@ -69,6 +69,12 @@
     /* 装飾用透過カラー */
     --decoration-pink: hsl(345 100% 95% / 0.6);
     --decoration-teal: hsl(185 70% 92% / 0.5);
+
+    /* --- PWA修正: セーフエリア変数の定義 --- */
+    --safe-top: env(safe-area-inset-top);
+    --safe-bottom: env(safe-area-inset-bottom);
+    --safe-left: env(safe-area-inset-left);
+    --safe-right: env(safe-area-inset-right);
   }
 
   .dark {
@@ -130,6 +136,8 @@
 
   html {
     font-family: 'M PLUS Rounded 1c', system-ui, -apple-system, sans-serif;
+    /* PWAでのスクロールバウンス時の背景色漏れを防止 */
+    background-color: hsl(var(--background));
   }
 
   body {
@@ -141,7 +149,11 @@
       radial-gradient(circle at 10% 0%, var(--decoration-pink), transparent 60%),
       radial-gradient(circle at 90% 100%, var(--decoration-teal), transparent 60%);
     background-attachment: fixed;
+    /* 全画面表示にしつつ、コンテンツがノッチに潜り込まないように設定 */
     min-height: 100vh;
+    min-height: -webkit-fill-available;
+    /* body全体の余白を確保 */
+    padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
   }
 
   h1, h2, h3, h4 {
@@ -178,5 +190,33 @@
     background: var(--gradient-primary);
     color: hsl(var(--primary-foreground));
     box-shadow: var(--shadow-soft);
+  }
+
+  /* --- 修正箇所: 固定要素への強制適用クラス --- */
+  
+  /* 固定ヘッダーに使う（paddingを増やしてコンテンツを押し下げる） */
+  .pwa-header {
+    padding-top: var(--safe-top) !important;
+  }
+
+  /* 固定フッター/タブバーに使う（paddingを増やして押し上げる） */
+  .pwa-footer {
+    padding-bottom: var(--safe-bottom) !important;
+  }
+
+  /* absolute/fixedの基準位置をずらす場合 */
+  .fixed-safe-top {
+    top: var(--safe-top) !important;
+  }
+  .fixed-safe-bottom {
+    bottom: var(--safe-bottom) !important;
+  }
+}
+
+@layer utilities {
+  /* iOSでの高さ100%問題を解決するユーティリティ */
+  .h-screen-safe {
+    height: 100vh;
+    height: -webkit-fill-available;
   }
 }

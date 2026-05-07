@@ -20,6 +20,10 @@ export type Post = {
   imageUrls: string[];
   createdAt: string;
   likesCount: number;
+  /**
+   * DBのカラム名変更（comments_count）に合わせ、
+   * フロントエンドで一貫して使用する名称に統一
+   */
   commentsCount: number;
   likedByMe: boolean;
   clientName?: string;
@@ -37,6 +41,7 @@ export type Comment = {
   userId: string;
   content: string;
   createdAt: string;
+  likes_count?: number; // DBのスキーマに合わせたlikes_count
 };
 
 export type Follow = {

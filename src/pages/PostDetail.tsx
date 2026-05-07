@@ -43,6 +43,32 @@ export default function PostDetail() {
     setSelectedImageUrl(url);
   };
 
+  // --- メンションをリンク化する関数 ---
+  const renderContentWithMentions = (text: string) => {
+    if (!text) return null;
+    
+    // @username 形式にマッチさせる正規表現
+    const parts = text.split(/(@\w+)/g);
+    
+    return parts.map((part, index) => {
+      if (part.startsWith('@')) {
+        const username = part.substring(1);
+        return (
+          <Link
+            key={index}
+            to={`/u/${username}`}
+            className="text-pink-500 hover:underline transition-colors"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {part}
+          </Link>
+        );
+      }
+      return part;
+    });
+  };
+  // ------------------------------
+
   // YouTube IDの抽出と本文の加工
   const youtubeId = data ? getYouTubeId(data.content) : null;
   const displayContent = (data && youtubeId)
@@ -111,10 +137,10 @@ export default function PostDetail() {
             </div>
           </div>
 
-          {/* 加工した本文を表示 */}
+          {/* 加工した本文を表示（メンション処理を適用） */}
           {displayContent && (
-            <p className="mt-4 whitespace-pre-wrap break-words text-base leading-relaxed">
-              {displayContent}
+            <p className="mt-4 whitespace-pre-wrap break-words text-base leading-relaxed text-foreground">
+              {renderContentWithMentions(displayContent)}
             </p>
           )}
 
