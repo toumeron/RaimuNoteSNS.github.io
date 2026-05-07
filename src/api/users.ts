@@ -12,6 +12,7 @@ function toUser(row: any): User {
     coverUrl: (row.cover_url ?? '') as string,
     createdAt: (row.created_at ?? '') as string,
     isOfficial:  (row.is_official  ?? false) as boolean,
+    emojiEffect: (row.emoji_effect ?? '') as string,
   };
 }
 
@@ -42,11 +43,12 @@ export async function getUserById(id: string): Promise<User | null> {
  */
 export async function updateProfile(
   id: string,
-  patch: Partial<Pick<User, 'displayName' | 'bio' | 'avatarUrl' | 'coverUrl'>>,
+  patch: Partial<Pick<User, 'displayName' | 'bio' | 'avatarUrl' | 'coverUrl' | 'emojiEffect'>>,
 ): Promise<User> {
   const dbPatch: Record<string, unknown> = {};
   if (patch.displayName !== undefined) dbPatch.display_name = patch.displayName;
   if (patch.bio !== undefined) dbPatch.bio = patch.bio;
+  if (patch.emojiEffect !== undefined) dbPatch.emoji_effect = patch.emojiEffect;
 
   // --- 画像アップロードの共通処理 ---
   const uploadImage = async (url: string, bucket: string) => {

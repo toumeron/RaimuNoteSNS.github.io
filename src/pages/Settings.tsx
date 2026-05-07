@@ -1,5 +1,5 @@
-import { useRef, useState, type ChangeEvent } from 'react';
-import { ImagePlus, Loader2, LogOut, Moon, Sun, Monitor } from 'lucide-react';
+import { useRef, useState, useEffect, type ChangeEvent } from 'react';
+import { ImagePlus, Loader2, LogOut, Moon, Sun, Monitor, Sparkles, Check } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,7 +11,7 @@ import { useUpdateProfile } from '@/hooks/useProfile';
 import { useNavigate } from 'react-router-dom';
 import { z } from 'zod';
 import { toast } from 'sonner';
-import { useTheme } from 'next-themes'; // テーマ切り替え用フック
+import { useTheme } from 'next-themes'; 
 
 const schema = z.object({
   displayName: z.string().trim().min(1, '表示名を入力してください').max(30, '30文字以内で入力してください'),
@@ -24,23 +24,68 @@ export default function Settings() {
   const navigate = useNavigate();
   const { mutateAsync, isPending } = useUpdateProfile(user?.id ?? '');
 
+  // 初期値の決定ロジック：DB(user) > ローカル保存(fallback)
+  const getInitialEmoji = () => {
+    if (user?.emojiEffect) return user.emojiEffect;
+    return localStorage.getItem('lime_emoji_pref') ?? '';
+  };
+
   const [displayName, setDisplayName] = useState(user?.displayName ?? '');
   const [bio, setBio] = useState(user?.bio ?? '');
   const [avatarUrl, setAvatarUrl] = useState(user?.avatarUrl ?? '');
   const [coverUrl, setCoverUrl] = useState(user?.coverUrl ?? '');
+  const [emojiEffect, setEmojiEffect] = useState(getInitialEmoji());
+  
   const [errors, setErrors] = useState<Record<string, string>>({});
   const avatarRef = useRef<HTMLInputElement>(null);
   const coverRef = useRef<HTMLInputElement>(null);
+
+  // マウント時およびuserデータ更新時にステートを同期（リロード対策）
+  useEffect(() => {
+    if (user) {
+      setDisplayName(user.displayName ?? '');
+      setBio(user.bio ?? '');
+      setAvatarUrl(user.avatarUrl ?? '');
+      setCoverUrl(user.coverUrl ?? '');
+      // user.emojiEffectがDBから降ってきたら反映。なければローカルを見る
+      const currentEmoji = user.emojiEffect ?? localStorage.getItem('lime_emoji_pref') ?? '';
+      setEmojiEffect(currentEmoji);
+    }
+  }, [user]);
 
   if (!user) return null;
 
   const onPickImage = (e: ChangeEvent<HTMLInputElement>, setUrl: (s: string) => void) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    // TODO: Supabase Storage にアップロードして公開URLを setUrl に渡す
     const url = URL.createObjectURL(file);
     setUrl(url);
     e.target.value = '';
+  };
+
+  // 絵文字専用の更新処理
+  const updateEmojiOnly = async () => {
+    // 文字数制限のチェック（サロゲートペア対応）
+    const emojiCount = Array.from(emojiEffect).length;
+    if (emojiCount > 1) {
+      toast.error('エフェクトには1文字だけ入力してください');
+      return;
+    }
+
+    try {
+      await mutateAsync({
+        displayName,
+        bio,
+        avatarUrl,
+        coverUrl,
+        emojiEffect
+      });
+      localStorage.setItem('lime_emoji_pref', emojiEffect);
+      toast.success('エフェクト設定を更新しました');
+    } catch (err) {
+      console.error("Emoji Update Error:", err);
+      toast.error('エフェクトの保存に失敗しました');
+    }
   };
 
   const submit = async () => {
@@ -51,10 +96,34 @@ export default function Settings() {
       setErrors(fe);
       return;
     }
+    
+    // 絵文字のバリデーションをメインの保存時にも適用
+    const emojiCount = Array.from(emojiEffect).length;
+    if (emojiCount > 1) {
+      toast.error('エフェクトには1文字だけ入力してください');
+      return;
+    }
+
     setErrors({});
+    
     try {
-      await mutateAsync({ displayName, bio, avatarUrl, coverUrl });
-    } catch {/* hookでtoast */}
+      // 1. DB（Supabase）へ保存
+      await mutateAsync({ 
+        displayName, 
+        bio, 
+        avatarUrl, 
+        coverUrl, 
+        emojiEffect 
+      });
+      
+      // 2. ローカルストレージへ保存（リロード時の保険・即時反映用）
+      localStorage.setItem('lime_emoji_pref', emojiEffect);
+      
+      toast.success('プロフィールを更新しました');
+    } catch (err) {
+      console.error("Settings Update Error:", err);
+      toast.error('保存に失敗しました。DBのカラム名を確認してください。');
+    }
   };
 
   return (
@@ -87,7 +156,6 @@ export default function Settings() {
                 type="button"
                 onClick={() => avatarRef.current?.click()}
                 className="absolute bottom-0 right-0 rounded-full bg-gradient-primary p-2 text-primary-foreground shadow-soft transition hover:scale-110"
-                aria-label="アイコン変更"
               >
                 <ImagePlus className="h-4 w-4" />
               </button>
@@ -175,6 +243,55 @@ export default function Settings() {
           >
             <Monitor className="h-4 w-4" /> システム
           </button>
+        </div>
+      </div>
+
+      <Separator />
+
+      {/* エフェクト設定セクション */}
+      <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-primary" />
+          <h2 className="font-display text-base font-bold">エフェクト設定</h2>
+        </div>
+        <p className="mt-1 text-sm text-muted-foreground">謎機能 ※空白にして更新すると消せる</p>
+        
+        <div className="mt-4 space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="flex-1 space-y-1.5">
+              <Label htmlFor="emojiEffect">降らせる文字</Label>
+              <div className="relative">
+                <Input
+                  id="emojiEffect"
+                  value={emojiEffect}
+                  onChange={(e) => setEmojiEffect(e.target.value)}
+                  placeholder="絵文字を入力..."
+                  className="rounded-full bg-background pr-10"
+                />
+                {emojiEffect && (
+                  <button
+                    onClick={() => setEmojiEffect('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    クリア
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-muted text-2xl shadow-inner border border-border/40">
+              {emojiEffect ? Array.from(emojiEffect)[0] : '？'}
+            </div>
+          </div>
+          
+          <Button
+            onClick={updateEmojiOnly}
+            disabled={isPending}
+            variant="secondary"
+            className="w-full rounded-full font-bold shadow-sm"
+          >
+            {isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}
+            エフェクトを更新
+          </Button>
         </div>
       </div>
 

@@ -9,6 +9,7 @@ type CustomUser = SupabaseUser & {
   avatarUrl?: string;
   bio?: string;
   coverUrl?: string;
+  emojiEffect?: string; // 追加: 絵文字エフェクト用
 };
 
 type AuthContextType = {
@@ -45,7 +46,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const { data: profile, error } = await supabase
           .from('profiles')
-          .select('username, display_name, avatar_url, bio, cover_url')
+          .select('username, display_name, avatar_url, bio, cover_url, emoji_effect')
           .eq('id', supabaseUser.id)
           .single();
 
@@ -60,6 +61,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               avatarUrl: profile.avatar_url ?? current.avatarUrl,
               bio: profile.bio ?? current.bio,
               coverUrl: profile.cover_url ?? current.coverUrl,
+              emojiEffect: profile.emoji_effect ?? current.emojiEffect,
             };
           });
         }
@@ -84,6 +86,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           username: meta?.username ?? emailName,
           displayName: meta?.display_name ?? meta?.displayName ?? emailName,
           avatarUrl: meta?.avatar_url ?? meta?.avatarUrl ?? '',
+          emojiEffect: '', // 初期値
         });
         
         // 詳細をDBに獲りに行く
@@ -127,6 +130,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           avatarUrl: meta?.avatar_url ?? meta?.avatarUrl ?? '',
           bio: '',
           coverUrl: '',
+          emojiEffect: '',
         });
 
         if (loading) setLoading(false);

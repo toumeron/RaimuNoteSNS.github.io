@@ -102,10 +102,13 @@ export const useToggleFollow = (targetUserId: string) => {
 export const useUpdateProfile = (userId: string) => {
   const qc = useQueryClient();
   return useMutation({
+    // updates オブジェクトに emojiEffect を含む可能性があることを Parameters 経由で維持
     mutationFn: (patch: Parameters<typeof updateProfile>[1]) => updateProfile(userId, patch),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['profile'] });
       qc.invalidateQueries({ queryKey: ['posts', 'user', userId] });
+      // auth-user 等、セッション情報を保持しているクエリがあればここでも無効化が必要な場合があります
+      qc.invalidateQueries({ queryKey: ['auth-user'] }); 
       toast.success('プロフィールを更新しました');
     },
     onError: () => toast.error('プロフィールの更新に失敗しました'),

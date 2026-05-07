@@ -1,13 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { AuthProvider, useAuth } from "@/hooks/useAuth"; // useAuth を追加
+import { AuthProvider, useAuth } from "@/hooks/useAuth"; 
 import { AppLayout } from "@/components/layout/AppLayout";
-import { ThemeProvider } from "next-themes"; // 追加
-import { useOSNotification } from "@/hooks/useOSNotification"; // 追加
+import { ThemeProvider } from "next-themes"; 
+import { useOSNotification } from "@/hooks/useOSNotification"; 
 import AuthPage from "./pages/Auth";
 import Feed from "./pages/Feed";
 import PostDetail from "./pages/PostDetail";
@@ -17,7 +17,7 @@ import SearchPage from "./pages/SearchPage";
 import PostActivity from "./pages/PostActivity";
 import Share from "./pages/Share";
 import NotFound from "./pages/NotFound";
-import Notifications from "./pages/Notifications"; // 追加
+import Notifications from "./pages/Notifications";
 
 const ScrollToTop = () => {
   const { pathname } = useLocation();
@@ -45,9 +45,64 @@ const NotificationWatcher = () => {
   return null;
 };
 
+// --- ここから絵文字エフェクトのロジック ---
+const EmojiRainEffect = () => {
+  const { user } = useAuth();
+  const [items, setItems] = useState<{ id: number; char: string; left: number; duration: number; delay: number; size: number }[]>([]);
+
+  const char = user?.emojiEffect || localStorage.getItem('lime_emoji_pref') || '';
+
+  useEffect(() => {
+    if (!char) {
+      setItems([]);
+      return;
+    }
+    const newItems = Array.from({ length: 20 }).map((_, i) => ({
+      id: i,
+      char: char,
+      left: Math.random() * 100,
+      duration: 5 + Math.random() * 7,
+      delay: Math.random() * 10,
+      size: 16 + Math.random() * 20,
+    }));
+    setItems(newItems);
+  }, [char]);
+
+  if (!char) return null;
+
+  return (
+    <div style={{ pointerEvents: 'none', position: 'fixed', inset: 0, zIndex: 9999, overflow: 'hidden' }}>
+      <style>{`
+        @keyframes fall-animation {
+          0% { transform: translateY(-10vh) rotate(0deg); opacity: 0; }
+          10% { opacity: 0.8; }
+          90% { opacity: 0.8; }
+          100% { transform: translateY(110vh) rotate(360deg); opacity: 0; }
+        }
+      `}</style>
+      {items.map((item) => (
+        <div
+          key={item.id}
+          style={{
+            position: 'absolute',
+            top: '-50px',
+            left: `${item.left}%`,
+            animation: `fall-animation ${item.duration}s linear infinite`,
+            animationDelay: `${item.delay}s`,
+            fontSize: `${item.size}px`,
+            userSelect: 'none',
+          }}
+        >
+          {item.char}
+        </div>
+      ))}
+    </div>
+  );
+};
+// --- ここまで ---
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    {/* ThemeProvider を追加。attribute="class" が必須です */}
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
       <TooltipProvider>
         <Toaster />
@@ -60,7 +115,8 @@ const App = () => (
           <ScrollToTop />
           
           <AuthProvider>
-            <NotificationWatcher /> {/* 通知監視を追加 */}
+            <NotificationWatcher />
+            <EmojiRainEffect /> {/* ファイルを作らずにここで呼び出し */}
             <Routes>
               <Route path="/auth" element={<AuthPage />} />
               <Route element={<AppLayout />}>
