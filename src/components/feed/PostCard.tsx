@@ -322,11 +322,11 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
 
             <div className="mt-4 flex items-center gap-1 text-muted-foreground">
               <div onClick={(e) => e.stopPropagation()}>
-                <LikeButton 
-                  postId={post.id} 
-                  liked={post.likedByMe} 
-                  count={formatDisplayCount(post.likesCount) as any} 
-                />
+<LikeButton 
+  postId={post.id} 
+  liked={post.likedByMe} 
+  count={post.likesCount} // そのまま数値を渡す
+/>
               </div>
               <Link
                 to={`/post/${post.id}`}
@@ -372,11 +372,11 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
           >
             <div className="flex items-center gap-8 rounded-full bg-black/40 px-6 py-3 backdrop-blur-md border border-white/10">
               <div className="scale-125">
-                <LikeButton 
-                  postId={post.id} 
-                  liked={post.likedByMe} 
-                  count={formatDisplayCount(post.likesCount) as any} 
-                />
+<LikeButton 
+  postId={post.id} 
+  liked={post.likedByMe} 
+  count={post.likesCount} // そのまま数値を渡す
+/>
               </div>
               <button
                 onClick={() => {

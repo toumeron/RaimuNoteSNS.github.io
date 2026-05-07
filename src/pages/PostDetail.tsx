@@ -175,7 +175,7 @@ export default function PostDetail() {
             <LikeButton 
               postId={data.id} 
               liked={data.likedByMe} 
-              count={formatDisplayCount(data.likesCount) as any} 
+              count={data.likesCount}
             />
             <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm text-muted-foreground">
               <MessageCircle className="h-5 w-5" />
@@ -229,7 +229,7 @@ export default function PostDetail() {
                 <LikeButton 
                   postId={data.id} 
                   liked={data.likedByMe} 
-                  count={formatDisplayCount(data.likesCount) as any} 
+                  count={data.likesCount}
                 />
               </div>
               <div className="inline-flex items-center gap-2 text-white/90">

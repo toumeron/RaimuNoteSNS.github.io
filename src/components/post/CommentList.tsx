@@ -38,7 +38,7 @@ interface Comment {
   author: CommentAuthor;
 }
 
-// ─── PostCard と完全同一のユーティリティ ─────────────────────────────────────
+// ─── ユーティリティ ─────────────────────────────────────
 const formatDisplayCount = (count: number) => {
   if (count >= 10000) return (count / 10000).toFixed(1).replace(/\.0$/, '') + '万';
   return count.toLocaleString();
@@ -90,7 +90,6 @@ function CommentCard({
     }
   };
 
-  // PostCard の HoverStats と完全同一
   const HoverStats = ({ userId }: { userId: string }) => {
     const { data: stats } = useFollowStats(userId);
     return (
@@ -111,7 +110,6 @@ function CommentCard({
     );
   };
 
-  // PostCard の ProfileHoverContent と完全同一
   const ProfileHoverContent = () => (
     <HoverCardContent
       side="bottom"
@@ -170,8 +168,6 @@ function CommentCard({
   return (
     <article className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft transition hover:shadow-card-soft relative">
       <div className="flex items-start gap-3">
-
-        {/* ─ アバター（HoverCard 付き） PostCard と完全同一 ─ */}
         <HoverCard openDelay={300}>
           <HoverCardTrigger asChild>
             <Link
@@ -189,12 +185,8 @@ function CommentCard({
         </HoverCard>
 
         <div className="min-w-0 flex-1">
-
-          {/* ─ ヘッダー行 PostCard と完全同一 ─ */}
           <div className="flex items-center justify-between mb-1">
             <div className="flex items-center overflow-hidden w-full min-w-0">
-
-              {/* 表示名（HoverCard 付き） */}
               <HoverCard openDelay={300}>
                 <HoverCardTrigger asChild>
                   <Link
@@ -227,7 +219,6 @@ function CommentCard({
               </span>
             </div>
 
-            {/* ⋯ メニュー PostCard と完全同一構造 */}
             <div className="relative ml-2 shrink-0">
               <button
                 onClick={(e) => {
@@ -264,7 +255,6 @@ function CommentCard({
             </div>
           </div>
 
-          {/* ─ 本文 PostCard の displayContent ブロックと完全同一 ─ */}
           <div className="mt-1">
             <div onClick={(e) => e.stopPropagation()}>
               {comment.content && (
@@ -275,7 +265,6 @@ function CommentCard({
             </div>
           </div>
 
-          {/* ─ アクションバー PostCard の mt-4 行と完全同一 ─ */}
           <div className="mt-4 flex items-center gap-1 text-muted-foreground">
             <div onClick={(e) => e.stopPropagation()}>
               <Commentlikebutton
@@ -294,6 +283,7 @@ function CommentCard({
 
 // ─── CommentList ──────────────────────────────────────────────────────────────
 export function CommentList({ postId }: { postId: string }) {
+  // useComments 内のクエリが comment_details ビューを参照するように修正されている前提
   const { data, isLoading, isError } = useComments(postId);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [, setTick] = useState(0);
@@ -343,7 +333,14 @@ export function CommentList({ postId }: { postId: string }) {
     <ul className="space-y-4">
       {data.map((c) => (
         <li key={c.id} className="animate-float-up">
-          <CommentCard comment={c as unknown as Comment} currentUserId={currentUserId} />
+          {/* comment.likedByMe が undefined の場合に false を保証する */}
+          <CommentCard 
+            comment={{
+              ...c,
+              likedByMe: !!(c as any).likedByMe
+            } as unknown as Comment} 
+            currentUserId={currentUserId} 
+          />
         </li>
       ))}
     </ul>
