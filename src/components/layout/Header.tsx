@@ -19,8 +19,8 @@ export const Header = () => {
 
   // ロゴをクリックした際の処理
   const handleLogoClick = () => {
-    // ホーム画面へ遷移しつつ、ページ全体を再読み込みする
-    window.location.href = '/';
+    // 常にプロジェクトのベースURL（/RaimuNoteSNS.github.io/）へリロードを伴って遷移する
+    window.location.href = import.meta.env.BASE_URL;
   };
 
   return (
