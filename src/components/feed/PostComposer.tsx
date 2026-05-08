@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect, type ChangeEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ImagePlus, Loader2, Send, X, AtSign } from 'lucide-react';
+import { ImagePlus, Loader2, Send, X, AtSign, Hash } from 'lucide-react'; // Hashを追加
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -66,11 +66,13 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
   const [quotedPost, setQuotedPost] = useState<PostWithAuthor | null>(initialQuotedPost || null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // メンション機能用ステートとRef
+  // メンション・ハッシュタグ機能用ステートとRef
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionResults, setMentionResults] = useState<any[]>([]);
+  const [hashtagQuery, setHashtagQuery] = useState<string | null>(null); // 追加
+  const [hashtagResults, setHashtagResults] = useState<any[]>([]); // 追加
   const [cursorPosition, setCursorPosition] = useState(0);
-  const [mentionPos, setMentionPos] = useState({ top: 0, left: 0 });
+  const [popupPos, setPopupPos] = useState({ top: 0, left: 0 }); // 汎用的な名に変更
   const [scrollTop, setScrollTop] = useState(0);
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -115,11 +117,31 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
     fetchUsers();
   }, [mentionQuery]);
 
-  // 外側クリックでメンション候補を閉じる
+  // ハッシュタグ候補の検索ロジック (追加)
+  useEffect(() => {
+    const fetchHashtags = async () => {
+      if (!hashtagQuery) {
+        setHashtagResults([]);
+        return;
+      }
+      const { data } = await supabase
+        .from('hashtags')
+        .select('tag')
+        .ilike('tag', `${hashtagQuery}%`)
+        .order('usage_count', { ascending: false })
+        .limit(5);
+      
+      setHashtagResults(data || []);
+    };
+    fetchHashtags();
+  }, [hashtagQuery]);
+
+  // 外側クリックで候補を閉じる
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setMentionQuery(null);
+        setHashtagQuery(null);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -134,26 +156,42 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
     setContent(val);
     setCursorPosition(pos);
 
-    // カーソル位置の直前の単語が @で始まっているか確認
     const lastAtIdx = val.lastIndexOf('@', pos - 1);
-    if (lastAtIdx !== -1) {
+    const lastHashIdx = val.lastIndexOf('#', pos - 1);
+
+    // メンション判定
+    if (lastAtIdx !== -1 && (lastHashIdx === -1 || lastAtIdx > lastHashIdx)) {
       const query = val.slice(lastAtIdx + 1, pos);
-      // 空白が含まれていない場合のみ検索対象とする
       if (!query.includes(' ') && !query.includes('\n')) {
         setMentionQuery(query);
-        // カーソル位置の座標を計算
-        if (textareaRef.current) {
-          const coords = getCaretCoordinates(textareaRef.current, pos);
-          setMentionPos({ 
-            top: coords.top + coords.height, 
-            left: Math.min(coords.left, 150) // 右端にはみ出さないよう制限
-          });
-        }
-      } else {
-        setMentionQuery(null);
+        setHashtagQuery(null);
+        updatePopupPosition(pos);
+        return;
       }
-    } else {
-      setMentionQuery(null);
+    }
+    
+    // ハッシュタグ判定 (追加)
+    if (lastHashIdx !== -1 && (lastAtIdx === -1 || lastHashIdx > lastAtIdx)) {
+      const query = val.slice(lastHashIdx + 1, pos);
+      if (!query.includes(' ') && !query.includes('\n')) {
+        setHashtagQuery(query);
+        setMentionQuery(null);
+        updatePopupPosition(pos);
+        return;
+      }
+    }
+
+    setMentionQuery(null);
+    setHashtagQuery(null);
+  };
+
+  const updatePopupPosition = (pos: number) => {
+    if (textareaRef.current) {
+      const coords = getCaretCoordinates(textareaRef.current, pos);
+      setPopupPos({ 
+        top: coords.top + coords.height, 
+        left: Math.min(coords.left, 150) 
+      });
     }
   };
 
@@ -169,11 +207,18 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
     setContent(newContent);
     setMentionQuery(null);
     setMentionResults([]);
-    
-    // 入力エリアにフォーカスを戻す
-    if (textareaRef.current) {
-      textareaRef.current.focus();
-    }
+    if (textareaRef.current) textareaRef.current.focus();
+  };
+
+  const selectHashtag = (tag: string) => {
+    const lastHashIdx = content.lastIndexOf('#', cursorPosition - 1);
+    const beforeHash = content.slice(0, lastHashIdx);
+    const afterCursor = content.slice(cursorPosition);
+    const newContent = `${beforeHash}#${tag} ${afterCursor}`;
+    setContent(newContent);
+    setHashtagQuery(null);
+    setHashtagResults([]);
+    if (textareaRef.current) textareaRef.current.focus();
   };
 
   const onFile = (e: ChangeEvent<HTMLInputElement>) => {
@@ -211,25 +256,44 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
       return;
     }
     try {
+      // 投稿処理を先に実行し、確実に完了を待つ
       await mutateAsync({ 
         content: trimmed, 
         imageUrls: previews,
         parentId: quotedPost?.id,
-        isQuote: !!quotedPost
-      });
+        isQuote: !!quotedPost,
+        user_id: user.id
+      } as any);
+
+      // ハッシュタグの抽出と統計更新 (投稿後に非同期で実行)
+      const hashtagRegex = /#([a-zA-Z0-9_\u3041-\u3094\u30a1-\u30fa\u30fc\u4e00-\u9fa5]+)/g;
+      const matches = trimmed.match(hashtagRegex);
+      if (matches) {
+        const uniqueTags = Array.from(new Set(matches.map(tag => tag.slice(1))));
+        // 各ハッシュタグの処理。エラーが起きても全体が止まらないように個別にcatch
+        uniqueTags.forEach(async (tag) => {
+          try {
+            await supabase.rpc('upsert_hashtag', { tag_name: tag });
+          } catch (e) {
+            console.warn(`Hashtag upsert failed for #${tag}:`, e);
+          }
+        });
+      }
+
       setContent('');
       previews.forEach(URL.revokeObjectURL);
       setPreviews([]);
       cancelQuote();
       if (onSuccess) onSuccess();
-    } catch {
-      /* エラーはHook側で処理 */
+    } catch (err) {
+      console.error("Submission failed:", err);
+      /* エラーはHook側で処理されるが、デバッグ用にログ出力 */
     }
   };
 
-  // メンション部分のテキスト色付け描画
+  // メンション・ハッシュタグ部分のテキスト色付け描画
   const renderHighlightedText = (text: string) => {
-    const regex = /(@[a-zA-Z0-9_]+)/g;
+    const regex = /(@[a-zA-Z0-9_]+|#[a-zA-Z0-9_\u3041-\u3094\u30a1-\u30fa\u30fc\u4e00-\u9fa5]+)/g;
     const parts = text.split(regex);
     return parts.map((part, i) => {
       if (part.match(regex)) {
@@ -252,25 +316,21 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
         <div className="flex-1 min-w-0 space-y-3 relative" ref={containerRef}>
           
           <div className="relative w-full overflow-hidden">
-            {/* カスタムプレースホルダー */}
             {!content && (
               <div className="absolute inset-0 pointer-events-none px-0 py-2 text-[20px] leading-relaxed text-muted-foreground z-0">
                 {quotedPost ? "コメントを添えてリポスト" : "いまどうしてる？"}
               </div>
             )}
 
-            {/* バックドロップレイヤー（色付け用） */}
             <div
               aria-hidden="true"
               className="absolute inset-0 pointer-events-none whitespace-pre-wrap break-words px-0 py-2 text-[20px] leading-relaxed text-foreground z-0"
               style={{ transform: `translateY(-${scrollTop}px)` }}
             >
               {renderHighlightedText(content)}
-              {/* 最後の改行を正しくレンダリングするための処理 */}
               {content.endsWith('\n') ? <br /> : null}
             </div>
 
-            {/* 実際のテキストエリア（文字を透明化） */}
             <Textarea
               ref={textareaRef}
               value={content}
@@ -278,19 +338,16 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
               onScroll={handleScroll}
               rows={3}
               spellCheck={false}
-              /* selection:bg-[#b4d7ff] (ライトモード) / dark:selection:bg-[#385474] (ダークモード) でハイライト背景色を指定。
-                selection:text-black (ライトモード) / dark:selection:text-white (ダークモード) で文字色を反転させ可視化。
-              */
               className="relative z-10 resize-none border-0 bg-transparent px-0 py-2 text-[20px] leading-relaxed shadow-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:outline-none outline-none w-full text-transparent selection:bg-[#b4d7ff] selection:text-black dark:selection:bg-[#385474] dark:selection:text-white"
               style={{ color: "transparent", caretColor: "hsl(var(--foreground))" }}
             />
           </div>
 
-          {/* メンション候補リスト（カーソル位置に追従） */}
-          {mentionResults.length > 0 && mentionQuery !== null && (
+          {/* 候補ポップアップ */}
+          {(mentionResults.length > 0 && mentionQuery !== null) && (
             <div 
               className="absolute z-[60] w-64 overflow-hidden rounded-xl border border-border/60 bg-popover shadow-xl backdrop-blur-md transition-all duration-150"
-              style={{ top: mentionPos.top - scrollTop, left: mentionPos.left }}
+              style={{ top: popupPos.top - scrollTop, left: popupPos.left }}
             >
               <div className="p-2 text-xs font-bold text-muted-foreground bg-muted/30 flex items-center gap-1">
                 <AtSign className="w-3 h-3" /> メンションします
@@ -313,6 +370,29 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
                       @{result.username}
                     </span>
                   </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {hashtagResults.length > 0 && hashtagQuery !== null && (
+            <div 
+              className="absolute z-[60] w-64 overflow-hidden rounded-xl border border-border/60 bg-popover shadow-xl backdrop-blur-md transition-all duration-150"
+              style={{ top: popupPos.top - scrollTop, left: popupPos.left }}
+            >
+              <div className="p-2 text-xs font-bold text-muted-foreground bg-muted/30 flex items-center gap-1">
+                <Hash className="w-3 h-3" /> ハッシュタグを検索
+              </div>
+              {hashtagResults.map((result, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => selectHashtag(result.tag)}
+                  className="flex w-full items-center gap-3 p-3 text-left transition hover:bg-accent focus:bg-accent outline-none"
+                >
+                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted">
+                    <Hash className="h-4 w-4" />
+                  </div>
+                  <span className="text-sm font-bold truncate">#{result.tag}</span>
                 </button>
               ))}
             </div>

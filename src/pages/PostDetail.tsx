@@ -43,19 +43,47 @@ export default function PostDetail() {
     setSelectedImageUrl(url);
   };
 
-  // --- メンションをリンク化する関数 ---
-  const renderContentWithMentions = (text: string) => {
+  // --- URLをリンク化する関数 ---
+  const renderTextWithUrls = (text: string) => {
+    if (!text) return null;
+
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    const parts = text.split(urlRegex);
+
+    return parts.map((part, index) => {
+      if (part.match(urlRegex)) {
+        return (
+          <a
+            key={`url-${index}`}
+            href={part}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-pink-500 hover:underline transition-colors"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {part}
+          </a>
+        );
+      }
+      return part;
+    });
+  };
+
+  // --- メンションとハッシュタグをリンク化する関数 ---
+  const renderContentWithLinks = (text: string) => {
     if (!text) return null;
     
-    // @username 形式にマッチさせる正規表現
-    const parts = text.split(/(@\w+)/g);
+    // @username と #hashtag 形式にマッチさせる正規表現
+    // 括弧で囲むことで split の結果にマッチした文字列が含まれる
+    const parts = text.split(/(@\w+|#[\w\u3040-\u309f\u30a0-\u30ff\u4e00-\u9faf]+)/g);
     
     return parts.map((part, index) => {
+      // メンション処理
       if (part.startsWith('@')) {
         const username = part.substring(1);
         return (
           <Link
-            key={index}
+            key={`mention-${index}`}
             to={`/u/${username}`}
             className="text-pink-500 hover:underline transition-colors"
             onClick={(e) => e.stopPropagation()}
@@ -64,7 +92,21 @@ export default function PostDetail() {
           </Link>
         );
       }
-      return part;
+      // ハッシュタグ処理
+      if (part.startsWith('#')) {
+        return (
+          <Link
+            key={`hashtag-${index}`}
+            to={`/search?q=${encodeURIComponent(part)}`}
+            className="text-pink-500 hover:underline transition-colors"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {part}
+          </Link>
+        );
+      }
+      // メンション・ハッシュタグ以外に対してURLリンク処理を適用
+      return renderTextWithUrls(part);
     });
   };
   // ------------------------------
@@ -137,10 +179,10 @@ export default function PostDetail() {
             </div>
           </div>
 
-          {/* 加工した本文を表示（メンション処理を適用） */}
+          {/* 加工した本文を表示（メンション・ハッシュタグ・URL処理を適用） */}
           {displayContent && (
             <p className="mt-4 whitespace-pre-wrap break-words text-base leading-relaxed text-foreground">
-              {renderContentWithMentions(displayContent)}
+              {renderContentWithLinks(displayContent)}
             </p>
           )}
 
@@ -172,7 +214,7 @@ export default function PostDetail() {
           </p>
 
           <div className="mt-3 flex items-center gap-1 border-t border-border/60 pt-3">
-            <LikeButton 
+            < LikeButton 
               postId={data.id} 
               liked={data.likedByMe} 
               count={data.likesCount}

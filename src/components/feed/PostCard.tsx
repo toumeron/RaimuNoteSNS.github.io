@@ -65,6 +65,33 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
         .trim()
     : post.content;
 
+  // --- URLをリンク化する関数 ---
+  const renderContentWithLinks = (text: string) => {
+    if (!text) return null;
+
+    // URLを検知する正規表現
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    const parts = text.split(urlRegex);
+
+    return parts.map((part, index) => {
+      if (part.match(urlRegex)) {
+        return (
+          <a
+            key={`link-${index}`}
+            href={part}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-pink-500 hover:underline transition-colors"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {part}
+          </a>
+        );
+      }
+      return part;
+    });
+  };
+
   // --- メンションをリンク化する関数 ---
   const renderContentWithMentions = (text: string) => {
     if (!text) return null;
@@ -77,7 +104,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
         const username = part.substring(1);
         return (
           <Link
-            key={index}
+            key={`mention-${index}`}
             to={`/u/${username}`}
             className="text-pink-500 hover:underline transition-colors"
             onClick={(e) => e.stopPropagation()}
@@ -86,7 +113,38 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
           </Link>
         );
       }
-      return part;
+      // メンション以外のテキストに対してハッシュタグ処理を適用
+      return renderContentWithHashtags(part);
+    });
+  };
+
+  // --- ハッシュタグをリンク化する関数 ---
+  const renderContentWithHashtags = (text: string) => {
+    if (!text) return null;
+
+    // #ハッシュタグ 形式にマッチさせる正規表現（日本語含む、文末や区切り文字を考慮）
+    const parts = text.split(/(#[^\s#　.,!?:;'"()\[\]{}<>]+)/g);
+
+    return parts.map((part, index) => {
+      if (part.startsWith('#')) {
+        return (
+          <button
+            key={`hashtag-${index}`}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              // 検索ページに「#タグ名」で遷移。
+              // 検索ページ側のuseEffect(URLのqを監視)がこの値を拾って自動検索を走らせる。
+              navigate(`/search?q=${encodeURIComponent(part)}`);
+            }}
+            className="text-pink-500 hover:underline transition-colors inline-block align-baseline"
+          >
+            {part}
+          </button>
+        );
+      }
+      // ハッシュタグ以外のテキストに対してURLリンク処理を適用
+      return renderContentWithLinks(part);
     });
   };
   // ------------------------------
@@ -311,7 +369,6 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
                   if (target.tagName === 'IMG' && (target as HTMLImageElement).src) {
                     handleImageClick(e, (target as HTMLImageElement).src);
                   } else {
-                    // 画像以外の隙間をクリックした場合は詳細へ
                     handleCardClick();
                   }
                 }}
@@ -322,11 +379,11 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
 
             <div className="mt-4 flex items-center gap-1 text-muted-foreground">
               <div onClick={(e) => e.stopPropagation()}>
-<LikeButton 
-  postId={post.id} 
-  liked={post.likedByMe} 
-  count={post.likesCount} // そのまま数値を渡す
-/>
+                <LikeButton 
+                  postId={post.id} 
+                  liked={post.likedByMe} 
+                  count={post.likesCount} 
+                />
               </div>
               <Link
                 to={`/post/${post.id}`}
@@ -347,7 +404,6 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
           className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black/95 backdrop-blur-sm animate-in fade-in duration-200"
           onClick={() => setSelectedImageUrl(null)}
         >
-          {/* 閉じるボタン */}
           <button 
             className="absolute top-5 left-5 z-[110] p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
             onClick={() => setSelectedImageUrl(null)}
@@ -355,7 +411,6 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
             <X className="h-6 w-6" />
           </button>
 
-          {/* 画像本体 */}
           <div className="relative flex max-h-full max-w-full items-center justify-center p-4">
             <img 
               src={selectedImageUrl} 
@@ -365,18 +420,17 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
             />
           </div>
 
-          {/* 下部アクションエリア */}
           <div 
             className="absolute bottom-0 left-0 right-0 flex items-center justify-center bg-gradient-to-t from-black/80 to-transparent pb-8 pt-10"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center gap-8 rounded-full bg-black/40 px-6 py-3 backdrop-blur-md border border-white/10">
               <div className="scale-125">
-<LikeButton 
-  postId={post.id} 
-  liked={post.likedByMe} 
-  count={post.likesCount} // そのまま数値を渡す
-/>
+                <LikeButton 
+                  postId={post.id} 
+                  liked={post.likedByMe} 
+                  count={post.likesCount} 
+                />
               </div>
               <button
                 onClick={() => {

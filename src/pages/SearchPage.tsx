@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase';
 import type { User, PostWithAuthor } from '@/types';
 // @ts-ignore - tiny-segmenter has no bundled types
 import TinySegmenter from 'tiny-segmenter';
+import { useSearchParams } from 'react-router-dom';
 
 const segmenter = new TinySegmenter();
 
@@ -59,6 +60,7 @@ const RowSkeleton = () => (
 );
 
 export default function SearchPage() {
+  const [searchParams] = useSearchParams();
   const [inputValue, setInputValue] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [allUsers, setAllUsers] = useState<User[]>([]);
@@ -78,6 +80,29 @@ export default function SearchPage() {
   const suggestBoxRef = useRef<HTMLDivElement>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const lastElementRef = useRef<HTMLDivElement>(null);
+
+  // Realtime同期用のEffect
+  useEffect(() => {
+    if (!searchQuery) return;
+
+    const channel = supabase
+      .channel('search_likes_sync')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'likes' },
+        () => {
+          // いいねテーブルに変化があったら、現在の検索結果のいいね数を再取得する
+          // ここでは簡略化のためフラグ更新等の最小限の同期を行うか、
+          // PostCard側で個別に管理されている場合はそちらに任せる構成になります。
+          // 検索結果全体の整合性を保つため、必要に応じてステートを再検証するロジックをここに挟めます。
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [searchQuery]);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -128,9 +153,11 @@ export default function SearchPage() {
     if (targetPage === 0) setIsPostsLoading(true);
 
     try {
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
       const from = targetPage * PAGE_SIZE;
       const to = from + PAGE_SIZE - 1;
 
+      // ポスト取得
       const { data, error } = await supabase
         .from('posts')
         .select(`id, content, image_urls, created_at, user_id, likes_count, reposts_count`)
@@ -141,6 +168,28 @@ export default function SearchPage() {
       if (error) throw error;
 
       if (data) {
+        // 現在のユーザーがこれらのポストをいいねしているか確認
+        let myLikes: string[] = [];
+        if (currentUser) {
+          const { data: likesData } = await supabase
+            .from('likes')
+            .select('post_id')
+            .eq('user_id', currentUser.id)
+            .in('post_id', data.map(p => p.id));
+          if (likesData) myLikes = likesData.map(l => l.post_id);
+        }
+
+        // 自分のリポストも確認
+        let myReposts: string[] = [];
+        if (currentUser) {
+          const { data: repostsData } = await supabase
+            .from('reposts')
+            .select('post_id')
+            .eq('user_id', currentUser.id)
+            .in('post_id', data.map(p => p.id));
+          if (repostsData) myReposts = repostsData.map(r => r.post_id);
+        }
+
         const formatted: PostWithAuthor[] = data.map((p: any) => {
           const user = allUsers.find(u => u.id === p.user_id);
           return {
@@ -154,8 +203,8 @@ export default function SearchPage() {
             likesCount: p.likes_count || 0,
             repostsCount: p.reposts_count || 0,
             commentsCount: 0,
-            likedByMe: false,
-            repostedByMe: false,
+            likedByMe: myLikes.includes(p.id),
+            repostedByMe: myReposts.includes(p.id),
             author: {
               id: user?.id || p.user_id,
               username: user?.username || 'unknown',
@@ -204,6 +253,13 @@ export default function SearchPage() {
     await fetchPosts(q, 0);
     inputRef.current?.blur();
   }, [fetchPosts]);
+
+  useEffect(() => {
+    const queryParam = searchParams.get('q');
+    if (queryParam) {
+      commitSearch(queryParam);
+    }
+  }, [searchParams, commitSearch]);
 
   useEffect(() => {
     if (isPostsLoading) return;

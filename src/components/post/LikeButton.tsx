@@ -85,10 +85,12 @@ export function LikeButton({
       
       if (willBeLiked) {
         // すでに存在する場合のエラーを考慮して insert
-        const { error } = await supabase
-          .from(config.table)
-          .insert({ [config.idCol]: postId, user_id: userId });
-        
+const { error } = await supabase
+  .from('likes')
+  .upsert(
+    { post_id: postId, user_id: userId }, 
+    { onConflict: 'post_id, user_id' } // この組み合わせが重複したら無視（または更新）する
+  );
         if (error && error.code !== '23505') throw error;
       } else {
         const { error } = await supabase

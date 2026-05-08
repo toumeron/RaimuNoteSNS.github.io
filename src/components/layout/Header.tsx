@@ -17,11 +17,21 @@ export const Header = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
+  // ロゴをクリックした際の処理
+  const handleLogoClick = () => {
+    // ホーム画面へ遷移しつつ、ページ全体を再読み込みする
+    window.location.href = '/';
+  };
+
   return (
     // bg-background/80 をベースにし、モバイル版(max-sm)でも背景色(var(--background))を使用するように修正
     <header className="sticky top-0 z-50 border-b border-border/40 bg-background/80 backdrop-blur-md">
       <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-4">
-        <Logo />
+        {/* ロゴにクリックイベントを追加 */}
+        <div onClick={handleLogoClick} className="cursor-pointer">
+          <Logo />
+        </div>
+        
         {user ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
