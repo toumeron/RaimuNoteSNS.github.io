@@ -42,6 +42,7 @@ function rowToPost(row: any, likedIds: Set<string>, repostedIds: Set<string>): P
     clientName:    row.client_name,
     parentId:      row.parent_id,
     isQuote:       row.is_quote,
+    visibility:    row.visibility,
     parentPost: row.parent_post ? {
       ...row.parent_post,
       imageUrls: row.parent_post.image_urls ?? [],
@@ -54,6 +55,7 @@ function rowToPost(row: any, likedIds: Set<string>, repostedIds: Set<string>): P
 
 /**
  * タイムライン取得（無限スクロール対応）
+ * ロジック: 「投稿主が自分をフォローしている」場合にその投稿を表示する
  */
 export async function getFeed(page: number = 0, limit: number = 10): Promise<PostWithAuthor[]> {
   const userId = await getCurrentUserId();
@@ -61,10 +63,30 @@ export async function getFeed(page: number = 0, limit: number = 10): Promise<Pos
   const from = page * limit;
   const to = from + limit - 1;
 
+  // 「自分(userId)をフォローしている投稿主」のリストを取得
+  const { data: followedByData } = await supabase
+    .from('follows')
+    .select('follower_id')
+    .eq('followee_id', userId);
+  
+  const authorsWhoFollowMe = followedByData?.map(f => f.follower_id) || [];
+
+  // OR条件の組み立て
+  const conditions = [
+    'visibility.eq.public', // 公開投稿
+    `user_id.eq.${userId}`   // 自分の投稿
+  ];
+
+  // 自分をフォローしている投稿主の投稿を条件に追加
+  if (authorsWhoFollowMe.length > 0) {
+    conditions.push(`user_id.in.(${authorsWhoFollowMe.join(',')})`);
+  }
+
   const [postsRes, likesRes, repostsRes] = await Promise.all([
     supabase
       .from('posts')
       .select(POST_SELECT_QUERY)
+      .or(conditions.join(','))
       .order('created_at', { ascending: false })
       .range(from, to),
     
@@ -81,7 +103,7 @@ export async function getFeed(page: number = 0, limit: number = 10): Promise<Pos
 }
 
 /**
- * フォロー中のユーザーの投稿のみを取得（無限スクロール対応）
+ * フォローされているユーザーの投稿のみを取得（無限スクロール対応）
  */
 export async function getFollowingFeed(page: number = 0, limit: number = 10): Promise<PostWithAuthor[]> {
   const userId = await getCurrentUserId();
@@ -90,23 +112,22 @@ export async function getFollowingFeed(page: number = 0, limit: number = 10): Pr
   const from = page * limit;
   const to = from + limit - 1;
 
-  // 1. 自分がフォローしているユーザーのIDリストを取得
-  const { data: followingData, error: followError } = await supabase
+  // 「自分をフォローしている人」のIDリストを取得
+  const { data: followedByData, error: followError } = await supabase
     .from('follows')
-    .select('followee_id')
-    .eq('follower_id', userId);
+    .select('follower_id')
+    .eq('followee_id', userId);
 
   if (followError) throw followError;
 
-  const followingIds = followingData?.map(f => f.followee_id) || [];
-  if (followingIds.length === 0) return [];
+  const authorsWhoFollowMe = followedByData?.map(f => f.follower_id) || [];
+  if (authorsWhoFollowMe.length === 0) return [];
 
-  // 2. フォロー中ユーザーの投稿を取得
   const [postsRes, likesRes, repostsRes] = await Promise.all([
     supabase
       .from('posts')
       .select(POST_SELECT_QUERY)
-      .in('user_id', followingIds)
+      .in('user_id', authorsWhoFollowMe)
       .order('created_at', { ascending: false })
       .range(from, to),
     
@@ -123,7 +144,7 @@ export async function getFollowingFeed(page: number = 0, limit: number = 10): Pr
 }
 
 /**
- * 特定ユーザーの投稿取得（無限スクロール対応）
+ * 特定ユーザーの投稿取得
  */
 export async function getPostsByUser(targetUserId: string, page: number = 0, limit: number = 10): Promise<PostWithAuthor[]> {
   const userId = await getCurrentUserId();
@@ -131,14 +152,26 @@ export async function getPostsByUser(targetUserId: string, page: number = 0, lim
   const from = page * limit;
   const to = from + limit - 1;
 
+  // ターゲットユーザーが自分をフォローしているか確認
+  const { data: authorFollowsMe } = await supabase
+    .from('follows')
+    .select('*')
+    .eq('follower_id', targetUserId)
+    .eq('followee_id', userId)
+    .maybeSingle();
+
+  let query = supabase
+    .from('posts')
+    .select(POST_SELECT_QUERY)
+    .eq('user_id', targetUserId);
+
+  // 本人でもなく、かつターゲット（投稿主）からフォローもされていない場合は公開投稿のみ
+  if (userId !== targetUserId && !authorFollowsMe) {
+    query = query.eq('visibility', 'public');
+  }
+
   const [postsRes, likesRes, repostsRes] = await Promise.all([
-    supabase
-      .from('posts')
-      .select(POST_SELECT_QUERY)
-      .eq('user_id', targetUserId)
-      .order('created_at', { ascending: false })
-      .range(from, to),
-    
+    query.order('created_at', { ascending: false }).range(from, to),
     supabase.from('likes').select('post_id').eq('user_id', userId),
     supabase.from('reposts').select('post_id').eq('user_id', userId),
   ]);
@@ -150,7 +183,7 @@ export async function getPostsByUser(targetUserId: string, page: number = 0, lim
 }
 
 /**
- * 特定ユーザーがいいねした投稿取得（無限スクロール対応）
+ * 特定ユーザーがいいねした投稿取得
  */
 export async function getLikedPostsByUser(targetUserId: string, page: number = 0, limit: number = 10): Promise<any[]> {
   const userId = await getCurrentUserId();
@@ -158,13 +191,30 @@ export async function getLikedPostsByUser(targetUserId: string, page: number = 0
   const from = page * limit;
   const to = from + limit - 1;
 
+  // 自分をフォローしている投稿主を取得
+  const { data: followedByData } = await supabase
+    .from('follows')
+    .select('follower_id')
+    .eq('followee_id', userId);
+  const authorsWhoFollowMe = followedByData?.map(f => f.follower_id) || [];
+
+  const conditions = [
+    'posts.visibility.eq.public',
+    `posts.user_id.eq.${userId}`
+  ];
+
+  if (authorsWhoFollowMe.length > 0) {
+    conditions.push(`posts.user_id.in.(${authorsWhoFollowMe.join(',')})`);
+  }
+
   const { data: likesData, error: likesErr } = await supabase
     .from('likes')
     .select(`
       created_at,
-      posts (${POST_SELECT_QUERY})
+      posts!inner (${POST_SELECT_QUERY})
     `)
     .eq('user_id', targetUserId)
+    .or(conditions.join(','))
     .order('created_at', { ascending: false })
     .range(from, to);
 
@@ -189,7 +239,7 @@ export async function getLikedPostsByUser(targetUserId: string, page: number = 0
 }
 
 /**
- * 投稿検索（無限スクロール対応）
+ * 投稿検索
  */
 export async function searchPosts(query: string, page: number = 0, limit: number = 10): Promise<PostWithAuthor[]> {
   const userId = await getCurrentUserId();
@@ -197,11 +247,27 @@ export async function searchPosts(query: string, page: number = 0, limit: number
   const from = page * limit;
   const to = from + limit - 1;
 
+  const { data: followedByData } = await supabase
+    .from('follows')
+    .select('follower_id')
+    .eq('followee_id', userId);
+  const authorsWhoFollowMe = followedByData?.map(f => f.follower_id) || [];
+
+  const conditions = [
+    'visibility.eq.public',
+    `user_id.eq.${userId}`
+  ];
+
+  if (authorsWhoFollowMe.length > 0) {
+    conditions.push(`user_id.in.(${authorsWhoFollowMe.join(',')})`);
+  }
+
   const [postsRes, likesRes, repostsRes] = await Promise.all([
     supabase
       .from('posts')
       .select(POST_SELECT_QUERY)
       .ilike('content', `%${query}%`)
+      .or(conditions.join(','))
       .order('created_at', { ascending: false })
       .range(from, to),
     
@@ -219,12 +285,27 @@ export async function searchPosts(query: string, page: number = 0, limit: number
 
 export async function getPostById(id: string): Promise<PostWithAuthor | null> {
   const userId = await getCurrentUserId();
+  
   const [postRes, likeRes, repostRes] = await Promise.all([
     supabase.from('posts').select(POST_SELECT_QUERY).eq('id', id).single(),
     supabase.from('likes').select('post_id').eq('post_id', id).eq('user_id', userId).maybeSingle(),
     supabase.from('reposts').select('post_id').eq('post_id', id).eq('user_id', userId).maybeSingle(),
   ]);
+  
   if (postRes.error || !postRes.data) return null;
+
+  // visibilityが'following'の場合、投稿主があなたをフォローしているかチェックする
+  if (postRes.data.visibility === 'following' && postRes.data.user_id !== userId) {
+    const { data: authorFollowsMe } = await supabase
+      .from('follows')
+      .select('*')
+      .eq('follower_id', postRes.data.user_id)
+      .eq('followee_id', userId)
+      .maybeSingle();
+    
+    if (!authorFollowsMe) return null;
+  }
+
   const likedIds = new Set<string>(likeRes.data ? [id] : []);
   const repostedIds = new Set<string>(repostRes.data ? [id] : []);
   return rowToPost(postRes.data, likedIds, repostedIds);
@@ -235,6 +316,7 @@ export async function createPost(input: {
   imageUrls: string[];
   parentId?: string;
   isQuote?: boolean;
+  visibility?: 'public' | 'following';
 }): Promise<PostWithAuthor> {
   const userId = await getCurrentUserId();
   const newId = crypto.randomUUID();
@@ -273,10 +355,8 @@ export async function createPost(input: {
     ...detectedUrls
   ]));
 
-  // --- メンション抽出ロジックの追加 ---
   const MENTION_PATTERN = /@(\w+)/g;
   const mentionedUsernames = Array.from(new Set([...input.content.matchAll(MENTION_PATTERN)].map(match => match[1])));
-  // ---------------------------------
 
   const { error } = await supabase.from('posts').insert({
     id:          newId,
@@ -286,11 +366,11 @@ export async function createPost(input: {
     client_name: clientSource,
     parent_id:   input.parentId || null,
     is_quote:    input.isQuote || false,
+    visibility:  input.visibility || 'public'
   });
 
   if (error) throw error;
 
-  // --- メンション保存処理の実行 ---
   if (mentionedUsernames.length > 0) {
     const { data: mentionedUsers } = await supabase
       .from('profiles')
@@ -305,7 +385,6 @@ export async function createPost(input: {
       await supabase.from('mentions').insert(mentionInserts);
     }
   }
-  // ---------------------------------
 
   if (input.parentId && input.isQuote) {
     const [rep, quo] = await Promise.all([
@@ -360,7 +439,6 @@ export async function toggleRepost(postId: string): Promise<{ reposted: boolean;
   ]);
 
   const totalReposts = (repostsRes.count ?? 0) + (quotesRes.count ?? 0);
-
   await supabase.from('posts').update({ reposts_count: totalReposts }).eq('id', postId);
   
   return { reposted: !existing, repostsCount: totalReposts };

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'; 
 import { Link, useNavigate } from 'react-router-dom'; // useNavigateを追加
-import { MessageCircle, MoreHorizontal, Trash2, CalendarDays, ChartBarBig, X } from 'lucide-react'; 
+import { MessageCircle, MoreHorizontal, Trash2, CalendarDays, ChartBarBig, X, Globe, Lock } from 'lucide-react'; 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { LikeButton } from '@/components/post/LikeButton';
 import { PostImages } from './PostImages';
@@ -10,6 +10,7 @@ import { deletePost } from '@/api/posts';
 import { getCurrentUserId } from '@/lib/currentUser';
 import { getYouTubeId } from '@/lib/utils';
 import { YouTubeEmbed } from '@/components/YouTubeEmbed';
+import { supabase } from '@/lib/supabase';
 import dayjs from 'dayjs';
 
 import {
@@ -169,6 +170,30 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
     setShowMenu(false);
   };
 
+  const handleToggleVisibility = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const newVisibility = post.visibility === 'public' ? 'following' : 'public';
+    const confirmMsg = newVisibility === 'public' 
+      ? 'この投稿を全体公開に切り替えますか？' 
+      : 'この投稿を限定公開（フォロワーのみ）に切り替えますか？';
+    
+    if (!confirm(confirmMsg)) return;
+
+    try {
+      const { error } = await supabase
+        .from('posts')
+        .update({ visibility: newVisibility })
+        .eq('id', post.id);
+
+      if (error) throw error;
+      window.location.reload();
+    } catch (err) {
+      console.error(err);
+      alert('公開設定の変更に失敗しました');
+    }
+  };
+
   // 画像クリック時の処理
   const handleImageClick = (e: React.MouseEvent, url: string) => {
     e.preventDefault();
@@ -308,44 +333,71 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
                 </span>
               </div>
               
-              <div className="relative ml-2 shrink-0">
-                <button
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setShowMenu(!showMenu);
-                  }}
-                  className="p-1 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                >
-                  <MoreHorizontal className="h-5 w-5" />
-                </button>
-                {showMenu && (
-                  <>
-                    <div className="fixed inset-0 z-10" onClick={(e) => { e.stopPropagation(); setShowMenu(false); }} />
-                    <div 
-                      className="absolute right-0 mt-1 w-44 rounded-xl border border-border bg-card p-1 shadow-lg z-20 overflow-hidden animate-in fade-in zoom-in duration-100"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <button
-                        onClick={handleActivityClick}
-                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
-                      >
-                        <ChartBarBig className="h-4 w-4" />
-                        ポストアクティビティー
-                      </button>
-                      
-                      {isMyPost && (
-                        <button
-                          onClick={handleDelete}
-                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-destructive hover:bg-destructive/10 transition-colors border-t border-border/50 mt-1"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          削除
-                        </button>
-                      )}
-                    </div>
-                  </>
+              <div className="flex items-center shrink-0 ml-2">
+                {/* 限定公開ラベル（三点印の左） */}
+                {post.visibility === 'following' && (
+                  <span className="text-[14px] font-bold text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-md whitespace-nowrap mr-1">
+                    限定公開
+                  </span>
                 )}
+                <div className="relative shrink-0">
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setShowMenu(!showMenu);
+                    }}
+                    className="p-1 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                  >
+                    < MoreHorizontal className="h-5 w-5" />
+                  </button>
+                  {showMenu && (
+                    <>
+                      <div className="fixed inset-0 z-10" onClick={(e) => { e.stopPropagation(); setShowMenu(false); }} />
+                      <div 
+                        className="absolute right-0 mt-1 w-44 rounded-xl border border-border bg-card p-1 shadow-lg z-20 overflow-hidden animate-in fade-in zoom-in duration-100"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          onClick={handleActivityClick}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
+                        >
+                          <ChartBarBig className="h-4 w-4" />
+                          ポストアクティビティー
+                        </button>
+
+                        {isMyPost && (
+                          <button
+                            onClick={handleToggleVisibility}
+                            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
+                          >
+                            {post.visibility === 'public' ? (
+                              <>
+                                <Lock className="h-4 w-4" />
+                                限定公開にする
+                              </>
+                            ) : (
+                              <>
+                                <Globe className="h-4 w-4" />
+                                全体公開にする
+                              </>
+                            )}
+                          </button>
+                        )}
+                        
+                        {isMyPost && (
+                          <button
+                            onClick={handleDelete}
+                            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-destructive hover:bg-destructive/10 transition-colors border-t border-border/50 mt-1"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            削除
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
 

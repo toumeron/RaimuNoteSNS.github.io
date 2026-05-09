@@ -156,27 +156,36 @@ export default function PostDetail() {
 
       {data && (
         <article className="rounded-3xl border border-border/60 bg-card p-6 shadow-soft">
-          <div className="flex items-center gap-3">
-            <Link to={`/u/${data.author.username}`}>
-              <Avatar className="h-12 w-12 border-2 border-primary/30">
-                <AvatarImage src={data.author.avatarUrl} alt={data.author.displayName} />
-                <AvatarFallback>{data.author.displayName.slice(0, 1)}</AvatarFallback>
-              </Avatar>
-            </Link>
-            <div className="min-w-0">
-              <Link to={`/u/${data.author.username}`} className="flex items-center gap-0.5 min-w-0 font-display font-bold hover:underline">
-                <span className="truncate">{data.author.displayName}</span>
-                {data.author.isOfficial && (
-                  <img 
-                    src={`${import.meta.env.BASE_URL}verified.png`}
-                    alt="Official" 
-                    className="h-4 w-4 shrink-0 transform translate-y-[0.5px]"
-                    loading="eager"
-                  />
-                )}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Link to={`/u/${data.author.username}`}>
+                <Avatar className="h-12 w-12 border-2 border-primary/30">
+                  <AvatarImage src={data.author.avatarUrl} alt={data.author.displayName} />
+                  <AvatarFallback>{data.author.displayName.slice(0, 1)}</AvatarFallback>
+                </Avatar>
               </Link>
-              <p className="truncate text-xs text-muted-foreground">@{data.author.username}</p>
+              <div className="min-w-0">
+                <Link to={`/u/${data.author.username}`} className="flex items-center gap-0.5 min-w-0 font-display font-bold hover:underline">
+                  <span className="truncate">{data.author.displayName}</span>
+                  {data.author.isOfficial && (
+                    <img 
+                      src={`${import.meta.env.BASE_URL}verified.png`}
+                      alt="Official" 
+                      className="h-4 w-4 shrink-0 transform translate-y-[0.5px]"
+                      loading="eager"
+                    />
+                  )}
+                </Link>
+                <p className="truncate text-xs text-muted-foreground">@{data.author.username}</p>
+              </div>
             </div>
+
+            {/* 限定公開ラベル（カード右上に配置） */}
+            {data.visibility === 'following' && (
+<span className="text-[14px] font-bold text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-md whitespace-nowrap -translate-y-[30px]">
+  限定公開
+</span>
+            )}
           </div>
 
           {/* 加工した本文を表示（メンション・ハッシュタグ・URL処理を適用） */}
@@ -268,7 +277,7 @@ export default function PostDetail() {
           >
             <div className="flex items-center gap-8 rounded-full bg-black/40 px-6 py-3 backdrop-blur-md border border-white/10">
               <div className="scale-125">
-                <LikeButton 
+                < LikeButton 
                   postId={data.id} 
                   liked={data.likedByMe} 
                   count={data.likesCount}

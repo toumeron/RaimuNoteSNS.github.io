@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect, type ChangeEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ImagePlus, Loader2, Send, X, AtSign, Hash } from 'lucide-react'; // Hashを追加
+import { ImagePlus, Loader2, Send, X, AtSign, Hash, Globe, Users } from 'lucide-react'; // Globe, Usersを追加
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -12,6 +12,13 @@ import { toast } from 'sonner';
 import type { PostWithAuthor } from '@/types';
 import { formatRelative } from '@/lib/format';
 import { supabase } from '@/lib/supabase';
+// 公開範囲選択用のDropdown MenuをUIに合わせてインポート（既存のUIライブラリ想定）
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const MAX_LEN = 500;
 const MAX_IMAGES = 4;
@@ -65,6 +72,9 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
   const [previews, setPreviews] = useState<string[]>([]);
   const [quotedPost, setQuotedPost] = useState<PostWithAuthor | null>(initialQuotedPost || null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // 公開範囲用ステート (追加)
+  const [visibility, setVisibility] = useState<'public' | 'following'>('public');
 
   // メンション・ハッシュタグ機能用ステートとRef
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -256,13 +266,14 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
       return;
     }
     try {
-      // 投稿処理を先に実行し、確実に完了を待つ
+      // 投稿処理を先に実行し、確実に完了を待つ (visibilityを追加)
       await mutateAsync({ 
         content: trimmed, 
         imageUrls: previews,
         parentId: quotedPost?.id,
         isQuote: !!quotedPost,
-        user_id: user.id
+        user_id: user.id,
+        visibility: visibility // 追加
       } as any);
 
       // ハッシュタグの抽出と統計更新 (投稿後に非同期で実行)
@@ -283,6 +294,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
       setContent('');
       previews.forEach(URL.revokeObjectURL);
       setPreviews([]);
+      setVisibility('public'); // リセット
       cancelQuote();
       if (onSuccess) onSuccess();
     } catch (err) {
@@ -461,6 +473,41 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
                 <ImagePlus className="mr-1.5 h-4 w-4" />
                 画像
               </Button>
+
+              {/* 公開範囲選択 (追加) */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-9 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                  >
+                    {visibility === 'public' ? (
+                      <>
+                        <Globe className="mr-1.5 h-4 w-4" />
+                        全員
+                      </>
+                    ) : (
+                      <>
+                        <Users className="mr-1.5 h-4 w-4 text-accent" />
+                        <span className="text-accent">限定</span>
+                      </>
+                    )}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="rounded-xl z-[70]">
+                  <DropdownMenuItem onClick={() => setVisibility('public')}>
+                    <Globe className="mr-2 h-4 w-4" />
+                    全員
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setVisibility('following')}>
+                    <Users className="mr-2 h-4 w-4" />
+                    フォロー中
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+
               <span className={cn('text-xs tabular-nums', overLimit ? 'font-bold text-destructive' : 'text-muted-foreground')}>
                 {remaining}
               </span>

@@ -92,9 +92,6 @@ export default function SearchPage() {
         { event: '*', schema: 'public', table: 'likes' },
         () => {
           // いいねテーブルに変化があったら、現在の検索結果のいいね数を再取得する
-          // ここでは簡略化のためフラグ更新等の最小限の同期を行うか、
-          // PostCard側で個別に管理されている場合はそちらに任せる構成になります。
-          // 検索結果全体の整合性を保つため、必要に応じてステートを再検証するロジックをここに挟めます。
         }
       )
       .subscribe();
@@ -157,11 +154,29 @@ export default function SearchPage() {
       const from = targetPage * PAGE_SIZE;
       const to = from + PAGE_SIZE - 1;
 
+      // 限定公開の投稿をフィルタリングするための条件構築
+      let conditions = ['visibility.eq.public'];
+      if (currentUser) {
+        conditions.push(`user_id.eq.${currentUser.id}`);
+
+        // 自分をフォローしているユーザーのリストを取得
+        const { data: followedByData } = await supabase
+          .from('follows')
+          .select('follower_id')
+          .eq('followee_id', currentUser.id);
+        
+        const authorsWhoFollowMe = followedByData?.map(f => f.follower_id) || [];
+        if (authorsWhoFollowMe.length > 0) {
+          conditions.push(`user_id.in.(${authorsWhoFollowMe.join(',')})`);
+        }
+      }
+
       // ポスト取得
       const { data, error } = await supabase
         .from('posts')
-        .select(`id, content, image_urls, created_at, user_id, likes_count, reposts_count`)
+        .select(`id, content, image_urls, created_at, user_id, likes_count, reposts_count, visibility`)
         .ilike('content', `%${q}%`)
+        .or(conditions.join(','))
         .order('created_at', { ascending: false })
         .range(from, to);
 
@@ -205,6 +220,7 @@ export default function SearchPage() {
             commentsCount: 0,
             likedByMe: myLikes.includes(p.id),
             repostedByMe: myReposts.includes(p.id),
+            visibility: p.visibility,
             author: {
               id: user?.id || p.user_id,
               username: user?.username || 'unknown',

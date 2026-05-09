@@ -34,6 +34,9 @@ export type Post = {
   isQuote?: boolean;
   repostsCount: number;
   repostedByMe: boolean;
+
+  // --- 公開範囲制御用の追加 ---
+  visibility?: 'public' | 'following'; // これを追加することでエラーが解消されます
 };
 
 export type Comment = {
