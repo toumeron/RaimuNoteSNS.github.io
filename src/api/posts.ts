@@ -55,7 +55,7 @@ function rowToPost(row: any, likedIds: Set<string>, repostedIds: Set<string>): P
 
 /**
  * タイムライン取得（無限スクロール対応）
- * ロジック: 「投稿主が自分をフォローしている」場合にその投稿を表示する
+ * ロジック: 公開投稿、自分の投稿、または自分をフォローしている人の投稿を表示
  */
 export async function getFeed(page: number = 0, limit: number = 10): Promise<PostWithAuthor[]> {
   const userId = await getCurrentUserId();
@@ -73,13 +73,13 @@ export async function getFeed(page: number = 0, limit: number = 10): Promise<Pos
 
   // OR条件の組み立て
   const conditions = [
-    'visibility.eq.public', // 公開投稿
+    'visibility.eq.public', // 全体公開
     `user_id.eq.${userId}`   // 自分の投稿
   ];
 
-  // 自分をフォローしている投稿主の投稿を条件に追加
+  // 自分をフォローしている投稿主の投稿（限定公開分を含む）を条件に追加
   if (authorsWhoFollowMe.length > 0) {
-    conditions.push(`user_id.in.(${authorsWhoFollowMe.join(',')})`);
+    conditions.push(`and(user_id.in.(${authorsWhoFollowMe.join(',')}),visibility.eq.following)`);
   }
 
   const [postsRes, likesRes, repostsRes] = await Promise.all([
@@ -103,7 +103,7 @@ export async function getFeed(page: number = 0, limit: number = 10): Promise<Pos
 }
 
 /**
- * フォローされているユーザーの投稿のみを取得（無限スクロール対応）
+ * フォローしているユーザーの投稿のみを取得（無限スクロール対応）
  */
 export async function getFollowingFeed(page: number = 0, limit: number = 10): Promise<PostWithAuthor[]> {
   const userId = await getCurrentUserId();
@@ -112,22 +112,38 @@ export async function getFollowingFeed(page: number = 0, limit: number = 10): Pr
   const from = page * limit;
   const to = from + limit - 1;
 
-  // 「自分をフォローしている人」のIDリストを取得
-  const { data: followedByData, error: followError } = await supabase
+  // 1. 自分がフォローしている人のリストを取得
+  const { data: followingData } = await supabase
+    .from('follows')
+    .select('followee_id')
+    .eq('follower_id', userId);
+
+  const followingIds = followingData?.map(f => f.followee_id) || [];
+  if (followingIds.length === 0) return [];
+
+  // 2. 自分をフォローしてくれている人のリストを取得（限定公開用）
+  const { data: followedByData } = await supabase
     .from('follows')
     .select('follower_id')
     .eq('followee_id', userId);
 
-  if (followError) throw followError;
-
   const authorsWhoFollowMe = followedByData?.map(f => f.follower_id) || [];
-  if (authorsWhoFollowMe.length === 0) return [];
+
+  // 3. クエリ条件の組み立て
+  // 「フォローしている人の公開投稿」 OR 「フォローしており、かつ相手も自分をフォローしている限定公開投稿」
+  let filterConditions = `and(user_id.in.(${followingIds.join(',')}),visibility.eq.public)`;
+  
+  // 相互フォロー（相手が自分をフォローしている）の人がいれば、その人の限定公開投稿も加える
+  const mutualFollowIds = followingIds.filter(id => authorsWhoFollowMe.includes(id));
+  if (mutualFollowIds.length > 0) {
+    filterConditions += `,and(user_id.in.(${mutualFollowIds.join(',')}),visibility.eq.following)`;
+  }
 
   const [postsRes, likesRes, repostsRes] = await Promise.all([
     supabase
       .from('posts')
       .select(POST_SELECT_QUERY)
-      .in('user_id', authorsWhoFollowMe)
+      .or(filterConditions)
       .order('created_at', { ascending: false })
       .range(from, to),
     
@@ -198,13 +214,14 @@ export async function getLikedPostsByUser(targetUserId: string, page: number = 0
     .eq('followee_id', userId);
   const authorsWhoFollowMe = followedByData?.map(f => f.follower_id) || [];
 
+  // 条件：公開投稿、自分の投稿、または自分をフォローしている人の限定公開投稿
   const conditions = [
     'posts.visibility.eq.public',
     `posts.user_id.eq.${userId}`
   ];
 
   if (authorsWhoFollowMe.length > 0) {
-    conditions.push(`posts.user_id.in.(${authorsWhoFollowMe.join(',')})`);
+    conditions.push(`and(posts.user_id.in.(${authorsWhoFollowMe.join(',')}),posts.visibility.eq.following)`);
   }
 
   const { data: likesData, error: likesErr } = await supabase
@@ -259,7 +276,7 @@ export async function searchPosts(query: string, page: number = 0, limit: number
   ];
 
   if (authorsWhoFollowMe.length > 0) {
-    conditions.push(`user_id.in.(${authorsWhoFollowMe.join(',')})`);
+    conditions.push(`and(user_id.in.(${authorsWhoFollowMe.join(',')}),visibility.eq.following)`);
   }
 
   const [postsRes, likesRes, repostsRes] = await Promise.all([
