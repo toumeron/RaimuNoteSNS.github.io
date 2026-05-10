@@ -25,6 +25,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
   const [showMenu, setShowMenu] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null); // 拡大用
+  const [failedUrls, setFailedUrls] = useState<string[]>([]); // 読み込みに失敗したURLを管理
   const navigate = useNavigate();
   // リアルタイム更新用のステート
   const [, setTick] = useState(0);
@@ -60,9 +61,20 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
   const isMyPost = currentUserId === post.userId;
   const youtubeId = getYouTubeId(post.content);
 
-  const displayContent = youtubeId 
+  // 画像URLを判定する正規表現（拡張子または特定のクエリパラメータ付きURLに対応）
+  const imageRegex = /https?:\/\/[^\s]+?\.(?:png|jpg|jpeg|gif|webp|svg)(?:\?[^\s]*)?|https?:\/\/pbs\.twimg\.com\/media\/[^\s?]+(?:\?[^\s]*)?/gi;
+
+  // 本文から画像URLを抽出する
+  const extractedImageUrls = post.content.match(imageRegex) || [];
+  
+  // 元々の画像配列と、本文から抽出した画像を合体させ、最大4枚に制限する
+  const allImageUrls = [...(post.imageUrls || []), ...extractedImageUrls].slice(0, 4);
+
+  // 表示用コンテンツの作成（YouTubeと画像URLを除去）
+  const displayContent = (youtubeId || extractedImageUrls.length > 0)
     ? post.content
         .replace(/(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|embed\/|shorts\/)?([a-zA-Z0-9_-]{11})([^?\s\n]*)?(\S+)?/g, '')
+        .replace(imageRegex, '')
         .trim()
     : post.content;
 
@@ -135,7 +147,6 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
               e.preventDefault();
               e.stopPropagation();
               // 検索ページに「#タグ名」で遷移。
-              // 検索ページ側のuseEffect(URLのqを監視)がこの値を拾って自動検索を走らせる。
               navigate(`/search?q=${encodeURIComponent(part)}`);
             }}
             className="text-pink-500 hover:underline transition-colors inline-block align-baseline"
@@ -176,7 +187,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
     const newVisibility = post.visibility === 'public' ? 'following' : 'public';
     const confirmMsg = newVisibility === 'public' 
       ? 'この投稿を全体公開に切り替えますか？' 
-      : 'この投稿を限定公開（フォロワーのみ）に切り替えますか？';
+      : 'この投稿を限定公開に切り替えますか？フォロー中のユーザーのみ表示されます。';
     
     if (!confirm(confirmMsg)) return;
 
@@ -408,6 +419,16 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
                     {renderContentWithMentions(displayContent)}
                   </p>
                 )}
+                {/* 画像読み込みに失敗したURLをテキストリンクとして表示 */}
+                {failedUrls.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {failedUrls.map((url, idx) => (
+                      <div key={`failed-${idx}`}>
+                        {renderContentWithLinks(url)}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
               {youtubeId && (
                 <div onClick={(e) => e.stopPropagation()}>
@@ -425,7 +446,18 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
                   }
                 }}
               >
-                <PostImages urls={post.imageUrls} />
+                {/* PostImages内で画像がエラーになった際、親(PostCard)のfailedUrlsに
+                  URLを追加する仕組み。PostImagesコンポーネント側にonErrorを仕込むか、
+                  ここではシンプルにURLを渡しつつ表示制御を行う。
+                */}
+                <PostImages 
+                  urls={allImageUrls} 
+                  onImageError={(url) => {
+                    if (!failedUrls.includes(url)) {
+                      setFailedUrls(prev => [...prev, url]);
+                    }
+                  }}
+                />
               </div>
             </div>
 

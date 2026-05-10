@@ -16,6 +16,7 @@ export default function PostDetail() {
   const { id = '' } = useParams();
   const { data, isLoading, isError } = usePost(id);
   const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null); // 拡大用
+  const [failedUrls, setFailedUrls] = useState<string[]>([]); // 読み込み失敗URL管理
   const navigate = useNavigate();
 
   // 数値をフォーマットする関数
@@ -74,8 +75,7 @@ export default function PostDetail() {
     if (!text) return null;
     
     // @username と #hashtag 形式にマッチさせる正規表現
-    // 括弧で囲むことで split の結果にマッチした文字列が含まれる
-    const parts = text.split(/(@\w+|#[\w\u3040-\u309f\u30a0-\u30ff\u4e00-\u9faf]+)/g);
+    const parts = text.split(/(@\w+|#[^\s#　.,!?:;'"()\[\]{}<>]+)/g);
     
     return parts.map((part, index) => {
       // メンション処理
@@ -111,11 +111,21 @@ export default function PostDetail() {
   };
   // ------------------------------
 
-  // YouTube IDの抽出と本文の加工
+  // 画像URLを判定する正規表現
+  const imageRegex = /https?:\/\/[^\s]+?\.(?:png|jpg|jpeg|gif|webp|svg)(?:\?[^\s]*)?|https?:\/\/pbs\.twimg\.com\/media\/[^\s?]+(?:\?[^\s]*)?/gi;
+
+  // 本文から画像URLを抽出
+  const extractedImageUrls = data?.content.match(imageRegex) || [];
+  
+  // 元々の画像配列と、本文から抽出した画像を合体させ、最大4枚に制限
+  const allImageUrls = data ? [...(data.imageUrls || []), ...extractedImageUrls].slice(0, 4) : [];
+
+  // YouTube IDの抽出と本文の加工（YouTube URLと画像URLを除去）
   const youtubeId = data ? getYouTubeId(data.content) : null;
-  const displayContent = (data && youtubeId)
+  const displayContent = (data && (youtubeId || extractedImageUrls.length > 0))
     ? data.content
         .replace(/(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|embed\/|shorts\/)?([a-zA-Z0-9_-]{11})([^?\s\n]*)?(\S+)?/g, '')
+        .replace(imageRegex, '')
         .trim()
     : data?.content;
 
@@ -182,9 +192,9 @@ export default function PostDetail() {
 
             {/* 限定公開ラベル（カード右上に配置） */}
             {data.visibility === 'following' && (
-<span className="text-[14px] font-bold text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-md whitespace-nowrap -translate-y-[30px]">
-  限定公開
-</span>
+              <span className="text-[14px] font-bold text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-md whitespace-nowrap -translate-y-[30px]">
+                限定公開
+              </span>
             )}
           </div>
 
@@ -193,6 +203,17 @@ export default function PostDetail() {
             <p className="mt-4 whitespace-pre-wrap break-words text-base leading-relaxed text-foreground">
               {renderContentWithLinks(displayContent)}
             </p>
+          )}
+
+          {/* 画像読み込み失敗時のURL表示 */}
+          {failedUrls.length > 0 && (
+            <div className="mt-2 space-y-1">
+              {failedUrls.map((url, idx) => (
+                <div key={`failed-${idx}`}>
+                  {renderTextWithUrls(url)}
+                </div>
+              ))}
+            </div>
           )}
 
           {/* YouTube埋め込みを追加 */}
@@ -207,7 +228,14 @@ export default function PostDetail() {
               }
             }}
           >
-            <PostImages urls={data.imageUrls} />
+            <PostImages 
+              urls={allImageUrls} 
+              onImageError={(url) => {
+                if (!failedUrls.includes(url)) {
+                  setFailedUrls(prev => [...prev, url]);
+                }
+              }}
+            />
           </div>
 
           <p className="mt-4 text-xs text-muted-foreground" title={formatDate(data.createdAt)}>

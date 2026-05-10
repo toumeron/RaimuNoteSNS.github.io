@@ -470,8 +470,8 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
                 onClick={() => fileRef.current?.click()}
                 disabled={previews.length >= MAX_IMAGES}
               >
-                <ImagePlus className="mr-1.5 h-4 w-4" />
-                画像
+                <ImagePlus className="sm:mr-1.5 h-4 w-4" />
+                <span className="hidden sm:inline">画像</span>
               </Button>
 
               {/* 公開範囲選択 (追加) */}
@@ -485,13 +485,13 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
                   >
                     {visibility === 'public' ? (
                       <>
-                        <Globe className="mr-1.5 h-4 w-4" />
-                        全員
+                        <Globe className="sm:mr-1.5 h-4 w-4" />
+                        <span className="hidden sm:inline">全員</span>
                       </>
                     ) : (
                       <>
-                        <Users className="mr-1.5 h-4 w-4 text-accent" />
-                        <span className="text-accent">限定</span>
+                        <Users className="sm:mr-1.5 h-4 w-4 text-accent" />
+                        <span className="text-accent hidden sm:inline">限定</span>
                       </>
                     )}
                   </Button>

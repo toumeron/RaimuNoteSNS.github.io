@@ -64,3 +64,4 @@ export type PostWithAuthor = Post & {
 export type CommentWithAuthor = Comment & {
   author: User;
 };
+
