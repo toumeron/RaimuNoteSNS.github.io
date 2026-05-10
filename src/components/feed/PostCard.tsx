@@ -10,6 +10,7 @@ import { deletePost } from '@/api/posts';
 import { getCurrentUserId } from '@/lib/currentUser';
 import { getYouTubeId } from '@/lib/utils';
 import { YouTubeEmbed } from '@/components/YouTubeEmbed';
+import { SpotifyEmbed } from '@/components/SpotifyEmbed';
 import { supabase } from '@/lib/supabase';
 import dayjs from 'dayjs';
 
@@ -61,6 +62,11 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
   const isMyPost = currentUserId === post.userId;
   const youtubeId = getYouTubeId(post.content);
 
+  // Spotify URLを判定する正規表現
+  // [a-z]{2}を[\w-]+に変更し、intl-ja などの任意の言語パスを確実に検知・除去できるように修正
+  const spotifyRegex = /https:\/\/open\.spotify\.com\/(?:[\w-]+\/)?(track|album|playlist)\/[a-zA-Z0-9._?=&/%-]+/gi;
+  const spotifyUrls = post.content.match(spotifyRegex) || [];
+
   // 画像URLを判定する正規表現（拡張子または特定のクエリパラメータ付きURLに対応）
   const imageRegex = /https?:\/\/[^\s]+?\.(?:png|jpg|jpeg|gif|webp|svg)(?:\?[^\s]*)?|https?:\/\/pbs\.twimg\.com\/media\/[^\s?]+(?:\?[^\s]*)?/gi;
 
@@ -70,13 +76,17 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
   // 元々の画像配列と、本文から抽出した画像を合体させ、最大4枚に制限する
   const allImageUrls = [...(post.imageUrls || []), ...extractedImageUrls].slice(0, 4);
 
-  // 表示用コンテンツの作成（YouTubeと画像URLを除去）
-  const displayContent = (youtubeId || extractedImageUrls.length > 0)
-    ? post.content
-        .replace(/(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|embed\/|shorts\/)?([a-zA-Z0-9_-]{11})([^?\s\n]*)?(\S+)?/g, '')
-        .replace(imageRegex, '')
-        .trim()
-    : post.content;
+  // 表示用コンテンツの作成（YouTube、Spotify、画像URLを除去）
+  let displayContent = post.content;
+  
+  // YouTube除去
+  displayContent = displayContent.replace(/(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|embed\/|shorts\/)?([a-zA-Z0-9_-]{11})([^?\s\n]*)?(\S+)?/g, '');
+  // 画像URL除去
+  displayContent = displayContent.replace(imageRegex, '');
+  // Spotify除去（修正した正規表現で intl-ja 部分もろとも削除）
+  displayContent = displayContent.replace(spotifyRegex, '');
+  
+  displayContent = displayContent.trim();
 
   // --- URLをリンク化する関数 ---
   const renderContentWithLinks = (text: string) => {
@@ -435,6 +445,14 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
                   <YouTubeEmbed videoId={youtubeId} />
                 </div>
               )}
+              {/* Spotify URLがあれば埋め込みを表示 */}
+              {spotifyUrls.length > 0 && (
+                <div onClick={(e) => e.stopPropagation()} className="space-y-2">
+                  {spotifyUrls.map((url, idx) => (
+                    <SpotifyEmbed key={`spotify-${idx}`} url={url} />
+                  ))}
+                </div>
+              )}
               <div 
                 className="cursor-zoom-in"
                 onClick={(e) => {
@@ -446,10 +464,6 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
                   }
                 }}
               >
-                {/* PostImages内で画像がエラーになった際、親(PostCard)のfailedUrlsに
-                  URLを追加する仕組み。PostImagesコンポーネント側にonErrorを仕込むか、
-                  ここではシンプルにURLを渡しつつ表示制御を行う。
-                */}
                 <PostImages 
                   urls={allImageUrls} 
                   onImageError={(url) => {
