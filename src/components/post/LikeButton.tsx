@@ -6,7 +6,7 @@ import { getCurrentUserId } from '@/lib/currentUser';
 import { useQueryClient } from '@tanstack/react-query';
 
 const formatDisplayCount = (count: number = 0) => {
-  const n = count ?? 0;
+  const n = Number(count) || 0; // 確実に数値に変換
   if (n >= 10000) return (n / 10000).toFixed(1).replace(/\.0$/, '') + '万';
   return n.toLocaleString();
 };
@@ -33,20 +33,21 @@ export function LikeButton({
   
   // 表示用の状態（楽観的更新用）
   const [displayLiked, setDisplayLiked] = useState(liked);
-  const [displayCount, setDisplayCount] = useState(count);
+  const [displayCount, setDisplayCount] = useState(Number(count) || 0);
   const [isPending, setIsPending] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
 
-  // 最新の状態を常に保持するためのRef（関数の外側から値を参照する）
-  const stateRef = useRef({ liked, count, isProcessing: false });
+  // 最新の状態を常に保持するためのRef
+  const stateRef = useRef({ liked, count: Number(count) || 0, isProcessing: false });
 
   // Propsが外部から更新されたら、処理中でない場合のみ同期
   useEffect(() => {
     if (!stateRef.current.isProcessing) {
+      const safeCount = Number(count) || 0;
       setDisplayLiked(liked);
-      setDisplayCount(count);
+      setDisplayCount(safeCount);
       stateRef.current.liked = liked;
-      stateRef.current.count = count;
+      stateRef.current.count = safeCount;
     }
   }, [liked, count]);
 
@@ -54,7 +55,7 @@ export function LikeButton({
     e.preventDefault();
     e.stopPropagation();
 
-    // 1. 物理ロック（ここを通れるのは1回のリクエストサイクルで一度だけ）
+    // 1. 物理ロック
     if (stateRef.current.isProcessing) return;
     
     stateRef.current.isProcessing = true;
@@ -84,13 +85,13 @@ export function LikeButton({
       const config = TABLE_CONFIG[type];
       
       if (willBeLiked) {
-        // すでに存在する場合のエラーを考慮して insert
-const { error } = await supabase
-  .from('likes')
-  .upsert(
-    { post_id: postId, user_id: userId }, 
-    { onConflict: 'post_id, user_id' } // この組み合わせが重複したら無視（または更新）する
-  );
+        // config.table を使用して、post/comment 適切なテーブルへ insert するよう修正
+        const { error } = await supabase
+          .from(config.table)
+          .upsert(
+            { [config.idCol]: postId, user_id: userId }, 
+            { onConflict: `${config.idCol}, user_id` }
+          );
         if (error && error.code !== '23505') throw error;
       } else {
         const { error } = await supabase
@@ -117,7 +118,6 @@ const { error } = await supabase
         setIsPending(false);
       }, 500);
     }
-    // 依存関係から displayLiked や count を外し、関数の再生成を抑える
   }, [postId, queryClient, type]);
 
   return (

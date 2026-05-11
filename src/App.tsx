@@ -18,6 +18,7 @@ import PostActivity from "./pages/PostActivity";
 import Share from "./pages/Share";
 import NotFound from "./pages/NotFound";
 import Notifications from "./pages/Notifications";
+import FollowersFollowingPage from "./pages/FollowersFollowingPage";
 
 const ScrollToTop = () => {
   const { pathname } = useLocation();
@@ -126,6 +127,8 @@ const App = () => (
                 <Route path="/post/:id" element={<PostDetail />} />
                 <Route path="/post/:postId/activity" element={<PostActivity />} />
                 <Route path="/u/:username" element={<Profile />} />
+                {/* 修正：/u/ を含めたパスを設定 */}
+                <Route path="/u/:username/followers_following" element={<FollowersFollowingPage />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/share" element={<Share />} />
               </Route>

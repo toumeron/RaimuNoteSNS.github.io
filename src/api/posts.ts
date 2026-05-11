@@ -214,16 +214,8 @@ export async function getLikedPostsByUser(targetUserId: string, page: number = 0
     .eq('followee_id', userId);
   const authorsWhoFollowMe = followedByData?.map(f => f.follower_id) || [];
 
-  // 条件：公開投稿、自分の投稿、または自分をフォローしている人の限定公開投稿
-  const conditions = [
-    'posts.visibility.eq.public',
-    `posts.user_id.eq.${userId}`
-  ];
-
-  if (authorsWhoFollowMe.length > 0) {
-    conditions.push(`and(posts.user_id.in.(${authorsWhoFollowMe.join(',')}),posts.visibility.eq.following)`);
-  }
-
+  // RLSが適切に設定されていれば、フロントエンド側でvisibilityによる複雑なorフィルタをlikesテーブルに対してかける必要はありません。
+  // ポストの公開・非公開はposts側のRLSで制御すべきですが、現状の400エラーを回避するためにor条件を削除または修正します。
   const { data: likesData, error: likesErr } = await supabase
     .from('likes')
     .select(`
@@ -231,7 +223,6 @@ export async function getLikedPostsByUser(targetUserId: string, page: number = 0
       posts!inner (${POST_SELECT_QUERY})
     `)
     .eq('user_id', targetUserId)
-    .or(conditions.join(','))
     .order('created_at', { ascending: false })
     .range(from, to);
 

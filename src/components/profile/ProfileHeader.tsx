@@ -77,18 +77,25 @@ export function ProfileHeader({ user }: { user: User }) {
         </div>
 
         <div className="mt-4 flex items-center gap-5 border-t border-border/60 pt-4 text-sm">
-          <div>
-            <span className="font-display text-base font-bold tabular-nums">
+          {/* items-baseline に変更して数字とテキストの文字底を統一 */}
+          <Link 
+            to={`/u/${user.username}/followers_following?tab=following`}
+            className="group flex items-baseline gap-1 hover:no-underline"
+          >
+            <span className="font-display text-base font-bold tabular-nums group-hover:underline">
               {stats ? formatDisplayCount(stats.following) : 0}
             </span>
-            <span className="ml-1 text-muted-foreground">フォロー中</span>
-          </div>
-          <div>
-            <span className="font-display text-base font-bold tabular-nums">
+            <span className="text-muted-foreground">フォロー中</span>
+          </Link>
+          <Link 
+            to={`/u/${user.username}/followers_following?tab=followers`}
+            className="group flex items-baseline gap-1 hover:no-underline"
+          >
+            <span className="font-display text-base font-bold tabular-nums group-hover:underline">
               {stats ? formatDisplayCount(stats.followers) : 0}
             </span>
-            <span className="ml-1 text-muted-foreground">フォロワー</span>
-          </div>
+            <span className="text-muted-foreground">フォロワー</span>
+          </Link>
         </div>
       </div>
     </div>
