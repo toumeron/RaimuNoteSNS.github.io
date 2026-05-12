@@ -83,6 +83,8 @@ export default defineConfig(({ mode }) => ({
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg,webmanifest}"],
         navigateFallback: "/RaimuNoteSNS.github.io/index.html",
+        // ビルドエラー回避のためキャッシュ許容サイズを5MBに拡大
+        maximumFileSizeToCacheInBytes: 5242880,
       },
       devOptions: {
         enabled: true,
