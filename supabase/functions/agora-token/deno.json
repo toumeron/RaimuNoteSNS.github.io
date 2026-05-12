@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "lib": ["deno.window"],
+    "strict": false
+  },
+  "imports": {
+    "std/": "https://deno.land/std@0.177.0/",
+    "agora-access-token": "https://esm.sh/agora-access-token@2.0.4",
+    "cors": "./_shared/cors.ts"
+  }
+}

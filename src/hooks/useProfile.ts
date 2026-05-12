@@ -79,9 +79,9 @@ export const useUserMediaInfinite = (userId: string | undefined) =>
       if (currentUserId && !isOwner) {
         const { data: follow } = await supabase
           .from('follows')
-          .select('id')
+          .select('follower_id')
           .eq('follower_id', currentUserId)
-          .eq('following_id', userId)
+          .eq('followee_id', userId)
           .maybeSingle();
         isFollowing = !!follow;
       }

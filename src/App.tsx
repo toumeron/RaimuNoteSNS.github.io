@@ -20,6 +20,7 @@ import Share from "./pages/Share";
 import NotFound from "./pages/NotFound";
 import Notifications from "./pages/Notifications";
 import FollowersFollowingPage from "./pages/FollowersFollowingPage";
+import SpacePage from "./pages/SpacePage";
 
 // PostComposer 用のインポート群
 import { ImagePlus, Loader2, Send, X, AtSign, Hash, Globe, Users, Plus, PenSquare } from 'lucide-react';
@@ -199,7 +200,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
   const [content, setContent] = useState(initialContent);
   const [previews, setPreviews] = useState<string[]>([]);
   const [quotedPost, setQuotedPost] = useState<PostWithAuthor | null>(initialQuotedPost || null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null); // 宣言を上に移動し、const に修正
 
   const [visibility, setVisibility] = useState<'public' | 'following'>('public');
 
@@ -726,6 +727,7 @@ const App = () => {
                   <Route path="/u/:username/followers_following" element={<FollowersFollowingPage />} />
                   <Route path="/settings" element={<Settings />} />
                   <Route path="/share" element={<Share />} />
+                  <Route path="/spaces/:id" element={<SpacePage />} />
                 </Route>
                 <Route path="/index" element={<Navigate to="/" replace />} />
                 <Route path="*" element={<NotFound />} />
