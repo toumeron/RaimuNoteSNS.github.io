@@ -1,0 +1,15 @@
+name: 6-hour-news-cron
+on:
+  schedule:
+    - cron: '0 */6 * * *' # 日本時間で 9時, 15時, 21時, 3時 ごろ
+  workflow_dispatch: # 手動実行ボタンも追加
+
+jobs:
+  run-function:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call Supabase Function
+        run: |
+          curl -X POST "https://wrxaayteittkjoblgauk.supabase.co/functions/v1/generate-news" \
+          -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+          -H "Content-Type: application/json"
