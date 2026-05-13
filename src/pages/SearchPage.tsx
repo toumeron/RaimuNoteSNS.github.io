@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Search, X, Clock, Loader2, TrendingUp } from 'lucide-react';
+import { Search, X, Clock, Loader2, TrendingUp, Newspaper } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PostCard } from '@/components/feed/PostCard';
 import UserCard from '@/components/search/UserCard';
@@ -7,7 +7,7 @@ import { supabase } from '@/lib/supabase';
 import type { User, PostWithAuthor } from '@/types';
 // @ts-ignore - tiny-segmenter has no bundled types
 import TinySegmenter from 'tiny-segmenter';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 
 const segmenter = new TinySegmenter();
 
@@ -65,8 +65,18 @@ type TrendItem = {
   traffic: string;
 };
 
+// ニュースアイテムの型定義
+type NewsItem = {
+  id: string;
+  title: string;
+  content: string;
+  category: string;
+  created_at: string;
+};
+
 export default function SearchPage() {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [inputValue, setInputValue] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [allUsers, setAllUsers] = useState<User[]>([]);
@@ -86,38 +96,63 @@ export default function SearchPage() {
   const [trends, setTrends] = useState<TrendItem[]>([]);
   const [isTrendsLoading, setIsTrendsLoading] = useState(false);
 
+  // ニュース用ステート
+  const [latestNews, setLatestNews] = useState<NewsItem | null>(null);
+  const [isNewsLoading, setIsNewsLoading] = useState(false);
+
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestBoxRef = useRef<HTMLDivElement>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const lastElementRef = useRef<HTMLDivElement>(null);
 
+  // ニュース取得用Effect
+  useEffect(() => {
+    async function fetchLatestNews() {
+      setIsNewsLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from('news_summaries')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (error && error.code !== 'PGRST116') throw error; // PGRST116はデータなしエラー
+        if (data) setLatestNews(data);
+      } catch (err) {
+        console.error('Failed to fetch news:', err);
+      } finally {
+        setIsNewsLoading(false);
+      }
+    }
+    fetchLatestNews();
+  }, []);
+
   // トレンド取得用Effect
   useEffect(() => {
-// SearchPage.tsx 内の fetchTrends 関数を微修正
-async function fetchTrends() {
-  setIsTrendsLoading(true);
-  try {
-    const { data, error } = await supabase.functions.invoke('get-trends', {
-      method: 'POST',
-      body: {}, 
-    });
+    async function fetchTrends() {
+      setIsTrendsLoading(true);
+      try {
+        const { data, error } = await supabase.functions.invoke('get-trends', {
+          method: 'POST',
+          body: {}, 
+        });
 
-    if (error) throw error;
+        if (error) throw error;
 
-    // 配列であること、かつエラープロパティを持っていないことを確認
-    if (Array.isArray(data)) {
-      setTrends(data);
-    } else if (data && data.error) {
-      console.error('Function returned error:', data.error);
-      setTrends([]);
+        if (Array.isArray(data)) {
+          setTrends(data);
+        } else if (data && data.error) {
+          console.error('Function returned error:', data.error);
+          setTrends([]);
+        }
+      } catch (err) {
+        console.error('Failed to fetch trends:', err);
+        setTrends([]);
+      } finally {
+        setIsTrendsLoading(false);
+      }
     }
-  } catch (err) {
-    console.error('Failed to fetch trends:', err);
-    setTrends([]);
-  } finally {
-    setIsTrendsLoading(false);
-  }
-}
     fetchTrends();
   }, []);
 
@@ -131,7 +166,6 @@ async function fetchTrends() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'likes' },
         () => {
-          // いいねテーブルに変化があったら、現在の検索結果のいいね数を再取得する
         }
       )
       .subscribe();
@@ -194,12 +228,10 @@ async function fetchTrends() {
       const from = targetPage * PAGE_SIZE;
       const to = from + PAGE_SIZE - 1;
 
-      // 限定公開の投稿をフィルタリングするための条件構築
       let conditions = ['visibility.eq.public'];
       if (currentUser) {
         conditions.push(`user_id.eq.${currentUser.id}`);
 
-        // 自分をフォローしているユーザーのリストを取得
         const { data: followedByData } = await supabase
           .from('follows')
           .select('follower_id')
@@ -211,7 +243,6 @@ async function fetchTrends() {
         }
       }
 
-      // ポスト取得
       const { data, error } = await supabase
         .from('posts')
         .select(`id, content, image_urls, created_at, user_id, likes_count, reposts_count, visibility`)
@@ -223,7 +254,6 @@ async function fetchTrends() {
       if (error) throw error;
 
       if (data) {
-        // 現在のユーザーがこれらのポストをいいねしているか確認
         let myLikes: string[] = [];
         if (currentUser) {
           const { data: likesData } = await supabase
@@ -234,7 +264,6 @@ async function fetchTrends() {
           if (likesData) myLikes = likesData.map(l => l.post_id);
         }
 
-        // 自分のリポストも確認
         let myReposts: string[] = [];
         if (currentUser) {
           const { data: repostsData } = await supabase
@@ -516,6 +545,57 @@ async function fetchTrends() {
                   title="LimeSearch (ベータ版) " 
                   desc="キーワードを入力して、ポストやアカウントを見つけましょう。" 
                 />
+                
+                {/* 最新ニュースセクション */}
+                <div className="px-4">
+                  <div className="bg-[#1d9bf0]/10 dark:bg-[#1d9bf0]/5 rounded-2xl border border-[#1d9bf0]/20 dark:border-[#1d9bf0]/10 overflow-hidden">
+                    <div className="px-4 py-3 border-b border-[#1d9bf0]/20 dark:border-[#1d9bf0]/10 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Newspaper className="w-5 h-5 text-[#1d9bf0]" />
+                        <h2 className="font-extrabold text-xl">ニュース</h2>
+                      </div>
+                      {latestNews && (
+                         <button 
+                           onClick={() => navigate('/news')}
+                           className="text-[11px] font-bold bg-[#1d9bf0] text-white px-2 py-0.5 rounded-full uppercase hover:opacity-80 transition-opacity"
+                         >
+                           NEW
+                         </button>
+                      )}
+                    </div>
+                    
+                    {isNewsLoading ? (
+                      <div className="p-8 flex justify-center">
+                        <Loader2 className="w-6 h-6 animate-spin text-[#1d9bf0]" />
+                      </div>
+                    ) : latestNews ? (
+                      <div 
+                        className="p-4 flex flex-col gap-2 cursor-pointer hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors"
+                        onClick={() => navigate('/news')}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-[12px] font-bold text-[#1d9bf0] px-2 py-0.5 bg-[#1d9bf0]/10 rounded-md">
+                            {latestNews.category}
+                          </span>
+                          <span className="text-[12px] text-[rgb(83,100,113)] dark:text-gray-400">
+                            {new Date(latestNews.created_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <h3 className="font-bold text-[17px] leading-tight hover:underline">
+                          {latestNews.title}
+                        </h3>
+                        <p className="text-[14px] text-[rgb(83,100,113)] dark:text-gray-300 leading-normal line-clamp-3">
+                          {latestNews.content}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="px-4 py-8 text-center text-[rgb(83,100,113)] dark:text-gray-400 text-[14px]">
+                        現在、表示できるニュースはありません
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 {/* トレンドセクション */}
                 <div className="px-4">
                   <div className="bg-black/[0.02] dark:bg-white/[0.03] rounded-2xl border border-black/[0.03] dark:border-white/[0.05] overflow-hidden">

@@ -21,6 +21,7 @@ import NotFound from "./pages/NotFound";
 import Notifications from "./pages/Notifications";
 import FollowersFollowingPage from "./pages/FollowersFollowingPage";
 import SpacePage from "./pages/SpacePage";
+import NewsPage from './pages/NewsPage';
 
 // PostComposer 用のインポート群
 import { ImagePlus, Loader2, Send, X, AtSign, Hash, Globe, Users, Plus, PenSquare } from 'lucide-react';
@@ -721,6 +722,7 @@ const App = () => {
                   <Route path="/" element={<Feed />} />
                   <Route path="/notifications" element={<Notifications />} />
                   <Route path="/search" element={<SearchPage />} />
+                  <Route path="/news" element={<NewsPage />} />
                   <Route path="/post/:id" element={<PostDetail />} />
                   <Route path="/post/:postId/activity" element={<PostActivity />} />
                   <Route path="/u/:username" element={<Profile />} />
