@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Search, X, Clock, Loader2 } from 'lucide-react';
+import { Search, X, Clock, Loader2, TrendingUp } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PostCard } from '@/components/feed/PostCard';
 import UserCard from '@/components/search/UserCard';
@@ -59,6 +59,12 @@ const RowSkeleton = () => (
   </div>
 );
 
+// トレンドアイテムの型定義
+type TrendItem = {
+  title: string;
+  traffic: string;
+};
+
 export default function SearchPage() {
   const [searchParams] = useSearchParams();
   const [inputValue, setInputValue] = useState('');
@@ -76,10 +82,44 @@ export default function SearchPage() {
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 20;
 
+  // トレンド用ステート
+  const [trends, setTrends] = useState<TrendItem[]>([]);
+  const [isTrendsLoading, setIsTrendsLoading] = useState(false);
+
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestBoxRef = useRef<HTMLDivElement>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const lastElementRef = useRef<HTMLDivElement>(null);
+
+  // トレンド取得用Effect
+  useEffect(() => {
+// SearchPage.tsx 内の fetchTrends 関数を微修正
+async function fetchTrends() {
+  setIsTrendsLoading(true);
+  try {
+    const { data, error } = await supabase.functions.invoke('get-trends', {
+      method: 'POST',
+      body: {}, 
+    });
+
+    if (error) throw error;
+
+    // 配列であること、かつエラープロパティを持っていないことを確認
+    if (Array.isArray(data)) {
+      setTrends(data);
+    } else if (data && data.error) {
+      console.error('Function returned error:', data.error);
+      setTrends([]);
+    }
+  } catch (err) {
+    console.error('Failed to fetch trends:', err);
+    setTrends([]);
+  } finally {
+    setIsTrendsLoading(false);
+  }
+}
+    fetchTrends();
+  }, []);
 
   // Realtime同期用のEffect
   useEffect(() => {
@@ -458,7 +498,7 @@ export default function SearchPage() {
         </div>
       </div>
 
-      <div className="max-w-3xl mx-auto">
+      <div className="max-w-3xl mx-auto flex flex-col gap-6">
         <Tabs defaultValue="posts" className="w-full">
           <TabsList className="w-full h-[53px] bg-transparent border-b border-black/[0.03] dark:border-white/[0.05] rounded-none p-0 grid grid-cols-2 relative z-20">
             <TabsTrigger value="posts" className="relative h-full bg-transparent text-[15px] font-medium text-[rgb(83,100,113)] dark:text-gray-400 data-[state=active]:text-[rgb(15,20,25)] dark:data-[state=active]:text-white data-[state=active]:font-bold data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-black/[0.03] dark:hover:bg-white/5 transition-colors data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:w-16 data-[state=active]:after:h-1 data-[state=active]:after:rounded-full data-[state=active]:after:bg-[#1d9bf0]">
@@ -470,7 +510,50 @@ export default function SearchPage() {
           </TabsList>
 
           <TabsContent value="posts" className="mt-4 bg-transparent border-none outline-none">
-            {!searchQuery ? <EmptyHint title="LimeSearch (ベータ版) " desc="キーワードを入力して、ポストやアカウントを見つけましょう。" /> :
+            {!searchQuery ? (
+              <div className="flex flex-col gap-6">
+                <EmptyHint 
+                  title="LimeSearch (ベータ版) " 
+                  desc="キーワードを入力して、ポストやアカウントを見つけましょう。" 
+                />
+                {/* トレンドセクション */}
+                <div className="px-4">
+                  <div className="bg-black/[0.02] dark:bg-white/[0.03] rounded-2xl border border-black/[0.03] dark:border-white/[0.05] overflow-hidden">
+                    <div className="px-4 py-3 border-b border-black/[0.03] dark:border-white/[0.05] flex items-center gap-2">
+                      <TrendingUp className="w-5 h-5 text-[#1d9bf0]" />
+                      <h2 className="font-extrabold text-xl">Google トレンド</h2>
+                    </div>
+                    
+                    {isTrendsLoading ? (
+                      <div className="p-8 flex justify-center">
+                        <Loader2 className="w-6 h-6 animate-spin text-[#1d9bf0]" />
+                      </div>
+                    ) : (
+                      <div className="flex flex-col">
+                        {trends.length > 0 ? (
+                          trends.map((trend, idx) => (
+                            <button
+                              key={idx}
+                              onClick={() => commitSearch(trend.title)}
+                              className="px-4 py-3 text-left hover:bg-black/[0.03] dark:hover:bg-white/[0.05] transition-colors border-b last:border-none border-black/[0.03] dark:border-white/[0.05] flex flex-col gap-0.5"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="text-[13px] text-[rgb(83,100,113)] dark:text-gray-400">{idx + 1} · トレンド</span>
+                              </div>
+                              <div className="font-bold text-[15px]">{trend.title}</div>
+                            </button>
+                          ))
+                        ) : (
+                          <div className="px-4 py-8 text-center text-[rgb(83,100,113)] dark:text-gray-400 text-[14px]">
+                            現在、トレンドを取得できません
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) :
              isPostsLoading && page === 0 ? <div>{Array.from({ length: 5 }).map((_, i) => <RowSkeleton key={i} />)}</div> :
              searchedPosts.length === 0 ? <EmptyHint title={`"${searchQuery}" に一致する結果はありません`} desc="キーワードを変えてみてください。" /> :
              <div className="flex flex-col gap-4">
@@ -506,7 +589,7 @@ export default function SearchPage() {
 
 function EmptyHint({ title, desc }: { title: string; desc: string }) {
   return (
-    <div className="px-8 py-16 text-center max-w-[450px] mx-auto bg-transparent">
+    <div className="px-8 pt-16 pb-8 text-center max-w-[450px] mx-auto bg-transparent">
       <h2 className="text-[31px] leading-tight font-extrabold text-[rgb(15,20,25)] dark:text-white mb-2">{title}</h2>
       <p className="text-[15px] text-[rgb(83,100,113)] dark:text-gray-400">{desc}</p>
     </div>
