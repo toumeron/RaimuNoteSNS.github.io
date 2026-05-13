@@ -4,6 +4,7 @@ import { formatRelative } from '@/lib/format';
 import { History, X } from 'lucide-react';
 import { PostCard } from '@/components/feed/PostCard'; // PostCardをインポート
 
+
 export default function NewsPage() {
   const [news, setNews] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
