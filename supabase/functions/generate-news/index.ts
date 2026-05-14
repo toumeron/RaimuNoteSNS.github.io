@@ -38,7 +38,7 @@ serve(async (_req: Request): Promise<Response> => {
     const postsText = posts.map((p: Post) => `ID:${p.id} 内容:${p.content}`).join('\n')
     
     // 2. プロンプト
-    const prompt = `以下のSNS投稿データをもとに、ニュース記事を1つ作成してください。
+    const prompt = `以下のLimeNoteというSNS投稿データをもとに、ニュース記事を1つ作成してください。
 【ルール】
 - 投稿が少なくとも、その中から主要なトピックを見つけてまとめてください。
 - 必ず以下のJSON形式のみで出力してください。
