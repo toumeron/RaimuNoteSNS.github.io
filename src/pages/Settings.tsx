@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, type ChangeEvent } from 'react';
-import { ImagePlus, Loader2, LogOut, Moon, Sun, Monitor, Sparkles, Check } from 'lucide-react';
+import { ImagePlus, Loader2, LogOut, Moon, Sun, Monitor, Sparkles, Check, Bot, MessageSquareText } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,6 +12,9 @@ import { useNavigate } from 'react-router-dom';
 import { z } from 'zod';
 import { toast } from 'sonner';
 import { useTheme } from 'next-themes'; 
+import { Switch } from '@/components/ui/switch';
+import { User } from '@/types'; // 型定義をインポート
+
 
 const schema = z.object({
   displayName: z.string().trim().min(1, '表示名を入力してください').max(30, '30文字以内で入力してください'),
@@ -19,7 +22,11 @@ const schema = z.object({
 });
 
 export default function Settings() {
-  const { user, logout } = useAuth();
+  // User型としてキャストすることで bot_enabled 等へのアクセスを可能にします
+  // エラー解消のため、unknownを経由してキャストします
+  const { user: authUser, logout } = useAuth();
+  const user = (authUser as unknown) as User | null;
+
   const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
   const { mutateAsync, isPending } = useUpdateProfile(user?.id ?? '');
@@ -36,6 +43,10 @@ export default function Settings() {
   const [coverUrl, setCoverUrl] = useState(user?.coverUrl ?? '');
   const [emojiEffect, setEmojiEffect] = useState(getInitialEmoji());
   
+  // Bot設定用のステート
+  const [botEnabled, setBotEnabled] = useState(user?.bot_enabled ?? false);
+  const [botPrompt, setBotPrompt] = useState(user?.bot_prompt ?? '');
+  
   const [errors, setErrors] = useState<Record<string, string>>({});
   const avatarRef = useRef<HTMLInputElement>(null);
   const coverRef = useRef<HTMLInputElement>(null);
@@ -47,6 +58,8 @@ export default function Settings() {
       setBio(user.bio ?? '');
       setAvatarUrl(user.avatarUrl ?? '');
       setCoverUrl(user.coverUrl ?? '');
+      setBotEnabled(user.bot_enabled ?? false);
+      setBotPrompt(user.bot_prompt ?? '');
       // user.emojiEffectがDBから降ってきたら反映。なければローカルを見る
       const currentEmoji = user.emojiEffect ?? localStorage.getItem('lime_emoji_pref') ?? '';
       setEmojiEffect(currentEmoji);
@@ -78,7 +91,9 @@ export default function Settings() {
         bio,
         avatarUrl,
         coverUrl,
-        emojiEffect
+        emojiEffect,
+        bot_enabled: botEnabled,
+        bot_prompt: botPrompt
       });
       localStorage.setItem('lime_emoji_pref', emojiEffect);
       toast.success('エフェクト設定を更新しました');
@@ -86,6 +101,36 @@ export default function Settings() {
       console.error("Emoji Update Error:", err);
       toast.error('エフェクトの保存に失敗しました');
     }
+  };
+
+  // Bot設定専用の更新処理（切り替え時・ボタン押下時共通）
+  const updateBotSettings = async (nextEnabled?: boolean) => {
+    // 引数があればそれを使用し、なければ現在のステートを使用する
+    const targetEnabled = nextEnabled !== undefined ? nextEnabled : botEnabled;
+    
+    try {
+      await mutateAsync({
+        displayName,
+        bio,
+        avatarUrl,
+        coverUrl,
+        emojiEffect,
+        bot_enabled: targetEnabled,
+        bot_prompt: botPrompt
+      });
+    } catch (err) {
+      console.error("Bot Update Error:", err);
+      toast.error('Bot設定の保存に失敗しました');
+      // 失敗した場合はステートを戻す（UI上の不整合を防ぐ）
+      setBotEnabled(!targetEnabled);
+    }
+  };
+
+  // Switch切り替え時のハンドラ
+  const handleBotSwitchChange = async (checked: boolean) => {
+    setBotEnabled(checked);
+    // 即時更新を実行
+    await updateBotSettings(checked);
   };
 
   const submit = async () => {
@@ -113,7 +158,9 @@ export default function Settings() {
         bio, 
         avatarUrl, 
         coverUrl, 
-        emojiEffect 
+        emojiEffect,
+        bot_enabled: botEnabled,
+        bot_prompt: botPrompt
       });
       
       // 2. ローカルストレージへ保存（リロード時の保険・即時反映用）
@@ -209,6 +256,57 @@ export default function Settings() {
             </Button>
           </div>
         </div>
+      </div>
+
+      <Separator />
+
+      {/* Bot設定セクション */}
+      <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Bot className="h-4 w-4 text-primary" />
+            <h2 className="font-display text-base font-bold">自動投稿の設定</h2>
+          </div>
+          <Switch 
+            checked={botEnabled}
+            onCheckedChange={handleBotSwitchChange}
+          />
+        </div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          AIがあなたに代わって自動的に投稿を行います
+        </p>
+
+        {botEnabled && (
+          <div className="mt-4 space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <MessageSquareText className="h-3.5 w-3.5 text-muted-foreground" />
+                <Label htmlFor="botPrompt">性格・指示</Label>
+              </div>
+              <Textarea
+                id="botPrompt"
+                value={botPrompt}
+                onChange={(e) => setBotPrompt(e.target.value)}
+                placeholder="例:猫が好きな人として振る舞ってください"
+                rows={3}
+                className="resize-none rounded-2xl bg-background"
+              />
+              <p className="text-[10px] text-muted-foreground leading-relaxed">
+                ※ AIへの指示を入力してください。この指示に基づいて自動投稿が生成されます。
+              </p>
+            </div>
+            
+            <Button
+              onClick={() => updateBotSettings()}
+              disabled={isPending}
+              variant="secondary"
+              className="w-full rounded-full font-bold shadow-sm"
+            >
+              {isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}
+              自動投稿の設定を更新
+            </Button>
+          </div>
+        )}
       </div>
 
       <Separator />

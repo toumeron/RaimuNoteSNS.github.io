@@ -10,6 +10,7 @@ import { getPostsByUser, getLikedPostsByUser } from '@/api/posts';
 import { supabase } from '@/lib/supabase';
 import { getCurrentUserId } from '@/lib/currentUser';
 import { toast } from 'sonner';
+import { User } from '@/types'; // User型をインポート
 
 export const profileKey = (username: string) => ['profile', username] as const;
 export const followStatsKey = (userId: string) => ['follow-stats', userId] as const;
@@ -174,11 +175,14 @@ export const useToggleFollow = (targetUserId: string) => {
 
 /**
  * プロフィール更新
+ * bot_enabled, bot_prompt 等の新規プロパティを省略せずに受け入れ、
+ * booleanのfalse値も確実に updateProfile へ渡します。
  */
 export const useUpdateProfile = (userId: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (patch: Parameters<typeof updateProfile>[1]) => updateProfile(userId, patch),
+    // patch の中身を Partial<User> としてそのまま渡すことで、false値の脱落を防ぎます
+    mutationFn: (patch: Partial<User>) => updateProfile(userId, patch),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['profile'] });
       qc.invalidateQueries({ queryKey: ['posts', 'user', userId] });

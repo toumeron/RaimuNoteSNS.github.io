@@ -10,6 +10,8 @@ type CustomUser = SupabaseUser & {
   bio?: string;
   coverUrl?: string;
   emojiEffect?: string; // 追加: 絵文字エフェクト用
+  bot_enabled?: boolean; // 追加: Bot設定用
+  bot_prompt?: string;   // 追加: Bot設定用
 };
 
 type AuthContextType = {
@@ -46,7 +48,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const { data: profile, error } = await supabase
           .from('profiles')
-          .select('username, display_name, avatar_url, bio, cover_url, emoji_effect')
+          // bot_enabled, bot_prompt を select に追加
+          .select('username, display_name, avatar_url, bio, cover_url, emoji_effect, bot_enabled, bot_prompt')
           .eq('id', supabaseUser.id)
           .single();
 
@@ -62,6 +65,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               bio: profile.bio ?? current.bio,
               coverUrl: profile.cover_url ?? current.coverUrl,
               emojiEffect: profile.emoji_effect ?? current.emojiEffect,
+              bot_enabled: profile.bot_enabled ?? false, // DBから取得した値を反映
+              bot_prompt: profile.bot_prompt ?? '',      // DBから取得した値を反映
             };
           });
         }
@@ -87,6 +92,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           displayName: meta?.display_name ?? meta?.displayName ?? emailName,
           avatarUrl: meta?.avatar_url ?? meta?.avatarUrl ?? '',
           emojiEffect: '', // 初期値
+          bot_enabled: false, // 初期値
+          bot_prompt: '',     // 初期値
         });
         
         // 詳細をDBに獲りに行く
@@ -122,7 +129,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const meta = supabaseUser.user_metadata;
         const emailName = supabaseUser.email?.split('@')[0] ?? 'user';
 
-        // DB取得を待たずに、まずメタデータで画面を表示させる
+        // DB取得を待まわずに、まずメタデータで画面を表示させる
         setUser({
           ...supabaseUser,
           username: meta?.username ?? emailName,
@@ -131,6 +138,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           bio: '',
           coverUrl: '',
           emojiEffect: '',
+          bot_enabled: false, // 初期値
+          bot_prompt: '',     // 初期値
         });
 
         if (loading) setLoading(false);

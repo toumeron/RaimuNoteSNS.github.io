@@ -13,6 +13,9 @@ function toUser(row: any): User {
     createdAt: (row.created_at ?? '') as string,
     isOfficial:  (row.is_official  ?? false) as boolean,
     emojiEffect: (row.emoji_effect ?? '') as string,
+    // bot関連のプロパティを追加
+    bot_enabled: (row.bot_enabled ?? false) as boolean,
+    bot_prompt: (row.bot_prompt ?? '') as string,
   };
 }
 
@@ -43,12 +46,15 @@ export async function getUserById(id: string): Promise<User | null> {
  */
 export async function updateProfile(
   id: string,
-  patch: Partial<Pick<User, 'displayName' | 'bio' | 'avatarUrl' | 'coverUrl' | 'emojiEffect'>>,
+  patch: Partial<Pick<User, 'displayName' | 'bio' | 'avatarUrl' | 'coverUrl' | 'emojiEffect' | 'bot_enabled' | 'bot_prompt'>>,
 ): Promise<User> {
   const dbPatch: Record<string, unknown> = {};
   if (patch.displayName !== undefined) dbPatch.display_name = patch.displayName;
   if (patch.bio !== undefined) dbPatch.bio = patch.bio;
   if (patch.emojiEffect !== undefined) dbPatch.emoji_effect = patch.emojiEffect;
+  // bot関連の値をDBのカラム名（スネークケース）にマッピングして追加
+  if (patch.bot_enabled !== undefined) dbPatch.bot_enabled = patch.bot_enabled;
+  if (patch.bot_prompt !== undefined) dbPatch.bot_prompt = patch.bot_prompt;
 
   // --- 画像アップロードの共通処理 ---
   const uploadImage = async (url: string, bucket: string) => {

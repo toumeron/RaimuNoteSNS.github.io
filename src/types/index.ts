@@ -10,6 +10,10 @@ export type User = {
   createdAt: string;
   isOfficial?: boolean; 
   emojiEffect?: string; // 絵文字の雨機能用の追加
+  
+  // --- Bot代理投稿機能用の追加 ---
+  bot_enabled?: boolean; // Bot機能のON/OFF
+  bot_prompt?: string;   // AIへの指示内容
 };
 
 export type Post = {
@@ -64,4 +68,3 @@ export type PostWithAuthor = Post & {
 export type CommentWithAuthor = Comment & {
   author: User;
 };
-
