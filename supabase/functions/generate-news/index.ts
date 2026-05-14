@@ -24,7 +24,7 @@ serve(async (_req: Request): Promise<Response> => {
       .from('posts')
       .select('id, content')
       .order('created_at', { ascending: false })
-      .limit(10)
+      .limit(5)
 
     if (fetchError) throw new Error(`Database fetch error: ${fetchError.message}`);
 
