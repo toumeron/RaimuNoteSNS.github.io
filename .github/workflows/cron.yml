@@ -1,8 +1,8 @@
 name: 6-hour-news-cron
 on:
   schedule:
-    - cron: '0 */6 * * *' # 日本時間で 9時, 15時, 21時, 3時 ごろ
-  workflow_dispatch: # 手動実行ボタンも追加
+    - cron: '17 */6 * * *' # 0分を避けて「17分」に変更。これでGitHubの目につきやすくなる
+  workflow_dispatch:
 
 jobs:
   run-function:
