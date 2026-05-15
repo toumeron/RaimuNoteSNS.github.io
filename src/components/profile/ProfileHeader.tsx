@@ -1,10 +1,11 @@
+import { useState, useEffect } from 'react';
 import { CalendarDays } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { FollowButton } from './FollowButton';
 import { useFollowStats } from '@/hooks/useProfile';
 import { useAuth } from '@/hooks/useAuth';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import type { User } from '@/types';
 
@@ -12,6 +13,7 @@ export function ProfileHeader({ user }: { user: User }) {
   const { user: me } = useAuth();
   const { data: stats } = useFollowStats(user.id);
   const isMe = me?.id === user.id;
+  const navigate = useNavigate();
 
   // 数値をフォーマットする関数
   const formatDisplayCount = (count: number) => {
@@ -19,6 +21,88 @@ export function ProfileHeader({ user }: { user: User }) {
       return (count / 10000).toFixed(1).replace(/\.0$/, '') + '万';
     }
     return count.toLocaleString();
+  };
+
+  // --- URLをリンク化する関数 ---
+  const renderContentWithLinks = (text: string) => {
+    if (!text) return null;
+
+    // URLを検知する正規表現
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    const parts = text.split(urlRegex);
+
+    return parts.map((part, index) => {
+      if (part.match(urlRegex)) {
+        return (
+          <a
+            key={`link-${index}`}
+            href={part}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-pink-500 hover:underline transition-colors"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {part}
+          </a>
+        );
+      }
+      return part;
+    });
+  };
+
+  // --- メンションをリンク化する関数 ---
+  const renderContentWithMentions = (text: string) => {
+    if (!text) return null;
+    
+    // @username 形式にマッチさせる正規表現
+    const parts = text.split(/(@\w+)/g);
+    
+    return parts.map((part, index) => {
+      if (part.startsWith('@')) {
+        const username = part.substring(1);
+        return (
+          <Link
+            key={`mention-${index}`}
+            to={`/u/${username}`}
+            className="text-pink-500 hover:underline transition-colors"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {part}
+          </Link>
+        );
+      }
+      // メンション以外のテキストに対してハッシュタグ処理を適用
+      return renderContentWithHashtags(part);
+    });
+  };
+
+  // --- ハッシュタグをリンク化する関数 ---
+  const renderContentWithHashtags = (text: string) => {
+    if (!text) return null;
+
+    // #ハッシュタグ 形式にマッチさせる正規表現（日本語含む、文末や区切り文字を考慮）
+    const parts = text.split(/(#[^\s#　.,!?:;'"()\[\]{}<>]+)/g);
+
+    return parts.map((part, index) => {
+      if (part.startsWith('#')) {
+        return (
+          <button
+            key={`hashtag-${index}`}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              // 検索ページに「#タグ名」で遷移。
+              navigate(`/search?q=${encodeURIComponent(part)}`);
+            }}
+            className="text-pink-500 hover:underline transition-colors inline-block align-baseline"
+          >
+            {part}
+          </button>
+        );
+      }
+      // ハッシュタグ以外のテキストに対してURLリンク処理を適用
+      return renderContentWithLinks(part);
+    });
   };
 
   return (
@@ -68,7 +152,9 @@ export function ProfileHeader({ user }: { user: User }) {
         </div>
 
         {user.bio && (
-          <p className="mt-3 whitespace-pre-wrap text-[15px] leading-relaxed">{user.bio}</p>
+          <p className="mt-3 whitespace-pre-wrap text-[15px] leading-relaxed">
+            {renderContentWithMentions(user.bio)}
+          </p>
         )}
 
         <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
