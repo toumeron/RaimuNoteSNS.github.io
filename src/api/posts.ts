@@ -43,12 +43,14 @@ function rowToPost(row: any, likedIds: Set<string>, repostedIds: Set<string>): P
     parentId:      row.parent_id,
     isQuote:       row.is_quote,
     visibility:    row.visibility,
+    isBot:         row.is_bot ?? false, // AIフラグをマッピングに追加
     parentPost: row.parent_post ? {
       ...row.parent_post,
       imageUrls: row.parent_post.image_urls ?? [],
       author: rowToUser(row.parent_post.profiles),
       likedByMe: likedIds.has(row.parent_post.id),
       repostedByMe: repostedIds.has(row.parent_post.id),
+      isBot: row.parent_post.is_bot ?? false, // 親投稿のAIフラグも追加
     } : null,
   };
 }
@@ -325,6 +327,7 @@ export async function createPost(input: {
   parentId?: string;
   isQuote?: boolean;
   visibility?: 'public' | 'following';
+  isBot?: boolean; // 追加
 }): Promise<PostWithAuthor> {
   const userId = await getCurrentUserId();
   const newId = crypto.randomUUID();
@@ -374,7 +377,8 @@ export async function createPost(input: {
     client_name: clientSource,
     parent_id:   input.parentId || null,
     is_quote:    input.isQuote || false,
-    visibility:  input.visibility || 'public'
+    visibility:  input.visibility || 'public',
+    is_bot:      input.isBot || false // AIフラグをDBに保存
   });
 
   if (error) throw error;

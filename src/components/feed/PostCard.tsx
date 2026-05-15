@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'; 
 import { Link, useNavigate } from 'react-router-dom'; // useNavigateを追加
-import { MessageCircle, MoreHorizontal, Trash2, CalendarDays, ChartBarBig, X, Globe, Lock } from 'lucide-react'; 
+import { MessageCircle, MoreHorizontal, Trash2, CalendarDays, ChartBarBig, X, Globe, Lock, Sparkles } from 'lucide-react'; 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { LikeButton } from '@/components/post/LikeButton';
 import { PostImages } from './PostImages';
@@ -67,7 +67,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
   const spotifyRegex = /https:\/\/open\.spotify\.com\/(?:[\w-]+\/)?(track|album|playlist)\/[a-zA-Z0-9._?=&/%-]+/gi;
   const spotifyUrls = post.content.match(spotifyRegex) || [];
 
-  // 画像URLを判定する正規表現（拡張子または特定のクエリパラメータ付きURLに対応）
+  // 画像URLを判定する正規表現（拡張子または特定のグエリパラメータ付きURLに対応）
   const imageRegex = /https?:\/\/[^\s]+?\.(?:png|jpg|jpeg|gif|webp|svg)(?:\?[^\s]*)?|https?:\/\/pbs\.twimg\.com\/media\/[^\s?]+(?:\?[^\s]*)?/gi;
 
   // 本文から画像URLを抽出する
@@ -440,6 +440,15 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
                   </div>
                 )}
               </div>
+
+              {/* AIラベル（文章の下に配置）: isBot または is_bot 両方の可能性に対応 */}
+              {((post as any).is_bot || post.isBot) && (
+                <div className="flex items-center gap-1 mt-1.5 text-muted-foreground/70">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span className="text-[15px] font-medium">AIで生成</span>
+                </div>
+              )}
+
               {youtubeId && (
                 <div onClick={(e) => e.stopPropagation()}>
                   <YouTubeEmbed videoId={youtubeId} />

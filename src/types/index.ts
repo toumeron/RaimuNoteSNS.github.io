@@ -41,6 +41,9 @@ export type Post = {
 
   // --- 公開範囲制御用の追加 ---
   visibility?: 'public' | 'following'; // これを追加することでエラーが解消されます
+
+  // --- AI生成フラグの追加 ---
+  isBot?: boolean; // AIによる自動投稿かどうか
 };
 
 export type Comment = {
