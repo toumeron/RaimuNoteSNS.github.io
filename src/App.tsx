@@ -22,6 +22,7 @@ import Notifications from "./pages/Notifications";
 import FollowersFollowingPage from "./pages/FollowersFollowingPage";
 import SpacePage from "./pages/SpacePage";
 import NewsPage from './pages/NewsPage';
+import ChatPage from "./pages/ChatPage"; // AIチャットページのインポートを追加
 
 // PostComposer 用のインポート群
 import { ImagePlus, Loader2, Send, X, AtSign, Hash, Globe, Users, Plus, PenSquare } from 'lucide-react';
@@ -201,7 +202,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
   const [content, setContent] = useState(initialContent);
   const [previews, setPreviews] = useState<string[]>([]);
   const [quotedPost, setQuotedPost] = useState<PostWithAuthor | null>(initialQuotedPost || null);
-  const fileRef = useRef<HTMLInputElement>(null); // 宣言を上に移動し、const に修正
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const [visibility, setVisibility] = useState<'public' | 'following'>('public');
 
@@ -723,6 +724,7 @@ const App = () => {
                   <Route path="/notifications" element={<Notifications />} />
                   <Route path="/search" element={<SearchPage />} />
                   <Route path="/news" element={<NewsPage />} />
+                  <Route path="/chat" element={<ChatPage />} /> {/* AIチャットページのルーティングを追加 */}
                   <Route path="/post/:id" element={<PostDetail />} />
                   <Route path="/post/:postId/activity" element={<PostActivity />} />
                   <Route path="/u/:username" element={<Profile />} />

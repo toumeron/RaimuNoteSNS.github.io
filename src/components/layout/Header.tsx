@@ -10,7 +10,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/hooks/useAuth';
-import { LogOut, Settings as SettingsIcon, User as UserIcon, Search, Bell } from 'lucide-react';
+// MessageSquare アイコンを追加
+import { LogOut, Settings as SettingsIcon, User as UserIcon, Search, Bell, MessageSquare } from 'lucide-react';
 
 // 名前付きエクスポート
 export const Header = () => {
@@ -55,6 +56,14 @@ export const Header = () => {
                 className="dark:focus:text-black"
               >
                 <Bell className="mr-2 h-4 w-4" /> 通知
+              </DropdownMenuItem>
+
+              {/* AIチャットへの導線を追加 */}
+              <DropdownMenuItem 
+                onClick={() => navigate('/chat')}
+                className="dark:focus:text-black"
+              >
+                <MessageSquare className="mr-2 h-4 w-4" /> チャット
               </DropdownMenuItem>
 
               <DropdownMenuSeparator />
