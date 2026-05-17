@@ -9,7 +9,8 @@ import {
   Loader2, 
   Sparkles, 
   User,
-  Menu
+  PanelLeftClose,
+  PanelLeft
 } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { toast } from 'sonner'
@@ -38,7 +39,7 @@ export default function ChatPage() {
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   
-  // スマホ表示の初期状態では画面を圧迫しないようサイドバーを閉じ、デスクトップ（md以上）では開くように画面幅を検知
+  // スマホ表示 of 初期状態では画面を圧迫しないようサイドバーを閉じ、デスクトップ（md以上）では開くように画面幅を検知
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
 
   useEffect(() => {
@@ -308,25 +309,41 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="fixed inset-0 top-14 bottom-20 md:bottom-0 left-0 right-0 w-full bg-white text-gray-900 dark:bg-[#212121] dark:text-[#ececec] overflow-hidden font-sans selection:bg-gray-200 dark:selection:bg-[#3d3d3d] flex z-40">
+    <div className="fixed inset-0 top-14 bottom-11 md:bottom-0 left-0 right-0 w-full bg-transparent text-[#0d0d0d] dark:text-[#ececec] overflow-hidden font-sans flex z-40">
       
-      {/* サイドバー: スマホ時は最前面にオーバーレイ展開（fixed/absolute制御）させてタイムラインを潰さないように最適化 */}
+      {/* サイドバー：メニューとして背景色を維持 */}
       <div className={`${
-        isSidebarOpen ? 'w-64 opacity-100 visible' : 'w-0 opacity-0 invisible md:visible'
-      } shrink-0 bg-gray-50 dark:bg-[#171717] flex flex-col h-full border-r border-gray-200 dark:border-[#2f2f2f] transition-all duration-300 overflow-hidden absolute md:relative z-50 md:z-auto`}>
-        <div className="p-3.5">
+        isSidebarOpen ? 'w-64 opacity-100 visible' : 'w-0 opacity-0 invisible'
+      } shrink-0 bg-white dark:bg-[#121212] flex flex-col h-full border-r border-[#e5e5e5] dark:border-[#2f2f2f] transition-all duration-300 overflow-hidden absolute md:relative z-50 md:z-auto`}>
+        <div className="p-3.5 flex items-center justify-between gap-2">
           <button
             onClick={createNewSession}
-            className="w-full flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 dark:border-[#3c3c3c] bg-white dark:bg-[#212121] hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition duration-200 text-sm font-medium text-gray-900 dark:text-[#f9f9f9]"
+            className="flex-1 flex items-center justify-between px-3 py-2.5 rounded-lg bg-transparent hover:bg-[#ececec] dark:hover:bg-[#212121] transition duration-200 text-sm font-medium text-[#0d0d0d] dark:text-[#ececec] border border-[#e5e5e5] dark:border-[#2f2f2f]"
           >
             <span className="flex items-center gap-2">
-              <Plus className="w-4 h-4 text-gray-400" /> 新しいチャット
+              <Plus className="w-4 h-4 text-[#0d0d0d] dark:text-[#ececec]" /> 新しいチャット
             </span>
+          </button>
+
+          {/* スマホ用閉じるボタン（枠線を排除しアセットを最適化） */}
+          <button
+            onClick={() => setIsSidebarOpen(false)}
+            className="md:hidden p-2.5 rounded-lg hover:bg-[#ececec] dark:hover:bg-[#212121] text-[#666666] dark:text-[#999999] hover:text-[#0d0d0d] dark:hover:text-[#ececec] transition shrink-0"
+          >
+            <PanelLeftClose className="w-5 h-5" />
+          </button>
+
+          {/* PC用閉じるボタン（枠線を排除しアセットを最適化） */}
+          <button
+            onClick={() => setIsSidebarOpen(false)}
+            className="hidden md:block p-2.5 rounded-lg hover:bg-[#ececec] dark:hover:bg-[#212121] text-[#666666] dark:text-[#999999] hover:text-[#0d0d0d] dark:hover:text-[#ececec] transition shrink-0"
+          >
+            <PanelLeftClose className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-2 space-y-0.5 custom-scrollbar">
-          <div className="px-3 py-2 text-xs font-semibold text-gray-400 sticky top-0 bg-gray-50 dark:bg-[#171717] z-10">
+        <div className="flex-1 overflow-y-auto px-3 space-y-0.5 custom-scrollbar">
+          <div className="py-2 text-xs font-semibold text-[#666666] dark:text-[#999999] sticky top-0 bg-white dark:bg-[#121212] z-10">
             チャット履歴
           </div>
           {sessions.map((s) => (
@@ -334,15 +351,14 @@ export default function ChatPage() {
               key={s.id}
               onClick={() => {
                 setCurrentSessionId(s.id)
-                // スマホ環境なら選択時に自動でサイドバーを閉じる
                 if (window.innerWidth < 768) {
                   setIsSidebarOpen(false)
                 }
               }}
-              className={`group flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer text-sm transition duration-150 ${
+              className={`group flex items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer text-sm transition duration-150 ${
                 s.id === currentSessionId 
-                  ? 'bg-white shadow-sm border border-gray-200 dark:border-transparent dark:bg-[#212121] text-gray-900 dark:text-white font-medium' 
-                  : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100/50 dark:hover:bg-[#212121]/50 hover:text-gray-900 dark:hover:text-gray-200'
+                  ? 'bg-[#ececec] dark:bg-[#212121] text-[#0d0d0d] dark:text-[#ececec] font-medium' 
+                  : 'text-[#0d0d0d] dark:text-[#ececec] hover:bg-[#ececec]/80 dark:hover:bg-[#212121]'
               }`}
             >
               <div className="flex items-center gap-2.5 min-w-0 flex-1">
@@ -351,7 +367,7 @@ export default function ChatPage() {
               </div>
               <button
                 onClick={(e) => deleteSession(s.id, e)}
-                className="opacity-100 md:opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-200 dark:hover:bg-[#2a2a2a] rounded text-gray-400 hover:text-red-400 transition"
+                className="opacity-100 md:opacity-0 group-hover:opacity-100 p-1 hover:bg-[#d9d9d9] dark:hover:bg-[#2a2a2a] rounded text-[#0d0d0d] dark:text-[#ececec] hover:text-red-500 transition"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
@@ -360,54 +376,60 @@ export default function ChatPage() {
         </div>
 
         {user && (
-          <div className="p-3 border-t border-gray-200 dark:border-[#2f2f2f] bg-gray-50 dark:bg-[#171717] flex items-center gap-3">
-            <Avatar className="h-8 w-8 border border-gray-200 dark:border-[#2f2f2f]">
+          <div className="p-3 border-t border-[#e5e5e5] dark:border-[#2f2f2f] bg-white dark:bg-[#121212] flex items-center gap-3">
+            <Avatar className="h-8 w-8">
               <AvatarImage src={user.avatarUrl} />
-              <AvatarFallback>{user.displayName?.slice(0, 1)}</AvatarFallback>
+              <AvatarFallback className="bg-[#ececec] dark:bg-[#2a2a2a] text-[#0d0d0d] dark:text-[#ececec]">{user.displayName?.slice(0, 1)}</AvatarFallback>
             </Avatar>
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-bold text-gray-900 dark:text-[#f9f9f9] truncate leading-tight">{user.displayName}</div>
-              <div className="text-[10px] text-gray-400 dark:text-gray-500 truncate leading-none">@{user.username}</div>
+              <div className="text-sm font-medium text-[#0d0d0d] dark:text-[#ececec] truncate leading-tight">{user.displayName}</div>
+              <div className="text-xs text-[#666666] dark:text-[#999999] truncate leading-none mt-0.5">@{user.username}</div>
             </div>
           </div>
         )}
       </div>
 
-      {/* スマホ用サイドバー展開時の暗幕レイヤー（タップで閉じられる仕様を追加） */}
       {isSidebarOpen && (
         <div 
-          className="fixed inset-0 top-14 bottom-20 bg-black/40 z-40 md:hidden"
+          className="fixed inset-0 top-0 bottom-20 bg-black/20 dark:bg-black/40 z-40 md:hidden"
           onClick={() => setIsSidebarOpen(false)}
         />
       )}
 
-      {/* メインエリア: カード化を完全に排除した一体型構造 */}
-      <div className="flex flex-col flex-1 h-full bg-white dark:bg-[#212121] relative min-w-0 w-full">
+      {/* メインエリア */}
+      <div className="flex flex-col flex-1 h-full bg-transparent relative min-w-0 w-full">
         
-        {/* ヘッダー: 境界線を極限まで薄く */}
-        <div className="h-14 border-b border-gray-200 dark:border-[#2f2f2f] flex items-center px-4 bg-white dark:bg-[#212121] justify-between z-10">
-          <button
-            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className="p-2 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] rounded-lg text-gray-400 hover:text-gray-900 dark:hover:text-white transition"
-          >
-            <Menu className="w-5 h-5" />
-          </button>
-          <div className="text-sm font-semibold text-gray-900 dark:text-[#f9f9f9] flex items-center gap-1.5 tracking-tight">
-            LimeAI Chat
-          </div>
-          <div className="w-9" />
-        </div>
+        {/* メニューが閉じている時のアクセス用ボタンの最適化 */}
+        {!isSidebarOpen && (
+          <>
+            {/* スマホ用開くボタン */}
+            <button
+              onClick={() => setIsSidebarOpen(true)}
+              className="md:hidden absolute top-4 left-4 z-30 p-2.5 rounded-lg bg-transparent text-[#666666] dark:text-[#999999] hover:bg-[#ececec] dark:hover:bg-[#212121] hover:text-[#0d0d0d] dark:hover:text-[#ececec] transition"
+            >
+              <PanelLeft className="w-5 h-5" />
+            </button>
 
-        {/* タイムライン: 親のmax-w-2xlを突破し画面横幅いっぱいへ */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar bg-white dark:bg-[#212121]">
+            {/* PC用開くボタン */}
+            <button
+              onClick={() => setIsSidebarOpen(true)}
+              className="hidden md:flex absolute top-4 left-4 z-30 p-2 px-3 rounded-lg bg-transparent hover:bg-[#ececec] dark:hover:bg-[#212121] text-[#666666] dark:text-[#999999] hover:text-[#0d0d0d] dark:hover:text-[#ececec] transition items-center gap-2 text-sm font-medium"
+            >
+              <PanelLeft className="w-5 h-5" />
+            </button>
+          </>
+        )}
+
+        {/* タイムライン：bg-transparentを維持し、開閉ボタン用の余白を確保 */}
+        <div className={`flex-1 overflow-y-auto custom-scrollbar bg-transparent ${!isSidebarOpen ? 'pt-20 md:pt-4 md:pl-44' : 'pt-4'}`}>
           {messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center max-w-md mx-auto space-y-4 px-4">
-              <div className="p-3 bg-gray-50 dark:bg-[#2a2a2a] rounded-full border border-gray-200 dark:border-[#333] shadow-sm animate-fade-in">
-                <Sparkles className="w-6 h-6 text-purple-500 dark:text-purple-400" />
+            <div className="h-full flex flex-col items-center justify-center text-center max-w-md mx-auto space-y-5 px-4">
+              <div className="w-12 h-12 flex items-center justify-center rounded-full border border-[#e5e5e5] dark:border-[#383838] shadow-sm animate-fade-in bg-transparent">
+                <Sparkles className="w-6 h-6 text-[#0d0d0d] dark:text-[#ececec]" />
               </div>
-              <h2 className="text-xl font-medium text-gray-900 dark:text-[#f9f9f9] tracking-tight">LimeAI Beta</h2>
-              <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
-                LimeNoteの革命に乗ろう
+              <h2 className="text-2xl font-semibold text-[#0d0d0d] dark:text-[#ececec] tracking-tight">LimeAI Beta</h2>
+              <p className="text-[15px] text-[#666666] dark:text-[#999999] leading-relaxed">
+                LimeNoteのAI革命に乗ろう
               </p>
             </div>
           ) : (
@@ -417,32 +439,32 @@ export default function ChatPage() {
                 return (
                   <div 
                     key={msg.id} 
-                    className="w-full py-4 md:py-6 flex justify-center border-b border-gray-100 dark:border-[#2f2f2f]/30 transition-colors duration-150 bg-white dark:bg-[#212121]"
+                    className="w-full py-5 flex justify-center bg-transparent border-b border-gray-100 dark:border-[#2f2f2f]/30 transition-colors duration-150"
                   >
-                    <div className="max-w-3xl w-full flex gap-3 md:gap-4 px-4 sm:px-6">
+                    <div className="max-w-3xl w-full flex gap-4 px-4 sm:px-6">
                       {/* アバター配置 */}
-                      <div className="shrink-0">
+                      <div className="shrink-0 mt-0.5">
                         {isUser ? (
-                          <Avatar className="h-6 w-6 border border-gray-200 dark:border-[#3a3a3a]">
+                          <Avatar className="h-6 w-6">
                             <AvatarImage src={user?.avatarUrl} />
-                            <AvatarFallback><User className="w-3.5 h-3.5 text-gray-400" /></AvatarFallback>
+                            <AvatarFallback className="bg-[#ececec] dark:bg-[#2f2f2f]"><User className="w-3.5 h-3.5 text-[#0d0d0d] dark:text-[#ececec]" /></AvatarFallback>
                           </Avatar>
                         ) : (
-                          <div className="w-6 h-6 rounded-full bg-purple-500/10 dark:bg-purple-600/20 border border-purple-500/20 dark:border-purple-500/30 flex items-center justify-center">
-                            <Sparkles className="w-3.5 h-3.5 text-purple-500 dark:text-purple-400" />
+                          <div className="w-6 h-6 rounded-full bg-black dark:bg-white flex items-center justify-center">
+                            <Sparkles className="w-3.5 h-3.5 text-white dark:text-black" />
                           </div>
                         )}
                       </div>
 
-                      {/* テキストエリア: フラット展開 */}
-                      <div className="flex-1 space-y-1 md:max-w-2xl lg:max-w-3xl min-w-0">
-                        <div className="text-[13px] font-semibold tracking-wide uppercase text-gray-400 dark:text-gray-500 mb-1">
+                      {/* テキストエリア */}
+                      <div className="flex-1 space-y-1.5 md:max-w-2xl lg:max-w-3xl min-w-0">
+                        <div className="text-[15px] font-semibold text-[#0d0d0d] dark:text-[#ececec]">
                           {isUser ? 'あなた' : 'LimeAI'}
                         </div>
-                        <div className="text-[15px] leading-7 text-gray-800 dark:text-[#ececec] whitespace-pre-wrap break-words tracking-normal">
+                        <div className="text-[16px] leading-7 text-[#0d0d0d] dark:text-[#ececec] whitespace-pre-wrap break-words">
                           {msg.content === '' && isLoading ? (
-                            <span className="flex items-center gap-2 text-gray-400 text-sm animate-pulse">
-                              <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-500 dark:text-purple-400" />
+                            <span className="flex items-center gap-2 text-[#666666] dark:text-[#999999] text-[15px] animate-pulse">
+                              <Loader2 className="w-4 h-4 animate-spin text-[#0d0d0d] dark:text-[#ececec]" />
                               思考中...
                             </span>
                           ) : (
@@ -459,10 +481,10 @@ export default function ChatPage() {
           )}
         </div>
 
-        {/* フッター/入力欄: モバイル環境での横幅パディング調整とソフトウェアキーボード時の縮小防止 */}
-        <div className="p-3 md:p-4 bg-white dark:bg-[#212121] border-t border-gray-100 dark:border-[#2f2f2f]/40 w-full shrink-0">
+        {/* フッター/入力欄：背景色を透明化、境界線(border-t)のみ保持して外部背景に依存 */}
+        <div className="p-3 md:p-4 bg-transparent border-t border-[#e5e5e5] dark:border-[#2f2f2f] w-full shrink-0">
           <form onSubmit={handleSend} className="max-w-3xl mx-auto relative">
-            <div className="relative flex items-center bg-white dark:bg-[#2f2f2f] border border-gray-200 dark:border-[#3e3e3e] rounded-3xl focus-within:border-gray-400 dark:focus-within:border-[#4f4f4f] transition duration-200 px-3.5 md:px-4 py-2.5 md:py-3 shadow-md">
+            <div className="relative flex items-center bg-transparent rounded-3xl transition duration-200 px-3.5 md:px-4 py-2.5 md:py-3 shadow-md border border-[#e5e5e5] dark:border-[#2f2f2f] focus-within:border-gray-300 dark:focus-within:border-[#383838]">
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -479,18 +501,18 @@ export default function ChatPage() {
                 }}
                 placeholder="LimeAIへメッセージを送信する..."
                 rows={1}
-                className="w-full bg-transparent resize-none text-[15px] leading-relaxed focus:outline-none text-gray-900 dark:text-[#ececec] pr-10 md:pr-12 max-h-28 md:max-h-36 custom-scrollbar placeholder-gray-400 dark:placeholder-gray-500"
+                className="w-full bg-transparent resize-none text-[16px] leading-relaxed focus:outline-none text-[#0d0d0d] dark:text-[#ececec] pr-10 md:pr-12 max-h-28 md:max-h-36 custom-scrollbar placeholder-[#8e8ea0] dark:placeholder-[#9b9b9b]"
                 disabled={isLoading}
               />
               <button
                 type="submit"
                 disabled={isLoading || !input.trim()}
-                className="absolute right-2.5 bottom-2 p-2 rounded-full bg-gray-900 dark:bg-[#ececec] text-white dark:text-black hover:bg-gray-800 dark:hover:bg-[#d9d9d9] disabled:bg-gray-100 dark:disabled:bg-[#212121] disabled:text-gray-300 dark:disabled:text-[#4f4f4f] transition duration-200 shadow-sm"
+                className="absolute right-2.5 bottom-2 p-2 rounded-full bg-black text-white dark:bg-white dark:text-black hover:opacity-80 disabled:bg-[#e5e5e5] disabled:text-[#9b9b9b] dark:disabled:bg-[#383838] dark:disabled:text-[#676767] transition duration-200"
               >
                 {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
               </button>
             </div>
-            <div className="text-[11px] text-center text-gray-400 dark:text-gray-500 mt-2 tracking-wide">
+            <div className="text-xs text-center text-[#666666] dark:text-[#999999] mt-3 tracking-wide">
               LimeAIは間違いを起こす可能性があるため、重要な情報は確認してください。
             </div>
           </form>

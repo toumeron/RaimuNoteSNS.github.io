@@ -696,10 +696,66 @@ const PostOverlay = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
   );
 };
 
-const App = () => {
+// コンポーネントツリー内で useLocation を利用できるようにするためのラッパーコンポーネント
+const AppContent = () => {
   const [isPostModalOpen, setPostModalOpen] = useState(false);
   const isFABVisible = useScrollDirection();
+  const { pathname } = useLocation();
 
+  // 大文字小文字の違い（/CHAT または /chat）を許容するため、小文字に変換して判定
+  const isChatPage = pathname.toLowerCase() === "/chat" || pathname.toLowerCase() === "/ramunotesns.github.io/chat";
+
+  return (
+    <>
+      <ScrollToTop />
+      
+      <AuthProvider>
+        <NotificationWatcher />
+        <EmojiRainEffect /> 
+        
+        <Routes>
+          <Route path="/auth" element={<AuthPage />} />
+          <Route element={<AppLayout />}>
+            <Route path="/" element={<Feed />} />
+            <Route path="/notifications" element={<Notifications />} />
+            <Route path="/search" element={<SearchPage />} />
+            <Route path="/news" element={<NewsPage />} />
+            <Route path="/chat" element={<ChatPage />} /> {/* AIチャットページのルーティングを追加 */}
+            <Route path="/post/:id" element={<PostDetail />} />
+            <Route path="/post/:postId/activity" element={<PostActivity />} />
+            <Route path="/u/:username" element={<Profile />} />
+            <Route path="/u/:username/followers_following" element={<FollowersFollowingPage />} />
+            <Route path="/settings" element={<Settings />} />
+            <Route path="/share" element={<Share />} />
+            <Route path="/spaces/:id" element={<SpacePage />} />
+          </Route>
+          <Route path="/index" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+
+        <button 
+          onClick={() => setPostModalOpen(true)}
+          className={cn(
+            "fixed z-[999] flex items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-all duration-500 hover:scale-110 active:scale-95",
+            "bottom-24 right-6 h-12 w-12 md:hidden",
+            (!isFABVisible || isChatPage) && "scale-0 opacity-0"
+          )}
+          aria-label="新規投稿"
+        >
+          <PenSquare className="h-5 w-5" />
+        </button>
+
+        <PostOverlay 
+          isOpen={isPostModalOpen} 
+          onClose={() => setPostModalOpen(false)} 
+        />
+
+      </AuthProvider>
+    </>
+  );
+};
+
+const App = () => {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
@@ -711,50 +767,7 @@ const App = () => {
             basename="/RaimuNoteSNS.github.io"
             future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
           >
-            <ScrollToTop />
-            
-            <AuthProvider>
-              <NotificationWatcher />
-              <EmojiRainEffect /> 
-              
-              <Routes>
-                <Route path="/auth" element={<AuthPage />} />
-                <Route element={<AppLayout />}>
-                  <Route path="/" element={<Feed />} />
-                  <Route path="/notifications" element={<Notifications />} />
-                  <Route path="/search" element={<SearchPage />} />
-                  <Route path="/news" element={<NewsPage />} />
-                  <Route path="/chat" element={<ChatPage />} /> {/* AIチャットページのルーティングを追加 */}
-                  <Route path="/post/:id" element={<PostDetail />} />
-                  <Route path="/post/:postId/activity" element={<PostActivity />} />
-                  <Route path="/u/:username" element={<Profile />} />
-                  <Route path="/u/:username/followers_following" element={<FollowersFollowingPage />} />
-                  <Route path="/settings" element={<Settings />} />
-                  <Route path="/share" element={<Share />} />
-                  <Route path="/spaces/:id" element={<SpacePage />} />
-                </Route>
-                <Route path="/index" element={<Navigate to="/" replace />} />
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-
-              <button 
-                onClick={() => setPostModalOpen(true)}
-                className={cn(
-                  "fixed z-[999] flex items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-all duration-500 hover:scale-110 active:scale-95",
-                  "bottom-24 right-6 h-12 w-12 md:hidden",
-                  !isFABVisible && "scale-0 opacity-0"
-                )}
-                aria-label="新規投稿"
-              >
-                <PenSquare className="h-5 w-5" />
-              </button>
-
-              <PostOverlay 
-                isOpen={isPostModalOpen} 
-                onClose={() => setPostModalOpen(false)} 
-              />
-
-            </AuthProvider>
+            <AppContent />
           </BrowserRouter>
         </TooltipProvider>
       </ThemeProvider>
