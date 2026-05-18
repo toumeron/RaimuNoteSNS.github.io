@@ -212,11 +212,3 @@
     bottom: var(--safe-bottom) !important;
   }
 }
-
-@layer utilities {
-  /* iOSでの高さ100%問題を解決するユーティリティ */
-  .h-screen-safe {
-    height: 100vh;
-    height: -webkit-fill-available;
-  }
-}

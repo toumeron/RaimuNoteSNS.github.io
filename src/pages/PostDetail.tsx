@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, MessageCircle, X } from 'lucide-react'; // RefreshCwを削除, Xを追加
+import { ArrowLeft, MessageCircle, X, Plus } from 'lucide-react'; // Plusを追加
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { LikeButton } from '@/components/post/LikeButton';
@@ -9,8 +9,52 @@ import { CommentForm } from '@/components/post/CommentForm';
 import { PostImages } from '@/components/feed/PostImages';
 import { usePost } from '@/hooks/useFeed';
 import { formatDate, formatRelative } from '@/lib/format';
-import { getYouTubeId } from '@/lib/utils'; // 追加
-import { YouTubeEmbed } from '@/components/YouTubeEmbed'; // 追加
+import { getYouTubeId } from '@/lib/utils';
+import { YouTubeEmbed } from '@/components/YouTubeEmbed';
+import { supabase } from '@/lib/supabase';
+import { getCurrentUserId } from '@/lib/currentUser';
+
+// --- カスタム絵文字・リアクション用型定義 ---
+interface CustomEmoji {
+  id: string;
+  name: string;
+  public_id: string;
+  format: string;
+  uploaded_by: string;
+}
+
+interface ReactionUser {
+  id: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string;
+}
+
+interface ReactionGroup {
+  emoji: string;
+  count: number;
+  user_ids: string[];
+  users: ReactionUser[]; 
+}
+
+interface ReplicatedRing {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface ReplicatedDot {
+  id: string;
+  x: number;
+  y: number;
+  angle: number;
+  distance: number;
+  color: string;
+  size: number;
+  delay: number;
+}
 
 export default function PostDetail() {
   const { id = '' } = useParams();
@@ -18,6 +62,28 @@ export default function PostDetail() {
   const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null); // 拡大用
   const [failedUrls, setFailedUrls] = useState<string[]>([]); // 読み込み失敗URL管理
   const navigate = useNavigate();
+
+  // --- カスタム絵文字・リアクション用ステート群 ---
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [customEmojis, setCustomEmojis] = useState<CustomEmoji[]>([]);
+  const [reactions, setReactions] = useState<ReactionGroup[]>([]);
+  const [activePopupEmoji, setActivePopupEmoji] = useState<string | null>(null);
+  const [recentEmojis, setRecentEmojis] = useState<string[]>([]);
+  const [showPicker, setShowPicker] = useState(false); // ピッカー表示
+  const [searchQuery, setSearchQuery] = useState(''); // 絵文字検索
+  const [isEmojisOpen, setIsEmojisOpen] = useState(true); // アコーディオン
+  
+  // スマホ・PC判定用
+  const [isMobile, setIsMobile] = useState(false);
+
+  // --- 画像再現エフェクト用のステート ---
+  const [activeRings, setActiveRings] = useState<ReplicatedRing[]>([]);
+  const [activeDots, setActiveDots] = useState<ReplicatedDot[]>([]);
+
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  let longPressTimer: NodeJS.Timeout;
+
+  const defaultEmojis = ['👍', '❤️', '😆', '🤔', '😮', '🎉', '💢', '😢', '😇', '🍮'];
 
   // 数値をフォーマットする関数
   const formatDisplayCount = (count: number) => {
@@ -27,15 +93,269 @@ export default function PostDetail() {
     return count.toLocaleString();
   };
 
-  // モーダル表示時にスクロールを固定
+  // 初期画面幅の判定とリスナー設定
   useEffect(() => {
-    if (selectedImageUrl) {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 640);
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // モーダル表示時およびピッカー表示時にスクロールを固定
+  useEffect(() => {
+    if (selectedImageUrl || showPicker) {
       document.body.style.overflow = 'hidden';
     } else {
       document.body.style.overflow = 'unset';
     }
     return () => { document.body.style.overflow = 'unset'; };
-  }, [selectedImageUrl]);
+  }, [selectedImageUrl, showPicker]);
+
+  // リアクションとカスタム絵文字のデータ取得
+  useEffect(() => {
+    if (!id) return;
+
+    getCurrentUserId().then(uid => {
+      setCurrentUserId(uid);
+      if (uid) {
+        const saved = localStorage.getItem(`recent_emojis_${uid}`);
+        if (saved) {
+          try { setRecentEmojis(JSON.parse(saved)); } catch (e) { console.error(e); }
+        }
+      }
+    });
+
+    fetchReactions();
+    fetchCustomEmojis();
+
+    const channels = supabase
+      .channel(`post-detail-reactions-${id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'post_reactions',
+          filter: `post_id=eq.${id}`
+        },
+        () => {
+          fetchReactions();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channels);
+    };
+  }, [id]);
+
+  const fetchReactions = async () => {
+    if (!id) return;
+    try {
+      const { data: reactionData, error: reactionError } = await supabase
+        .from('post_reactions')
+        .select('emoji, user_id')
+        .eq('post_id', id);
+
+      if (reactionError) throw reactionError;
+
+      if (reactionData && reactionData.length > 0) {
+        const userIds = Array.from(new Set(reactionData.map((r: any) => r.user_id)));
+
+        const { data: profileData, error: profileError } = await supabase
+          .from('profiles')
+          .select('id, username, display_name, avatar_url')
+          .in('id', userIds);
+
+        if (profileError) throw profileError;
+
+        const profileMap: { [key: string]: any } = {};
+        if (profileData) {
+          profileData.forEach((p: any) => {
+            profileMap[p.id] = p;
+          });
+        }
+
+        const groups: { [key: string]: { userIds: string[], users: ReactionUser[] } } = {};
+        
+        reactionData.forEach((row: any) => {
+          if (!groups[row.emoji]) {
+            groups[row.emoji] = { userIds: [], users: [] };
+          }
+          groups[row.emoji].userIds.push(row.user_id);
+          
+          const profile = profileMap[row.user_id];
+          if (profile) {
+            groups[row.emoji].users.push({
+              id: profile.id,
+              username: profile.username || 'unknown',
+              displayName: profile.display_name || profile.username || 'ユーザー',
+              avatarUrl: profile.avatar_url || ''
+            });
+          }
+        });
+
+        const formattedGroups: ReactionGroup[] = Object.keys(groups).map(emoji => ({
+          emoji,
+          count: groups[emoji].userIds.length,
+          user_ids: groups[emoji].userIds,
+          users: groups[emoji].users
+        }));
+
+        setReactions(formattedGroups);
+      } else {
+        setReactions([]);
+      }
+    } catch (err) {
+      console.error('Fetch Reactions Error:', err);
+    }
+  };
+
+  const fetchCustomEmojis = async () => {
+    try {
+      const { data: emojiData, error } = await supabase
+        .from('custom_emojis')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      if (emojiData) setCustomEmojis(emojiData);
+    } catch (err) {
+      console.error('Fetch Emojis Error:', err);
+    }
+  };
+
+  const triggerImageReplicatedEffect = (targetElement: HTMLElement) => {
+    const rect = targetElement.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+
+    targetElement.classList.remove('misskey-elastic-active');
+    void targetElement.offsetWidth; 
+    targetElement.classList.add('misskey-elastic-active');
+
+    const batchId = Math.random().toString(36).substring(2, 9);
+
+    const newRing: ReplicatedRing = {
+      id: `ring-${batchId}`,
+      x: centerX,
+      y: centerY,
+      width: rect.width + 4,
+      height: rect.height + 4
+    };
+
+    const colors = ['#d4f022', '#e6007e', '#22f0d8', '#d4f022', '#e6007e'];
+    const dotCount = 16; 
+    const newDots: ReplicatedDot[] = [];
+
+    for (let i = 0; i < dotCount; i++) {
+      const angle = (i / dotCount) * 360 + (Math.random() * 20 - 10);
+      const maxDistance = (rect.width / 2) + (Math.random() * 16 - 4);
+
+      newDots.push({
+        id: `dot-${batchId}-${i}`,
+        x: centerX,
+        y: centerY,
+        angle: angle,
+        distance: maxDistance,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        size: Math.random() * 5 + 5, 
+        delay: Math.random() * 40 
+      });
+    }
+
+    setActiveRings((prev) => [...prev, newRing]);
+    setActiveDots((prev) => [...prev, ...newDots]);
+
+    setTimeout(() => {
+      setActiveRings((prev) => prev.filter((r) => r.id !== `ring-${batchId}`));
+      setActiveDots((prev) => prev.filter((d) => !d.id.startsWith(`dot-${batchId}-`)));
+    }, 550);
+  };
+
+  const handleAddReaction = async (emoji: string, event?: React.MouseEvent) => {
+    if (!currentUserId || !id) return;
+
+    if (event && event.currentTarget) {
+      triggerImageReplicatedEffect(event.currentTarget as HTMLElement);
+    }
+
+    const updatedRecents = [emoji, ...recentEmojis.filter(e => e !== emoji)].slice(0, 10);
+    setRecentEmojis(updatedRecents);
+    localStorage.setItem(`recent_emojis_${currentUserId}`, JSON.stringify(updatedRecents));
+
+    try {
+      const { data: existing, error: checkError } = await supabase
+        .from('post_reactions')
+        .select('id')
+        .eq('post_id', id)
+        .eq('user_id', currentUserId)
+        .eq('emoji', emoji)
+        .maybeSingle();
+
+      if (checkError) throw checkError;
+
+      if (existing) {
+        const { error } = await supabase
+          .from('post_reactions')
+          .delete()
+          .eq('id', existing.id);
+
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('post_reactions')
+          .insert({
+            post_id: id,
+            user_id: currentUserId,
+            emoji: emoji
+          });
+
+        if (error) throw error;
+      }
+      setShowPicker(false);
+      fetchReactions();
+    } catch (err) {
+      console.error('Toggle Reaction Error:', err);
+    }
+  };
+
+  const getCustomEmojiObj = (emojiStr: string) => {
+    if (emojiStr.startsWith(':') && emojiStr.endsWith(':')) {
+      const cleanName = emojiStr.slice(1, -1);
+      return customEmojis.find(e => e.name === cleanName);
+    }
+    return null;
+  };
+
+  const renderEmojiElement = (emojiStr: string, className = "h-5 w-5 object-contain inline-block") => {
+    const customEmoji = getCustomEmojiObj(emojiStr);
+    if (customEmoji) {
+      const cleanPublicId = customEmoji.public_id.startsWith('custom_emojis/')
+        ? customEmoji.public_id
+        : `custom_emojis/${customEmoji.public_id}`;
+
+      const imageUrl = `https://res.cloudinary.com/dveiikhhw/image/upload/${cleanPublicId}.${customEmoji.format}`;
+      return <img src={imageUrl} alt={customEmoji.name} className={className} />;
+    }
+    return <span className="text-lg leading-none select-none">{emojiStr}</span>;
+  };
+
+  const handleTouchStart = (emoji: string) => {
+    longPressTimer = setTimeout(() => {
+      setActivePopupEmoji(emoji);
+    }, 500); 
+  };
+
+  const handleTouchEnd = () => {
+    clearTimeout(longPressTimer);
+  };
+
+  const filteredCustomEmojis = customEmojis.filter(emoji => 
+    emoji.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   // 画像クリック時の処理
   const handleImageClick = (e: React.MouseEvent, url: string) => {
@@ -131,6 +451,125 @@ export default function PostDetail() {
 
   return (
     <div className="space-y-5">
+      <style>{`
+        @keyframes misskeyRingExpand {
+          0% {
+            transform: translate(-50%, -50%) scale(0.6);
+            opacity: 1;
+            border-width: 5px;
+          }
+          40% {
+            opacity: 1;
+            border-width: 4px;
+          }
+          100% {
+            transform: translate(-50%, -50%) scale(1.15);
+            opacity: 0;
+            border-width: 1px;
+          }
+        }
+        @keyframes misskeyDotBurst {
+          0% {
+            transform: translate(-50%, -50%) rotate(var(--mk-angle)) translateY(0px) scale(0.2);
+            opacity: 0;
+          }
+          15% {
+            opacity: 1;
+            transform: translate(-50%, -50%) rotate(var(--mk-angle)) translateY(calc(var(--mk-dist) * 0.4)) scale(1.1);
+          }
+          60% {
+            opacity: 1;
+          }
+          100% {
+            transform: translate(-50%, -50%) rotate(var(--mk-angle)) translateY(var(--mk-dist)) scale(0);
+            opacity: 0;
+          }
+        }
+        @keyframes misskeyButtonElastic {
+          0% { transform: scale(1); }
+          20% { transform: scale(0.84); }
+          50% { transform: scale(1.16); }
+          75% { transform: scale(0.94); }
+          100% { transform: scale(1); }
+        }
+        .misskey-elastic-active {
+          animation: misskeyButtonElastic 420ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards !important;
+        }
+
+        /* --- スマホ専用：画面下部から滑らかにスライド湧き出しするアニメーション --- */
+        @keyframes slideUpMobile {
+          0% {
+            transform: translate(-50%, 24px);
+            opacity: 0;
+          }
+          100% {
+            transform: translate(-50%, 0);
+            opacity: 1;
+          }
+        }
+        .animate-slide-up-mobile {
+          animation: slideUpMobile 240ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        /* --- PC専用：プラスボタンの直上(absolute)から上に弾むようにズームインするアニメーション --- */
+        @keyframes zoomInPc {
+          0% {
+            transform: scale(0.9) translateY(8px);
+            opacity: 0;
+          }
+          100% {
+            transform: scale(1) translateY(0);
+            opacity: 1;
+          }
+        }
+        .animate-zoom-in-pc {
+          animation: zoomInPc 160ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+        }
+      `}</style>
+
+      {/* --- 高度グラフィックアニメーションレイヤー --- */}
+      {(activeRings.length > 0 || activeDots.length > 0) && (
+        <div className="fixed inset-0 pointer-events-none z-[9999] overflow-hidden">
+          {activeRings.map((r) => (
+            <div
+              key={r.id}
+              style={{
+                position: 'fixed',
+                left: r.x,
+                top: r.y,
+                width: `${r.width}px`,
+                height: `${r.height}px`,
+                borderRadius: '9999px',
+                border: '4px solid #d4f022', 
+                backgroundColor: 'transparent',
+                transformOrigin: 'center center',
+                animation: 'misskeyRingExpand 460ms cubic-bezier(0.1, 0.8, 0.3, 1) forwards'
+              }}
+            />
+          ))}
+
+          {activeDots.map((d) => (
+            <div
+              key={d.id}
+              style={{
+                position: 'fixed',
+                left: d.x,
+                top: d.y,
+                width: `${d.size}px`,
+                height: `${d.size}px`,
+                backgroundColor: d.color,
+                borderRadius: '50%',
+                transformOrigin: 'center center',
+                ['--mk-angle' as any]: `${d.angle}deg`,
+                ['--mk-dist' as any]: `${d.distance}px`,
+                animation: `misskeyDotBurst 480ms cubic-bezier(0.12, 0.85, 0.3, 1) forwards`,
+                animationDelay: `${d.delay}ms`
+              }}
+            />
+          ))}
+        </div>
+      )}
+
       <button
         type="button"
         onClick={() => navigate(-1)}
@@ -165,7 +604,7 @@ export default function PostDetail() {
       )}
 
       {data && (
-        <article className="rounded-3xl border border-border/60 bg-card p-6 shadow-soft">
+        <article className="rounded-3xl border border-border/60 bg-card p-6 shadow-soft relative">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <Link to={`/u/${data.author.username}`}>
@@ -238,6 +677,69 @@ export default function PostDetail() {
             />
           </div>
 
+          {/* --- リアクションバッジエリア（本文・画像と日時表示の間に挿入） --- */}
+          {reactions.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-1.5 relative" onClick={(e) => e.stopPropagation()}>
+              {reactions.map((g) => {
+                const hasMyReaction = currentUserId ? g.user_ids.includes(currentUserId) : false;
+                const isPopupOpen = activePopupEmoji === g.emoji;
+
+                return (
+                  <div 
+                    key={g.emoji} 
+                    className="relative inline-block"
+                    onMouseEnter={() => setActivePopupEmoji(g.emoji)}
+                    onMouseLeave={() => setActivePopupEmoji(null)}
+                  >
+                    <button
+                      onClick={(e) => handleAddReaction(g.emoji, e)}
+                      onTouchStart={() => handleTouchStart(g.emoji)}
+                      onTouchEnd={handleTouchEnd}
+                      className={`inline-flex items-center gap-1.5 h-[45px] px-2.5 rounded-xl text-[15px] font-bold transition-all select-none outline-none border-none origin-center ${
+                        hasMyReaction
+                          ? 'bg-sky-500/15 dark:bg-sky-500/15 text-sky-500 dark:text-sky-400'
+                          : 'bg-black/[0.05] dark:bg-muted/50 text-muted-foreground hover:bg-black/[0.08] dark:hover:bg-muted/80 hover:text-foreground'
+                      }`}
+                    >
+                      {renderEmojiElement(g.emoji, "h-5 w-5 object-contain")}
+                      <span className="tabular-nums text-sm font-black">{g.count}</span>
+                    </button>
+
+                    {/* --- リアクションユーザーポップアップ --- */}
+                    {isPopupOpen && g.users.length > 0 && (
+                      <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-[260px] bg-white dark:bg-[#252932] border border-black/[0.08] dark:border-white/5 rounded-2xl shadow-2xl z-[60] flex p-3 pointer-events-none">
+                        
+                        <div className="w-[64px] h-[64px] shrink-0 flex items-center justify-center border-r border-black/[0.08] dark:border-white/10 pr-2.5 mr-2.5">
+                          {renderEmojiElement(g.emoji, "h-12 w-12 object-contain")}
+                        </div>
+
+                        <div className="flex-1 min-w-0 flex flex-col gap-1.5 max-h-[160px] overflow-y-auto scrollbar-none">
+                          {g.users.map((u) => (
+                            <div key={u.id} className="flex items-center gap-2 min-w-0">
+                              <Avatar className="h-5 w-5 shrink-0 border border-black/[0.08] dark:border-white/10">
+                                <AvatarImage src={u.avatarUrl} />
+                                <AvatarFallback className="text-[9px]">{u.displayName.slice(0, 1)}</AvatarFallback>
+                              </Avatar>
+                              <div className="min-w-0 flex-1 flex flex-col">
+                                <span className="text-[12px] font-black text-foreground dark:text-white truncate leading-none mb-0.5">
+                                  {u.displayName}
+                                </span>
+                                <span className="text-[10px] text-muted-foreground/70 truncate leading-none">
+                                  @{u.username}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           <p className="mt-4 text-xs text-muted-foreground" title={formatDate(data.createdAt)}>
             {formatDate(data.createdAt)} · {formatRelative(data.createdAt)}
             {data.clientName && (
@@ -250,16 +752,193 @@ export default function PostDetail() {
             )}
           </p>
 
-          <div className="mt-3 flex items-center gap-1 border-t border-border/60 pt-3">
-            < LikeButton 
-              postId={data.id} 
-              liked={data.likedByMe} 
-              count={data.likesCount}
-            />
+          <div className="mt-3 flex items-center gap-1 border-t border-border/60 pt-3 relative h-9">
+            <div onClick={(e) => e.stopPropagation()} className="flex items-center h-full">
+              < LikeButton 
+                postId={data.id} 
+                liked={data.likedByMe} 
+                count={data.likesCount}
+              />
+            </div>
             <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm text-muted-foreground">
               <MessageCircle className="h-5 w-5" />
               <span className="font-bold tabular-nums">{formatDisplayCount(data.commentsCount)}</span>
             </span>
+
+            {/* --- プラスボタンエリア --- */}
+            <div className="relative inline-flex items-center h-full" onClick={(e) => e.stopPropagation()}>
+              <button
+                ref={buttonRef}
+                onClick={() => setShowPicker(!showPicker)}
+                className={`inline-flex items-center justify-center p-1.5 rounded-full transition-colors hover:text-accent h-8 w-8 origin-center ${
+                  showPicker ? 'text-accent bg-accent/10' : 'text-muted-foreground'
+                }`}
+              >
+                <Plus className="h-5 w-5" />
+              </button>
+
+              {showPicker && (
+                <>
+                  {/* 背景レイヤー：最前面手前の z-[9998] で他の要素へのタップや背景スクロールを物理カット */}
+                  <div className="fixed inset-0 bg-transparent z-[9998]" onClick={() => setShowPicker(false)} />
+                  
+                  {isMobile ? (
+                    /* =========================================================================
+                       【スマートフォン専用ポップアップ：バー全体をスクロール対応化】
+                       ========================================================================= */
+                    <div 
+                      className="fixed bottom-[76px] left-1/2 transform -translate-x-1/2 w-[92vw] max-w-[340px] h-[430px] rounded-[24px] border border-border/80 bg-white dark:bg-[#1e222b] shadow-2xl z-[9999] p-4 animate-slide-up-mobile overflow-y-auto overflow-x-hidden touch-pan-y"
+                      onTouchStart={(e) => e.stopPropagation()}
+                      onScroll={(e) => e.stopPropagation()}
+                    >
+                      {/* デフォルト絵文字 */}
+                      <div className="grid grid-cols-5 gap-2.5 mb-3.5 shrink-0">
+                        {defaultEmojis.map((emoji) => (
+                          <button
+                            key={emoji}
+                            onClick={(e) => handleAddReaction(emoji, e)}
+                            className="flex items-center justify-center h-11 w-11 text-2xl rounded-2xl hover:bg-black/[0.05] dark:hover:bg-white/10 transition-all origin-center"
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+
+                      {recentEmojis.length > 0 && (
+                        <div className="mb-3.5 shrink-0">
+                          <div className="text-[11px] font-bold text-muted-foreground/60 mb-1.5 px-0.5">最近使用</div>
+                          <div className="flex flex-wrap gap-2.5">
+                            {recentEmojis.map((emoji) => (
+                              <button
+                                key={`recent-${emoji}`}
+                                onClick={(e) => handleAddReaction(emoji, e)}
+                                className="flex items-center justify-center h-9 w-9 rounded-xl hover:bg-black/[0.05] dark:hover:bg-white/10 transition-all origin-center"
+                              >
+                                {renderEmojiElement(emoji, "h-6 w-6 object-contain")}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* カスタム絵文字：内側の高さ固定を解除しバー全体のスクロールに統合 */}
+                      <div className="flex flex-col border-t border-black/[0.08] dark:border-white/5 pt-2">
+                        <button
+                          onClick={() => setIsEmojisOpen(!isEmojisOpen)}
+                          className="flex items-center justify-between w-full px-0.5 py-1 text-[11px] font-black text-muted-foreground/80 hover:text-foreground transition-colors shrink-0"
+                        >
+                          <span className="truncate">カスタム絵文字</span>
+                          <span className="text-[10px] opacity-60">{isEmojisOpen ? '▲' : '▼'}</span>
+                        </button>
+
+                        {isEmojisOpen && (
+                          <div className="p-0.5 block mt-1">
+                            {filteredCustomEmojis.length > 0 ? (
+                              <div className="grid grid-cols-4 gap-2.5">
+                                {filteredCustomEmojis.map((emoji) => (
+                                  <button
+                                    key={emoji.id}
+                                    onClick={(e) => handleAddReaction(`:${emoji.name}:`, e)}
+                                    title={`:${emoji.name}:`}
+                                    className="flex items-center justify-center h-12 w-12 rounded-2xl hover:bg-black/[0.05] dark:hover:bg-white/10 transition-all p-1.5 origin-center"
+                                  >
+                                    {renderEmojiElement(`:${emoji.name}:`, "h-9 w-9 object-contain")}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-center text-[11px] text-muted-foreground/50 py-6">絵文字が見つかりません</div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    /* =========================================================================
+                       【PC専用ポップアップ：バー全体をスクロール対応化・縦幅 h-[280px]】
+                       ========================================================================= */
+                    <div 
+                      className="absolute bottom-full left-0 mb-2 w-[260px] h-[280px] rounded-[20px] border border-border/80 bg-white dark:bg-[#1e222b] shadow-2xl z-[9999] p-2.5 animate-zoom-in-pc overflow-y-auto overflow-x-hidden"
+                      onWheel={(e) => e.stopPropagation()}
+                    >
+                      {/* デフォルト絵文字 */}
+                      <div className="grid grid-cols-7 gap-1 mb-2 shrink-0">
+                        {defaultEmojis.map((emoji) => (
+                          <button
+                            key={emoji}
+                            onClick={(e) => handleAddReaction(emoji, e)}
+                            className="flex items-center justify-center h-8 w-8 text-xl rounded-lg hover:bg-black/[0.05] dark:hover:bg-white/10 transition-all origin-center"
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+
+                      {recentEmojis.length > 0 && (
+                        <div className="mb-2 shrink-0">
+                          <div className="text-[11px] font-bold text-muted-foreground/60 mb-1 px-0.5">最近使用</div>
+                          <div className="flex flex-wrap gap-1">
+                            {recentEmojis.map((emoji) => (
+                              <button
+                                key={`recent-${emoji}`}
+                                onClick={(e) => handleAddReaction(emoji, e)}
+                                className="flex items-center justify-center h-7 w-7 rounded-md hover:bg-black/[0.05] dark:hover:bg-white/10 transition-all origin-center"
+                              >
+                                {renderEmojiElement(emoji, "h-[18px] w-[18px] object-contain")}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* カスタム絵文字：内側の高さ制限を外し全体のスクロールに委ねる */}
+                      <div className="flex flex-col border-t border-black/[0.08] dark:border-white/5 pt-1.5">
+                        <button
+                          onClick={() => setIsEmojisOpen(!isEmojisOpen)}
+                          className="flex items-center justify-between w-full px-0.5 py-1 text-[11px] font-black text-muted-foreground/80 hover:text-foreground transition-colors shrink-0"
+                        >
+                          <span className="truncate">カスタム絵文字</span>
+                          <span className="text-[10px] opacity-60">{isEmojisOpen ? '▲' : '▼'}</span>
+                        </button>
+
+                        {isEmojisOpen && (
+                          <div className="p-0.5 mt-1">
+                            {filteredCustomEmojis.length > 0 ? (
+                              <div className="grid grid-cols-6 gap-1">
+                                {filteredCustomEmojis.map((emoji) => (
+                                  <button
+                                    key={emoji.id}
+                                    onClick={(e) => handleAddReaction(`:${emoji.name}:`, e)}
+                                    title={`:${emoji.name}:`}
+                                    className="flex items-center justify-center h-8 w-8 rounded-lg hover:bg-black/[0.05] dark:hover:bg-white/10 transition-all p-0.5 origin-center"
+                                  >
+                                    {renderEmojiElement(`:${emoji.name}:`, "h-6 w-6 object-contain")}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-center text-[11px] text-muted-foreground/50 py-4">絵文字が見つかりません</div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 検索バー（PC版のみ最下部に固定表示されますが、ポップアップ全体をスクロールしてアクセス可能です） */}
+                      <div className="mt-2 pt-1.5 border-t border-black/[0.08] dark:border-white/5 shrink-0">
+                        <input
+                          type="text"
+                          placeholder="検索"
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          className="w-full h-8 bg-black/[0.03] dark:bg-black/30 border border-black/[0.08] dark:border-white/10 rounded-lg px-2.5 text-xs font-medium text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-pink-500/50 transition-colors"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
           </div>
         </article>
       )}
