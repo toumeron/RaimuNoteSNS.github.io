@@ -1,5 +1,5 @@
-import { useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, type FormEvent, useEffect, useRef } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
 import { z } from 'zod';
 import { Heart, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -23,6 +23,7 @@ function AuthForm({ mode }: { mode: Mode }) {
   const [password, setPassword] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const [isAgreed, setIsAgreed] = useState(false);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -46,10 +47,8 @@ function AuthForm({ mode }: { mode: Mode }) {
         const { data, error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
 
-        // サインアップ成功時に profiles テーブルへ行を作成
         if (data.user) {
           const base = email.split('@')[0].replace(/[^a-z0-9_]/gi, '_').toLowerCase();
-          // username の重複を避けるため末尾に短いランダム文字列を付加
           const username = `${base}_${Math.random().toString(36).slice(2, 6)}`;
           await supabase.from('profiles').upsert({
             id: data.user.id,
@@ -83,7 +82,7 @@ function AuthForm({ mode }: { mode: Mode }) {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="メールアドレスを入力..."
-          className="rounded-full bg-background"
+          className="rounded-full bg-background text-foreground"
         />
         {errors.email && <p className="text-xs text-destructive">{errors.email}</p>}
       </div>
@@ -96,13 +95,41 @@ function AuthForm({ mode }: { mode: Mode }) {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder="6文字以上"
-          className="rounded-full bg-background"
+          className="rounded-full bg-background text-foreground"
         />
         {errors.password && <p className="text-xs text-destructive">{errors.password}</p>}
       </div>
+
+      {mode === 'signup' && (
+        <div className="flex items-center gap-2 py-1">
+          <input
+            id="terms-agreement"
+            type="checkbox"
+            checked={isAgreed}
+            onChange={(e) => setIsAgreed(e.target.checked)}
+            className="h-4 w-4 rounded border-gray-300 dark:border-zinc-700 accent-primary cursor-pointer"
+          />
+          <Label 
+            htmlFor="terms-agreement" 
+            className="text-sm font-medium text-muted-foreground cursor-pointer select-none"
+          >
+            <Link 
+              to="/terms" 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="text-primary hover:underline font-semibold mr-1"
+              onClick={(e) => e.stopPropagation()}
+            >
+              利用規約
+            </Link>
+            に同意する <span className="text-destructive text-xs">*</span>
+          </Label>
+        </div>
+      )}
+
       <Button
         type="submit"
-        disabled={busy}
+        disabled={busy || (mode === 'signup' && !isAgreed)}
         className="w-full rounded-full bg-gradient-primary py-6 text-base font-bold shadow-soft transition hover:scale-[1.02] hover:shadow-pop"
       >
         {mode === 'login' ? 'ログインする' : '登録してはじめる'}
@@ -112,34 +139,72 @@ function AuthForm({ mode }: { mode: Mode }) {
 }
 
 export default function AuthPage() {
-  return (
-    /* bg-white を追加し、全体の背景を白に固定 */
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden p-4 bg-white">
-      {/* ここにあった背景画像(confetti-bg)や、
-          ピンク/ブルーのボカシ(blur-3xl)、
-          浮いているハート(Heart)をすべて削除しました 
-      */}
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
-      <div className="relative w-full max-w-md">
+  useEffect(() => {
+    // ブラウザの自動再生ブロックを回避するハンドラー
+    const handleUserInteraction = () => {
+      if (audioRef.current) {
+        audioRef.current.play().catch((err) => {
+          console.log("Audio play blocked or failed:", err);
+        });
+        // 1度再生が試みられたらイベントリスナーを解除
+        document.removeEventListener('click', handleUserInteraction);
+        document.removeEventListener('keydown', handleUserInteraction);
+      }
+    };
+
+    // ユーザーのアクションを監視
+    document.addEventListener('click', handleUserInteraction);
+    document.addEventListener('keydown', handleUserInteraction);
+
+    return () => {
+      document.removeEventListener('click', handleUserInteraction);
+      document.removeEventListener('keydown', handleUserInteraction);
+    };
+  }, []);
+
+return (
+  // 全体の背景を「常に真っ黒（bg-black）」に変更します
+  <div className="relative flex min-h-screen items-center justify-center overflow-hidden p-4 bg-black text-foreground transition-colors duration-200">
+    
+    {/* 背景動画（opacityで暗さを調整。数値が小さいほど暗い黒ベースになります） */}
+    <video
+      autoPlay
+      loop
+      muted
+      playsInline
+      className="absolute top-0 left-0 w-full h-full object-cover z-0 pointer-events-none opacity-60"
+    >
+      <source src="https://rr3---sn-oguelnsr.googlevideo.com/videoplayback?expire=1779342395&ei=20cOaqDdE_LM0u8Pt4j02AM&ip=216.40.74.11&id=o-AJlkl1v3UlVHBTrgal-KPEV1YoMJT4qOz52ibtLEBwKu&itag=136&source=youtube&requiressl=yes&xpc=EgVo2aDSNQ==&cps=53&bui=AbKmrwrcPRFi37dPr7H5iV5BvvQS6HcSx6UDCim-3zubYRgLNcK7Et-Kqw8uQ0zGi3gLgfMAjEvnisau&spc=96Xrv-8rFzXDvkqvkZ9_2ehjz_fylt9Wd0_PK4A5-sjX&vprv=1&svpuc=1&mime=video/mp4&rqh=1&gir=yes&clen=97698519&dur=370.866&lmt=1677381585476448&keepalive=yes&fexp=51565116,51565682&c=ANDROID_VR&txp=6219224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,bui,spc,vprv,svpuc,mime,rqh,gir,clen,dur,lmt&sig=AHEqNM4wRQIhAPEbvG3Y8f6YCp_UPFjxjG2eckI1bP7M9yBT2Ht8aeXuAiBrdHx2JGL3w5AKanLQfVQamMOTBl5Vt8-ZnIDANGmSmw==&title=%E3%80%90%E3%83%9B%E3%83%BC%E3%83%A0%E3%83%89%E3%82%A2%E6%9C%AA%E8%A8%AD%E7%BD%AE%E3%81%AE%E3%82%BF%E3%83%BC%E3%83%9F%E3%83%8A%E3%83%AB%E9%A7%85%E3%80%91%E4%BC%91%E6%97%A5%E5%A4%9C%E3%81%AE%E5%B1%B1%E6%89%8B%E7%B7%9A%E6%96%B0%E5%AE%BF%E9%A7%85%E7%99%BA%E7%9D%80%E6%98%A0%E5%83%8F%E3%80%80E235%E7%B3%BB&rm=sn-gxuo03g-3c2s7s,sn-ixhz7s&rrc=79,104,191&req_id=6ef35e62f547a3ee&rms=rdu,au&ipbypass=yes&redirect_counter=3&cm2rm=sn-3pmsr7s&cms_redirect=yes&cmsv=e&met=1779320806,&mh=-9&mip=126.140.57.247&mm=34&mn=sn-oguelnsr&ms=ltu&mt=1779320683&mv=m&mvi=3&pl=16&lsparams=cps,ipbypass,met,mh,mip,mm,mn,ms,mv,mvi,pl,rms&lsig=APaTxxMwRAIgDORrJPGIOcxFCxQC5LP4oSW-PBE1T4zylpPPrqBPXVQCICgAbU41nrkigvEwIroZXKPTMMwbCdVT3o-mga9A8yFo" type="video/mp4" />
+    </video>
+
+    {/* （オプショナル）もし動画の色味をさらに微調整したい場合は、ここに黒い遮光レイヤーを挟むことも可能です */}
+    {/* <div className="absolute top-0 left-0 w-full h-full bg-black/50 z-1 pointer-events-none" /> */}
+
+      {/* 2. 効果音・BGM用の音声（MP3） */}
+      <audio
+        ref={audioRef}
+        src="/background-music.mp3"
+        loop
+        preload="auto"
+      />
+
+      {/* コンテンツエリア（動画の上に重ねるために z-10 を指定） */}
+      <div className="relative w-full max-w-md z-10">
         <div className="mb-8 flex flex-col items-center text-center">
           <Logo size="lg" />
           <p className="mt-3 inline-flex items-center gap-1.5 text-sm text-muted-foreground">
-            <Sparkles className="h-3.5 w-3.5 text-accent" />
-            Beta
-            <Sparkles className="h-3.5 w-3.5 text-accent" />
           </p>
         </div>
 
-        {/* カード部分の bg-card/90 や backdrop-blur-md も
-            白背景なら不要なので、シンプルな border だけにしても綺麗です 
-        */}
-        <div className="rounded-3xl border border-border/60 bg-white p-6 shadow-card-soft sm:p-8">
+        <div className="rounded-3xl border border-border/60 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md p-6 shadow-card-soft sm:p-8 transition-colors duration-200">
           <Tabs defaultValue="login" className="w-full">
-            <TabsList className="mb-6 grid w-full grid-cols-2 rounded-full bg-secondary p-1">
-              <TabsTrigger value="login" className="rounded-full data-[state=active]:bg-gradient-primary data-[state=active]:text-primary-foreground">
+            <TabsList className="mb-6 grid w-full grid-cols-2 rounded-full bg-secondary dark:bg-zinc-800 p-1">
+              <TabsTrigger value="login" className="rounded-full data-[state=active]:bg-gradient-primary data-[state=active]:text-primary-foreground dark:text-zinc-400 dark:data-[state=active]:text-white">
                 ログイン
               </TabsTrigger>
-              <TabsTrigger value="signup" className="rounded-full data-[state=active]:bg-gradient-primary data-[state=active]:text-primary-foreground">
+              <TabsTrigger value="signup" className="rounded-full data-[state=active]:bg-gradient-primary data-[state=active]:text-primary-foreground dark:text-zinc-400 dark:data-[state=active]:text-white">
                 新規登録
               </TabsTrigger>
             </TabsList>

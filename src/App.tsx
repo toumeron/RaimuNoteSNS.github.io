@@ -23,6 +23,7 @@ import FollowersFollowingPage from "./pages/FollowersFollowingPage";
 import SpacePage from "./pages/SpacePage";
 import NewsPage from './pages/NewsPage';
 import ChatPage from "./pages/ChatPage"; // AIチャットページのインポートを追加
+import TermsPage from "./pages/terms";
 
 // PostComposer 用のインポート群
 import { ImagePlus, Loader2, Send, X, AtSign, Hash, Globe, Users, Plus, PenSquare } from 'lucide-react';
@@ -715,6 +716,7 @@ const AppContent = () => {
         
         <Routes>
           <Route path="/auth" element={<AuthPage />} />
+          <Route path="/terms" element={<TermsPage />} />
           <Route element={<AppLayout />}>
             <Route path="/" element={<Feed />} />
             <Route path="/notifications" element={<Notifications />} />
