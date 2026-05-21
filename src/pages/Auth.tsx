@@ -142,19 +142,17 @@ export default function AuthPage() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
-    // ブラウザの自動再生ブロックを回避するハンドラー
+    // ユーザーアクションを契機にBGM（音声）のロックを解除するハンドラー
     const handleUserInteraction = () => {
       if (audioRef.current) {
         audioRef.current.play().catch((err) => {
           console.log("Audio play blocked or failed:", err);
         });
-        // 1度再生が試みられたらイベントリスナーを解除
-        document.removeEventListener('click', handleUserInteraction);
-        document.removeEventListener('keydown', handleUserInteraction);
       }
+      document.removeEventListener('click', handleUserInteraction);
+      document.removeEventListener('keydown', handleUserInteraction);
     };
 
-    // ユーザーのアクションを監視
     document.addEventListener('click', handleUserInteraction);
     document.addEventListener('keydown', handleUserInteraction);
 
@@ -164,25 +162,17 @@ export default function AuthPage() {
     };
   }, []);
 
-return (
-  // 全体の背景を「常に真っ黒（bg-black）」に変更します
-  <div className="relative flex min-h-screen items-center justify-center overflow-hidden p-4 bg-black text-foreground transition-colors duration-200">
-    
-    {/* 背景動画（opacityで暗さを調整。数値が小さいほど暗い黒ベースになります） */}
-    <video
-      autoPlay
-      loop
-      muted
-      playsInline
-      className="absolute top-0 left-0 w-full h-full object-cover z-0 pointer-events-none opacity-60"
-    >
-      <source src="https://rr3---sn-oguelnsr.googlevideo.com/videoplayback?expire=1779342395&ei=20cOaqDdE_LM0u8Pt4j02AM&ip=216.40.74.11&id=o-AJlkl1v3UlVHBTrgal-KPEV1YoMJT4qOz52ibtLEBwKu&itag=136&source=youtube&requiressl=yes&xpc=EgVo2aDSNQ==&cps=53&bui=AbKmrwrcPRFi37dPr7H5iV5BvvQS6HcSx6UDCim-3zubYRgLNcK7Et-Kqw8uQ0zGi3gLgfMAjEvnisau&spc=96Xrv-8rFzXDvkqvkZ9_2ehjz_fylt9Wd0_PK4A5-sjX&vprv=1&svpuc=1&mime=video/mp4&rqh=1&gir=yes&clen=97698519&dur=370.866&lmt=1677381585476448&keepalive=yes&fexp=51565116,51565682&c=ANDROID_VR&txp=6219224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,bui,spc,vprv,svpuc,mime,rqh,gir,clen,dur,lmt&sig=AHEqNM4wRQIhAPEbvG3Y8f6YCp_UPFjxjG2eckI1bP7M9yBT2Ht8aeXuAiBrdHx2JGL3w5AKanLQfVQamMOTBl5Vt8-ZnIDANGmSmw==&title=%E3%80%90%E3%83%9B%E3%83%BC%E3%83%A0%E3%83%89%E3%82%A2%E6%9C%AA%E8%A8%AD%E7%BD%AE%E3%81%AE%E3%82%BF%E3%83%BC%E3%83%9F%E3%83%8A%E3%83%AB%E9%A7%85%E3%80%91%E4%BC%91%E6%97%A5%E5%A4%9C%E3%81%AE%E5%B1%B1%E6%89%8B%E7%B7%9A%E6%96%B0%E5%AE%BF%E9%A7%85%E7%99%BA%E7%9D%80%E6%98%A0%E5%83%8F%E3%80%80E235%E7%B3%BB&rm=sn-gxuo03g-3c2s7s,sn-ixhz7s&rrc=79,104,191&req_id=6ef35e62f547a3ee&rms=rdu,au&ipbypass=yes&redirect_counter=3&cm2rm=sn-3pmsr7s&cms_redirect=yes&cmsv=e&met=1779320806,&mh=-9&mip=126.140.57.247&mm=34&mn=sn-oguelnsr&ms=ltu&mt=1779320683&mv=m&mvi=3&pl=16&lsparams=cps,ipbypass,met,mh,mip,mm,mn,ms,mv,mvi,pl,rms&lsig=APaTxxMwRAIgDORrJPGIOcxFCxQC5LP4oSW-PBE1T4zylpPPrqBPXVQCICgAbU41nrkigvEwIroZXKPTMMwbCdVT3o-mga9A8yFo" type="video/mp4" />
-    </video>
+  return (
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden p-4 bg-black text-foreground transition-colors duration-200">
+      
+      {/* 背景画像：指定されたURLを全面に配置（動画と同じobject-coverでアスペクト比を維持） */}
+      <img
+        src="https://pbs.twimg.com/media/HHdk07nbMAAW14w?format=jpg&name=4096x4096"
+        alt="Background"
+        className="absolute top-0 left-0 w-full h-full object-cover z-0 pointer-events-none opacity-50"
+      />
 
-    {/* （オプショナル）もし動画の色味をさらに微調整したい場合は、ここに黒い遮光レイヤーを挟むことも可能です */}
-    {/* <div className="absolute top-0 left-0 w-full h-full bg-black/50 z-1 pointer-events-none" /> */}
-
-      {/* 2. 効果音・BGM用の音声（MP3） */}
+      {/* 効果音・BGM用の音声（MP3） */}
       <audio
         ref={audioRef}
         src="/background-music.mp3"
@@ -190,7 +180,7 @@ return (
         preload="auto"
       />
 
-      {/* コンテンツエリア（動画の上に重ねるために z-10 を指定） */}
+      {/* コンテンツエリア（画像の上に重ねるために z-10 を指定） */}
       <div className="relative w-full max-w-md z-10">
         <div className="mb-8 flex flex-col items-center text-center">
           <Logo size="lg" />
