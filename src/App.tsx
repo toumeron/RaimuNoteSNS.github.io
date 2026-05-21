@@ -705,6 +705,12 @@ const AppContent = () => {
 
   // 大文字小文字の違い（/CHAT または /chat）を許容するため、小文字に変換して判定
   const isChatPage = pathname.toLowerCase() === "/chat" || pathname.toLowerCase() === "/ramunotesns.github.io/chat";
+  const lowerPath = pathname.toLowerCase();
+  const isAuthPage = lowerPath.includes("/auth");
+  const isTermsPage = lowerPath.includes("/terms");
+
+  // いずれかの非表示対象ページであるか、またはスクロールによって非表示にするか
+  const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage;
 
   return (
     <>
@@ -740,10 +746,11 @@ const AppContent = () => {
           className={cn(
             "fixed z-[999] flex items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-all duration-500 hover:scale-110 active:scale-95",
             "bottom-24 right-6 h-12 w-12 md:hidden",
-            (!isFABVisible || isChatPage) && "scale-0 opacity-0"
+            shouldHideFAB && "scale-0 opacity-0"
           )}
           aria-label="新規投稿"
         >
+          
           <PenSquare className="h-5 w-5" />
         </button>
 
