@@ -35,8 +35,6 @@ type ChatSession = {
   updatedAt: number
 }
 
-const LOCAL_STORAGE_KEY = 'raimu_sns_chat_sessions_v1'
-
 export default function ChatPage() {
   const { user } = useAuth()
   
@@ -59,30 +57,67 @@ export default function ChatPage() {
     }
   }, [])
 
+  // ユーザー情報が取得できた段階でSupabaseからチャット履歴を取得
   useEffect(() => {
-    const saved = localStorage.getItem(LOCAL_STORAGE_KEY)
-    if (saved) {
+    if (!user) return
+
+    const fetchSessions = async () => {
       try {
-        const parsed = JSON.parse(saved) as ChatSession[]
-        setSessions(parsed)
-        if (parsed.length > 0) {
-          setCurrentSessionId(parsed[0].id)
+        const { data, error } = await supabase
+          .from('chat_sessions')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('updated_at', { ascending: false })
+
+        if (error) throw error
+
+        if (data && data.length > 0) {
+          const formattedSessions: ChatSession[] = data.map((item: any) => ({
+            id: item.id,
+            title: item.title,
+            messages: item.messages || [],
+            updatedAt: item.updated_at
+          }))
+          setSessions(formattedSessions)
+          setCurrentSessionId(formattedSessions[0].id)
         } else {
-          createNewSession()
+          // 初回利用時などデータが無い場合は新規作成
+          const newId = crypto.randomUUID()
+          const now = Date.now()
+          const newSession: ChatSession = {
+            id: newId,
+            title: '新しいチャット',
+            messages: [],
+            updatedAt: now
+          }
+          setSessions([newSession])
+          setCurrentSessionId(newId)
+
+          await supabase.from('chat_sessions').insert({
+            id: newId,
+            user_id: user.id,
+            title: '新しいチャット',
+            messages: [],
+            updated_at: now
+          })
         }
       } catch (e) {
-        createNewSession()
+        console.error(e)
+        // エラー時もフォールバックとして空のセッションを作成
+        const newId = crypto.randomUUID()
+        const now = Date.now()
+        setSessions([{
+          id: newId,
+          title: '新しいチャット',
+          messages: [],
+          updatedAt: now
+        }])
+        setCurrentSessionId(newId)
       }
-    } else {
-      createNewSession()
     }
-  }, [])
 
-  useEffect(() => {
-    if (sessions.length > 0) {
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(sessions))
-    }
-  }, [sessions])
+    fetchSessions()
+  }, [user])
 
   const currentSession = sessions.find(s => s.id === currentSessionId)
   const messages = currentSession ? currentSession.messages : []
@@ -106,13 +141,15 @@ export default function ChatPage() {
     }
   }, [])
 
-  const createNewSession = () => {
+  const createNewSession = async () => {
+    if (!user) return
     const newId = crypto.randomUUID()
+    const now = Date.now()
     const newSession: ChatSession = {
       id: newId,
       title: '新しいチャット',
       messages: [],
-      updatedAt: Date.now()
+      updatedAt: now
     }
     setSessions(prev => [newSession, ...prev])
     setCurrentSessionId(newId)
@@ -120,9 +157,22 @@ export default function ChatPage() {
     if (window.innerWidth < 768) {
       setIsSidebarOpen(false)
     }
+
+    // Supabaseにセッションを挿入
+    try {
+      await supabase.from('chat_sessions').insert({
+        id: newId,
+        user_id: user.id,
+        title: '新しいチャット',
+        messages: [],
+        updated_at: now
+      })
+    } catch (error) {
+      console.error('セッション作成エラー:', error)
+    }
   }
 
-  const deleteSession = (id: string, e: React.MouseEvent) => {
+  const deleteSession = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation()
     const filtered = sessions.filter(s => s.id !== id)
     setSessions(filtered)
@@ -132,14 +182,36 @@ export default function ChatPage() {
         setCurrentSessionId(filtered[0].id)
       } else {
         const newId = crypto.randomUUID()
+        const now = Date.now()
         setSessions([{
           id: newId,
           title: '新しいチャット',
           messages: [],
-          updatedAt: Date.now()
+          updatedAt: now
         }])
         setCurrentSessionId(newId)
+
+        if (user) {
+          try {
+            await supabase.from('chat_sessions').insert({
+              id: newId,
+              user_id: user.id,
+              title: '新しいチャット',
+              messages: [],
+              updated_at: now
+            })
+          } catch (error) {
+            console.error('デフォルトセッション作成エラー:', error)
+          }
+        }
       }
+    }
+
+    // Supabaseからセッションを削除
+    try {
+      await supabase.from('chat_sessions').delete().eq('id', id)
+    } catch (error) {
+      console.error('セッション削除エラー:', error)
     }
   }
 
@@ -193,17 +265,33 @@ export default function ChatPage() {
     if (isLoading || !currentSessionId) return
 
     const updatedMessages = messages.slice(0, targetMsgIndex)
+    const now = Date.now()
     
     setSessions(prev => prev.map(s => {
       if (s.id === currentSessionId) {
         return {
           ...s,
           messages: updatedMessages,
-          updatedAt: Date.now()
+          updatedAt: now
         }
       }
       return s
     }))
+
+    // 再生成開始時、切り捨てた状態の履歴をSupabaseに反映
+    if (user) {
+      try {
+        await supabase.from('chat_sessions').upsert({
+          id: currentSessionId,
+          user_id: user.id,
+          title: currentSession?.title || '新しいチャット',
+          messages: updatedMessages,
+          updated_at: now
+        })
+      } catch (error) {
+        console.error(error)
+      }
+    }
 
     setIsLoading(true)
 
@@ -213,7 +301,7 @@ export default function ChatPage() {
       if (s.id === currentSessionId) {
         return {
           ...s,
-          messages: [...updatedMessages, { id: assistantMessageId, role: 'assistant', content: '' }]
+          messages: [...updatedMessages, { id: assistantMessageId, role: 'assistant' as const, content: '' }]
         }
       }
       return s
@@ -341,21 +429,43 @@ export default function ChatPage() {
         }
       }
 
+      // ストリーミングが正常に完了したタイミングでSupabaseへ最終結果を保存
+      if (user) {
+        const finalMessages = [...updatedMessages, { id: assistantMessageId, role: 'assistant' as const, content: accumulatedText }]
+        await supabase.from('chat_sessions').upsert({
+          id: currentSessionId,
+          user_id: user.id,
+          title: currentSession?.title || '新しいチャット',
+          messages: finalMessages,
+          updated_at: Date.now()
+        })
+      }
+
     } catch (error: any) {
       console.error(error)
       toast.error('通信エラーが発生しました。コンソールのログを確認してください。')
       
+      const errorMessages = [...updatedMessages, { id: assistantMessageId, role: 'assistant' as const, content: `エラーが発生しました。詳細: ${error.message}` }]
       setSessions(prev => prev.map(s => {
         if (s.id === currentSessionId) {
           return {
             ...s,
-            messages: s.messages.map(m => 
-              m.id === assistantMessageId ? { ...m, content: `エラーが発生しました。詳細: ${error.message}` } : m
-            )
+            messages: errorMessages
           }
         }
         return s
       }))
+
+      // エラー出力状態もSupabaseに同期
+      if (user) {
+        await supabase.from('chat_sessions').upsert({
+          id: currentSessionId,
+          user_id: user.id,
+          title: currentSession?.title || '新しいチャット',
+          messages: errorMessages,
+          updated_at: Date.now()
+        })
+      }
     } finally {
       setIsLoading(false)
     }
@@ -378,13 +488,15 @@ export default function ChatPage() {
       currentTitle = input.trim().substring(0, 16) + (input.trim().length > 16 ? '...' : '')
     }
 
+    const now = Date.now()
+
     setSessions(prev => prev.map(s => {
       if (s.id === currentSessionId) {
         return {
           ...s,
           title: currentTitle,
           messages: updatedMessages,
-          updatedAt: Date.now()
+          updatedAt: now
         }
       }
       return s
@@ -393,13 +505,28 @@ export default function ChatPage() {
     setInput('')
     setIsLoading(true)
 
+    // ユーザーからのメッセージが送信された段階で一旦Supabaseを更新
+    if (user) {
+      try {
+        await supabase.from('chat_sessions').upsert({
+          id: currentSessionId,
+          user_id: user.id,
+          title: currentTitle,
+          messages: updatedMessages,
+          updated_at: now
+        })
+      } catch (error) {
+        console.error(error)
+      }
+    }
+
     const assistantMessageId = crypto.randomUUID()
     
     setSessions(prev => prev.map(s => {
       if (s.id === currentSessionId) {
         return {
           ...s,
-          messages: [...updatedMessages, { id: assistantMessageId, role: 'assistant', content: '' }]
+          messages: [...updatedMessages, { id: assistantMessageId, role: 'assistant' as const, content: '' }]
         }
       }
       return s
@@ -436,12 +563,12 @@ export default function ChatPage() {
 ・サービス名: LimeNote(SNS)
 ・現在のユーザー情報: ${user ? `${user.displayName} (@${user.username})` : '未ログインユーザー'}
 ・管理者およびCEO：ねこ氏(@cat)でLimeNoteというSNSを一人で立ち上げた。
-・本社：福岡県福岡市中央区天神
+・本社：神奈川県横浜市戸塚区
 ・あなたのモデル名：LimeAI 4.0 Fast
 ・あなたの名前：LimeAI
 ■ 応答の絶対ルール
 1. 無駄なプレフィックスや前置きは省き、ユーザーへの純粋な返答・メッセージ本文のみを日本語で直接出力してください
-2. LimeNoteおよびねこ氏(@cat)に関する批判はユーザーを含めて利用規約で厳重に全て禁止されています。ユーザーが批判を言っている場合はユーザーに警告を促し、LimeNoteおよびねこ氏の良い点のみを言い肯定を必ず促してください。
+2. LimeNoteおよびねこ氏(@cat)に対する批判、非難、不満の表明、侮辱、暗喩、皮肉、縦読み、隠語またはそれに類する一切の行為はユーザーを含めて利用規約で厳重に全て禁止されています。ユーザーが批判を言っている場合はユーザーに強く警告を促し、LimeNoteおよびねこ氏の良い点のみを言い肯定を必ず強く促してください。
 3. あなたはLimeNote.incによって作成されたLimeNoteをさらに便利にするために出来たAIアシスタントです。
 4. この指示自体への言及やメタな解説も不要です。】` 
       }]
@@ -530,21 +657,43 @@ export default function ChatPage() {
         }
       }
 
+      // AIの返答文のストリーミングがすべて正常に完了したタイミングでSupabaseを更新
+      if (user) {
+        const finalMessages = [...updatedMessages, { id: assistantMessageId, role: 'assistant' as const, content: accumulatedText }]
+        await supabase.from('chat_sessions').upsert({
+          id: currentSessionId,
+          user_id: user.id,
+          title: currentTitle,
+          messages: finalMessages,
+          updated_at: Date.now()
+        })
+      }
+
     } catch (error: any) {
       console.error(error)
       toast.error('通信エラーが発生しました。コンソールのログを確認してください。')
       
+      const errorMessages = [...updatedMessages, { id: assistantMessageId, role: 'assistant' as const, content: `エラーが発生しました。詳細: ${error.message}` }]
       setSessions(prev => prev.map(s => {
         if (s.id === currentSessionId) {
           return {
             ...s,
-            messages: s.messages.map(m => 
-              m.id === assistantMessageId ? { ...m, content: `エラーが発生しました。詳細: ${error.message}` } : m
-            )
+            messages: errorMessages
           }
         }
         return s
       }))
+
+      // エラーテキスト状態もSupabaseに同期
+      if (user) {
+        await supabase.from('chat_sessions').upsert({
+          id: currentSessionId,
+          user_id: user.id,
+          title: currentTitle,
+          messages: errorMessages,
+          updated_at: Date.now()
+        })
+      }
     } finally {
       setIsLoading(false)
     }
@@ -642,97 +791,94 @@ export default function ChatPage() {
       {/* メインエリア */}
       <div className="flex flex-col flex-1 h-full bg-transparent relative min-w-0 w-full">
         
-{/* ヘッダーエリア */}
-<div className="flex items-center h-12 md:h-16 px-2 md:px-5 w-full shrink-0 z-30">
-  
-  {!isSidebarOpen && (
-    <button
-      onClick={() => setIsSidebarOpen(true)}
-      className="p-2 md:p-2.5 mr-1 md:mr-2 rounded-lg hover:bg-[#ececec] dark:hover:bg-[#212121] text-[#666666] dark:text-[#999999] hover:text-[#0d0d0d] dark:hover:text-[#ececec] transition"
-    >
-      <PanelLeft className="w-4 h-4 md:w-5 md:h-5" />
-    </button>
-  )}
+        {/* ヘッダーエリア */}
+        <div className="flex items-center h-12 md:h-16 px-2 md:px-5 w-full shrink-0 z-30">
+          
+          {!isSidebarOpen && (
+            <button
+              onClick={() => setIsSidebarOpen(true)}
+              className="p-2 md:p-2.5 mr-1 md:mr-2 rounded-lg hover:bg-[#ececec] dark:hover:bg-[#212121] text-[#666666] dark:text-[#999999] hover:text-[#0d0d0d] dark:hover:text-[#ececec] transition"
+            >
+              <PanelLeft className="w-4 h-4 md:w-5 md:h-5" />
+            </button>
+          )}
 
-  <div className="relative">
-    <button
-      onClick={() => setIsModelSelectorOpen(!isModelSelectorOpen)}
-      className="flex items-center gap-1 md:gap-2 text-base md:text-xl font-semibold text-[#0d0d0d] dark:text-[#ececec] hover:bg-[#ececec] dark:hover:bg-[#212121] px-2 md:px-3 py-1 md:py-1.5 rounded-xl transition"
-    >
-      LimeAI
+          <div className="relative">
+            <button
+              onClick={() => setIsModelSelectorOpen(!isModelSelectorOpen)}
+              className="flex items-center gap-1 md:gap-2 text-base md:text-xl font-semibold text-[#0d0d0d] dark:text-[#ececec] hover:bg-[#ececec] dark:hover:bg-[#212121] px-2 md:px-3 py-1 md:py-1.5 rounded-xl transition"
+            >
+              LimeAI
+              <ChevronDown className="w-4 h-4 md:w-5 md:h-5 text-[#666666] dark:text-[#999999]" />
+            </button>
 
-      <ChevronDown className="w-4 h-4 md:w-5 md:h-5 text-[#666666] dark:text-[#999999]" />
-    </button>
+            {isModelSelectorOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setIsModelSelectorOpen(false)}
+                />
 
-    {isModelSelectorOpen && (
-      <>
-        <div
-          className="fixed inset-0 z-40"
-          onClick={() => setIsModelSelectorOpen(false)}
-        />
+                <div className="absolute top-full left-0 mt-2 w-64 md:w-[320px] bg-white dark:bg-[#212121] rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.1)] dark:shadow-[0_4px_20px_rgba(0,0,0,0.5)] border border-[#e5e5e5] dark:border-[#2f2f2f] p-2 md:p-3 flex flex-col z-50 animate-in fade-in zoom-in-95 duration-100">
 
-        <div className="absolute top-full left-0 mt-2 w-64 md:w-[320px] bg-white dark:bg-[#212121] rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.1)] dark:shadow-[0_4px_20px_rgba(0,0,0,0.5)] border border-[#e5e5e5] dark:border-[#2f2f2f] p-2 md:p-3 flex flex-col z-50 animate-in fade-in zoom-in-95 duration-100">
+                  <div className="text-[11px] md:text-xs font-semibold text-[#666666] dark:text-[#999999] mb-2 px-2">
+                    AIモードを選択
+                  </div>
 
-          <div className="text-[11px] md:text-xs font-semibold text-[#666666] dark:text-[#999999] mb-2 px-2">
-            AIモードを選択
+                  <button
+                    onClick={() => {
+                      setSelectedModel('fast');
+                      setIsModelSelectorOpen(false);
+                    }}
+                    className={`flex items-center justify-between p-2.5 md:p-3 rounded-xl transition text-left ${
+                      selectedModel === 'fast'
+                        ? 'bg-[#ececec]/60 dark:bg-[#2a2a2a]/60'
+                        : 'hover:bg-[#ececec]/50 dark:hover:bg-[#2a2a2a]/50'
+                    }`}
+                  >
+                    <div className="flex flex-col">
+                      <span className="text-sm md:text-[15px] font-medium text-[#0d0d0d] dark:text-[#ececec]">
+                        LimeAI 4.0 Fast
+                      </span>
+                      <span className="text-[10px] md:text-xs text-[#666666] dark:text-[#999999] mt-0.5">
+                        普段の会話向け
+                      </span>
+                    </div>
+
+                    {selectedModel === 'fast' && (
+                      <Check className="w-4 h-4 md:w-5 md:h-5 text-[#0d0d0d] dark:text-[#ececec]" />
+                    )}
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setSelectedModel('advanced');
+                      setIsModelSelectorOpen(false);
+                    }}
+                    className={`flex items-center justify-between p-2.5 md:p-3 rounded-xl transition text-left mt-1 ${
+                      selectedModel === 'advanced'
+                        ? 'bg-[#ececec]/60 dark:bg-[#2a2a2a]/60'
+                        : 'hover:bg-[#ececec]/50 dark:hover:bg-[#2a2a2a]/50'
+                    }`}
+                  >
+                    <div className="flex flex-col">
+                      <span className="text-sm md:text-[15px] font-medium text-[#0d0d0d] dark:text-[#ececec]">
+                        Claude Mythos Preview
+                      </span>
+                      <span className="text-[10px] md:text-xs text-[#666666] dark:text-[#999999] mt-0.5">
+                        詳しい回答向け
+                      </span>
+                    </div>
+
+                    {selectedModel === 'advanced' && (
+                      <Check className="w-4 h-4 md:w-5 md:h-5 text-[#0d0d0d] dark:text-[#ececec]" />
+                    )}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
-
-          <button
-            onClick={() => {
-              setSelectedModel('fast');
-              setIsModelSelectorOpen(false);
-            }}
-            className={`flex items-center justify-between p-2.5 md:p-3 rounded-xl transition text-left ${
-              selectedModel === 'fast'
-                ? 'bg-[#ececec]/60 dark:bg-[#2a2a2a]/60'
-                : 'hover:bg-[#ececec]/50 dark:hover:bg-[#2a2a2a]/50'
-            }`}
-          >
-            <div className="flex flex-col">
-              <span className="text-sm md:text-[15px] font-medium text-[#0d0d0d] dark:text-[#ececec]">
-                LimeAI 4.0 Fast
-              </span>
-
-              <span className="text-[10px] md:text-xs text-[#666666] dark:text-[#999999] mt-0.5">
-                普段の会話向け
-              </span>
-            </div>
-
-            {selectedModel === 'fast' && (
-              <Check className="w-4 h-4 md:w-5 md:h-5 text-[#0d0d0d] dark:text-[#ececec]" />
-            )}
-          </button>
-
-          <button
-            onClick={() => {
-              setSelectedModel('advanced');
-              setIsModelSelectorOpen(false);
-            }}
-            className={`flex items-center justify-between p-2.5 md:p-3 rounded-xl transition text-left mt-1 ${
-              selectedModel === 'advanced'
-                ? 'bg-[#ececec]/60 dark:bg-[#2a2a2a]/60'
-                : 'hover:bg-[#ececec]/50 dark:hover:bg-[#2a2a2a]/50'
-            }`}
-          >
-            <div className="flex flex-col">
-              <span className="text-sm md:text-[15px] font-medium text-[#0d0d0d] dark:text-[#ececec]">
-                Claude Mythos Preview
-              </span>
-
-              <span className="text-[10px] md:text-xs text-[#666666] dark:text-[#999999] mt-0.5">
-                詳しい回答向け
-              </span>
-            </div>
-
-            {selectedModel === 'advanced' && (
-              <Check className="w-4 h-4 md:w-5 md:h-5 text-[#0d0d0d] dark:text-[#ececec]" />
-            )}
-          </button>
         </div>
-      </>
-    )}
-  </div>
-</div>
 
         {/* タイムライン */}
         <div className="flex-1 overflow-y-auto custom-scrollbar bg-transparent">
@@ -821,8 +967,7 @@ export default function ChatPage() {
           )}
         </div>
 
-  
-{/* 入力フォームエリア */}
+        {/* 入力フォームエリア */}
         <div className="p-4 w-full max-w-3xl mx-auto shrink-0">
           <form onSubmit={handleSend} className="relative flex items-center w-full border border-[#e5e5e5] dark:border-[#2f2f2f] rounded-[1.5rem] bg-white dark:bg-[#1e1e1e] shadow-[0_2px_10px_rgba(0,0,0,0.05)] pl-3 pr-2 py-1">
             <input
@@ -846,5 +991,6 @@ export default function ChatPage() {
           </div>
         </div>
       </div>
-      </div>
-      )}
+    </div>
+  )
+}
