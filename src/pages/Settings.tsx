@@ -483,7 +483,6 @@ export default function Settings() {
                 placeholder="例:Nakkar"
                 className="rounded-full bg-background"
               />
-              <p className="text-[10px] text-muted-foreground">※ 前後のコロンは自動付与されます（英数字・_・- のみ利用可）</p>
             </div>
             <div className="space-y-1.5">
               <Label>画像ファイル</Label>

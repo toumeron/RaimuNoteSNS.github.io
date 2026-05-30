@@ -363,7 +363,6 @@ export async function createPost(input: {
 
   const finalImageUrls = Array.from(new Set([
     ...uploadedUrls.filter((url): url is string => url !== null),
-    ...detectedUrls
   ]));
 
   const MENTION_PATTERN = /@(\w+)/g;
