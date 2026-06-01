@@ -40,42 +40,55 @@ export default function Feed() {
 
   return (
     <div className="space-y-5">
-      {/* タイムライン行のコンテナ（items-center で右側のボックスと垂直の中心を完全に同期） */}
-      <div className="flex items-center justify-between px-1">
+      {/* 
+        コンテナの gap はPC表示時に影響を与えないよう sm:gap-0 にリセットしています。
+      */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between sm:gap-0 px-1">
         
-        {/* 左側：タイトルとボタンのコンテナ */}
-        <div className="flex items-center gap-1.5">
-          {/* タイトルの不要な行高（line-height）を排除し、ボタンの垂直位置が下にズレるのを完全に防ぐ */}
-          <h1 className="text-2xl font-black font-display leading-none select-none">
-            タイムライン
-          </h1>
+        {/* 
+          PC表示（sm以上）のときは横並びになり余白は不要なため、
+          スマホ表示のときだけ下に余白を作る「mb-2.5 sm:mb-0」を追加しました。
+        */}
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-1.5">
           
-          {/* 修正：LimeNoteBetaボックスの濃いピンク（pink-600）をベースに指定。
-            背景（bg-pink-600/15）：ベースの色に不透明度15%を適用して、黒背景の上でも濁らない綺麗な「薄いピンク背景」を表現。
-            文字（text-pink-600）：ベースの「濃いピンク色」をそのまま適用し、圧倒的な視認性を確保。
-            形状：右側のボックスの仕様（h-6, px-3, rounded-full, text-xs, font-bold）を正確にトレース。
-          */}
-          <a 
-            href="https://toumeron.github.io/RaimuNote.github.io/" 
-            target="_blank" 
-            rel="noopener noreferrer"
-            className="inline-flex items-center justify-center h-6 px-3 rounded-full bg-pink-600/15 hover:bg-pink-600/45 text-pink-600 text-xs font-bold transition-colors whitespace-nowrap select-none leading-none border-none shadow-none"
-          >
-            ↗︎ 公式サイト
-          </a>
+          {/* 公式サイト・お問い合わせボタンのコンテナ（スマホでは上部） */}
+          <div className="flex flex-wrap items-center gap-1.5 order-1 sm:order-2 mb-2.5 sm:mb-0">
+            <a 
+              href="https://toumeron.github.io/RaimuNote.github.io/" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center h-6 px-3 rounded-full bg-pink-600/15 hover:bg-pink-600/45 text-pink-600 text-xs font-bold transition-colors whitespace-nowrap select-none leading-none border-none shadow-none"
+            >
+              ↗︎ 公式サイト
+            </a>
 
-                  <a 
-            href="https://forms.gle/1FUHzrWL38iVbUju5" 
-            target="_blank" 
-            rel="noopener noreferrer"
-            className="inline-flex items-center justify-center h-6 px-3 rounded-full bg-pink-600/15 hover:bg-pink-600/25 text-pink-600 text-xs font-bold transition-colors whitespace-nowrap select-none leading-none border-none shadow-none"
-          >
-            ↗︎ お問い合わせ
-          </a>
+            <a 
+              href="https://forms.gle/1FUHzrWL38iVbUju5" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center h-6 px-3 rounded-full bg-pink-600/15 hover:bg-pink-600/25 text-pink-600 text-xs font-bold transition-colors whitespace-nowrap select-none leading-none border-none shadow-none"
+            >
+              ↗︎ お問い合わせ
+            </a>
+          </div>
+
+          {/* タイムライン文字と、スマホ用LimeNoteBetaのコンテナ（スマホでは下部） */}
+          <div className="flex items-center gap-2 order-2 sm:order-1">
+            <h1 className="text-2xl font-black font-display leading-none select-none">
+              タイムライン
+            </h1>
+
+            {/* スマホ専用の LimeNoteBeta ボックス */}
+            <span className="ribbon-tag sm:hidden">
+              <Sparkles className="h-3 w-3" />
+              LimeNoteBeta 1.5
+            </span>
+          </div>
+
         </div>
 
-        {/* 右側：位置・形状・色の基準となるボックス */}
-        <span className="ribbon-tag">
+        {/* PC専用の LimeNoteBeta ボックス */}
+        <span className="ribbon-tag hidden sm:inline-flex">
           <Sparkles className="h-3 w-3" />
           LimeNoteBeta 1.5
         </span>
