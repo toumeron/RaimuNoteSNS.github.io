@@ -24,7 +24,6 @@ export default function Feed() {
 
   useEffect(() => {
     const handleScroll = () => {
-      // 10px以上スクロールで状態を切り替え
       setIsScrolled(window.scrollY > 10);
     };
     window.addEventListener('scroll', handleScroll, { passive: true });
@@ -41,10 +40,41 @@ export default function Feed() {
 
   return (
     <div className="space-y-5">
+      {/* タイムライン行のコンテナ（items-center で右側のボックスと垂直の中心を完全に同期） */}
       <div className="flex items-center justify-between px-1">
-        <h1 className="inline-flex items-center gap-2 font-display text-2xl font-black">
-          タイムライン
-        </h1>
+        
+        {/* 左側：タイトルとボタンのコンテナ */}
+        <div className="flex items-center gap-1.5">
+          {/* タイトルの不要な行高（line-height）を排除し、ボタンの垂直位置が下にズレるのを完全に防ぐ */}
+          <h1 className="text-2xl font-black font-display leading-none select-none">
+            タイムライン
+          </h1>
+          
+          {/* 修正：LimeNoteBetaボックスの濃いピンク（pink-600）をベースに指定。
+            背景（bg-pink-600/15）：ベースの色に不透明度15%を適用して、黒背景の上でも濁らない綺麗な「薄いピンク背景」を表現。
+            文字（text-pink-600）：ベースの「濃いピンク色」をそのまま適用し、圧倒的な視認性を確保。
+            形状：右側のボックスの仕様（h-6, px-3, rounded-full, text-xs, font-bold）を正確にトレース。
+          */}
+          <a 
+            href="https://toumeron.github.io/RaimuNote.github.io/" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="inline-flex items-center justify-center h-6 px-3 rounded-full bg-pink-600/15 hover:bg-pink-600/45 text-pink-600 text-xs font-bold transition-colors whitespace-nowrap select-none leading-none border-none shadow-none"
+          >
+            ↗︎ 公式サイト
+          </a>
+
+                  <a 
+            href="https://forms.gle/1FUHzrWL38iVbUju5" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="inline-flex items-center justify-center h-6 px-3 rounded-full bg-pink-600/15 hover:bg-pink-600/25 text-pink-600 text-xs font-bold transition-colors whitespace-nowrap select-none leading-none border-none shadow-none"
+          >
+            ↗︎ お問い合わせ
+          </a>
+        </div>
+
+        {/* 右側：位置・形状・色の基準となるボックス */}
         <span className="ribbon-tag">
           <Sparkles className="h-3 w-3" />
           LimeNoteBeta 1.5
@@ -53,11 +83,7 @@ export default function Feed() {
 
       <PostComposer />
 
-      {/* 特別扱い：ヘッダー統合タブ 
-         - sticky top-0 に設定してヘッダー(64px)と完全に重なる位置に配置。
-         - z-[60] を指定して、Header(z-50) よりも物理的に上に表示。
-         - スクロール前は通常の配置、スクロール後はヘッダーの「ロゴの横」や「中央」に重なる。
-      */}
+      {/* 特別扱い：ヘッダー統合タブ */}
       <div className={`sticky top-0 transition-all duration-300 py-3 -mx-5 px-5 border-none pointer-events-none ${
         isScrolled 
           ? 'z-[60] h-16 flex items-center justify-center' 
@@ -69,7 +95,6 @@ export default function Feed() {
             className="w-full border-none shadow-none" 
             onValueChange={(v) => setActiveTab(v as 'all' | 'following')}
           >
-            {/* 影・線を徹底排除。bg-muted/80 でヘッダー越しでもハッキリ見えるように調整 */}
             <TabsList className="grid w-full grid-cols-2 h-11 items-center justify-center rounded-full bg-muted/80 p-1 border-none shadow-none ring-0 backdrop-blur-sm">
               <TabsTrigger 
                 value="all" 
