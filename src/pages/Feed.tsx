@@ -54,7 +54,7 @@ export default function Feed() {
           {/* 公式サイト・お問い合わせボタンのコンテナ（スマホでは上部） */}
           <div className="flex flex-wrap items-center gap-1.5 order-1 sm:order-2 mb-2.5 sm:mb-0">
             <a 
-              href="https://toumeron.github.io/RaimuNote.github.io/" 
+              href="https://toumeron.github.io/" 
               target="_blank" 
               rel="noopener noreferrer"
               className="inline-flex items-center justify-center h-6 px-3 rounded-full bg-pink-600/15 hover:bg-pink-600/45 text-pink-600 text-xs font-bold transition-colors whitespace-nowrap select-none leading-none border-none shadow-none"
