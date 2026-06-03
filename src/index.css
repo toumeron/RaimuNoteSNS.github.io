@@ -212,3 +212,7 @@
     bottom: var(--safe-bottom) !important;
   }
 }
+
+body {
+  padding: 0;
+}
