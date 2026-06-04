@@ -1,15 +1,29 @@
 import { Heart, RefreshCw, Sparkles, Loader2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
+import { useQueryClient } from '@tanstack/react-query';
 import { PostComposer } from '@/components/feed/PostComposer';
 import { PostCard } from '@/components/feed/PostCard';
 import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
 import { useFeed } from '@/hooks/useFeed';
+import { useIsPWA } from '@/hooks/useIsPWA';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 export default function Feed() {
   const [activeTab, setActiveTab] = useState<'all' | 'following'>('all');
   const [isScrolled, setIsScrolled] = useState(false);
+
+  const queryClient = useQueryClient();
+  const isPWA = useIsPWA();
+  const [isMobile, setIsMobile] = useState(false);
+  const isPWAMobile = isPWA && isMobile;
+
+  const touchStartYRef = useRef(0);
+  const isPullingRef = useRef(false);
+  const pullDistanceRef = useRef(0);
+  const [pullDistance, setPullDistance] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showRefreshDone, setShowRefreshDone] = useState(false);
 
   const { 
     data, 
@@ -26,9 +40,132 @@ export default function Feed() {
     const handleScroll = () => {
       setIsScrolled(window.scrollY > 10);
     };
+
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 640);
+    };
+
+    handleScroll();
+    checkMobile();
+
     window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
+    window.addEventListener('resize', checkMobile);
+
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('resize', checkMobile);
+    };
   }, []);
+
+  useEffect(() => {
+    if (!isPWAMobile) {
+      document.documentElement.style.overscrollBehaviorY = '';
+      document.body.style.overscrollBehaviorY = '';
+      return;
+    }
+
+    document.documentElement.style.overscrollBehaviorY = 'contain';
+    document.body.style.overscrollBehaviorY = 'contain';
+
+    const handleTouchStart = (e: TouchEvent) => {
+      if (isRefreshing) return;
+      if (window.scrollY !== 0) return;
+      if (e.touches.length !== 1) return;
+
+      touchStartYRef.current = e.touches[0].clientY;
+      isPullingRef.current = true;
+      pullDistanceRef.current = 0;
+      setPullDistance(0);
+      setShowRefreshDone(false);
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (!isPullingRef.current) return;
+      if (isRefreshing) return;
+      if (e.touches.length !== 1) return;
+
+      if (window.scrollY !== 0) {
+        isPullingRef.current = false;
+        pullDistanceRef.current = 0;
+        setPullDistance(0);
+        return;
+      }
+
+      const currentY = e.touches[0].clientY;
+      const diff = currentY - touchStartYRef.current;
+
+      if (diff <= 0) {
+        pullDistanceRef.current = 0;
+        setPullDistance(0);
+        return;
+      }
+
+      e.preventDefault();
+
+      const distance = Math.min(diff * 0.45, 86);
+      pullDistanceRef.current = distance;
+      setPullDistance(distance);
+    };
+
+    const handleTouchEnd = async () => {
+      if (!isPullingRef.current) return;
+
+      const shouldRefresh = pullDistanceRef.current >= 58;
+
+      isPullingRef.current = false;
+
+      if (!shouldRefresh) {
+        pullDistanceRef.current = 0;
+        setPullDistance(0);
+        return;
+      }
+
+      setIsRefreshing(true);
+      setShowRefreshDone(false);
+      pullDistanceRef.current = 58;
+      setPullDistance(58);
+
+      try {
+        await queryClient.invalidateQueries({ queryKey: ['posts'] });
+      } finally {
+        setIsRefreshing(false);
+        setShowRefreshDone(true);
+        pullDistanceRef.current = 58;
+        setPullDistance(58);
+
+        setTimeout(() => {
+          setShowRefreshDone(false);
+          pullDistanceRef.current = 0;
+          setPullDistance(0);
+        }, 650);
+      }
+    };
+
+    const handleTouchCancel = () => {
+      isPullingRef.current = false;
+
+      if (!isRefreshing) {
+        pullDistanceRef.current = 0;
+        setPullDistance(0);
+        setShowRefreshDone(false);
+      }
+    };
+
+    window.addEventListener('touchstart', handleTouchStart, { passive: true });
+    window.addEventListener('touchmove', handleTouchMove, { passive: false });
+    window.addEventListener('touchend', handleTouchEnd);
+    window.addEventListener('touchcancel', handleTouchCancel);
+
+    return () => {
+      document.documentElement.style.overscrollBehaviorY = '';
+      document.body.style.overscrollBehaviorY = '';
+
+      window.removeEventListener('touchstart', handleTouchStart);
+      window.removeEventListener('touchmove', handleTouchMove);
+      window.removeEventListener('touchend', handleTouchEnd);
+      window.removeEventListener('touchcancel', handleTouchCancel);
+    };
+  }, [isPWAMobile, isRefreshing, queryClient]);
 
   useEffect(() => {
     if (inView && hasNextPage && !isFetchingNextPage) {
@@ -37,9 +174,41 @@ export default function Feed() {
   }, [inView, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const allPosts = data?.pages.flatMap((page) => page) ?? [];
+  const canReleaseToRefresh = pullDistance >= 58;
 
   return (
     <div className="space-y-5">
+      {isPWAMobile && (
+        <div
+          className="pointer-events-none fixed left-0 right-0 top-0 z-[80] flex justify-center transition-all duration-150"
+          style={{
+            transform: `translateY(${pullDistance > 0 || isRefreshing || showRefreshDone ? pullDistance : -56}px)`,
+            opacity: pullDistance > 0 || isRefreshing || showRefreshDone ? 1 : 0,
+          }}
+        >
+          <div className="mt-3 inline-flex h-10 items-center gap-2 rounded-full border border-border/60 bg-card/95 px-4 text-sm font-bold text-muted-foreground shadow-lg backdrop-blur">
+            <RefreshCw
+              className={`h-4 w-4 ${
+                isRefreshing
+                  ? 'animate-spin'
+                  : canReleaseToRefresh || showRefreshDone
+                    ? 'rotate-180'
+                    : ''
+              } transition-transform duration-150`}
+            />
+            <span>
+              {isRefreshing
+                ? '更新中...'
+                : showRefreshDone
+                  ? '更新しました'
+                  : canReleaseToRefresh
+                    ? '離して更新'
+                    : '引っ張って更新'}
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* 
         コンテナの gap はPC表示時に影響を与えないよう sm:gap-0 にリセットしています。
       */}

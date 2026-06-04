@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/hover-card";
 import { FollowButton } from '../profile/FollowButton'; 
 import { useFollowStats } from '@/hooks/useProfile';
+import { useIsPWA } from '@/hooks/useIsPWA';
 
 // --- カスタム絵文字用の型定義 ---
 interface CustomEmoji {
@@ -94,6 +95,9 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
   const [isMobile, setIsMobile] = useState(false);
 
   const buttonRef = useRef<HTMLButtonElement>(null);
+
+  const isPWA = useIsPWA();
+  const isPWAMobile = isPWA && isMobile;
 
   const defaultEmojis = ['👍', '❤️', '😆', '🤔', '😮', '🎉', '💢', '😢', '😇', '🍮'];
 
@@ -696,8 +700,16 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
 
       <article 
         onClick={handleCardClick}
-        className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft transition hover:shadow-card-soft relative cursor-pointer"
+        className={
+          isPWAMobile
+            ? "relative mx-auto w-full max-w-[600px] px-0 py-3 cursor-pointer"
+            : "rounded-3xl border border-border/60 bg-card p-5 shadow-soft transition hover:shadow-card-soft relative cursor-pointer"
+        }
       >
+        {isPWAMobile && (
+          <div className="pointer-events-none absolute bottom-0 left-1/2 w-screen -translate-x-1/2 border-b border-border/60" />
+        )}
+
         <div className="flex items-start gap-3">
           <HoverCard openDelay={300}>
             <HoverCardTrigger asChild>
@@ -706,7 +718,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
                 className="shrink-0"
                 onClick={(e) => e.stopPropagation()}
               >
-                <Avatar className="h-11 w-11 border-2 border-primary/30">
+                <Avatar className={isPWAMobile ? "h-11 w-11 border-2 border-primary/30" : "h-11 w-11 border-2 border-primary/30"}>
                   <AvatarImage src={post.author.avatarUrl} alt={post.author.displayName} />
                   <AvatarFallback>{post.author.displayName.slice(0, 1)}</AvatarFallback>
                 </Avatar>
@@ -726,7 +738,9 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
                       onClick={(e) => e.stopPropagation()}
                     >
                       <div className="flex items-center gap-0.5 min-w-0">
-                        <span className="truncate text-base">{post.author.displayName}</span>
+                        <span className={isPWAMobile ? "truncate text-[16px]" : "truncate text-base"}>
+                          {post.author.displayName}
+                        </span>
                         {post.author.isOfficial && (
                           <img 
                             src={`${import.meta.env.BASE_URL}verified.png`}
@@ -741,19 +755,19 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
                   <ProfileHoverContent />
                 </HoverCard>
                 
-                <span className="truncate text-base text-muted-foreground ml-1 opacity-80 shrink">
+                <span className={isPWAMobile ? "truncate text-[16px] text-muted-foreground ml-1 opacity-80 shrink" : "truncate text-base text-muted-foreground ml-1 opacity-80 shrink"}>
                   @{post.author.username}
                 </span>
                 
                 <span className="text-muted-foreground mx-1 shrink-0">·</span>
-                <span className="text-sm text-muted-foreground whitespace-nowrap shrink-0">
+                <span className={isPWAMobile ? "text-[16px] text-muted-foreground whitespace-nowrap shrink-0" : "text-sm text-muted-foreground whitespace-nowrap shrink-0"}>
                   {formatRelative(post.createdAt)}
                 </span>
               </div>
               
               <div className="flex items-center shrink-0 ml-2">
                 {post.visibility === 'following' && (
-                  <span className="text-[14px] font-bold text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-md whitespace-nowrap mr-1">
+                  <span className={isPWAMobile ? "text-[13px] font-bold text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-md whitespace-nowrap mr-1" : "text-[14px] font-bold text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-md whitespace-nowrap mr-1"}>
                     限定公開
                   </span>
                 )}
@@ -821,7 +835,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
             <div>
               <div onClick={(e) => { e.stopPropagation(); navigate(`/post/${post.id}`); }}>
                 {displayContent && (
-                  <p className="whitespace-pre-wrap break-words text-base leading-relaxed text-foreground mt-1">
+                  <p className={isPWAMobile ? "whitespace-pre-wrap break-words text-[16px] leading-normal text-foreground mt-1" : "whitespace-pre-wrap break-words text-base leading-relaxed text-foreground mt-1"}>
                     {renderContentWithMentions(displayContent)}
                   </p>
                 )}
@@ -839,7 +853,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
               {((post as any).is_bot || post.isBot) && (
                 <div className="flex items-center gap-1 mt-1.5 text-muted-foreground/70">
                   <Sparkles className="h-3.5 w-3.5" />
-                  <span className="text-[15px] font-medium">AIで生成</span>
+                  <span className={isPWAMobile ? "text-[13px] font-medium" : "text-[15px] font-medium"}>AIで生成</span>
                 </div>
               )}
 
@@ -941,7 +955,7 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
             )}
 
             {/* --- アクションボタンエリア（上部要素とのマージンを mt-3 に均一化） --- */}
-            <div className="mt-3 flex items-center gap-1 text-muted-foreground relative h-9">
+            <div className={isPWAMobile ? "mt-2 flex items-center gap-1 text-muted-foreground relative h-8" : "mt-3 flex items-center gap-1 text-muted-foreground relative h-9"}>
               <div onClick={(e) => e.stopPropagation()} className="flex items-center h-full">
                 <LikeButton 
                   postId={post.id} 
@@ -952,19 +966,25 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
               <Link
                 to={`/post/${post.id}`}
                 onClick={(e) => e.stopPropagation()}
-                className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"
+                className={isPWAMobile ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
               >
                 <MessageCircle className="h-5 w-5" />
-                <span className="font-bold tabular-nums text-sm">{formatDisplayCount(post.commentsCount)}</span>
+                <span className={isPWAMobile ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{formatDisplayCount(post.commentsCount)}</span>
               </Link>
 
               <div className="relative inline-flex items-center h-full" onClick={(e) => e.stopPropagation()}>
                 <button
                   ref={buttonRef}
                   onClick={() => setShowPicker(!showPicker)}
-                  className={`inline-flex items-center justify-center p-1.5 rounded-full transition-colors hover:text-accent h-8 w-8 origin-center ${
-                    showPicker ? 'text-accent bg-accent/10' : 'text-muted-foreground'
-                  }`}
+                  className={
+                    isPWAMobile
+                      ? `inline-flex items-center justify-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full origin-center ${
+                          showPicker ? 'text-accent bg-accent/10' : 'text-muted-foreground'
+                        }`
+                      : `inline-flex items-center justify-center p-1.5 rounded-full transition-colors hover:text-accent h-8 w-8 origin-center ${
+                          showPicker ? 'text-accent bg-accent/10' : 'text-muted-foreground'
+                        }`
+                  }
                 >
                   <Plus className="h-5 w-5" />
                 </button>

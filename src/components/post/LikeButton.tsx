@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 import { getCurrentUserId } from '@/lib/currentUser';
 import { useQueryClient } from '@tanstack/react-query';
+import { useIsPWA } from '@/hooks/useIsPWA';
 
 const formatDisplayCount = (count: number = 0) => {
   const n = Number(count) || 0; // 確実に数値に変換
@@ -30,6 +31,10 @@ export function LikeButton({
   type?: 'post' | 'comment';
 }) {
   const queryClient = useQueryClient();
+
+  const isPWA = useIsPWA();
+  const [isMobile, setIsMobile] = useState(false);
+  const isPWAMobile = isPWA && isMobile;
   
   // 表示用の状態（楽観的更新用）
   const [displayLiked, setDisplayLiked] = useState(liked);
@@ -39,6 +44,19 @@ export function LikeButton({
 
   // 最新の状態を常に保持するためのRef
   const stateRef = useRef({ liked, count: Number(count) || 0, isProcessing: false });
+
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 640);
+    };
+
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+
+    return () => {
+      window.removeEventListener('resize', checkMobile);
+    };
+  }, []);
 
   // Propsが外部から更新されたら、処理中でない場合のみ同期
   useEffect(() => {
@@ -126,21 +144,37 @@ export function LikeButton({
       disabled={isPending}
       onClick={handleClick}
       className={cn(
-        'group inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 transition-colors outline-none select-none',
+        'group inline-flex items-center rounded-full transition-colors outline-none select-none',
+        isPWAMobile
+          ? 'gap-1.5 px-2 py-1 text-[13px] h-full'
+          : 'gap-1.5 px-2.5 py-1',
         displayLiked ? 'text-pink-500' : 'text-muted-foreground hover:text-pink-500',
         isPending && 'pointer-events-none opacity-70'
       )}
     >
       <Heart
         className={cn(
-          size === 'sm' ? 'h-4 w-4' : 'h-5 w-5',
+          isPWAMobile
+            ? 'h-5 w-5'
+            : size === 'sm'
+              ? 'h-4 w-4'
+              : 'h-5 w-5',
           'transition-transform duration-200 group-hover:scale-110 pointer-events-none',
           isAnimating && 'scale-125',
           displayLiked && 'fill-current animate-heart-pop',
         )}
         strokeWidth={displayLiked ? 0 : 2}
       />
-      <span className={cn('font-bold tabular-nums pointer-events-none', size === 'sm' ? 'text-xs' : 'text-sm')}>
+      <span
+        className={cn(
+          'font-bold tabular-nums pointer-events-none',
+          isPWAMobile
+            ? 'text-[15px]'
+            : size === 'sm'
+              ? 'text-sm'
+              : 'text-sm'
+        )}
+      >
         {formatDisplayCount(displayCount)}
       </span>
     </button>
