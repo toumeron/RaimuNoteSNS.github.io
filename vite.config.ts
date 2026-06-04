@@ -23,8 +23,8 @@ export default defineConfig(({ mode }) => ({
       injectRegister: "auto",
       includeAssets: ["favicon.ico", "apple-touch-icon.png", "mask-icon.svg"],
       manifest: {
-        name: "RaimuNote SNS",
-        short_name: "RaimuNote",
+        name: "LimeNote SNS",
+        short_name: "LimeNote",
         description: "A next-generation SNS built with Supabase and Vite",
         theme_color: "#ffffff",
         background_color: "#ffffff",
