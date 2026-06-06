@@ -1,4 +1,4 @@
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Logo } from './Logo';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -10,29 +10,59 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/hooks/useAuth';
-// MessageSquare アイコンを追加
-import { LogOut, Settings as SettingsIcon, User as UserIcon, Search, Bell, MessageSquare } from 'lucide-react';
+import {
+  LogOut,
+  Settings as SettingsIcon,
+  User as UserIcon,
+  Search,
+  Bell,
+  MessageSquare,
+  Images,
+} from 'lucide-react';
 
-// 名前付きエクスポート
 export const Header = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
-  // ロゴをクリックした際の処理
+  const isSearchPage = location.pathname === '/u/LimeBiz';
+
   const handleLogoClick = () => {
-    // 常にプロジェクトのベースURL（/RaimuNoteSNS.github.io/）へリロードを伴って遷移する
     window.location.href = import.meta.env.BASE_URL;
   };
 
+  const notices = [
+    '【お知らせ】いつもLimeNoteをご利用いただきありがとうございます。より快適にサービスをご利用いただけるよう、システムの軽微な調整および表示改善を実施いたしました。これに伴い、一部画面の表示速度や操作感が向上しております。今後も皆さまに安心してご利用いただけるサービス運営に努めてまいります。引き続きLimeNoteをよろしくお願いいたします。',
+  ];
+
   return (
-    // bg-background/80 をベースにし、モバイル版(max-sm)でも背景色(var(--background))を使用するように修正
-    <header className="sticky top-0 z-50 border-b border-border/40 bg-background/80 backdrop-blur-md">
+    <header className="sticky top-0 z-[100] border-b border-border/40 bg-background/80 backdrop-blur-md">
+      <style>
+        {`
+          @keyframes notice-scroll {
+            0% {
+              transform: translateX(0);
+            }
+            100% {
+              transform: translateX(-50%);
+            }
+          }
+
+          .notice-scroll {
+            animation: notice-scroll 28s linear infinite;
+          }
+
+          .notice-scroll:hover {
+            animation-play-state: paused;
+          }
+        `}
+      </style>
+
       <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-4">
-        {/* ロゴにクリックイベントを追加 */}
         <div onClick={handleLogoClick} className="cursor-pointer">
           <Logo />
         </div>
-        
+
         {user ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -43,44 +73,57 @@ export const Header = () => {
                 </Avatar>
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56 rounded-xl border-border/60 shadow-xl bg-popover text-popover-foreground">
-              <DropdownMenuItem 
+
+            <DropdownMenuContent
+              align="end"
+              className="z-[120] w-56 rounded-xl border-border/60 shadow-xl bg-popover text-popover-foreground"
+            >
+              <DropdownMenuItem
                 onClick={() => navigate('/search')}
                 className="dark:focus:text-black"
               >
                 <Search className="mr-2 h-4 w-4" /> 検索
               </DropdownMenuItem>
-              
-              <DropdownMenuItem 
+
+              <DropdownMenuItem
                 onClick={() => navigate('/notifications')}
                 className="dark:focus:text-black"
               >
                 <Bell className="mr-2 h-4 w-4" /> 通知
               </DropdownMenuItem>
 
-              {/* AIチャットへの導線を追加 */}
-              <DropdownMenuItem 
+              <DropdownMenuItem
                 onClick={() => navigate('/chat')}
                 className="dark:focus:text-black"
               >
                 <MessageSquare className="mr-2 h-4 w-4" /> チャット
               </DropdownMenuItem>
 
+              <DropdownMenuItem
+                onClick={() => navigate('/media')}
+                className="dark:focus:text-black"
+              >
+                <Images className="mr-2 h-4 w-4" /> フォト(Beta)
+              </DropdownMenuItem>
+
               <DropdownMenuSeparator />
-              
-              <DropdownMenuItem 
+
+              <DropdownMenuItem
                 onClick={() => navigate(`/u/${user.username}`)}
                 className="dark:focus:text-black"
               >
                 <UserIcon className="mr-2 h-4 w-4" /> プロフィール
               </DropdownMenuItem>
-              <DropdownMenuItem 
+
+              <DropdownMenuItem
                 onClick={() => navigate('/settings')}
                 className="dark:focus:text-black"
               >
                 <SettingsIcon className="mr-2 h-4 w-4" /> 設定
               </DropdownMenuItem>
+
               <DropdownMenuSeparator />
+
               <DropdownMenuItem
                 onClick={() => {
                   logout();
@@ -98,6 +141,18 @@ export const Header = () => {
           </Button>
         )}
       </div>
+
+      {isSearchPage && (
+        <div className="w-full overflow-hidden bg-green-600 text-white">
+          <div className="notice-scroll flex w-max whitespace-nowrap py-1 text-sm font-bold">
+            {[...notices, ...notices].map((notice, index) => (
+              <span key={index} className="mx-8">
+                {notice}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
     </header>
   );
 };

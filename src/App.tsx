@@ -24,6 +24,7 @@ import SpacePage from "./pages/SpacePage";
 import NewsPage from './pages/NewsPage';
 import ChatPage from "./pages/ChatPage"; // AIチャットページのインポートを追加
 import TermsPage from "./pages/terms";
+import MediaViewer from "./pages/MediaViewer.tsx"
 
 // PostComposer 用のインポート群
 import { ImagePlus, Loader2, Send, X, AtSign, Hash, Globe, Users, Plus, PenSquare } from 'lucide-react';
@@ -705,12 +706,13 @@ const AppContent = () => {
 
   // 大文字小文字の違い（/CHAT または /chat）を許容するため、小文字に変換して判定
   const isChatPage = pathname.toLowerCase() === "/chat" || pathname.toLowerCase() === "/ramunotesns.github.io/chat";
-  const lowerPath = pathname.toLowerCase();
-  const isAuthPage = lowerPath.includes("/auth");
-  const isTermsPage = lowerPath.includes("/terms");
+const lowerPath = pathname.toLowerCase();
+const isAuthPage = lowerPath.includes("/auth");
+const isTermsPage = lowerPath.includes("/terms");
+const isMediaPage = lowerPath === "/media" || lowerPath.startsWith("/media/");
 
-  // いずれかの非表示対象ページであるか、またはスクロールによって非表示にするか
-  const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage;
+// いずれかの非表示対象ページであるか、またはスクロールによって非表示にするか
+const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage || isMediaPage;
 
   return (
     <>
@@ -736,6 +738,8 @@ const AppContent = () => {
             <Route path="/settings" element={<Settings />} />
             <Route path="/share" element={<Share />} />
             <Route path="/spaces/:id" element={<SpacePage />} />
+            <Route path="/media" element={<MediaViewer />} />
+<Route path="/media/:username" element={<MediaViewer />} />
           </Route>
           <Route path="/index" element={<Navigate to="/" replace />} />
           <Route path="*" element={<NotFound />} />
