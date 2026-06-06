@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MouseEvent as ReactMouseEvent,
   type UIEvent,
 } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -11,6 +12,7 @@ import {
   Image as ImageIcon,
   Loader2,
   MessageCircle,
+  Plus,
   UserCircle,
 } from "lucide-react";
 
@@ -85,7 +87,42 @@ type MediaViewerItem = NormalizedPost & {
   imageCount: number;
 };
 
+type CustomEmoji = {
+  id: string;
+  name: string;
+  public_id: string;
+  format: string;
+  uploaded_by: string | null;
+};
+
+type ReactionUser = {
+  id: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string;
+};
+
+type ReactionGroup = {
+  emoji: string;
+  count: number;
+  user_ids: string[];
+  users: ReactionUser[];
+};
+
 const PAGE_SIZE = 30;
+
+const defaultEmojis = [
+  "👍",
+  "❤️",
+  "😆",
+  "🤔",
+  "😮",
+  "🎉",
+  "💢",
+  "😢",
+  "😇",
+  "🍮",
+];
 
 const imageRegex =
   /https?:\/\/[^\s]+?\.(?:png|jpg|jpeg|gif|webp|svg)(?:\?[^\s]*)?|https?:\/\/pbs\.twimg\.com\/media\/[^\s?]+(?:\?[^\s]*)?/gi;
@@ -177,6 +214,7 @@ export default function MediaViewer() {
 
   const scrollRootRef = useRef<HTMLDivElement | null>(null);
   const scrollTickingRef = useRef(false);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [posts, setPosts] = useState<NormalizedPost[]>([]);
   const [activeItemKey, setActiveItemKey] = useState<string | null>(null);
@@ -186,6 +224,14 @@ export default function MediaViewer() {
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isFetchingNextPage, setIsFetchingNextPage] = useState(false);
   const [isError, setIsError] = useState(false);
+
+  const [showPicker, setShowPicker] = useState(false);
+  const [customEmojis, setCustomEmojis] = useState<CustomEmoji[]>([]);
+  const [reactions, setReactions] = useState<ReactionGroup[]>([]);
+  const [recentEmojis, setRecentEmojis] = useState<string[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [isEmojisOpen, setIsEmojisOpen] = useState(true);
+  const [activePopupEmoji, setActivePopupEmoji] = useState<string | null>(null);
 
   const fetchMediaPosts = useCallback(
     async (pageToFetch: number) => {
@@ -201,21 +247,21 @@ export default function MediaViewer() {
       const to = from + PAGE_SIZE - 1;
 
       try {
-        let followingUserIds = new Set<string>();
+        let authorIdsWhoFollowMe = new Set<string>();
 
         if (user?.id) {
           const { data: followsData, error: followsError } = await supabase
             .from("follows")
-            .select("followee_id")
-            .eq("follower_id", user.id);
+            .select("follower_id")
+            .eq("followee_id", user.id);
 
           if (followsError) {
             console.warn("MediaViewer follows fetch failed:", followsError);
           }
 
-          followingUserIds = new Set(
+          authorIdsWhoFollowMe = new Set(
             (followsData ?? []).map(
-              (follow: { followee_id: string }) => follow.followee_id
+              (follow: { follower_id: string }) => follow.follower_id
             )
           );
         }
@@ -272,7 +318,7 @@ export default function MediaViewer() {
           }
 
           likedPostIds = new Set(
-            (likesData ?? []).map((like) => like.post_id as string)
+            (likesData ?? []).map((like: { post_id: string }) => like.post_id)
           );
         }
 
@@ -297,7 +343,7 @@ export default function MediaViewer() {
 
             if (
               post.visibility === "following" &&
-              followingUserIds.has(post.userId)
+              authorIdsWhoFollowMe.has(post.userId)
             ) {
               return true;
             }
@@ -368,6 +414,162 @@ export default function MediaViewer() {
     mediaItems.find((item) => item.displayImageKey === activeItemKey) ??
     mediaItems[0] ??
     null;
+
+  const fetchCustomEmojis = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from("custom_emojis")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        throw error;
+      }
+
+      setCustomEmojis((data ?? []) as CustomEmoji[]);
+    } catch (error) {
+      console.error("MediaViewer custom emojis fetch error:", error);
+    }
+  }, []);
+
+  const fetchReactions = useCallback(async (postId: string) => {
+    try {
+      const { data: reactionData, error: reactionError } = await supabase
+        .from("post_reactions")
+        .select("emoji, user_id")
+        .eq("post_id", postId);
+
+      if (reactionError) {
+        throw reactionError;
+      }
+
+      if (!reactionData || reactionData.length === 0) {
+        setReactions([]);
+        return;
+      }
+
+      const userIds = Array.from(
+        new Set(reactionData.map((reaction: any) => reaction.user_id))
+      );
+
+      const { data: profileData, error: profileError } = await supabase
+        .from("profiles")
+        .select("id, username, display_name, avatar_url")
+        .in("id", userIds);
+
+      if (profileError) {
+        throw profileError;
+      }
+
+      const profileMap: Record<string, any> = {};
+
+      (profileData ?? []).forEach((profile: any) => {
+        profileMap[profile.id] = profile;
+      });
+
+      const groups: Record<
+        string,
+        {
+          userIds: string[];
+          users: ReactionUser[];
+        }
+      > = {};
+
+      reactionData.forEach((row: any) => {
+        if (!groups[row.emoji]) {
+          groups[row.emoji] = {
+            userIds: [],
+            users: [],
+          };
+        }
+
+        groups[row.emoji].userIds.push(row.user_id);
+
+        const profile = profileMap[row.user_id];
+
+        if (profile) {
+          groups[row.emoji].users.push({
+            id: profile.id,
+            username: profile.username || "unknown",
+            displayName:
+              profile.display_name || profile.username || "ユーザー",
+            avatarUrl: profile.avatar_url || "",
+          });
+        }
+      });
+
+      const formattedGroups: ReactionGroup[] = Object.keys(groups).map(
+        (emoji) => ({
+          emoji,
+          count: groups[emoji].userIds.length,
+          user_ids: groups[emoji].userIds,
+          users: groups[emoji].users,
+        })
+      );
+
+      setReactions(formattedGroups);
+    } catch (error) {
+      console.error("MediaViewer reactions fetch error:", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchCustomEmojis();
+  }, [fetchCustomEmojis]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setRecentEmojis([]);
+      return;
+    }
+
+    const saved = localStorage.getItem(`recent_emojis_${user.id}`);
+
+    if (!saved) {
+      setRecentEmojis([]);
+      return;
+    }
+
+    try {
+      setRecentEmojis(JSON.parse(saved));
+    } catch (error) {
+      console.error("MediaViewer recent emoji parse error:", error);
+      setRecentEmojis([]);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!activeItem?.id) {
+      setReactions([]);
+      setShowPicker(false);
+      setActivePopupEmoji(null);
+      return;
+    }
+
+    setShowPicker(false);
+    setActivePopupEmoji(null);
+    fetchReactions(activeItem.id);
+
+    const channel = supabase
+      .channel(`media-viewer-post-reactions-${activeItem.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "post_reactions",
+          filter: `post_id=eq.${activeItem.id}`,
+        },
+        () => {
+          fetchReactions(activeItem.id);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [activeItem?.id, fetchReactions]);
 
   const updateActiveItemByScroll = useCallback(() => {
     const rootElement = scrollRootRef.current;
@@ -537,6 +739,348 @@ export default function MediaViewer() {
 
   const openPostDetail = (postId: string) => {
     navigate(`/post/${postId}`);
+  };
+
+  const getCustomEmojiObj = (emojiString: string) => {
+    const cleanName =
+      emojiString.startsWith(":") && emojiString.endsWith(":")
+        ? emojiString.slice(1, -1)
+        : emojiString;
+
+    return (
+      customEmojis.find((emoji) => emoji.name === emojiString) ??
+      customEmojis.find((emoji) => emoji.name === cleanName) ??
+      customEmojis.find((emoji) => emoji.name === `:${cleanName}:`) ??
+      null
+    );
+  };
+
+  const renderEmojiElement = (
+    emojiString: string,
+    className = "h-5 w-5 object-contain inline-block"
+  ) => {
+    const customEmoji = getCustomEmojiObj(emojiString);
+
+    if (customEmoji) {
+      const cleanPublicId = customEmoji.public_id.startsWith("custom_emojis/")
+        ? customEmoji.public_id
+        : `custom_emojis/${customEmoji.public_id}`;
+
+      const imageUrl = `https://res.cloudinary.com/dveiikhhw/image/upload/${cleanPublicId}.${customEmoji.format}`;
+
+      return (
+        <img
+          src={imageUrl}
+          alt={customEmoji.name}
+          className={className}
+          loading="lazy"
+        />
+      );
+    }
+
+    return <span className="select-none text-lg leading-none">{emojiString}</span>;
+  };
+
+  const handleAddReaction = async (
+    emoji: string,
+    event?: ReactMouseEvent<HTMLElement>
+  ) => {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    if (!user?.id || !activeItem?.id) {
+      return;
+    }
+
+    const updatedRecents = [
+      emoji,
+      ...recentEmojis.filter((recentEmoji) => recentEmoji !== emoji),
+    ].slice(0, 10);
+
+    setRecentEmojis(updatedRecents);
+    localStorage.setItem(
+      `recent_emojis_${user.id}`,
+      JSON.stringify(updatedRecents)
+    );
+
+    try {
+      const { data: existing, error: checkError } = await supabase
+        .from("post_reactions")
+        .select("id")
+        .eq("post_id", activeItem.id)
+        .eq("user_id", user.id)
+        .eq("emoji", emoji)
+        .maybeSingle();
+
+      if (checkError) {
+        throw checkError;
+      }
+
+      if (existing) {
+        const { error } = await supabase
+          .from("post_reactions")
+          .delete()
+          .eq("id", existing.id);
+
+        if (error) {
+          throw error;
+        }
+      } else {
+        const { error } = await supabase.from("post_reactions").insert({
+          post_id: activeItem.id,
+          user_id: user.id,
+          emoji,
+        });
+
+        if (error) {
+          throw error;
+        }
+      }
+
+      await fetchReactions(activeItem.id);
+      setShowPicker(false);
+    } catch (error) {
+      console.error("MediaViewer toggle reaction error:", error);
+    }
+  };
+
+  const handleTouchStart = (emoji: string) => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+    }
+
+    longPressTimerRef.current = setTimeout(() => {
+      setActivePopupEmoji(emoji);
+    }, 500);
+  };
+
+  const handleTouchEnd = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+    }
+  };
+
+  const filteredCustomEmojis = customEmojis.filter((emoji) =>
+    emoji.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const renderReactionBadges = () => {
+    if (reactions.length === 0) {
+      return null;
+    }
+
+    return (
+      <div className="mt-4 flex flex-wrap gap-1.5">
+        {reactions.map((reactionGroup) => {
+          const hasMyReaction = user?.id
+            ? reactionGroup.user_ids.includes(user.id)
+            : false;
+
+          const isPopupOpen = activePopupEmoji === reactionGroup.emoji;
+
+          return (
+            <div
+              key={reactionGroup.emoji}
+              className="relative inline-block"
+              onMouseEnter={() => setActivePopupEmoji(reactionGroup.emoji)}
+              onMouseLeave={() => setActivePopupEmoji(null)}
+            >
+              <button
+                type="button"
+                onClick={(event) =>
+                  handleAddReaction(reactionGroup.emoji, event)
+                }
+                onTouchStart={() => handleTouchStart(reactionGroup.emoji)}
+                onTouchEnd={handleTouchEnd}
+                className={`inline-flex h-9 items-center gap-1.5 rounded-xl px-2.5 text-[14px] font-bold transition-all ${
+                  hasMyReaction
+                    ? "bg-sky-500/15 text-sky-500 dark:text-sky-400"
+                    : "bg-black/[0.05] text-muted-foreground hover:bg-black/[0.08] hover:text-foreground dark:bg-muted/50 dark:hover:bg-muted/80"
+                }`}
+              >
+                {renderEmojiElement(
+                  reactionGroup.emoji,
+                  "h-5 w-5 object-contain"
+                )}
+                <span className="tabular-nums">
+                  {formatDisplayCount(reactionGroup.count)}
+                </span>
+              </button>
+
+              {isPopupOpen && reactionGroup.users.length > 0 && (
+                <div className="pointer-events-none absolute bottom-full left-1/2 z-[60] mb-2 flex w-[260px] -translate-x-1/2 rounded-2xl border border-black/[0.08] bg-white p-3 shadow-2xl dark:border-white/5 dark:bg-[#252932]">
+                  <div className="mr-2.5 flex h-16 w-16 shrink-0 items-center justify-center border-r border-black/[0.08] pr-2.5 dark:border-white/10">
+                    {renderEmojiElement(
+                      reactionGroup.emoji,
+                      "h-12 w-12 object-contain"
+                    )}
+                  </div>
+
+                  <div className="flex max-h-[160px] min-w-0 flex-1 flex-col gap-1.5 overflow-y-auto">
+                    {reactionGroup.users.map((reactionUser) => (
+                      <div
+                        key={reactionUser.id}
+                        className="flex min-w-0 items-center gap-2"
+                      >
+                        {reactionUser.avatarUrl ? (
+                          <img
+                            src={reactionUser.avatarUrl}
+                            alt={reactionUser.displayName}
+                            className="h-5 w-5 shrink-0 rounded-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted">
+                            <UserCircle className="h-3.5 w-3.5 text-muted-foreground" />
+                          </div>
+                        )}
+
+                        <div className="flex min-w-0 flex-1 flex-col">
+                          <span className="mb-0.5 truncate text-[12px] font-black leading-none text-foreground dark:text-white">
+                            {reactionUser.displayName}
+                          </span>
+                          <span className="truncate text-[10px] leading-none text-muted-foreground/70">
+                            @{reactionUser.username}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const renderReactionPicker = () => {
+    if (!user?.id) {
+      return null;
+    }
+
+    return (
+      <div
+        className="relative inline-flex items-center"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={() => setShowPicker((current) => !current)}
+          className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors hover:text-primary ${
+            showPicker
+              ? "bg-primary/10 text-primary"
+              : "text-muted-foreground"
+          }`}
+          aria-label="リアクションを追加"
+        >
+          <Plus className="h-5 w-5" />
+        </button>
+
+        {showPicker && (
+          <>
+            <div
+              className="fixed inset-0 z-[9998] bg-transparent"
+              onClick={() => setShowPicker(false)}
+            />
+
+            <div className="fixed bottom-[calc(9.25rem+env(safe-area-inset-bottom))] left-1/2 z-[9999] h-[430px] w-[92vw] max-w-[340px] -translate-x-1/2 overflow-y-auto overflow-x-hidden rounded-[24px] border border-border/80 bg-white p-4 shadow-2xl dark:bg-[#1e222b] md:absolute md:bottom-full md:left-0 md:mb-2 md:h-[280px] md:w-[260px] md:max-w-none md:translate-x-0 md:rounded-[20px] md:p-2.5">
+              <div className="mb-3 grid grid-cols-5 gap-2.5 md:grid-cols-7 md:gap-1">
+                {defaultEmojis.map((emoji) => (
+                  <button
+                    key={emoji}
+                    type="button"
+                    onClick={(event) => handleAddReaction(emoji, event)}
+                    className="flex h-11 w-11 items-center justify-center rounded-2xl text-2xl transition-all hover:bg-black/[0.05] dark:hover:bg-white/10 md:h-8 md:w-8 md:rounded-lg md:text-xl"
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+
+              {recentEmojis.length > 0 && (
+                <div className="mb-3.5">
+                  <div className="mb-1.5 px-0.5 text-[11px] font-bold text-muted-foreground/60">
+                    最近使用
+                  </div>
+
+                  <div className="flex flex-wrap gap-2.5 md:gap-1.5">
+                    {recentEmojis.map((emoji) => (
+                      <button
+                        key={`recent-${emoji}`}
+                        type="button"
+                        onClick={(event) => handleAddReaction(emoji, event)}
+                        className="flex h-9 w-9 items-center justify-center rounded-xl transition-all hover:bg-black/[0.05] dark:hover:bg-white/10"
+                      >
+                        {renderEmojiElement(
+                          emoji,
+                          "h-6 w-6 object-contain"
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="border-t border-black/[0.08] pt-2 dark:border-white/5">
+                <button
+                  type="button"
+                  onClick={() => setIsEmojisOpen((current) => !current)}
+                  className="flex w-full items-center justify-between px-0.5 py-1 text-[11px] font-black text-muted-foreground/80 transition-colors hover:text-foreground"
+                >
+                  <span>カスタム絵文字</span>
+                  <span className="text-[10px] opacity-60">
+                    {isEmojisOpen ? "▲" : "▼"}
+                  </span>
+                </button>
+
+                {isEmojisOpen && (
+                  <div className="mt-2">
+                    <input
+                      value={searchQuery}
+                      onChange={(event) => setSearchQuery(event.target.value)}
+                      placeholder="絵文字を検索"
+                      className="mb-2 h-8 w-full rounded-xl border border-border bg-background px-3 text-xs outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+
+                    {filteredCustomEmojis.length > 0 ? (
+                      <div className="grid grid-cols-4 gap-2.5 md:grid-cols-5 md:gap-1.5">
+                        {filteredCustomEmojis.map((emoji) => {
+                          const emojiValue = emoji.name.startsWith(":")
+                            ? emoji.name
+                            : `:${emoji.name}:`;
+
+                          return (
+                            <button
+                              key={emoji.id}
+                              type="button"
+                              title={emojiValue}
+                              onClick={(event) =>
+                                handleAddReaction(emojiValue, event)
+                              }
+                              className="flex h-12 w-12 items-center justify-center rounded-2xl p-1.5 transition-all hover:bg-black/[0.05] dark:hover:bg-white/10 md:h-9 md:w-9 md:rounded-xl"
+                            >
+                              {renderEmojiElement(
+                                emojiValue,
+                                "h-9 w-9 object-contain md:h-7 md:w-7"
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="py-6 text-center text-[11px] text-muted-foreground/50">
+                        絵文字が見つかりません
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    );
   };
 
   const renderContentWithLinks = (text: string) => {
@@ -746,12 +1290,23 @@ export default function MediaViewer() {
                 <div className="min-w-0">
                   <Link
                     to={`/u/${activeItem.author.username}`}
-                    className="block truncate font-bold leading-tight hover:underline"
+                    className="flex min-w-0 items-center gap-1 font-bold leading-tight hover:underline"
                     onClick={(event) => event.stopPropagation()}
                   >
-                    {activeItem.author.displayName ||
-                      activeItem.author.username ||
-                      "ユーザー"}
+                    <span className="truncate">
+                      {activeItem.author.displayName ||
+                        activeItem.author.username ||
+                        "ユーザー"}
+                    </span>
+
+                    {activeItem.author.isOfficial && (
+                      <img
+                        src={`${import.meta.env.BASE_URL}verified.png`}
+                        alt="Official"
+                        className="h-4 w-4 shrink-0 translate-y-[0.5px]"
+                        loading="eager"
+                      />
+                    )}
                   </Link>
 
                   <Link
@@ -788,6 +1343,8 @@ export default function MediaViewer() {
                 </div>
               )}
 
+              {renderReactionBadges()}
+
               <div className="mt-6 flex items-center gap-5 border-y border-border py-4">
                 <LikeButton
                   postId={activeItem.id}
@@ -805,6 +1362,8 @@ export default function MediaViewer() {
                     {formatDisplayCount(activeItem.commentsCount)}
                   </span>
                 </button>
+
+                {renderReactionPicker()}
               </div>
 
               <div className="mt-5">
@@ -850,12 +1409,23 @@ export default function MediaViewer() {
               <div className="flex items-center gap-1 overflow-hidden">
                 <Link
                   to={`/u/${activeItem.author.username}`}
-                  className="truncate text-sm font-bold hover:underline"
+                  className="flex min-w-0 items-center gap-1 text-sm font-bold hover:underline"
                   onClick={(event) => event.stopPropagation()}
                 >
-                  {activeItem.author.displayName ||
-                    activeItem.author.username ||
-                    "ユーザー"}
+                  <span className="truncate">
+                    {activeItem.author.displayName ||
+                      activeItem.author.username ||
+                      "ユーザー"}
+                  </span>
+
+                  {activeItem.author.isOfficial && (
+                    <img
+                      src={`${import.meta.env.BASE_URL}verified.png`}
+                      alt="Official"
+                      className="h-3.5 w-3.5 shrink-0 translate-y-[0.5px]"
+                      loading="eager"
+                    />
+                  )}
                 </Link>
 
                 <span className="truncate text-xs text-muted-foreground dark:text-white/50">
@@ -875,6 +1445,8 @@ export default function MediaViewer() {
                 </div>
               )}
 
+              {renderReactionBadges()}
+
               <div className="mt-2 flex items-center gap-4">
                 <LikeButton
                   postId={activeItem.id}
@@ -892,6 +1464,8 @@ export default function MediaViewer() {
                     {formatDisplayCount(activeItem.commentsCount)}
                   </span>
                 </button>
+
+                {renderReactionPicker()}
 
                 <button
                   type="button"

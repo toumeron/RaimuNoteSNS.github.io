@@ -36,7 +36,7 @@ export const Header = () => {
   ];
 
   return (
-    <header className="sticky top-0 z-[100] border-b border-border/40 bg-background/80 backdrop-blur-md">
+    <header className="sticky top-0 z-50 border-b border-border/40 bg-background/80 backdrop-blur-md">
       <style>
         {`
           @keyframes notice-scroll {
@@ -76,7 +76,7 @@ export const Header = () => {
 
             <DropdownMenuContent
               align="end"
-              className="z-[120] w-56 rounded-xl border-border/60 shadow-xl bg-popover text-popover-foreground"
+              className="z-[60] w-56 rounded-xl border-border/60 bg-popover text-popover-foreground shadow-xl"
             >
               <DropdownMenuItem
                 onClick={() => navigate('/search')}
