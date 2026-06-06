@@ -145,7 +145,7 @@ export function LikeButton({
       onClick={handleClick}
       className={cn(
         'group inline-flex items-center rounded-full transition-colors outline-none select-none',
-        isPWAMobile
+        isMobile
           ? 'gap-1.5 px-2 py-1 text-[13px] h-full'
           : 'gap-1.5 px-2.5 py-1',
         displayLiked ? 'text-pink-500' : 'text-muted-foreground hover:text-pink-500',
@@ -154,7 +154,7 @@ export function LikeButton({
     >
       <Heart
         className={cn(
-          isPWAMobile
+          isMobile
             ? 'h-5 w-5'
             : size === 'sm'
               ? 'h-4 w-4'
@@ -168,7 +168,7 @@ export function LikeButton({
       <span
         className={cn(
           'font-bold tabular-nums pointer-events-none',
-          isPWAMobile
+          isMobile
             ? 'text-[15px]'
             : size === 'sm'
               ? 'text-sm'

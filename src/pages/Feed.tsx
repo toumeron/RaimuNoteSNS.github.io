@@ -250,7 +250,7 @@ export default function Feed() {
             {/* スマホ専用の LimeNoteBeta ボックス */}
             <span className="ribbon-tag sm:hidden">
               <Sparkles className="h-3 w-3" />
-              LimeNoteBeta 1.5
+              LimeNoteBeta 1.6
             </span>
           </div>
 
@@ -259,7 +259,7 @@ export default function Feed() {
         {/* PC専用の LimeNoteBeta ボックス */}
         <span className="ribbon-tag hidden sm:inline-flex">
           <Sparkles className="h-3 w-3" />
-          LimeNoteBeta 1.5
+          LimeNoteBeta 1.6
         </span>
       </div>
 

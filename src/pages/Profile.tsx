@@ -12,13 +12,14 @@ import {
   useProfile, 
   useUserPostsInfinite, 
   useUserLikesInfinite, 
-  useUserMediaInfinite 
+  useUserMediaInfinite,
+  useUserReactionsInfinite
 } from '@/hooks/useProfile';
 
 export default function Profile() {
   const { username = '' } = useParams();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'posts' | 'likes' | 'media'>('posts');
+  const [activeTab, setActiveTab] = useState<'posts' | 'likes' | 'media' | 'reactions'>('posts');
   
   // メディア拡大用のステート
   const [selectedMedia, setSelectedMedia] = useState<{ url: string; post: any } | null>(null);
@@ -29,11 +30,13 @@ export default function Profile() {
   const postsQuery = useUserPostsInfinite(user?.id);
   const likesQuery = useUserLikesInfinite(user?.id);
   const mediaQuery = useUserMediaInfinite(user?.id);
+  const reactionsQuery = useUserReactionsInfinite(user?.id);
 
   // タブに応じて使用するクエリを切り替え（Supabaseレベルでフィルタリングされた結果を取得）
   const currentQuery = 
     activeTab === 'likes' ? likesQuery : 
     activeTab === 'media' ? mediaQuery : 
+    activeTab === 'reactions' ? reactionsQuery :
     postsQuery;
 
   const { 
@@ -41,7 +44,8 @@ export default function Profile() {
     isLoading: contentLoading, 
     fetchNextPage, 
     hasNextPage, 
-    isFetchingNextPage 
+    isFetchingNextPage,
+    isError: contentError
   } = currentQuery;
 
   const { ref, inView } = useInView();
@@ -74,13 +78,205 @@ export default function Profile() {
   // 画像URLを判定する正規表現 (PostCardと同期)
   const imageRegex = /https?:\/\/[^\s]+?\.(?:png|jpg|jpeg|gif|webp|svg)(?:\?[^\s]*)?|https?:\/\/pbs\.twimg\.com\/media\/[^\s?]+(?:\?[^\s]*)?/gi;
 
+  // PostCardに渡す前に、undefinedになりやすい投稿者情報を補完する
+  const normalizeAuthor = (author: any, fallbackUserId = '') => {
+    const safeUsername = author?.username ?? '';
+    const safeDisplayName = author?.display_name ?? author?.displayName ?? safeUsername;
+
+    return {
+      ...author,
+      id: author?.id ?? fallbackUserId ?? '',
+      username: safeUsername,
+      display_name: safeDisplayName,
+      displayName: safeDisplayName,
+      bio: author?.bio ?? '',
+      avatar_url: author?.avatar_url ?? author?.avatarUrl ?? null,
+      avatarUrl: author?.avatarUrl ?? author?.avatar_url ?? null,
+      cover_url: author?.cover_url ?? author?.coverUrl ?? null,
+      coverUrl: author?.coverUrl ?? author?.cover_url ?? null,
+      created_at: author?.created_at ?? author?.createdAt ?? new Date().toISOString(),
+      createdAt: author?.createdAt ?? author?.created_at ?? new Date().toISOString(),
+      is_official: !!(author?.is_official ?? author?.isOfficial),
+      isOfficial: !!(author?.isOfficial ?? author?.is_official),
+      emoji_effect: author?.emoji_effect ?? author?.emojiEffect ?? '',
+      emojiEffect: author?.emojiEffect ?? author?.emoji_effect ?? '',
+      bot_enabled: !!(author?.bot_enabled ?? author?.botEnabled),
+      botEnabled: !!(author?.botEnabled ?? author?.bot_enabled),
+      bot_prompt: author?.bot_prompt ?? author?.botPrompt ?? '',
+      botPrompt: author?.botPrompt ?? author?.bot_prompt ?? '',
+      bot_interval_hours: author?.bot_interval_hours ?? author?.botIntervalHours ?? 5,
+      botIntervalHours: author?.botIntervalHours ?? author?.bot_interval_hours ?? 5,
+      prefecture: author?.prefecture ?? '',
+      city: author?.city ?? ''
+    };
+  };
+
+  // PostCardに渡す前に、undefinedになりやすい投稿情報を補完する
+  const normalizePost = (post: any, reaction?: any) => {
+    if (!post) return null;
+
+    const baseAuthor = post.author ?? post.profiles ?? post.user ?? null;
+    const safeAuthor = normalizeAuthor(baseAuthor, post.user_id ?? post.userId ?? '');
+
+    const imageUrls = Array.isArray(post.imageUrls)
+      ? post.imageUrls
+      : Array.isArray(post.image_urls)
+        ? post.image_urls
+        : [];
+
+    return {
+      ...post,
+
+      id: post.id ?? '',
+      user_id: post.user_id ?? post.userId ?? safeAuthor.id,
+      userId: post.userId ?? post.user_id ?? safeAuthor.id,
+
+      content: post.content ?? '',
+
+      image_urls: imageUrls,
+      imageUrls,
+
+      created_at: post.created_at ?? post.createdAt ?? new Date().toISOString(),
+      createdAt: post.createdAt ?? post.created_at ?? new Date().toISOString(),
+
+      likes_count: Number(post.likes_count ?? post.likesCount ?? 0),
+      likesCount: Number(post.likesCount ?? post.likes_count ?? 0),
+
+      comments_count: Number(post.comments_count ?? post.commentsCount ?? 0),
+      commentsCount: Number(post.commentsCount ?? post.comments_count ?? 0),
+
+      reposts_count: Number(post.reposts_count ?? post.repostsCount ?? 0),
+      repostsCount: Number(post.repostsCount ?? post.reposts_count ?? 0),
+
+      liked_by_me: !!(post.liked_by_me ?? post.likedByMe),
+      likedByMe: !!(post.likedByMe ?? post.liked_by_me),
+
+      reposted_by_me: !!(post.reposted_by_me ?? post.repostedByMe),
+      repostedByMe: !!(post.repostedByMe ?? post.reposted_by_me),
+
+      client_name: post.client_name ?? post.clientName ?? '',
+      clientName: post.clientName ?? post.client_name ?? '',
+
+      parent_id: post.parent_id ?? post.parentId ?? null,
+      parentId: post.parentId ?? post.parent_id ?? null,
+
+      is_quote: !!(post.is_quote ?? post.isQuote),
+      isQuote: !!(post.isQuote ?? post.is_quote),
+
+      visibility: post.visibility ?? 'public',
+
+      is_bot: !!(post.is_bot ?? post.isBot),
+      isBot: !!(post.isBot ?? post.is_bot),
+
+      source_twitter: !!(post.source_twitter ?? post.sourceTwitter),
+      sourceTwitter: !!(post.sourceTwitter ?? post.source_twitter),
+
+      origin_url: post.origin_url ?? post.originUrl ?? '',
+      originUrl: post.originUrl ?? post.origin_url ?? '',
+
+      prefecture: post.prefecture ?? '',
+      city: post.city ?? '',
+
+      author: safeAuthor,
+      profiles: safeAuthor,
+      user: safeAuthor,
+
+      reactionId: reaction?.id ?? post.reactionId ?? null,
+      reactionEmoji: reaction?.emoji ?? post.reactionEmoji ?? '',
+      reactionCreatedAt: reaction?.created_at ?? post.reactionCreatedAt ?? null,
+
+      reactionEmojis: Array.isArray(post.reactionEmojis)
+        ? post.reactionEmojis
+        : reaction?.emoji
+          ? [reaction.emoji]
+          : []
+    };
+  };
+
+  // 通常投稿・いいね投稿でも同じ投稿が重複した場合に key 警告を防ぐ
+  const uniquePostsById = (posts: any[]) => {
+    const map = new Map<string, any>();
+
+    posts.forEach((post: any) => {
+      const normalized = normalizePost(post);
+      if (!normalized?.id) return;
+
+      if (!map.has(normalized.id)) {
+        map.set(normalized.id, normalized);
+      }
+    });
+
+    return Array.from(map.values());
+  };
+
+  // リアクション欄用：全ページをまとめてから同じ投稿を1枚にまとめる
+  const groupReactionPosts = (reactions: any[]) => {
+    const grouped = new Map<string, any>();
+
+    reactions.forEach((reaction: any) => {
+      const rawPost = reaction.posts ?? reaction.post;
+      const post = normalizePost(rawPost, reaction);
+
+      if (!post?.id) return;
+
+      const existing = grouped.get(post.id);
+      const nextEmoji = reaction.emoji ?? post.reactionEmoji ?? '';
+
+      if (!existing) {
+        grouped.set(post.id, {
+          ...post,
+          reactionId: reaction.id ?? post.reactionId ?? post.id,
+          reactionEmoji: nextEmoji,
+          reactionCreatedAt: reaction.created_at ?? post.reactionCreatedAt ?? null,
+          reactionEmojis: nextEmoji ? [nextEmoji] : []
+        });
+        return;
+      }
+
+      const currentEmojis = Array.isArray(existing.reactionEmojis)
+        ? existing.reactionEmojis
+        : existing.reactionEmoji
+          ? [existing.reactionEmoji]
+          : [];
+
+      const mergedEmojis = nextEmoji && !currentEmojis.includes(nextEmoji)
+        ? [...currentEmojis, nextEmoji]
+        : currentEmojis;
+
+      grouped.set(post.id, {
+        ...existing,
+        reactionId: existing.reactionId ?? reaction.id ?? post.id,
+        reactionCreatedAt: existing.reactionCreatedAt ?? reaction.created_at ?? null,
+        reactionEmojis: mergedEmojis,
+        reactionEmoji: mergedEmojis.join(' ')
+      });
+    });
+
+    return Array.from(grouped.values());
+  };
+
+  const pages = data?.pages ?? [];
+  const flatPageItems = pages.flatMap((page: any) => Array.isArray(page) ? page : []);
+
   // データのフラット化
-  const items = data?.pages.flatMap((page) => {
+  const items = (() => {
     if (activeTab === 'likes') {
-      return page.map((like: any) => like.posts).filter(Boolean);
+      return uniquePostsById(
+        flatPageItems
+          .map((like: any) => like.posts)
+          .filter(Boolean)
+      );
     }
+
+    if (activeTab === 'reactions') {
+      return groupReactionPosts(flatPageItems);
+    }
+
     if (activeTab === 'media') {
-      return page.flatMap((p: any) => {
+      return flatPageItems.flatMap((rawPost: any) => {
+        const p = normalizePost(rawPost);
+        if (!p) return [];
+
         const dbImages = Array.isArray(p.imageUrls) 
           ? p.imageUrls 
           : (Array.isArray(p.image_urls) ? p.image_urls : []);
@@ -91,9 +287,10 @@ export default function Profile() {
         if (allUrls.length === 0) return [];
 
         // 投稿オブジェクトそのものを返しつつ、表示用のURLだけを個別に持たせる
-        return allUrls.map(url => ({
+        return allUrls.map((url, idx) => ({
           ...p,
           displayImageUrl: url,
+          displayImageKey: `${p.id}-${idx}-${url}`,
           isMulti: allUrls.length > 1,
           // 確実に数値を維持
           likesCount: p.likesCount ?? p.likes_count ?? 0,
@@ -102,17 +299,19 @@ export default function Profile() {
         }));
       });
     }
-    return page;
-  }) ?? [];
+
+    return uniquePostsById(flatPageItems);
+  })();
 
   if (userLoading) {
     return (
       <div className="space-y-5">
         <Skeleton className="h-72 w-full rounded-3xl" />
         <div className="flex gap-2">
-          <Skeleton className="h-10 w-1/3 rounded-xl" />
-          <Skeleton className="h-10 w-1/3 rounded-xl" />
-          <Skeleton className="h-10 w-1/3 rounded-xl" />
+          <Skeleton className="h-10 w-1/4 rounded-xl" />
+          <Skeleton className="h-10 w-1/4 rounded-xl" />
+          <Skeleton className="h-10 w-1/4 rounded-xl" />
+          <Skeleton className="h-10 w-1/4 rounded-xl" />
         </div>
         <PostCardSkeleton />
         <PostCardSkeleton />
@@ -133,11 +332,12 @@ export default function Profile() {
       {user && <ProfileHeader user={user} />}
 
       <Tabs 
+        value={activeTab}
         defaultValue="posts" 
         className="w-full" 
-        onValueChange={(value) => setActiveTab(value as 'posts' | 'likes' | 'media')}
+        onValueChange={(value) => setActiveTab(value as 'posts' | 'likes' | 'media' | 'reactions')}
       >
-        <TabsList className="grid w-full grid-cols-3 rounded-2xl bg-muted/50 p-1">
+        <TabsList className="grid w-full grid-cols-4 rounded-2xl bg-muted/50 p-1">
           <TabsTrigger value="posts" className="rounded-xl font-bold transition-all">
             投稿
           </TabsTrigger>
@@ -146,6 +346,9 @@ export default function Profile() {
           </TabsTrigger>
           <TabsTrigger value="likes" className="rounded-xl font-bold transition-all">
             いいね
+          </TabsTrigger>
+          <TabsTrigger value="reactions" className="rounded-xl font-bold transition-all">
+            リアクション
           </TabsTrigger>
         </TabsList>
       </Tabs>
@@ -158,11 +361,21 @@ export default function Profile() {
           </>
         )}
 
-        {!contentLoading && !isFetchingNextPage && items.length === 0 && (
+        {!contentLoading && contentError && (
+          <div className="rounded-3xl border border-dashed border-border bg-card/60 p-12 text-center text-sm text-muted-foreground animate-in fade-in zoom-in duration-300">
+            {activeTab === 'posts' && '投稿の取得に失敗しました。'}
+            {activeTab === 'likes' && 'いいねした投稿の取得に失敗しました。'}
+            {activeTab === 'media' && 'メディア投稿の取得に失敗しました。'}
+            {activeTab === 'reactions' && 'リアクションの取得に失敗しました。'}
+          </div>
+        )}
+
+        {!contentLoading && !contentError && !isFetchingNextPage && items.length === 0 && (
           <div className="rounded-3xl border border-dashed border-border bg-card/60 p-12 text-center text-sm text-muted-foreground animate-in fade-in zoom-in duration-300">
             {activeTab === 'posts' && 'まだ投稿がありません。'}
             {activeTab === 'likes' && 'いいねした投稿がありません。'}
             {activeTab === 'media' && 'メディア投稿がありません。'}
+            {activeTab === 'reactions' && 'リアクションした投稿がありません。'}
           </div>
         )}
 
@@ -170,7 +383,7 @@ export default function Profile() {
           <div className="grid grid-cols-3 gap-1 md:gap-2 px-0">
             {items.map((p: any, idx: number) => (
               <div 
-                key={`media-${p.id}-${idx}`} 
+                key={`media-${p.displayImageKey ?? `${p.id}-${idx}`}`} 
                 className="relative aspect-square overflow-hidden rounded-md md:rounded-xl bg-muted cursor-pointer animate-float-up"
                 onClick={() => setSelectedMedia({ url: p.displayImageUrl, post: p })}
               >
@@ -188,8 +401,22 @@ export default function Profile() {
             ))}
           </div>
         ) : (
-          items.map((p) => (
-            <div key={`${activeTab}-${p.id}`} className="animate-float-up">
+          items.map((p: any, idx: number) => (
+            <div
+              key={activeTab === 'reactions' ? `reactions-${p.id}-${idx}` : `${activeTab}-${p.id}-${idx}`}
+              className="animate-float-up"
+            >
+              {activeTab === 'reactions' && (
+                <div className="px-1 pb-1 text-sm text-muted-foreground">
+                  <span className="mr-1 text-base">
+                    {Array.isArray(p.reactionEmojis) && p.reactionEmojis.length > 0
+                      ? p.reactionEmojis.join(' ')
+                      : p.reactionEmoji}
+                  </span>
+                  でリアクションしました
+                </div>
+              )}
+
               <PostCard post={p} />
             </div>
           ))
