@@ -555,7 +555,7 @@ export default function MediaViewer() {
             href={part}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-pink-500 transition-colors hover:underline"
+            className="text-pink-500 transition-colors hover:underline dark:text-pink-400"
             onClick={(event) => event.stopPropagation()}
           >
             {part}
@@ -585,7 +585,7 @@ export default function MediaViewer() {
               event.stopPropagation();
               navigate(`/search?q=${encodeURIComponent(part)}`);
             }}
-            className="inline-block align-baseline text-pink-500 transition-colors hover:underline"
+            className="inline-block align-baseline text-pink-500 transition-colors hover:underline dark:text-pink-400"
           >
             {part}
           </button>
@@ -611,7 +611,7 @@ export default function MediaViewer() {
           <Link
             key={`mention-${index}-${part}`}
             to={`/u/${mentionUsername}`}
-            className="text-pink-500 transition-colors hover:underline"
+            className="text-pink-500 transition-colors hover:underline dark:text-pink-400"
             onClick={(event) => event.stopPropagation()}
           >
             {part}
@@ -625,8 +625,8 @@ export default function MediaViewer() {
 
   if (isInitialLoading) {
     return (
-      <div className="fixed inset-x-0 top-16 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[20] flex items-center justify-center bg-black text-white md:bottom-0">
-        <div className="flex items-center gap-2 text-sm text-white/70">
+      <div className="fixed inset-x-0 top-16 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[20] flex items-center justify-center bg-background text-foreground md:bottom-0 dark:bg-black dark:text-white">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground dark:text-white/70">
           <Loader2 className="h-5 w-5 animate-spin" />
           <span>読み込み中...</span>
         </div>
@@ -636,7 +636,7 @@ export default function MediaViewer() {
 
   if (isError && mediaItems.length === 0) {
     return (
-      <div className="fixed inset-x-0 top-16 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[20] flex items-center justify-center bg-background px-6 text-center md:bottom-0">
+      <div className="fixed inset-x-0 top-16 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[20] flex items-center justify-center bg-background px-6 text-center text-foreground md:bottom-0">
         <div>
           <UserCircle className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
           <h1 className="text-lg font-bold">メディア投稿の取得に失敗しました</h1>
@@ -650,8 +650,8 @@ export default function MediaViewer() {
 
   if (mediaItems.length === 0 && (hasNextPage || isFetchingNextPage)) {
     return (
-      <div className="fixed inset-x-0 top-16 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[20] flex items-center justify-center bg-black text-white md:bottom-0">
-        <div className="flex items-center gap-2 text-sm text-white/70">
+      <div className="fixed inset-x-0 top-16 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[20] flex items-center justify-center bg-background text-foreground md:bottom-0 dark:bg-black dark:text-white">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground dark:text-white/70">
           <Loader2 className="h-5 w-5 animate-spin" />
           <span>メディアを探しています...</span>
         </div>
@@ -661,7 +661,7 @@ export default function MediaViewer() {
 
   if (mediaItems.length === 0) {
     return (
-      <div className="fixed inset-x-0 top-16 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[20] flex items-center justify-center bg-background px-6 text-center md:bottom-0">
+      <div className="fixed inset-x-0 top-16 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[20] flex items-center justify-center bg-background px-6 text-center text-foreground md:bottom-0">
         <div>
           <ImageIcon className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
           <h1 className="text-lg font-bold">メディア投稿がありません</h1>
@@ -674,17 +674,17 @@ export default function MediaViewer() {
   }
 
   return (
-    <div className="fixed inset-x-0 top-16 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[20] bg-transparent text-white md:bottom-0 md:grid md:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px]">
+    <div className="fixed inset-x-0 top-16 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[20] bg-transparent text-foreground md:bottom-0 md:grid md:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px] dark:text-white">
       <main
         ref={scrollRootRef}
         onScroll={handleViewerScroll}
-        className="flex h-full min-w-0 snap-y snap-mandatory flex-col gap-6 overflow-y-auto overscroll-contain bg-black pb-40 scroll-py-6 md:gap-3 md:pb-0 md:scroll-py-0"
+        className="flex h-full min-w-0 snap-y snap-mandatory flex-col gap-6 overflow-y-auto overscroll-contain bg-muted/40 pb-40 scroll-py-6 md:gap-3 md:pb-0 md:scroll-py-0 dark:bg-black"
       >
         {mediaItems.map((item) => (
           <section
             key={item.displayImageKey}
             data-media-key={item.displayImageKey}
-            className="relative flex h-[calc(100%-1.5rem)] min-h-[calc(100%-1.5rem)] shrink-0 snap-start items-center justify-center bg-black px-0 py-0 sm:px-3 md:h-full md:min-h-full md:px-5"
+            className="relative flex h-[calc(100%-1.5rem)] min-h-[calc(100%-1.5rem)] shrink-0 snap-start items-center justify-center bg-muted/40 px-0 py-0 sm:px-3 md:h-full md:min-h-full md:px-5 dark:bg-black"
           >
             <img
               src={item.displayImageUrl}
@@ -694,7 +694,7 @@ export default function MediaViewer() {
             />
 
             {item.imageCount > 1 && (
-              <div className="absolute right-3 top-3 rounded-full bg-black/60 px-3 py-1 text-xs font-bold text-white backdrop-blur-md md:right-5 md:top-5">
+              <div className="absolute right-3 top-3 rounded-full border border-border/60 bg-background/85 px-3 py-1 text-xs font-bold text-foreground shadow-sm backdrop-blur-md md:right-5 md:top-5 dark:border-white/10 dark:bg-black/60 dark:text-white">
                 {item.imageIndex + 1} / {item.imageCount}
               </div>
             )}
@@ -703,14 +703,14 @@ export default function MediaViewer() {
 
         <div className="flex h-24 shrink-0 items-center justify-center">
           {isFetchingNextPage ? (
-            <div className="flex items-center gap-2 text-sm text-white/60">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground dark:text-white/60">
               <Loader2 className="h-5 w-5 animate-spin" />
               <span>さらに読み込み中...</span>
             </div>
           ) : hasNextPage ? (
             <div className="h-10" />
           ) : (
-            <p className="text-xs text-white/40">
+            <p className="text-xs text-muted-foreground dark:text-white/40">
               すべてのメディアを表示しました
             </p>
           )}
@@ -822,7 +822,7 @@ export default function MediaViewer() {
       </aside>
 
       {activeItem && (
-        <div className="fixed left-0 right-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[25] border-t border-white/10 bg-black/85 px-4 pb-3 pt-3 text-white backdrop-blur-md md:hidden">
+        <div className="fixed left-0 right-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[25] border-t border-border/60 bg-background/95 px-4 pb-3 pt-3 text-foreground backdrop-blur-md md:hidden dark:border-white/10 dark:bg-black/85 dark:text-white">
           <div className="flex items-start gap-3">
             {activeItem.author.avatarUrl ? (
               <Link
@@ -840,9 +840,9 @@ export default function MediaViewer() {
               <Link
                 to={`/u/${activeItem.author.username}`}
                 onClick={(event) => event.stopPropagation()}
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted dark:bg-white/10"
               >
-                <UserCircle className="h-6 w-6 text-white/70" />
+                <UserCircle className="h-6 w-6 text-muted-foreground dark:text-white/70" />
               </Link>
             )}
 
@@ -858,19 +858,19 @@ export default function MediaViewer() {
                     "ユーザー"}
                 </Link>
 
-                <span className="truncate text-xs text-white/50">
+                <span className="truncate text-xs text-muted-foreground dark:text-white/50">
                   @{activeItem.author.username || "unknown"}
                 </span>
 
                 {activeItem.visibility === "following" && (
-                  <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-bold text-white/70">
+                  <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold text-muted-foreground dark:bg-white/10 dark:text-white/70">
                     限定
                   </span>
                 )}
               </div>
 
               {activeItem.displayContent && (
-                <div className="mt-1 line-clamp-2 break-words text-xs leading-5 text-white/75">
+                <div className="mt-1 line-clamp-2 break-words text-xs leading-5 text-muted-foreground dark:text-white/75">
                   {renderContentWithMentions(activeItem.displayContent)}
                 </div>
               )}
@@ -885,7 +885,7 @@ export default function MediaViewer() {
                 <button
                   type="button"
                   onClick={() => openPostDetail(activeItem.id)}
-                  className="inline-flex items-center gap-1.5 rounded-full text-xs text-white/85"
+                  className="inline-flex items-center gap-1.5 rounded-full text-xs text-muted-foreground dark:text-white/85"
                 >
                   <MessageCircle className="h-5 w-5" />
                   <span className="font-bold tabular-nums">
@@ -896,7 +896,7 @@ export default function MediaViewer() {
                 <button
                   type="button"
                   onClick={() => openPostDetail(activeItem.id)}
-                  className="ml-auto rounded-full bg-white px-3 py-1.5 text-xs font-bold text-black"
+                  className="ml-auto rounded-full bg-foreground px-3 py-1.5 text-xs font-bold text-background dark:bg-white dark:text-black"
                 >
                   開く
                 </button>
