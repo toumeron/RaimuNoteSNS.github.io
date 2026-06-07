@@ -1,5 +1,5 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { Loader2, Image as ImageIcon, X, MessageCircle } from 'lucide-react';
 import { ProfileHeader } from '@/components/profile/ProfileHeader';
@@ -23,6 +23,8 @@ export default function Profile() {
   
   // メディア拡大用のステート
   const [selectedMedia, setSelectedMedia] = useState<{ url: string; post: any } | null>(null);
+  const [isScrolled, setIsScrolled] = useState(false);
+  const tabsSentinelRef = useRef<HTMLDivElement>(null);
 
   const { data: user, isLoading: userLoading, isError: userError } = useProfile(username);
   
@@ -55,6 +57,22 @@ export default function Profile() {
       fetchNextPage();
     }
   }, [inView, hasNextPage, isFetchingNextPage, fetchNextPage]);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      if (!tabsSentinelRef.current) return;
+      setIsScrolled(tabsSentinelRef.current.getBoundingClientRect().top <= 0);
+    };
+
+    handleScroll();
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener('resize', handleScroll);
+
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('resize', handleScroll);
+    };
+  }, []);
 
   // モーダル表示時にスクロールを固定
   useEffect(() => {
@@ -337,106 +355,114 @@ export default function Profile() {
         className="w-full" 
         onValueChange={(value) => setActiveTab(value as 'posts' | 'likes' | 'media' | 'reactions')}
       >
-        <TabsList className="grid w-full grid-cols-4 rounded-2xl bg-muted/50 p-1">
-          <TabsTrigger value="posts" className="rounded-xl font-bold transition-all">
-            投稿
-          </TabsTrigger>
-          <TabsTrigger value="media" className="rounded-xl font-bold transition-all">
-            メディア
-          </TabsTrigger>
-          <TabsTrigger value="likes" className="rounded-xl font-bold transition-all">
-            いいね
-          </TabsTrigger>
-          <TabsTrigger value="reactions" className="rounded-xl font-bold transition-all">
-            リアクション
-          </TabsTrigger>
-        </TabsList>
-      </Tabs>
+        <div ref={tabsSentinelRef} className="h-0" />
 
-      <div className="space-y-4">
-        {contentLoading && (
-          <>
-            <PostCardSkeleton />
-            <PostCardSkeleton />
-          </>
-        )}
+        <div className={`sticky top-0 z-50 transition-all duration-300 w-full h-16 flex items-center ${
+          isScrolled 
+            ? 'bg-[#fbf9f2]/70 dark:bg-[#000000]/70 backdrop-blur-md border-b border-black/[0.03] dark:border-white/[0.05]' 
+            : 'bg-transparent'
+        }`}>
+          <TabsList className="grid w-full grid-cols-4 rounded-2xl bg-muted/50 p-1">
+            <TabsTrigger value="posts" className="rounded-xl font-bold transition-all">
+              投稿
+            </TabsTrigger>
+            <TabsTrigger value="media" className="rounded-xl font-bold transition-all">
+              メディア
+            </TabsTrigger>
+            <TabsTrigger value="likes" className="rounded-xl font-bold transition-all">
+              いいね
+            </TabsTrigger>
+            <TabsTrigger value="reactions" className="rounded-xl font-bold transition-all">
+              リアクション
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
-        {!contentLoading && contentError && (
-          <div className="rounded-3xl border border-dashed border-border bg-card/60 p-12 text-center text-sm text-muted-foreground animate-in fade-in zoom-in duration-300">
-            {activeTab === 'posts' && '投稿の取得に失敗しました。'}
-            {activeTab === 'likes' && 'いいねした投稿の取得に失敗しました。'}
-            {activeTab === 'media' && 'メディア投稿の取得に失敗しました。'}
-            {activeTab === 'reactions' && 'リアクションの取得に失敗しました。'}
-          </div>
-        )}
+        <div className="space-y-4">
+          {contentLoading && (
+            <>
+              <PostCardSkeleton />
+              <PostCardSkeleton />
+            </>
+          )}
 
-        {!contentLoading && !contentError && !isFetchingNextPage && items.length === 0 && (
-          <div className="rounded-3xl border border-dashed border-border bg-card/60 p-12 text-center text-sm text-muted-foreground animate-in fade-in zoom-in duration-300">
-            {activeTab === 'posts' && 'まだ投稿がありません。'}
-            {activeTab === 'likes' && 'いいねした投稿がありません。'}
-            {activeTab === 'media' && 'メディア投稿がありません。'}
-            {activeTab === 'reactions' && 'リアクションした投稿がありません。'}
-          </div>
-        )}
+          {!contentLoading && contentError && (
+            <div className="rounded-3xl border border-dashed border-border bg-card/60 p-12 text-center text-sm text-muted-foreground animate-in fade-in zoom-in duration-300">
+              {activeTab === 'posts' && '投稿の取得に失敗しました。'}
+              {activeTab === 'likes' && 'いいねした投稿の取得に失敗しました。'}
+              {activeTab === 'media' && 'メディア投稿の取得に失敗しました。'}
+              {activeTab === 'reactions' && 'リアクションの取得に失敗しました。'}
+            </div>
+          )}
 
-        {activeTab === 'media' ? (
-          <div className="grid grid-cols-3 gap-1 md:gap-2 px-0">
-            {items.map((p: any, idx: number) => (
-              <div 
-                key={`media-${p.displayImageKey ?? `${p.id}-${idx}`}`} 
-                className="relative aspect-square overflow-hidden rounded-md md:rounded-xl bg-muted cursor-pointer animate-float-up"
-                onClick={() => setSelectedMedia({ url: p.displayImageUrl, post: p })}
+          {!contentLoading && !contentError && !isFetchingNextPage && items.length === 0 && (
+            <div className="rounded-3xl border border-dashed border-border bg-card/60 p-12 text-center text-sm text-muted-foreground animate-in fade-in zoom-in duration-300">
+              {activeTab === 'posts' && 'まだ投稿がありません。'}
+              {activeTab === 'likes' && 'いいねした投稿がありません。'}
+              {activeTab === 'media' && 'メディア投稿がありません。'}
+              {activeTab === 'reactions' && 'リアクションした投稿がありません。'}
+            </div>
+          )}
+
+          {activeTab === 'media' ? (
+            <div className="grid grid-cols-3 gap-1 md:gap-2 px-0">
+              {items.map((p: any, idx: number) => (
+                <div 
+                  key={`media-${p.displayImageKey ?? `${p.id}-${idx}`}`} 
+                  className="relative aspect-square overflow-hidden rounded-md md:rounded-xl bg-muted cursor-pointer animate-float-up"
+                  onClick={() => setSelectedMedia({ url: p.displayImageUrl, post: p })}
+                >
+                  <img
+                    src={p.displayImageUrl}
+                    alt=""
+                    className="h-full w-full object-cover"
+                  />
+                  {p.isMulti && (
+                    <div className="absolute top-1.5 right-1.5 bg-black/40 p-1 rounded-md backdrop-blur-sm">
+                      <ImageIcon className="w-3.5 h-3.5 text-white" />
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            items.map((p: any, idx: number) => (
+              <div
+                key={activeTab === 'reactions' ? `reactions-${p.id}-${idx}` : `${activeTab}-${p.id}-${idx}`}
+                className="animate-float-up"
               >
-                <img
-                  src={p.displayImageUrl}
-                  alt=""
-                  className="h-full w-full object-cover"
-                />
-                {p.isMulti && (
-                  <div className="absolute top-1.5 right-1.5 bg-black/40 p-1 rounded-md backdrop-blur-sm">
-                    <ImageIcon className="w-3.5 h-3.5 text-white" />
+                {activeTab === 'reactions' && (
+                  <div className="px-1 pb-1 text-sm text-muted-foreground">
+                    <span className="mr-1 text-base">
+                      {Array.isArray(p.reactionEmojis) && p.reactionEmojis.length > 0
+                        ? p.reactionEmojis.join(' ')
+                        : p.reactionEmoji}
+                    </span>
+                    でリアクションしました
                   </div>
                 )}
+
+                <PostCard post={p} />
               </div>
-            ))}
+            ))
+          )}
+
+          <div ref={ref} className="py-10 flex justify-center">
+            {isFetchingNextPage ? (
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span className="text-sm">さらに読み込み中...</span>
+              </div>
+            ) : hasNextPage ? (
+              <div className="h-10" />
+            ) : items.length > 0 ? (
+              <p className="text-xs text-muted-foreground text-center">
+                すべての表示が完了しました
+              </p>
+            ) : null}
           </div>
-        ) : (
-          items.map((p: any, idx: number) => (
-            <div
-              key={activeTab === 'reactions' ? `reactions-${p.id}-${idx}` : `${activeTab}-${p.id}-${idx}`}
-              className="animate-float-up"
-            >
-              {activeTab === 'reactions' && (
-                <div className="px-1 pb-1 text-sm text-muted-foreground">
-                  <span className="mr-1 text-base">
-                    {Array.isArray(p.reactionEmojis) && p.reactionEmojis.length > 0
-                      ? p.reactionEmojis.join(' ')
-                      : p.reactionEmoji}
-                  </span>
-                  でリアクションしました
-                </div>
-              )}
-
-              <PostCard post={p} />
-            </div>
-          ))
-        )}
-
-        <div ref={ref} className="py-10 flex justify-center">
-          {isFetchingNextPage ? (
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Loader2 className="h-5 w-5 animate-spin" />
-              <span className="text-sm">さらに読み込み中...</span>
-            </div>
-          ) : hasNextPage ? (
-            <div className="h-10" />
-          ) : items.length > 0 ? (
-            <p className="text-xs text-muted-foreground text-center">
-              すべての表示が完了しました
-            </p>
-          ) : null}
         </div>
-      </div>
+      </Tabs>
 
       {/* メディア拡大オーバーレイ */}
       {selectedMedia && (
