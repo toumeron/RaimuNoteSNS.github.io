@@ -302,28 +302,43 @@ export default function Settings() {
   };
 
   const handleRemoveTimelineBackground = async () => {
-    if (!timelineBackgroundUrl) return;
+    if (!timelineBackgroundUrl && !timelineBackgroundPublicId) return;
+
+    if (!confirm('背景を削除しますか？')) return;
 
     setIsTimelineBackgroundUploading(true);
 
     try {
-      const { error } = await supabase
-        .from('profiles')
-        .update({
-          timeline_background_url: null,
-          timeline_background_public_id: null,
-        })
-        .eq('id', user.id);
+      const { error } = await supabase.functions.invoke('delete-timeline-background', {
+        body: {
+          publicId: timelineBackgroundPublicId || null,
+        },
+      });
 
-      if (error) throw error;
+      if (error) {
+        const maybeContext = (error as any).context;
+
+        if (maybeContext?.json) {
+          try {
+            const payload = await maybeContext.json();
+            throw new Error(payload?.error || error.message);
+          } catch (parseError) {
+            if (parseError instanceof Error && parseError.message) {
+              throw parseError;
+            }
+          }
+        }
+
+        throw error;
+      }
 
       applyTimelineBackgroundState('', '');
       notifyTimelineBackgroundChanged('');
 
       toast.success('タイムライン背景を削除しました');
-    } catch (err) {
+    } catch (err: any) {
       console.error('Timeline Background Remove Error:', err);
-      toast.error('タイムライン背景の削除に失敗しました');
+      toast.error(err.message || 'タイムライン背景の削除に失敗しました');
     } finally {
       setIsTimelineBackgroundUploading(false);
     }

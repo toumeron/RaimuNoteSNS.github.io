@@ -743,63 +743,154 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
         }
 
         .timeline-glass-card {
-          background: hsl(var(--card) / 0.50);
-          border: 1px solid hsl(var(--border) / 0.38);
+          background: hsl(var(--card) / 0.58);
+          border: 1px solid hsl(var(--border) / 0.055);
           box-shadow: none;
+          color: hsl(var(--foreground));
           -webkit-backdrop-filter: blur(24px) saturate(165%);
           backdrop-filter: blur(24px) saturate(165%);
         }
 
-        .dark .timeline-glass-card {
-          background: hsl(var(--card) / 0.46);
-          border-color: hsl(var(--border) / 0.34);
+        .timeline-theme-dark .timeline-glass-card {
+          background: linear-gradient(
+            135deg,
+            rgba(12, 16, 28, 0.72),
+            rgba(34, 24, 32, 0.66)
+          ) !important;
+          border-color: rgba(255, 255, 255, 0.035) !important;
+          color: rgba(255, 255, 255, 0.96) !important;
+        }
+
+        .timeline-theme-light .timeline-glass-card {
+          background: linear-gradient(
+            135deg,
+            rgba(255, 255, 255, 0.60),
+            rgba(255, 255, 255, 0.52)
+          ) !important;
+          border-color: rgba(40, 30, 25, 0.032) !important;
+          color: rgba(24, 22, 20, 0.96) !important;
+        }
+
+        /*
+          背景画像付きタイムライン専用の可読性補正。
+          ここではカードごとに light/dark を判定しない。
+          Feed 側の timeline-theme-dark / timeline-theme-light が決めたCSS変数に従う。
+        */
+        .timeline-glass-card,
+        .timeline-mobile-readable {
+          -webkit-font-smoothing: antialiased;
+          text-rendering: optimizeLegibility;
+          color: hsl(var(--foreground));
+        }
+
+        .timeline-glass-card .text-foreground,
+        .timeline-mobile-readable .text-foreground,
+        .timeline-glass-card p,
+        .timeline-mobile-readable p {
+          color: hsl(var(--foreground) / 0.96) !important;
+          text-shadow: none !important;
+        }
+
+        .timeline-glass-card .text-muted-foreground,
+        .timeline-mobile-readable .text-muted-foreground,
+        .timeline-glass-card .text-muted-foreground\/70,
+        .timeline-mobile-readable .text-muted-foreground\/70,
+        .timeline-glass-card .text-muted-foreground\/80,
+        .timeline-mobile-readable .text-muted-foreground\/80 {
+          color: hsl(var(--muted-foreground) / 0.92) !important;
+          text-shadow: none !important;
+        }
+
+        .timeline-glass-card .text-pink-500,
+        .timeline-mobile-readable .text-pink-500 {
+          color: hsl(var(--timeline-link, 330 96% 60%)) !important;
+          text-shadow: none !important;
+        }
+
+        .timeline-theme-dark .timeline-glass-card,
+        .timeline-theme-dark .timeline-mobile-readable,
+        .timeline-theme-dark .timeline-glass-card .text-foreground,
+        .timeline-theme-dark .timeline-mobile-readable .text-foreground,
+        .timeline-theme-dark .timeline-glass-card p,
+        .timeline-theme-dark .timeline-mobile-readable p {
+          color: rgba(255, 255, 255, 0.96) !important;
+        }
+
+        .timeline-theme-dark .timeline-glass-card .text-muted-foreground,
+        .timeline-theme-dark .timeline-mobile-readable .text-muted-foreground,
+        .timeline-theme-dark .timeline-glass-card .text-muted-foreground\/70,
+        .timeline-theme-dark .timeline-mobile-readable .text-muted-foreground\/70,
+        .timeline-theme-dark .timeline-glass-card .text-muted-foreground\/80,
+        .timeline-theme-dark .timeline-mobile-readable .text-muted-foreground\/80 {
+          color: rgba(226, 232, 240, 0.76) !important;
+        }
+
+        .timeline-theme-dark .timeline-glass-card .text-pink-500,
+        .timeline-theme-dark .timeline-mobile-readable .text-pink-500 {
+          color: rgb(255, 87, 166) !important;
+        }
+
+        .timeline-theme-light .timeline-glass-card,
+        .timeline-theme-light .timeline-mobile-readable,
+        .timeline-theme-light .timeline-glass-card .text-foreground,
+        .timeline-theme-light .timeline-mobile-readable .text-foreground,
+        .timeline-theme-light .timeline-glass-card p,
+        .timeline-theme-light .timeline-mobile-readable p {
+          color: rgba(24, 22, 20, 0.96) !important;
+        }
+
+        .timeline-theme-light .timeline-glass-card .text-muted-foreground,
+        .timeline-theme-light .timeline-mobile-readable .text-muted-foreground,
+        .timeline-theme-light .timeline-glass-card .text-muted-foreground\/70,
+        .timeline-theme-light .timeline-mobile-readable .text-muted-foreground\/70,
+        .timeline-theme-light .timeline-glass-card .text-muted-foreground\/80,
+        .timeline-theme-light .timeline-mobile-readable .text-muted-foreground\/80 {
+          color: rgba(86, 74, 66, 0.74) !important;
+        }
+
+        .timeline-theme-light .timeline-glass-card .text-pink-500,
+        .timeline-theme-light .timeline-mobile-readable .text-pink-500 {
+          color: rgb(224, 32, 122) !important;
+        }
+
+        .timeline-glass-card svg,
+        .timeline-mobile-readable svg {
+          filter: none !important;
         }
 
         @media (max-width: 639px) {
           .timeline-mobile-readable {
             position: relative;
-            left: 50%;
-            right: 50%;
-            width: 100vw;
-            max-width: none;
-            margin-left: -50vw;
-            margin-right: -50vw;
+            width: calc(100vw - 32px);
+            max-width: 600px;
+            margin: 10px auto 14px;
             box-sizing: border-box;
-            background: hsl(var(--card) / 0.52);
+            overflow: hidden;
+            border-radius: 28px;
+            border: 1px solid hsl(var(--border) / 0.075);
+            background: hsl(var(--card) / 0.58);
+            color: hsl(var(--foreground));
+            box-shadow: none;
             -webkit-backdrop-filter: blur(24px) saturate(170%);
             backdrop-filter: blur(24px) saturate(170%);
           }
 
-          .dark .timeline-mobile-readable {
-            background: hsl(var(--card) / 0.44);
+          .timeline-theme-dark .timeline-mobile-readable {
+            background: linear-gradient(
+              135deg,
+              rgba(12, 16, 28, 0.72),
+              rgba(34, 24, 32, 0.64)
+            ) !important;
+            border-color: rgba(255, 255, 255, 0.04) !important;
           }
 
-          .timeline-mobile-blur-divider {
-            height: 2px;
+          .timeline-theme-light .timeline-mobile-readable {
             background: linear-gradient(
-              90deg,
-              transparent,
-              hsl(var(--border) / 0.62),
-              hsl(var(--background) / 0.34),
-              hsl(var(--border) / 0.62),
-              transparent
-            );
-            -webkit-backdrop-filter: blur(34px) saturate(190%);
-            backdrop-filter: blur(34px) saturate(190%);
-            box-shadow:
-              0 -8px 22px hsl(var(--background) / 0.25),
-              0 8px 22px hsl(var(--foreground) / 0.08);
-          }
-
-          .dark .timeline-mobile-blur-divider {
-            background: linear-gradient(
-              90deg,
-              transparent,
-              hsl(var(--border) / 0.48),
-              hsl(var(--card) / 0.32),
-              hsl(var(--border) / 0.48),
-              transparent
-            );
+              135deg,
+              rgba(255, 255, 255, 0.62),
+              rgba(255, 255, 255, 0.54)
+            ) !important;
+            border-color: rgba(40, 30, 25, 0.045) !important;
           }
         }
       `}</style>
@@ -852,21 +943,15 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
         className={
           timelineGlass
             ? isMobile
-              ? "timeline-mobile-readable px-5 py-3 cursor-pointer"
+              ? "timeline-mobile-readable px-5 py-4 cursor-pointer"
               : "timeline-glass-card rounded-3xl p-5 transition relative cursor-pointer"
             : isMobile
               ? "relative mx-auto w-full max-w-[600px] px-0 py-3 cursor-pointer"
               : "rounded-3xl border border-border/60 bg-card p-5 shadow-soft transition hover:shadow-card-soft relative cursor-pointer"
         }
       >
-        {isMobile && (
-          <div
-            className={
-              timelineGlass
-                ? "pointer-events-none absolute bottom-0 left-0 w-full timeline-mobile-blur-divider"
-                : "pointer-events-none absolute bottom-0 left-1/2 w-screen -translate-x-1/2 border-b border-border/60"
-            }
-          />
+        {isMobile && !timelineGlass && (
+          <div className="pointer-events-none absolute bottom-0 left-1/2 w-screen -translate-x-1/2 border-b border-border/60" />
         )}
 
         <div className="flex items-start gap-3">
