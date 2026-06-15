@@ -27,6 +27,7 @@ interface PostComposerProps {
   initialQuotedPost?: PostWithAuthor | null;
   initialContent?: string;
   onSuccess?: () => void;
+  timelineGlass?: boolean;
 }
 
 // テキストエリア内のカーソル座標を計算するためのヘルパー関数
@@ -61,7 +62,7 @@ function getCaretCoordinates(element: HTMLTextAreaElement, position: number) {
   return coordinates;
 }
 
-export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess }: PostComposerProps) {
+export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess, timelineGlass = false }: PostComposerProps) {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const quoteId = searchParams.get('quote');
@@ -319,7 +320,13 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
   const overLimit = remaining < 0;
 
   return (
-    <div className="rounded-3xl bg-card p-5 shadow-soft transition-all duration-300">
+    <div
+      className={cn(
+        "rounded-3xl bg-card p-5 shadow-soft transition-all duration-300",
+        timelineGlass &&
+          "border border-border/45 bg-card/70 shadow-none backdrop-blur-2xl supports-[backdrop-filter]:bg-card/60"
+      )}
+    >
       <div className="flex gap-3">
         <Avatar className="h-11 w-11 border-2 border-primary/30 shrink-0">
           <AvatarImage src={user.avatarUrl} alt={user.displayName} />
@@ -358,8 +365,8 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
           {/* 候補ポップアップ */}
           {(mentionResults.length > 0 && mentionQuery !== null) && (
             <div 
-              className="absolute z-[60] w-64 overflow-hidden rounded-xl border border-border/60 bg-popover shadow-xl backdrop-blur-md transition-all duration-150"
-              style={{ top: popupPos.top - scrollTop, left: popupPos.left }}
+              className={cn("absolute z-[2147483647] w-64 overflow-hidden rounded-xl border border-border/60 bg-popover shadow-xl backdrop-blur-md transition-all duration-150", timelineGlass && "bg-popover/85 backdrop-blur-xl")}
+              style={{ top: popupPos.top - scrollTop, left: popupPos.left, zIndex: 2147483647 }}
             >
               <div className="p-2 text-xs font-bold text-muted-foreground bg-muted/30 flex items-center gap-1">
                 <AtSign className="w-3 h-3" /> メンションします
@@ -389,8 +396,8 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
 
           {hashtagResults.length > 0 && hashtagQuery !== null && (
             <div 
-              className="absolute z-[60] w-64 overflow-hidden rounded-xl border border-border/60 bg-popover shadow-xl backdrop-blur-md transition-all duration-150"
-              style={{ top: popupPos.top - scrollTop, left: popupPos.left }}
+              className={cn("absolute z-[2147483647] w-64 overflow-hidden rounded-xl border border-border/60 bg-popover shadow-xl backdrop-blur-md transition-all duration-150", timelineGlass && "bg-popover/85 backdrop-blur-xl")}
+              style={{ top: popupPos.top - scrollTop, left: popupPos.left, zIndex: 2147483647 }}
             >
               <div className="p-2 text-xs font-bold text-muted-foreground bg-muted/30 flex items-center gap-1">
                 <Hash className="w-3 h-3" /> ハッシュタグを検索
@@ -411,7 +418,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
           )}
 
           {quotedPost && (
-            <div className="relative mt-2 overflow-hidden rounded-2xl border border-border/60 bg-muted/20 p-4 transition-all">
+            <div className={cn("relative mt-2 overflow-hidden rounded-2xl border border-border/60 bg-muted/20 p-4 transition-all", timelineGlass && "bg-background/35 backdrop-blur-xl")}>
               {!initialQuotedPost && (
                 <button
                   type="button"
@@ -459,7 +466,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
             </div>
           )}
 
-          <div className="flex items-center justify-between border-t border-border/60 pt-3">
+          <div className={cn("flex items-center justify-between border-t border-border/60 pt-3", timelineGlass && "border-border/40")}>
             <div className="flex items-center gap-2">
               <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={onFile} />
               <Button
@@ -496,7 +503,12 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
                     )}
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="rounded-xl z-[70]">
+                <DropdownMenuContent
+                  align="start"
+                  sideOffset={8}
+                  className="z-[2147483647] rounded-xl"
+                  style={{ zIndex: 2147483647 }}
+                >
                   <DropdownMenuItem onClick={() => setVisibility('public')}>
                     <Globe className="mr-2 h-4 w-4" />
                     全員

@@ -63,6 +63,17 @@ export default function Settings() {
   const [bio, setBio] = useState(user?.bio ?? '');
   const [avatarUrl, setAvatarUrl] = useState(user?.avatarUrl ?? '');
   const [coverUrl, setCoverUrl] = useState(user?.coverUrl ?? '');
+  const [timelineBackgroundUrl, setTimelineBackgroundUrl] = useState(
+    (user as any)?.timelineBackgroundUrl ??
+      (user as any)?.timeline_background_url ??
+      localStorage.getItem('lime_timeline_background_url') ??
+      ''
+  );
+  const [timelineBackgroundPublicId, setTimelineBackgroundPublicId] = useState(
+    (user as any)?.timelineBackgroundPublicId ?? (user as any)?.timeline_background_public_id ?? ''
+  );
+  const [isTimelineBackgroundUploading, setIsTimelineBackgroundUploading] = useState(false);
+  const [isTimelineBackgroundLoading, setIsTimelineBackgroundLoading] = useState(false);
   const [emojiEffect, setEmojiEffect] = useState(getInitialEmoji());
 
   const [botEnabled, setBotEnabled] = useState(user?.bot_enabled ?? false);
@@ -71,6 +82,7 @@ export default function Settings() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const avatarRef = useRef<HTMLInputElement>(null);
   const coverRef = useRef<HTMLInputElement>(null);
+  const timelineBackgroundRef = useRef<HTMLInputElement>(null);
 
   const [customEmojis, setCustomEmojis] = useState<CustomEmoji[]>([]);
   const [emojiName, setEmojiName] = useState('');
@@ -115,12 +127,72 @@ export default function Settings() {
     }
   };
 
+  const applyTimelineBackgroundState = (url: string, publicId = '') => {
+    setTimelineBackgroundUrl(url);
+    setTimelineBackgroundPublicId(publicId);
+
+    if (url) {
+      localStorage.setItem('lime_timeline_background_url', url);
+    } else {
+      localStorage.removeItem('lime_timeline_background_url');
+    }
+  };
+
+  const fetchTimelineBackgroundSetting = async () => {
+    if (!user?.id) return;
+
+    setIsTimelineBackgroundLoading(true);
+
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('timeline_background_url, timeline_background_public_id')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      const url = data?.timeline_background_url ?? '';
+      const publicId = data?.timeline_background_public_id ?? '';
+
+      applyTimelineBackgroundState(url, publicId);
+    } catch (err) {
+      console.error('Fetch Timeline Background Error:', err);
+
+      const fallbackUrl =
+        (user as any)?.timelineBackgroundUrl ??
+        (user as any)?.timeline_background_url ??
+        localStorage.getItem('lime_timeline_background_url') ??
+        '';
+      const fallbackPublicId =
+        (user as any)?.timelineBackgroundPublicId ??
+        (user as any)?.timeline_background_public_id ??
+        '';
+
+      applyTimelineBackgroundState(fallbackUrl, fallbackPublicId);
+    } finally {
+      setIsTimelineBackgroundLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (user) {
       setDisplayName(user.displayName ?? '');
       setBio(user.bio ?? '');
       setAvatarUrl(user.avatarUrl ?? '');
       setCoverUrl(user.coverUrl ?? '');
+
+      const localTimelineBackgroundUrl = localStorage.getItem('lime_timeline_background_url') ?? '';
+      const userTimelineBackgroundUrl =
+        (user as any)?.timelineBackgroundUrl ?? (user as any)?.timeline_background_url ?? '';
+      const userTimelineBackgroundPublicId =
+        (user as any)?.timelineBackgroundPublicId ?? (user as any)?.timeline_background_public_id ?? '';
+
+      applyTimelineBackgroundState(
+        userTimelineBackgroundUrl || localTimelineBackgroundUrl,
+        userTimelineBackgroundPublicId
+      );
+
       setBotEnabled(user.bot_enabled ?? false);
       setBotPrompt(user.bot_prompt ?? '');
 
@@ -129,8 +201,9 @@ export default function Settings() {
 
       fetchCustomEmojis();
       fetchLimeProStatus();
+      fetchTimelineBackgroundSetting();
     }
-  }, [user]);
+  }, [user?.id]);
 
   if (!user) return null;
 
@@ -140,6 +213,120 @@ export default function Settings() {
     const url = URL.createObjectURL(file);
     setUrl(url);
     e.target.value = '';
+  };
+
+  const notifyTimelineBackgroundChanged = (url: string) => {
+    if (url) {
+      localStorage.setItem('lime_timeline_background_url', url);
+    } else {
+      localStorage.removeItem('lime_timeline_background_url');
+    }
+
+    window.dispatchEvent(
+      new CustomEvent('timeline-background-changed', {
+        detail: { url },
+      })
+    );
+
+    if ('BroadcastChannel' in window) {
+      const channel = new BroadcastChannel('timeline-background');
+      channel.postMessage({ url });
+      channel.close();
+    }
+  };
+
+  const handleTimelineBackgroundUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('背景には画像ファイルを選択してください');
+      return;
+    }
+
+    const maxSize = 8 * 1024 * 1024;
+
+    if (file.size > maxSize) {
+      toast.error('背景画像は8MB以下にしてください');
+      return;
+    }
+
+    setIsTimelineBackgroundUploading(true);
+
+    try {
+      const cloudinaryCloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
+      const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
+
+      if (!cloudinaryCloudName || !uploadPreset) {
+        throw new Error('Cloudinaryの環境設定が不足しています');
+      }
+
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('upload_preset', uploadPreset);
+      formData.append('folder', `timeline_backgrounds/${user.id}`);
+
+      const clRes = await fetch(`https://api.cloudinary.com/v1_1/${cloudinaryCloudName}/image/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!clRes.ok) throw new Error('Cloudinaryへのアップロードに失敗しました');
+
+      const clData = await clRes.json();
+      const uploadedUrl = clData.secure_url as string;
+      const uploadedPublicId = clData.public_id as string;
+
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          timeline_background_url: uploadedUrl,
+          timeline_background_public_id: uploadedPublicId,
+        })
+        .eq('id', user.id);
+
+      if (error) throw error;
+
+      applyTimelineBackgroundState(uploadedUrl, uploadedPublicId);
+      notifyTimelineBackgroundChanged(uploadedUrl);
+
+      toast.success('タイムライン背景を更新しました');
+    } catch (err: any) {
+      console.error('Timeline Background Upload Error:', err);
+      toast.error(err.message || 'タイムライン背景の更新に失敗しました');
+    } finally {
+      setIsTimelineBackgroundUploading(false);
+    }
+  };
+
+  const handleRemoveTimelineBackground = async () => {
+    if (!timelineBackgroundUrl) return;
+
+    setIsTimelineBackgroundUploading(true);
+
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          timeline_background_url: null,
+          timeline_background_public_id: null,
+        })
+        .eq('id', user.id);
+
+      if (error) throw error;
+
+      applyTimelineBackgroundState('', '');
+      notifyTimelineBackgroundChanged('');
+
+      toast.success('タイムライン背景を削除しました');
+    } catch (err) {
+      console.error('Timeline Background Remove Error:', err);
+      toast.error('タイムライン背景の削除に失敗しました');
+    } finally {
+      setIsTimelineBackgroundUploading(false);
+    }
   };
 
   const onPickEmojiFile = (e: ChangeEvent<HTMLInputElement>) => {
@@ -822,6 +1009,83 @@ const handleDummyLimeProPurchase = async () => {
               ? 'LimeProを無効化'
               : 'LimeProを有効化'}
         </Button>
+      </div>
+
+      <Separator />
+
+      <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border/60 bg-background text-primary shadow-sm">
+            <ImagePlus className="h-5 w-5" />
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <h2 className="font-display text-base font-bold">タイムライン背景(Beta)</h2>
+            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+              タイムラインに表示する背景画像を設定できます。
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4 overflow-hidden rounded-3xl border border-border/60 bg-muted">
+          <div
+            className="relative flex h-44 items-center justify-center bg-gradient-cream bg-cover bg-center sm:h-56"
+            style={
+              timelineBackgroundUrl
+                ? { backgroundImage: `url(${timelineBackgroundUrl})` }
+                : undefined
+            }
+          >
+            {timelineBackgroundUrl && (
+              <div className="absolute inset-0 bg-background/10 backdrop-blur-md" />
+            )}
+
+            <div className="relative z-10 rounded-full border border-border/60 bg-card/70 px-4 py-2 text-xs font-bold text-foreground shadow-soft backdrop-blur-md">
+              {isTimelineBackgroundLoading
+                ? '背景設定を確認中...'
+                : timelineBackgroundUrl
+                  ? '現在の背景プレビュー'
+                  : '背景未設定'}
+            </div>
+          </div>
+        </div>
+
+        <input
+          ref={timelineBackgroundRef}
+          type="file"
+          accept="image/*"
+          hidden
+          onChange={handleTimelineBackgroundUpload}
+        />
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Button
+            type="button"
+            onClick={() => timelineBackgroundRef.current?.click()}
+            disabled={isTimelineBackgroundUploading || isTimelineBackgroundLoading}
+            className="rounded-full bg-gradient-primary font-bold shadow-soft hover:shadow-pop"
+          >
+            {isTimelineBackgroundUploading ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Upload className="mr-2 h-4 w-4" />
+            )}
+            {timelineBackgroundUrl ? '背景を変更' : '背景をアップロード'}
+          </Button>
+
+          {timelineBackgroundUrl && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleRemoveTimelineBackground}
+              disabled={isTimelineBackgroundUploading || isTimelineBackgroundLoading}
+              className="rounded-full border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+            >
+              <Trash2 className="mr-2 h-4 w-4" />
+              背景を削除
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">

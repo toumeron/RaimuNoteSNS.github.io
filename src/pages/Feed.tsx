@@ -8,10 +8,14 @@ import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
 import { useFeed } from '@/hooks/useFeed';
 import { useIsPWA } from '@/hooks/useIsPWA';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { supabase } from '@/lib/supabase';
 
 export default function Feed() {
   const [activeTab, setActiveTab] = useState<'all' | 'following'>('all');
   const [isScrolled, setIsScrolled] = useState(false);
+  const [timelineBackgroundUrl, setTimelineBackgroundUrl] = useState<string | null>(null);
+  const [timelineTitleTone, setTimelineTitleTone] = useState<'light' | 'dark'>('dark');
+  const titleRef = useRef<HTMLHeadingElement>(null);
 
   const queryClient = useQueryClient();
   const isPWA = useIsPWA();
@@ -35,6 +39,146 @@ export default function Feed() {
   } = useFeed(activeTab);
 
   const { ref, inView } = useInView();
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchTimelineBackground = async () => {
+      try {
+        const { data: authData, error: authError } = await supabase.auth.getUser();
+        if (authError) throw authError;
+
+        const currentUser = authData.user;
+        if (!currentUser) {
+          if (!cancelled) setTimelineBackgroundUrl(null);
+          return;
+        }
+
+        const { data: profile, error } = await supabase
+          .from('profiles')
+          .select('timeline_background_url')
+          .eq('id', currentUser.id)
+          .maybeSingle();
+
+        if (error) throw error;
+
+        if (!cancelled) {
+          setTimelineBackgroundUrl((profile?.timeline_background_url as string | null) ?? null);
+        }
+      } catch (err) {
+        console.error('Fetch timeline background error:', err);
+        if (!cancelled) setTimelineBackgroundUrl(null);
+      }
+    };
+
+    fetchTimelineBackground();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const previous = {
+      backgroundImage: document.body.style.backgroundImage,
+      backgroundSize: document.body.style.backgroundSize,
+      backgroundPosition: document.body.style.backgroundPosition,
+      backgroundRepeat: document.body.style.backgroundRepeat,
+      backgroundAttachment: document.body.style.backgroundAttachment,
+    };
+
+    if (timelineBackgroundUrl) {
+      document.body.style.backgroundImage = `url("${timelineBackgroundUrl}")`;
+      document.body.style.backgroundSize = 'cover';
+      document.body.style.backgroundPosition = 'center';
+      document.body.style.backgroundRepeat = 'no-repeat';
+      document.body.style.backgroundAttachment = 'fixed';
+    }
+
+    return () => {
+      document.body.style.backgroundImage = previous.backgroundImage;
+      document.body.style.backgroundSize = previous.backgroundSize;
+      document.body.style.backgroundPosition = previous.backgroundPosition;
+      document.body.style.backgroundRepeat = previous.backgroundRepeat;
+      document.body.style.backgroundAttachment = previous.backgroundAttachment;
+    };
+  }, [timelineBackgroundUrl]);
+
+  useEffect(() => {
+    if (!timelineBackgroundUrl) {
+      setTimelineTitleTone('dark');
+      return;
+    }
+
+    let cancelled = false;
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = timelineBackgroundUrl;
+
+    const sampleTitleBackground = () => {
+      if (cancelled || !img.naturalWidth || !img.naturalHeight) return;
+
+      const rect = titleRef.current?.getBoundingClientRect();
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+
+      const sampleX = rect ? rect.left + rect.width / 2 : viewportWidth * 0.18;
+      const sampleY = rect ? rect.top + rect.height / 2 : viewportHeight * 0.18;
+
+      const scale = Math.max(
+        viewportWidth / img.naturalWidth,
+        viewportHeight / img.naturalHeight
+      );
+      const renderedWidth = img.naturalWidth * scale;
+      const renderedHeight = img.naturalHeight * scale;
+      const offsetX = (viewportWidth - renderedWidth) / 2;
+      const offsetY = (viewportHeight - renderedHeight) / 2;
+
+      const sourceX = Math.max(
+        0,
+        Math.min(img.naturalWidth - 1, Math.round((sampleX - offsetX) / scale))
+      );
+      const sourceY = Math.max(
+        0,
+        Math.min(img.naturalHeight - 1, Math.round((sampleY - offsetY) / scale))
+      );
+
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return;
+
+      canvas.width = 1;
+      canvas.height = 1;
+      ctx.drawImage(img, sourceX, sourceY, 1, 1, 0, 0, 1, 1);
+
+      const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+      const srgb = [r, g, b].map((value) => {
+        const v = value / 255;
+        return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+      });
+      const luminance = 0.2126 * srgb[0] + 0.7152 * srgb[1] + 0.0722 * srgb[2];
+      const contrastWithWhite = 1.05 / (luminance + 0.05);
+      const contrastWithBlack = (luminance + 0.05) / 0.05;
+
+      setTimelineTitleTone(contrastWithWhite >= contrastWithBlack ? 'light' : 'dark');
+    };
+
+    img.onload = () => {
+      sampleTitleBackground();
+      window.addEventListener('resize', sampleTitleBackground);
+      window.addEventListener('scroll', sampleTitleBackground, { passive: true });
+    };
+
+    img.onerror = () => {
+      if (!cancelled) setTimelineTitleTone('dark');
+    };
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener('resize', sampleTitleBackground);
+      window.removeEventListener('scroll', sampleTitleBackground);
+    };
+  }, [timelineBackgroundUrl]);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -175,6 +319,7 @@ export default function Feed() {
 
   const allPosts = data?.pages.flatMap((page) => page) ?? [];
   const canReleaseToRefresh = pullDistance >= 58;
+  const hasTimelineBackground = Boolean(timelineBackgroundUrl);
 
   return (
     <div className="space-y-5">
@@ -243,7 +388,16 @@ export default function Feed() {
 
           {/* タイムライン文字と、スマホ用LimeNoteBetaのコンテナ（スマホでは下部） */}
           <div className="flex items-center gap-2 order-2 sm:order-1">
-            <h1 className="text-2xl font-black font-display leading-none select-none">
+            <h1
+              ref={titleRef}
+              className={`text-2xl font-black font-display leading-none select-none ${
+                hasTimelineBackground
+                  ? timelineTitleTone === 'light'
+                    ? 'text-white'
+                    : 'text-neutral-950'
+                  : ''
+              }`}
+            >
               タイムライン
             </h1>
 
@@ -263,21 +417,35 @@ export default function Feed() {
         </span>
       </div>
 
-      <PostComposer />
+      <PostComposer timelineGlass={hasTimelineBackground} />
 
       {/* 特別扱い：ヘッダー統合タブ */}
-      <div className={`sticky top-0 transition-all duration-300 py-3 -mx-5 px-5 border-none pointer-events-none ${
-        isScrolled 
-          ? 'z-[60] h-16 flex items-center justify-center' 
-          : 'z-40 bg-transparent h-auto'
-      }`}>
+      <div
+        className={`sticky top-0 transition-all duration-300 py-3 -mx-5 px-5 border-none pointer-events-none ${
+          isScrolled 
+            ? 'z-[2147483647] h-16 flex items-center justify-center' 
+            : 'z-[2147483647] bg-transparent h-auto'
+        }`}
+        style={{ zIndex: 2147483647 }}
+      >
         <div className="max-w-md mx-auto w-full pointer-events-auto">
           <Tabs 
             defaultValue="all" 
             className="w-full border-none shadow-none" 
             onValueChange={(v) => setActiveTab(v as 'all' | 'following')}
           >
-            <TabsList className="grid w-full grid-cols-2 h-11 items-center justify-center rounded-full bg-muted/80 p-1 border-none shadow-none ring-0 backdrop-blur-sm">
+            <TabsList
+              className={`grid w-full grid-cols-2 h-11 items-center justify-center rounded-full p-1 border-none ring-0 backdrop-blur-2xl ${
+                hasTimelineBackground
+                  ? 'bg-white/85 text-slate-950 shadow-none dark:bg-black/70 dark:text-white'
+                  : 'bg-muted/80 shadow-none'
+              }`}
+              style={{
+                boxShadow: 'none',
+                WebkitBackdropFilter: hasTimelineBackground ? 'blur(30px) saturate(185%)' : undefined,
+                backdropFilter: hasTimelineBackground ? 'blur(30px) saturate(185%)' : undefined,
+              }}
+            >
               <TabsTrigger 
                 value="all" 
                 className="h-9 rounded-full px-6 font-bold transition-all duration-200 
@@ -301,7 +469,7 @@ export default function Feed() {
         </div>
       </div>
 
-      <div className="space-y-4 pt-2">
+      <div className={hasTimelineBackground ? "space-y-0 pt-2 sm:space-y-4" : "space-y-4 pt-2"}>
         {isLoading && (
           <div className="space-y-4">
             <PostCardSkeleton />
@@ -323,7 +491,7 @@ export default function Feed() {
 
         {allPosts.map((post) => (
           <div key={`${activeTab}-${post.id}`} className="animate-float-up">
-            <PostCard post={post} />
+            <PostCard post={post} timelineGlass={hasTimelineBackground} />
           </div>
         ))}
 

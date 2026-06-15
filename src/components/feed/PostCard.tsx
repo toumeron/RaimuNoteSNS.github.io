@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'; 
+import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { MessageCircle, MoreHorizontal, Trash2, CalendarDays, ChartBarBig, X, Globe, Lock, Sparkles, Plus } from 'lucide-react'; 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -67,8 +68,9 @@ interface ReplicatedDot {
   delay: number;
 }
 
-export function PostCard({ post }: { post: PostWithAuthor }) {
+export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor; timelineGlass?: boolean }) {
   const [showMenu, setShowMenu] = useState(false);
+  const [moreMenuPosition, setMoreMenuPosition] = useState<{ top: number; right: number } | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null); 
   const [failedUrls, setFailedUrls] = useState<string[]>([]); 
@@ -95,6 +97,10 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
   const [isMobile, setIsMobile] = useState(false);
 
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const pickerPanelRef = useRef<HTMLDivElement>(null);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+  const ignoreNextCardClickRef = useRef(false);
 
   const isPWA = useIsPWA();
 
@@ -164,6 +170,83 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
     }
     return () => { document.body.style.overflow = 'unset'; };
   }, [selectedImageUrl, showPicker]);
+
+  // もっと見るメニューは、カード内外どこを押してもメニュー外なら閉じる。
+  // overlay が stacking context に巻き込まれて効かないケースを避けるため、document 側でも拾う。
+  useEffect(() => {
+    if (!showMenu) return;
+
+    const closeMenuFromOutside = () => {
+      ignoreNextCardClickRef.current = true;
+      setShowMenu(false);
+      setMoreMenuPosition(null);
+      window.setTimeout(() => {
+        ignoreNextCardClickRef.current = false;
+      }, 0);
+    };
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+
+      if (moreButtonRef.current?.contains(target)) return;
+      if (moreMenuRef.current?.contains(target)) return;
+
+      closeMenuFromOutside();
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown, true);
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+    };
+  }, [showMenu]);
+
+  useEffect(() => {
+    if (!showMenu) return;
+
+    const closeOnViewportChange = () => {
+      ignoreNextCardClickRef.current = true;
+      setShowMenu(false);
+      setMoreMenuPosition(null);
+      window.setTimeout(() => {
+        ignoreNextCardClickRef.current = false;
+      }, 0);
+    };
+
+    window.addEventListener('scroll', closeOnViewportChange, true);
+    window.addEventListener('resize', closeOnViewportChange);
+
+    return () => {
+      window.removeEventListener('scroll', closeOnViewportChange, true);
+      window.removeEventListener('resize', closeOnViewportChange);
+    };
+  }, [showMenu]);
+
+  // リアクション追加パネルも、パネル外を押したら確実に閉じる。
+  useEffect(() => {
+    if (!showPicker) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+
+      if (buttonRef.current?.contains(target)) return;
+      if (pickerPanelRef.current?.contains(target)) return;
+
+      ignoreNextCardClickRef.current = true;
+      setShowPicker(false);
+      window.setTimeout(() => {
+        ignoreNextCardClickRef.current = false;
+      }, 0);
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown, true);
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+    };
+  }, [showPicker]);
 
   const fetchReactions = async () => {
     try {
@@ -505,6 +588,12 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
   };
 
   const handleCardClick = () => {
+    if (showMenu || showPicker || ignoreNextCardClickRef.current) {
+      setShowMenu(false);
+      if (showPicker) setShowPicker(false);
+      return;
+    }
+
     navigate(`/post/${post.id}`);
   };
 
@@ -652,6 +741,67 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
         .animate-zoom-in-pc {
           animation: zoomInPc 160ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
         }
+
+        .timeline-glass-card {
+          background: hsl(var(--card) / 0.50);
+          border: 1px solid hsl(var(--border) / 0.38);
+          box-shadow: none;
+          -webkit-backdrop-filter: blur(24px) saturate(165%);
+          backdrop-filter: blur(24px) saturate(165%);
+        }
+
+        .dark .timeline-glass-card {
+          background: hsl(var(--card) / 0.46);
+          border-color: hsl(var(--border) / 0.34);
+        }
+
+        @media (max-width: 639px) {
+          .timeline-mobile-readable {
+            position: relative;
+            left: 50%;
+            right: 50%;
+            width: 100vw;
+            max-width: none;
+            margin-left: -50vw;
+            margin-right: -50vw;
+            box-sizing: border-box;
+            background: hsl(var(--card) / 0.52);
+            -webkit-backdrop-filter: blur(24px) saturate(170%);
+            backdrop-filter: blur(24px) saturate(170%);
+          }
+
+          .dark .timeline-mobile-readable {
+            background: hsl(var(--card) / 0.44);
+          }
+
+          .timeline-mobile-blur-divider {
+            height: 2px;
+            background: linear-gradient(
+              90deg,
+              transparent,
+              hsl(var(--border) / 0.62),
+              hsl(var(--background) / 0.34),
+              hsl(var(--border) / 0.62),
+              transparent
+            );
+            -webkit-backdrop-filter: blur(34px) saturate(190%);
+            backdrop-filter: blur(34px) saturate(190%);
+            box-shadow:
+              0 -8px 22px hsl(var(--background) / 0.25),
+              0 8px 22px hsl(var(--foreground) / 0.08);
+          }
+
+          .dark .timeline-mobile-blur-divider {
+            background: linear-gradient(
+              90deg,
+              transparent,
+              hsl(var(--border) / 0.48),
+              hsl(var(--card) / 0.32),
+              hsl(var(--border) / 0.48),
+              transparent
+            );
+          }
+        }
       `}</style>
 
       {/* --- 高度グラフィックアニメーションレイヤー --- */}
@@ -700,13 +850,23 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
       <article 
         onClick={handleCardClick}
         className={
-          isMobile
-            ? "relative mx-auto w-full max-w-[600px] px-0 py-3 cursor-pointer"
-            : "rounded-3xl border border-border/60 bg-card p-5 shadow-soft transition hover:shadow-card-soft relative cursor-pointer"
+          timelineGlass
+            ? isMobile
+              ? "timeline-mobile-readable px-5 py-3 cursor-pointer"
+              : "timeline-glass-card rounded-3xl p-5 transition relative cursor-pointer"
+            : isMobile
+              ? "relative mx-auto w-full max-w-[600px] px-0 py-3 cursor-pointer"
+              : "rounded-3xl border border-border/60 bg-card p-5 shadow-soft transition hover:shadow-card-soft relative cursor-pointer"
         }
       >
         {isMobile && (
-          <div className="pointer-events-none absolute bottom-0 left-1/2 w-screen -translate-x-1/2 border-b border-border/60" />
+          <div
+            className={
+              timelineGlass
+                ? "pointer-events-none absolute bottom-0 left-0 w-full timeline-mobile-blur-divider"
+                : "pointer-events-none absolute bottom-0 left-1/2 w-screen -translate-x-1/2 border-b border-border/60"
+            }
+          />
         )}
 
         <div className="flex items-start gap-3">
@@ -772,20 +932,56 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
                 )}
                 <div className="relative shrink-0">
                   <button
+                    ref={moreButtonRef}
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      setShowMenu(!showMenu);
+
+                      if (showMenu) {
+                        setShowMenu(false);
+                        setMoreMenuPosition(null);
+                        return;
+                      }
+
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      setMoreMenuPosition({
+                        top: rect.bottom + 4,
+                        right: Math.max(8, window.innerWidth - rect.right),
+                      });
+                      setShowMenu(true);
                     }}
                     className="p-1 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
                   >
                     <MoreHorizontal className="h-5 w-5" />
                   </button>
-                  {showMenu && (
+                  {showMenu && typeof document !== 'undefined' && createPortal(
                     <>
-                      <div className="fixed inset-0 z-10" onClick={(e) => { e.stopPropagation(); setShowMenu(false); }} />
+                      <div
+                        className="fixed inset-0 bg-transparent"
+                        style={{ zIndex: 2147483646 }}
+                        onPointerDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          ignoreNextCardClickRef.current = true;
+                          setShowMenu(false);
+                          setMoreMenuPosition(null);
+                          window.setTimeout(() => {
+                            ignoreNextCardClickRef.current = false;
+                          }, 0);
+                        }}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }}
+                      />
                       <div 
-                        className="absolute right-0 mt-1 w-44 rounded-xl border border-border bg-card p-1 shadow-lg z-20 overflow-hidden animate-in fade-in zoom-in duration-100"
+                        ref={moreMenuRef}
+                        className="fixed w-44 rounded-xl border border-border bg-card p-1 shadow-lg overflow-hidden animate-in fade-in zoom-in duration-100"
+                        style={{
+                          top: moreMenuPosition?.top ?? 0,
+                          right: moreMenuPosition?.right ?? 8,
+                          zIndex: 2147483647,
+                        }}
                         onClick={(e) => e.stopPropagation()}
                       >
                         <button
@@ -825,7 +1021,8 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
                           </button>
                         )}
                       </div>
-                    </>
+                    </>,
+                    document.body
                   )}
                 </div>
               </div>
@@ -988,167 +1185,205 @@ export function PostCard({ post }: { post: PostWithAuthor }) {
                   <Plus className="h-5 w-5" />
                 </button>
 
-                {showPicker && (
+                {showPicker && isMobile && typeof document !== 'undefined' && createPortal(
                   <>
-                    {/* 背景レイヤー：最前面手前の z-[9998] で他の要素へのタップや背景スクロールを物理カット */}
-                    <div className="fixed inset-0 bg-transparent z-[9998]" onClick={() => setShowPicker(false)} />
-                    
-                    {isMobile ? (
-                      /* =========================================================================
-                         【スマートフォン専用ポップアップ：バー全体をスクロール対応化】
-                         ========================================================================= */
-                      <div 
-                        className="fixed bottom-[76px] left-1/2 transform -translate-x-1/2 w-[92vw] max-w-[340px] h-[430px] rounded-[24px] border border-border/80 bg-white dark:bg-[#1e222b] shadow-2xl z-[9999] p-4 animate-slide-up-mobile overflow-y-auto overflow-x-hidden touch-pan-y"
-                        onTouchStart={(e) => e.stopPropagation()}
-                        onScroll={(e) => e.stopPropagation()}
-                      >
-                        {/* デフォルト絵文字 */}
-                        <div className="grid grid-cols-5 gap-2.5 mb-3.5 shrink-0">
-                          {defaultEmojis.map((emoji) => (
-                            <button
-                              key={emoji}
-                              onClick={(e) => handleAddReaction(emoji, e)}
-                              className="flex items-center justify-center h-11 w-11 text-2xl rounded-2xl hover:bg-black/[0.05] dark:hover:bg-white/10 transition-all origin-center"
-                            >
-                              {emoji}
-                            </button>
-                          ))}
-                        </div>
+                    {/* 背景レイヤー：通常表示時と同じく、パネル外タップで閉じる */}
+                    <div
+                      className="fixed inset-0 bg-transparent"
+                      style={{ zIndex: 2147483646 }}
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        ignoreNextCardClickRef.current = true;
+                        setShowPicker(false);
+                        window.setTimeout(() => {
+                          ignoreNextCardClickRef.current = false;
+                        }, 0);
+                      }}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                      }}
+                    />
 
-                        {recentEmojis.length > 0 && (
-                          <div className="mb-3.5 shrink-0">
-                            <div className="text-[11px] font-bold text-muted-foreground/60 mb-1.5 px-0.5">最近使用</div>
-                            <div className="flex flex-wrap gap-2.5">
-                              {recentEmojis.map((emoji) => (
-                                <button
-                                  key={`recent-${emoji}`}
-                                  onClick={(e) => handleAddReaction(emoji, e)}
-                                  className="flex items-center justify-center h-9 w-9 rounded-xl hover:bg-black/[0.05] dark:hover:bg-white/10 transition-all origin-center"
-                                >
-                                  {renderEmojiElement(emoji, "h-6 w-6 object-contain")}
-                                </button>
-                              ))}
-                            </div>
+                    {/* スマホでは body 直下へ出す。backdrop-filter/transform の親に固定配置を壊されないようにする */}
+                    <div 
+                      ref={pickerPanelRef}
+                      className="fixed bottom-[76px] left-1/2 transform -translate-x-1/2 w-[92vw] max-w-[340px] h-[430px] rounded-[24px] border border-border/80 bg-white dark:bg-[#1e222b] shadow-2xl p-4 animate-slide-up-mobile overflow-y-auto overflow-x-hidden touch-pan-y"
+                      style={{ zIndex: 2147483647 }}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onTouchStart={(e) => e.stopPropagation()}
+                      onScroll={(e) => e.stopPropagation()}
+                    >
+                      {/* デフォルト絵文字 */}
+                      <div className="grid grid-cols-5 gap-2.5 mb-3.5 shrink-0">
+                        {defaultEmojis.map((emoji) => (
+                          <button
+                            key={emoji}
+                            onClick={(e) => handleAddReaction(emoji, e)}
+                            className="flex items-center justify-center h-11 w-11 text-2xl rounded-2xl hover:bg-black/[0.05] dark:hover:bg-white/10 transition-all origin-center"
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+
+                      {recentEmojis.length > 0 && (
+                        <div className="mb-3.5 shrink-0">
+                          <div className="text-[11px] font-bold text-muted-foreground/60 mb-1.5 px-0.5">最近使用</div>
+                          <div className="flex flex-wrap gap-2.5">
+                            {recentEmojis.map((emoji) => (
+                              <button
+                                key={`recent-${emoji}`}
+                                onClick={(e) => handleAddReaction(emoji, e)}
+                                className="flex items-center justify-center h-9 w-9 rounded-xl hover:bg-black/[0.05] dark:hover:bg-white/10 transition-all origin-center"
+                              >
+                                {renderEmojiElement(emoji, "h-6 w-6 object-contain")}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* カスタム絵文字：内側の高さ固定を解除しバー全体のスクロールに統合 */}
+                      <div className="flex flex-col border-t border-black/[0.08] dark:border-white/5 pt-2">
+                        <button
+                          onClick={() => setIsEmojisOpen(!isEmojisOpen)}
+                          className="flex items-center justify-between w-full px-0.5 py-1 text-[11px] font-black text-muted-foreground/80 hover:text-foreground transition-colors shrink-0"
+                        >
+                          <span className="truncate">カスタム絵文字</span>
+                          <span className="text-[10px] opacity-60">{isEmojisOpen ? '▲' : '▼'}</span>
+                        </button>
+
+                        {isEmojisOpen && (
+                          <div className="p-0.5 block mt-1">
+                            {filteredCustomEmojis.length > 0 ? (
+                              <div className="grid grid-cols-4 gap-2.5">
+                                {filteredCustomEmojis.map((emoji) => (
+                                  <button
+                                    key={emoji.id}
+                                    onClick={(e) => handleAddReaction(`:${emoji.name}:`, e)}
+                                    title={`:${emoji.name}:`}
+                                    className="flex items-center justify-center h-12 w-12 rounded-2xl hover:bg-black/[0.05] dark:hover:bg-white/10 transition-all p-1.5 origin-center"
+                                  >
+                                    {renderEmojiElement(`:${emoji.name}:`, "h-9 w-9 object-contain")}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-center text-[11px] text-muted-foreground/50 py-6">絵文字が見つかりません</div>
+                            )}
                           </div>
                         )}
-
-                        {/* カスタム絵文字：内側の高さ固定を解除しバー全体のスクロールに統合 */}
-                        <div className="flex flex-col border-t border-black/[0.08] dark:border-white/5 pt-2">
-                          <button
-                            onClick={() => setIsEmojisOpen(!isEmojisOpen)}
-                            className="flex items-center justify-between w-full px-0.5 py-1 text-[11px] font-black text-muted-foreground/80 hover:text-foreground transition-colors shrink-0"
-                          >
-                            <span className="truncate">カスタム絵文字</span>
-                            <span className="text-[10px] opacity-60">{isEmojisOpen ? '▲' : '▼'}</span>
-                          </button>
-
-                          {isEmojisOpen && (
-                            <div className="p-0.5 block mt-1">
-                              {filteredCustomEmojis.length > 0 ? (
-                                <div className="grid grid-cols-4 gap-2.5">
-                                  {filteredCustomEmojis.map((emoji) => (
-                                    <button
-                                      key={emoji.id}
-                                      onClick={(e) => handleAddReaction(`:${emoji.name}:`, e)}
-                                      title={`:${emoji.name}:`}
-                                      className="flex items-center justify-center h-12 w-12 rounded-2xl hover:bg-black/[0.05] dark:hover:bg-white/10 transition-all p-1.5 origin-center"
-                                    >
-                                      {renderEmojiElement(`:${emoji.name}:`, "h-9 w-9 object-contain")}
-                                    </button>
-                                  ))}
-                                </div>
-                              ) : (
-                                <div className="text-center text-[11px] text-muted-foreground/50 py-6">絵文字が見つかりません</div>
-                              )}
-                            </div>
-                          )}
-                        </div>
                       </div>
-                    ) : (
-                      /* =========================================================================
-                         【PC専用ポップアップ：バー全体をスクロール対応化・縦幅 h-[280px]】
-                         ========================================================================= */
-                      <div 
-                        className="absolute bottom-full left-0 mb-2 w-[260px] h-[280px] rounded-[20px] border border-border/80 bg-white dark:bg-[#1e222b] shadow-2xl z-[9999] p-2.5 animate-zoom-in-pc overflow-y-auto overflow-x-hidden"
-                        onWheel={(e) => e.stopPropagation()}
-                      >
-                        {/* デフォルト絵文字 */}
-                        <div className="grid grid-cols-7 gap-1 mb-2 shrink-0">
-                          {defaultEmojis.map((emoji) => (
-                            <button
-                              key={emoji}
-                              onClick={(e) => handleAddReaction(emoji, e)}
-                              className="flex items-center justify-center h-8 w-8 text-xl rounded-lg hover:bg-black/[0.05] dark:hover:bg-white/10 transition-all origin-center"
-                            >
-                              {emoji}
-                            </button>
-                          ))}
-                        </div>
-
-                        {recentEmojis.length > 0 && (
-                          <div className="mb-2 shrink-0">
-                            <div className="text-[11px] font-bold text-muted-foreground/60 mb-1 px-0.5">最近使用</div>
-                            <div className="flex flex-wrap gap-1">
-                              {recentEmojis.map((emoji) => (
-                                <button
-                                  key={`recent-${emoji}`}
-                                  onClick={(e) => handleAddReaction(emoji, e)}
-                                  className="flex items-center justify-center h-7 w-7 rounded-md hover:bg-black/[0.05] dark:hover:bg-white/10 transition-all origin-center"
-                                >
-                                  {renderEmojiElement(emoji, "h-[18px] w-[18px] object-contain")}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* カスタム絵文字：内側の高さ制限を外し全体のスクロールに委ねる */}
-                        <div className="flex flex-col border-t border-black/[0.08] dark:border-white/5 pt-1.5">
-                          <button
-                            onClick={() => setIsEmojisOpen(!isEmojisOpen)}
-                            className="flex items-center justify-between w-full px-0.5 py-1 text-[11px] font-black text-muted-foreground/80 hover:text-foreground transition-colors shrink-0"
-                          >
-                            <span className="truncate">カスタム絵文字</span>
-                            <span className="text-[10px] opacity-60">{isEmojisOpen ? '▲' : '▼'}</span>
-                          </button>
-
-                          {isEmojisOpen && (
-                            <div className="p-0.5 mt-1">
-                              {filteredCustomEmojis.length > 0 ? (
-                                <div className="grid grid-cols-6 gap-1">
-                                  {filteredCustomEmojis.map((emoji) => (
-                                    <button
-                                      key={emoji.id}
-                                      onClick={(e) => handleAddReaction(`:${emoji.name}:`, e)}
-                                      title={`:${emoji.name}:`}
-                                      className="flex items-center justify-center h-8 w-8 rounded-lg hover:bg-black/[0.05] dark:hover:bg-white/10 transition-all p-0.5 origin-center"
-                                    >
-                                      {renderEmojiElement(`:${emoji.name}:`, "h-6 w-6 object-contain")}
-                                    </button>
-                                  ))}
-                                </div>
-                              ) : (
-                                <div className="text-center text-[11px] text-muted-foreground/50 py-4">絵文字が見つかりません</div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-
-                        {/* 検索バー */}
-                        <div className="mt-2 pt-1.5 border-t border-black/[0.08] dark:border-white/5 shrink-0">
-                          <input
-                            type="text"
-                            placeholder="検索"
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full h-8 bg-black/[0.03] dark:bg-black/30 border border-black/[0.08] dark:border-white/10 rounded-lg px-2.5 text-xs font-medium text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-pink-500/50 transition-colors"
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </>
+                    </div>
+                  </>,
+                  document.body
                 )}
-              </div>
+
+                {showPicker && !isMobile && (
+                  <>
+                    {/* 背景レイヤー：他の要素へのタップや背景スクロールを物理カット */}
+                    <div
+                      className="fixed inset-0 bg-transparent z-[100000]"
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        ignoreNextCardClickRef.current = true;
+                        setShowPicker(false);
+                        window.setTimeout(() => {
+                          ignoreNextCardClickRef.current = false;
+                        }, 0);
+                      }}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                      }}
+                    />
+                    
+                    {/* =========================================================================
+                       【PC専用ポップアップ：バー全体をスクロール対応化・縦幅 h-[280px]】
+                       ========================================================================= */}
+                    <div 
+                      ref={pickerPanelRef}
+                      className="absolute bottom-full left-0 mb-2 w-[260px] h-[280px] rounded-[20px] border border-border/80 bg-white dark:bg-[#1e222b] shadow-2xl z-[100001] p-2.5 animate-zoom-in-pc overflow-y-auto overflow-x-hidden"
+                      onWheel={(e) => e.stopPropagation()}
+                    >
+                      {/* デフォルト絵文字 */}
+                      <div className="grid grid-cols-7 gap-1 mb-2 shrink-0">
+                        {defaultEmojis.map((emoji) => (
+                          <button
+                            key={emoji}
+                            onClick={(e) => handleAddReaction(emoji, e)}
+                            className="flex items-center justify-center h-8 w-8 text-xl rounded-lg hover:bg-black/[0.05] dark:hover:bg-white/10 transition-all origin-center"
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+
+                      {recentEmojis.length > 0 && (
+                        <div className="mb-2 shrink-0">
+                          <div className="text-[11px] font-bold text-muted-foreground/60 mb-1 px-0.5">最近使用</div>
+                          <div className="flex flex-wrap gap-1">
+                            {recentEmojis.map((emoji) => (
+                              <button
+                                key={`recent-${emoji}`}
+                                onClick={(e) => handleAddReaction(emoji, e)}
+                                className="flex items-center justify-center h-7 w-7 rounded-md hover:bg-black/[0.05] dark:hover:bg-white/10 transition-all origin-center"
+                              >
+                                {renderEmojiElement(emoji, "h-[18px] w-[18px] object-contain")}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* カスタム絵文字：内側の高さ制限を外し全体のスクロールに委ねる */}
+                      <div className="flex flex-col border-t border-black/[0.08] dark:border-white/5 pt-1.5">
+                        <button
+                          onClick={() => setIsEmojisOpen(!isEmojisOpen)}
+                          className="flex items-center justify-between w-full px-0.5 py-1 text-[11px] font-black text-muted-foreground/80 hover:text-foreground transition-colors shrink-0"
+                        >
+                          <span className="truncate">カスタム絵文字</span>
+                          <span className="text-[10px] opacity-60">{isEmojisOpen ? '▲' : '▼'}</span>
+                        </button>
+
+                        {isEmojisOpen && (
+                          <div className="p-0.5 mt-1">
+                            {filteredCustomEmojis.length > 0 ? (
+                              <div className="grid grid-cols-6 gap-1">
+                                {filteredCustomEmojis.map((emoji) => (
+                                  <button
+                                    key={emoji.id}
+                                    onClick={(e) => handleAddReaction(`:${emoji.name}:`, e)}
+                                    title={`:${emoji.name}:`}
+                                    className="flex items-center justify-center h-8 w-8 rounded-lg hover:bg-black/[0.05] dark:hover:bg-white/10 transition-all p-0.5 origin-center"
+                                  >
+                                    {renderEmojiElement(`:${emoji.name}:`, "h-6 w-6 object-contain")}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-center text-[11px] text-muted-foreground/50 py-4">絵文字が見つかりません</div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 検索バー */}
+                      <div className="mt-2 pt-1.5 border-t border-black/[0.08] dark:border-white/5 shrink-0">
+                        <input
+                          type="text"
+                          placeholder="検索"
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          className="w-full h-8 bg-black/[0.03] dark:bg-black/30 border border-black/[0.08] dark:border-white/10 rounded-lg px-2.5 text-xs font-medium text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-pink-500/50 transition-colors"
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}              </div>
 
             </div>
           </div>
