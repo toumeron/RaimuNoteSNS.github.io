@@ -129,8 +129,6 @@ export default function Feed() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-
     const previous = {
       backgroundImage: document.body.style.backgroundImage,
       backgroundSize: document.body.style.backgroundSize,
@@ -141,50 +139,32 @@ export default function Feed() {
 
     if (timelineBackgroundUrl) {
       const safeBackgroundUrl = `url("${timelineBackgroundUrl}")`;
-      document.body.style.backgroundImage = safeBackgroundUrl;
-      document.body.style.backgroundPosition = 'center center';
-      document.body.style.backgroundRepeat = 'no-repeat';
-      document.body.style.backgroundAttachment = 'fixed';
 
       if (isMobile) {
-        // モバイルは初回アクセス時の画面サイズを基準に、画像比率を保ったまま中央 cover で固定する。
-        // これで URL バー開閉や viewport 再計算による拡大率の揺れを避ける。
-        const frameWidth = initialMobileBackgroundFrame.width || Math.ceil(window.innerWidth);
-        const frameHeight = initialMobileBackgroundFrame.height || Math.ceil(window.innerHeight);
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.src = timelineBackgroundUrl;
-
-        img.onload = () => {
-          if (cancelled || !img.naturalWidth || !img.naturalHeight) return;
-
-          const scale = Math.max(frameWidth / img.naturalWidth, frameHeight / img.naturalHeight);
-          const backgroundWidth = Math.ceil(img.naturalWidth * scale);
-          const backgroundHeight = Math.ceil(img.naturalHeight * scale);
-
-          document.body.style.backgroundSize = `${backgroundWidth}px ${backgroundHeight}px`;
-          document.body.style.backgroundPosition = 'center center';
-        };
-
-        img.onerror = () => {
-          if (cancelled) return;
-          document.body.style.backgroundSize = 'cover';
-          document.body.style.backgroundPosition = 'center center';
-        };
+        // iPhone PWA では body の background-attachment: fixed / background-size 計算が不安定になる。
+        // モバイルは元コードと同じく、body 背景を使わず JSX 側の fixed レイヤーで固定表示する。
+        document.body.style.backgroundImage = 'none';
+        document.body.style.backgroundSize = '';
+        document.body.style.backgroundPosition = '';
+        document.body.style.backgroundRepeat = '';
+        document.body.style.backgroundAttachment = '';
       } else {
+        document.body.style.backgroundImage = safeBackgroundUrl;
         document.body.style.backgroundSize = 'cover';
+        document.body.style.backgroundPosition = 'center';
+        document.body.style.backgroundRepeat = 'no-repeat';
+        document.body.style.backgroundAttachment = 'fixed';
       }
     }
 
     return () => {
-      cancelled = true;
       document.body.style.backgroundImage = previous.backgroundImage;
       document.body.style.backgroundSize = previous.backgroundSize;
       document.body.style.backgroundPosition = previous.backgroundPosition;
       document.body.style.backgroundRepeat = previous.backgroundRepeat;
       document.body.style.backgroundAttachment = previous.backgroundAttachment;
     };
-  }, [timelineBackgroundUrl, isMobile, initialMobileBackgroundFrame.width, initialMobileBackgroundFrame.height]);
+  }, [timelineBackgroundUrl, isMobile]);
 
   useEffect(() => {
     if (!timelineBackgroundUrl) {
@@ -563,6 +543,27 @@ export default function Feed() {
           : ''
       }`}
     >
+      {hasTimelineBackground && isMobile && timelineBackgroundUrl && (
+        <div
+          className="pointer-events-none fixed left-0 top-0 z-0 overflow-hidden bg-background"
+          style={{
+            width: initialMobileBackgroundFrame.width ? `${initialMobileBackgroundFrame.width}px` : '100vw',
+            height: initialMobileBackgroundFrame.height ? `${initialMobileBackgroundFrame.height}px` : '100vh',
+          }}
+          aria-hidden="true"
+        >
+          <img
+            src={timelineBackgroundUrl}
+            alt=""
+            className="absolute left-0 top-0 h-full w-full object-cover"
+            style={{ objectPosition: 'center center' }}
+            draggable={false}
+          />
+          <div
+            className={`absolute inset-0 ${timelineTheme === 'dark' ? 'bg-black/8' : 'bg-white/0'}`}
+          />
+        </div>
+      )}
       {hasTimelineBackground && (
         <style>{`
           .timeline-theme-scope {
@@ -690,7 +691,7 @@ export default function Feed() {
       {/* 
         コンテナの gap はPC表示時に影響を与えないよう sm:gap-0 にリセットしています。
       */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between sm:gap-0 px-1">
+      <div className="relative z-[1] flex flex-col sm:flex-row sm:items-center sm:justify-between sm:gap-0 px-1">
         
         {/* 
           PC表示（sm以上）のときは横並びになり余白は不要なため、
@@ -745,7 +746,9 @@ export default function Feed() {
         </span>
       </div>
 
-      <PostComposer timelineGlass={hasTimelineBackground} />
+      <div className="relative z-[1]">
+        <PostComposer timelineGlass={hasTimelineBackground} />
+      </div>
 
       {/* 特別扱い：ヘッダー統合タブ */}
       <div
@@ -800,7 +803,7 @@ export default function Feed() {
         </div>
       </div>
 
-      <div className={hasTimelineBackground ? "space-y-0 pt-2 sm:space-y-4" : "space-y-4 pt-2"}>
+      <div className={hasTimelineBackground ? "relative z-[1] space-y-0 pt-2 sm:space-y-4" : "relative z-[1] space-y-4 pt-2"}>
         {isLoading && (
           <div className="space-y-4">
             <PostCardSkeleton />
