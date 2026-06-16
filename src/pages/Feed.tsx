@@ -58,19 +58,11 @@ export default function Feed() {
   const queryClient = useQueryClient();
   const isPWA = useIsPWA();
   const [isMobile, setIsMobile] = useState(false);
-  const [initialMobileBackgroundFrame] = useState(() => {
-    if (typeof window === 'undefined') {
-      return { width: 0, height: 0 };
-    }
-
-    return {
-      width: Math.ceil(window.innerWidth),
-      height: Math.ceil(window.innerHeight),
-    };
-  });
   const isPWAMobile = isPWA && isMobile;
 
   const touchStartYRef = useRef(0);
+  const horizontalTouchStartXRef = useRef(0);
+  const horizontalTouchStartYRef = useRef(0);
   const isPullingRef = useRef(false);
   const pullDistanceRef = useRef(0);
   const [pullDistance, setPullDistance] = useState(0);
@@ -136,24 +128,11 @@ export default function Feed() {
     };
 
     if (timelineBackgroundUrl) {
-      const safeBackgroundUrl = `url("${timelineBackgroundUrl}")`;
-
-      if (isMobile) {
-        // モバイルは body の background-size: cover / fixed に任せると、
-        // ブラウザのURLバーや viewport 計算の差で拡大され過ぎることがある。
-        // 画像自体の表示は JSX 側の固定レイヤーで行うため、ここでは body 背景を使わない。
-        document.body.style.backgroundImage = 'none';
-        document.body.style.backgroundSize = '';
-        document.body.style.backgroundPosition = '';
-        document.body.style.backgroundRepeat = '';
-        document.body.style.backgroundAttachment = '';
-      } else {
-        document.body.style.backgroundImage = safeBackgroundUrl;
-        document.body.style.backgroundSize = 'cover';
-        document.body.style.backgroundPosition = 'center';
-        document.body.style.backgroundRepeat = 'no-repeat';
-        document.body.style.backgroundAttachment = 'fixed';
-      }
+      document.body.style.backgroundImage = `url("${timelineBackgroundUrl}")`;
+      document.body.style.backgroundSize = 'cover';
+      document.body.style.backgroundPosition = 'center';
+      document.body.style.backgroundRepeat = 'no-repeat';
+      document.body.style.backgroundAttachment = 'fixed';
     }
 
     return () => {
@@ -163,7 +142,7 @@ export default function Feed() {
       document.body.style.backgroundRepeat = previous.backgroundRepeat;
       document.body.style.backgroundAttachment = previous.backgroundAttachment;
     };
-  }, [timelineBackgroundUrl, isMobile]);
+  }, [timelineBackgroundUrl]);
 
   useEffect(() => {
     if (!timelineBackgroundUrl) {
@@ -315,76 +294,102 @@ export default function Feed() {
   }, []);
 
 
-
   useEffect(() => {
-    if (!isPWA) return;
+    if (typeof window === 'undefined') return;
+
+    const root = document.documentElement;
+    const body = document.body;
 
     const previous = {
-      htmlOverflowX: document.documentElement.style.overflowX,
-      bodyOverflowX: document.body.style.overflowX,
-      htmlWidth: document.documentElement.style.width,
-      bodyWidth: document.body.style.width,
-      htmlMaxWidth: document.documentElement.style.maxWidth,
-      bodyMaxWidth: document.body.style.maxWidth,
-      htmlOverscrollBehaviorX: document.documentElement.style.overscrollBehaviorX,
-      bodyOverscrollBehaviorX: document.body.style.overscrollBehaviorX,
-      htmlTouchAction: document.documentElement.style.touchAction,
-      bodyTouchAction: document.body.style.touchAction,
+      rootOverflowX: root.style.overflowX,
+      bodyOverflowX: body.style.overflowX,
+      rootMaxWidth: root.style.maxWidth,
+      bodyMaxWidth: body.style.maxWidth,
+      rootOverscrollBehaviorX: root.style.overscrollBehaviorX,
+      bodyOverscrollBehaviorX: body.style.overscrollBehaviorX,
+      bodyWidth: body.style.width,
     };
 
-    const clipValue = CSS.supports?.('overflow-x', 'clip') ? 'clip' : 'hidden';
+    // 別ページ遷移や古いピッカー処理で body overflow:hidden が残ると、ホーム復帰後に縦スクロールできなくなる。
+    // Feed 表示時点ではモーダルを開いていないので、縦方向のスクロールロックだけ明示的に解除する。
+    if (root.style.overflow === 'hidden') root.style.overflow = '';
+    if (body.style.overflow === 'hidden') body.style.overflow = '';
+    if (root.style.overflowY === 'hidden') root.style.overflowY = '';
+    if (body.style.overflowY === 'hidden') body.style.overflowY = '';
 
-    /*
-      PWAでは横方向スワイプを「判定して止める」方式だと、斜めスワイプや
-      iOSのラバーバンドで横に動けてしまう。
+    // タブ追従は元コード通り sticky top-0 のまま維持する。
+    // 横スクロール対策は Feed 本体やタブ親には overflow を付けず、html/body の X 軸だけを封じる。
+    root.style.overflowX = 'clip';
+    body.style.overflowX = 'clip';
+    root.style.maxWidth = '100%';
+    body.style.maxWidth = '100%';
+    body.style.width = '100%';
+    root.style.overscrollBehaviorX = 'none';
+    body.style.overscrollBehaviorX = 'none';
 
-      ただし Feed の親要素に overflow-x-hidden を付けると sticky タブが死ぬ。
-      そのため、Feed 内部には overflow を掛けず、html/body だけを横方向に固定する。
-      touch-action: pan-y は縦スクロールを許可したまま横パンをブラウザ側で禁止する。
-    */
-    document.documentElement.style.overflowX = clipValue;
-    document.body.style.overflowX = clipValue;
-    document.documentElement.style.width = '100%';
-    document.body.style.width = '100%';
-    document.documentElement.style.maxWidth = '100vw';
-    document.body.style.maxWidth = '100vw';
-    document.documentElement.style.overscrollBehaviorX = 'none';
-    document.body.style.overscrollBehaviorX = 'none';
-    document.documentElement.style.touchAction = 'pan-y pinch-zoom';
-    document.body.style.touchAction = 'pan-y pinch-zoom';
+    const forceScrollXToZero = () => {
+      const x = window.scrollX || root.scrollLeft || body.scrollLeft;
+      if (x === 0) return;
 
-    const style = document.createElement('style');
-    style.setAttribute('data-limenote-pwa-no-horizontal-scroll', 'true');
-    style.textContent = `
-      html,
-      body {
-        overflow-x: ${clipValue} !important;
-        width: 100% !important;
-        max-width: 100vw !important;
-        overscroll-behavior-x: none !important;
-        touch-action: pan-y pinch-zoom !important;
+      root.scrollLeft = 0;
+      body.scrollLeft = 0;
+      window.scrollTo(0, window.scrollY);
+    };
+
+    const handleHorizontalTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 1) return;
+      horizontalTouchStartXRef.current = event.touches[0].clientX;
+      horizontalTouchStartYRef.current = event.touches[0].clientY;
+    };
+
+    const handleHorizontalTouchMove = (event: TouchEvent) => {
+      if (event.touches.length !== 1) return;
+
+      const currentX = event.touches[0].clientX;
+      const currentY = event.touches[0].clientY;
+      const diffX = currentX - horizontalTouchStartXRef.current;
+      const diffY = currentY - horizontalTouchStartYRef.current;
+      const absX = Math.abs(diffX);
+      const absY = Math.abs(diffY);
+
+      // 前回の 0.35 判定は縦スクロール中のわずかな斜め入力まで止めていた。
+      // ここでは横方向が明確な操作だけ止め、縦スクロールは必ず通す。
+      if (absX > 12 && absX > absY * 1.25) {
+        event.preventDefault();
+        forceScrollXToZero();
       }
+    };
 
-      body {
-        position: relative !important;
-      }
-    `;
-    document.head.appendChild(style);
+    const handleTouchEnd = () => {
+      forceScrollXToZero();
+    };
+
+    window.addEventListener('scroll', forceScrollXToZero, { passive: true });
+    window.addEventListener('resize', forceScrollXToZero);
+    window.addEventListener('orientationchange', forceScrollXToZero);
+    window.addEventListener('touchstart', handleHorizontalTouchStart, { passive: true });
+    window.addEventListener('touchmove', handleHorizontalTouchMove, { passive: false });
+    window.addEventListener('touchend', handleTouchEnd, { passive: true });
+
+    forceScrollXToZero();
 
     return () => {
-      document.documentElement.style.overflowX = previous.htmlOverflowX;
-      document.body.style.overflowX = previous.bodyOverflowX;
-      document.documentElement.style.width = previous.htmlWidth;
-      document.body.style.width = previous.bodyWidth;
-      document.documentElement.style.maxWidth = previous.htmlMaxWidth;
-      document.body.style.maxWidth = previous.bodyMaxWidth;
-      document.documentElement.style.overscrollBehaviorX = previous.htmlOverscrollBehaviorX;
-      document.body.style.overscrollBehaviorX = previous.bodyOverscrollBehaviorX;
-      document.documentElement.style.touchAction = previous.htmlTouchAction;
-      document.body.style.touchAction = previous.bodyTouchAction;
-      style.remove();
+      root.style.overflowX = previous.rootOverflowX;
+      body.style.overflowX = previous.bodyOverflowX;
+      root.style.maxWidth = previous.rootMaxWidth;
+      body.style.maxWidth = previous.bodyMaxWidth;
+      root.style.overscrollBehaviorX = previous.rootOverscrollBehaviorX;
+      body.style.overscrollBehaviorX = previous.bodyOverscrollBehaviorX;
+      body.style.width = previous.bodyWidth;
+
+      window.removeEventListener('scroll', forceScrollXToZero);
+      window.removeEventListener('resize', forceScrollXToZero);
+      window.removeEventListener('orientationchange', forceScrollXToZero);
+      window.removeEventListener('touchstart', handleHorizontalTouchStart);
+      window.removeEventListener('touchmove', handleHorizontalTouchMove);
+      window.removeEventListener('touchend', handleTouchEnd);
     };
-  }, [isPWA]);
+  }, []);
 
   useEffect(() => {
     if (!isPWAMobile) {
@@ -508,7 +513,7 @@ export default function Feed() {
 
   return (
     <div
-      className={`relative isolate max-w-full min-w-0 space-y-5 ${
+      className={`space-y-5 ${
         hasTimelineBackground
           ? timelineTheme === 'dark'
             ? 'pt-4 sm:pt-6 timeline-theme-scope timeline-theme-dark'
@@ -516,27 +521,6 @@ export default function Feed() {
           : ''
       }`}
     >
-      {hasTimelineBackground && isMobile && timelineBackgroundUrl && (
-        <div
-          className="pointer-events-none fixed left-0 top-0 -z-10 overflow-hidden bg-background"
-          style={{
-            width: initialMobileBackgroundFrame.width ? `${initialMobileBackgroundFrame.width}px` : '100vw',
-            height: initialMobileBackgroundFrame.height ? `${initialMobileBackgroundFrame.height}px` : '100vh',
-          }}
-          aria-hidden="true"
-        >
-          <img
-            src={timelineBackgroundUrl}
-            alt=""
-            className="absolute left-0 top-0 h-full w-full object-cover"
-            style={{ objectPosition: 'center center' }}
-            draggable={false}
-          />
-          <div
-            className={`absolute inset-0 ${timelineTheme === 'dark' ? 'bg-black/8' : 'bg-white/0'}`}
-          />
-        </div>
-      )}
       {hasTimelineBackground && (
         <style>{`
           .timeline-theme-scope {
@@ -706,7 +690,7 @@ export default function Feed() {
             {/* スマホ専用の LimeNoteBeta ボックス */}
             <span className="ribbon-tag sm:hidden">
               <Sparkles className="h-3 w-3" />
-              LimeNoteBeta 1.7
+              LimeNoteBeta 1.6
             </span>
           </div>
 
@@ -715,7 +699,7 @@ export default function Feed() {
         {/* PC専用の LimeNoteBeta ボックス */}
         <span className="ribbon-tag hidden sm:inline-flex">
           <Sparkles className="h-3 w-3" />
-          LimeNoteBeta 1.7
+          LimeNoteBeta 1.6
         </span>
       </div>
 

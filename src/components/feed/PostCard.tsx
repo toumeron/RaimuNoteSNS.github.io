@@ -204,15 +204,18 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
     };
   }, [timelineGlass]);
 
-  // ポップアップ表示時または画像拡大時に背後のスクロールを完全に禁止にする
+  // 画像拡大時だけ背後のスクロールを固定する。
+  // リアクションピッカー表示時まで body overflow を触ると、sticky/fixed ヘッダーまで巻き込まれて消える環境がある。
   useEffect(() => {
-    if (selectedImageUrl || showPicker) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = 'unset';
-    }
-    return () => { document.body.style.overflow = 'unset'; };
-  }, [selectedImageUrl, showPicker]);
+    if (!selectedImageUrl) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [selectedImageUrl]);
 
   // もっと見るメニューは、カード内外どこを押してもメニュー外なら閉じる。
   // overlay が stacking context に巻き込まれて効かないケースを避けるため、document 側でも拾う。
@@ -267,6 +270,7 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
   }, [showMenu]);
 
   // リアクション追加パネルも、パネル外を押したら確実に閉じる。
+  // overlay を被せず document 側で拾うことで、ヘッダーを隠さない。
   useEffect(() => {
     if (!showPicker) return;
 
@@ -281,7 +285,7 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
       setShowPicker(false);
       window.setTimeout(() => {
         ignoreNextCardClickRef.current = false;
-      }, 0);
+      }, 140);
     };
 
     document.addEventListener('pointerdown', handlePointerDown, true);
@@ -1374,25 +1378,6 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
 
                 {showPicker && isMobile && typeof document !== 'undefined' && createPortal(
                   <>
-                    {/* 背景レイヤー：通常表示時と同じく、パネル外タップで閉じる */}
-                    <div
-                      className="fixed inset-0 bg-transparent"
-                      style={{ zIndex: 2147483646 }}
-                      onPointerDown={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        ignoreNextCardClickRef.current = true;
-                        setShowPicker(false);
-                        window.setTimeout(() => {
-                          ignoreNextCardClickRef.current = false;
-                        }, 0);
-                      }}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                      }}
-                    />
-
                     {/* スマホでは body 直下へ出す。backdrop-filter/transform の親に固定配置を壊されないようにする */}
                     <div 
                       ref={pickerPanelRef}
@@ -1470,24 +1455,6 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
 
                 {showPicker && !isMobile && (
                   <>
-                    {/* 背景レイヤー：他の要素へのタップや背景スクロールを物理カット */}
-                    <div
-                      className="fixed inset-0 bg-transparent z-[100000]"
-                      onPointerDown={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        ignoreNextCardClickRef.current = true;
-                        setShowPicker(false);
-                        window.setTimeout(() => {
-                          ignoreNextCardClickRef.current = false;
-                        }, 0);
-                      }}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                      }}
-                    />
-                    
                     {/* =========================================================================
                        【PC専用ポップアップ：バー全体をスクロール対応化・縦幅 h-[280px]】
                        ========================================================================= */}
