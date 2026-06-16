@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, MessageCircle, X, Plus } from 'lucide-react'; // Plusを追加
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -56,12 +57,52 @@ interface ReplicatedDot {
   delay: number;
 }
 
+function getRelativeLuminance(r: number, g: number, b: number) {
+  const [rs, gs, bs] = [r, g, b].map((value) => {
+    const v = value / 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  });
+
+  return 0.2126 * rs + 0.7152 * gs + 0.0722 * bs;
+}
+
+function getTimelineThemeFromImageStats({
+  averageLuminance,
+  medianLuminance,
+  lowerQuartileLuminance,
+  brightRatio,
+  darkRatio,
+  veryDarkRatio,
+}: {
+  averageLuminance: number;
+  medianLuminance: number;
+  lowerQuartileLuminance: number;
+  brightRatio: number;
+  darkRatio: number;
+  veryDarkRatio: number;
+}): 'light' | 'dark' {
+  const clearlyLightBackground =
+    lowerQuartileLuminance >= 0.58 ||
+    (medianLuminance >= 0.70 && darkRatio <= 0.18) ||
+    (averageLuminance >= 0.68 && brightRatio >= 0.50 && darkRatio <= 0.24 && veryDarkRatio <= 0.08);
+
+  return clearlyLightBackground ? 'light' : 'dark';
+}
+
 export default function PostDetail() {
   const { id = '' } = useParams();
   const { data, isLoading, isError } = usePost(id);
   const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null); // 拡大用
   const [failedUrls, setFailedUrls] = useState<string[]>([]); // 読み込み失敗URL管理
   const navigate = useNavigate();
+  const [timelineBackgroundUrl, setTimelineBackgroundUrl] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return localStorage.getItem('lime_timeline_background_url') || null;
+  });
+  const [timelineTheme, setTimelineTheme] = useState<'light' | 'dark'>(() => {
+    if (typeof window === 'undefined') return 'dark';
+    return localStorage.getItem('lime_timeline_visual_theme') === 'light' ? 'light' : 'dark';
+  });
 
   // --- カスタム絵文字・リアクション用ステート群 ---
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -75,12 +116,23 @@ export default function PostDetail() {
   
   // スマホ・PC判定用
   const [isMobile, setIsMobile] = useState(false);
+  const [initialMobileBackgroundFrame] = useState(() => {
+    if (typeof window === 'undefined') {
+      return { width: 0, height: 0 };
+    }
+
+    return {
+      width: Math.ceil(window.innerWidth),
+      height: Math.ceil(window.innerHeight),
+    };
+  });
 
   // --- 画像再現エフェクト用のステート ---
   const [activeRings, setActiveRings] = useState<ReplicatedRing[]>([]);
   const [activeDots, setActiveDots] = useState<ReplicatedDot[]>([]);
 
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const pickerPanelRef = useRef<HTMLDivElement>(null);
   let longPressTimer: NodeJS.Timeout;
 
   const defaultEmojis = ['👍', '❤️', '😆', '🤔', '😮', '🎉', '💢', '😢', '😇', '🍮'];
@@ -103,15 +155,299 @@ export default function PostDetail() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // モーダル表示時およびピッカー表示時にスクロールを固定
+
   useEffect(() => {
-    if (selectedImageUrl || showPicker) {
+    let cancelled = false;
+
+    const applyLocalBackground = () => {
+      const storedUrl = localStorage.getItem('lime_timeline_background_url');
+      const storedTheme = localStorage.getItem('lime_timeline_visual_theme');
+
+      setTimelineBackgroundUrl(storedUrl || null);
+      if (storedTheme === 'light' || storedTheme === 'dark') {
+        setTimelineTheme(storedTheme);
+      }
+    };
+
+    const fetchTimelineBackground = async () => {
+      try {
+        const { data: authData, error: authError } = await supabase.auth.getUser();
+        if (authError) throw authError;
+
+        const currentUser = authData.user;
+        if (!currentUser) {
+          if (!cancelled) applyLocalBackground();
+          return;
+        }
+
+        const { data: profile, error } = await supabase
+          .from('profiles')
+          .select('timeline_background_url')
+          .eq('id', currentUser.id)
+          .maybeSingle();
+
+        if (error) throw error;
+
+        if (!cancelled) {
+          const url = (profile?.timeline_background_url as string | null) ?? null;
+          setTimelineBackgroundUrl(url);
+
+          if (url) {
+            localStorage.setItem('lime_timeline_background_url', url);
+          } else {
+            localStorage.removeItem('lime_timeline_background_url');
+          }
+        }
+      } catch (err) {
+        console.error('Fetch post detail timeline background error:', err);
+        if (!cancelled) applyLocalBackground();
+      }
+    };
+
+    const handleBackgroundChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ url?: string }>).detail;
+      setTimelineBackgroundUrl(detail?.url || null);
+    };
+
+    const handleVisualThemeChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        theme?: 'light' | 'dark';
+        hasTimelineBackground?: boolean;
+        url?: string;
+      }>).detail;
+
+      if (detail?.theme === 'light' || detail?.theme === 'dark') {
+        setTimelineTheme(detail.theme);
+      }
+
+      if (typeof detail?.hasTimelineBackground === 'boolean') {
+        setTimelineBackgroundUrl(detail.hasTimelineBackground ? detail.url || localStorage.getItem('lime_timeline_background_url') : null);
+      }
+    };
+
+    fetchTimelineBackground();
+
+    window.addEventListener('timeline-background-changed', handleBackgroundChanged as EventListener);
+    window.addEventListener('timeline-visual-theme-changed', handleVisualThemeChanged as EventListener);
+
+    let backgroundChannel: BroadcastChannel | null = null;
+    let visualThemeChannel: BroadcastChannel | null = null;
+
+    if ('BroadcastChannel' in window) {
+      backgroundChannel = new BroadcastChannel('timeline-background');
+      backgroundChannel.onmessage = (event) => {
+        setTimelineBackgroundUrl(event.data?.url || null);
+      };
+
+      visualThemeChannel = new BroadcastChannel('timeline-visual-theme');
+      visualThemeChannel.onmessage = (event) => {
+        if (event.data?.theme === 'light' || event.data?.theme === 'dark') {
+          setTimelineTheme(event.data.theme);
+        }
+        if (typeof event.data?.hasTimelineBackground === 'boolean') {
+          setTimelineBackgroundUrl(event.data.hasTimelineBackground ? event.data.url || localStorage.getItem('lime_timeline_background_url') : null);
+        }
+      };
+    }
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener('timeline-background-changed', handleBackgroundChanged as EventListener);
+      window.removeEventListener('timeline-visual-theme-changed', handleVisualThemeChanged as EventListener);
+      backgroundChannel?.close();
+      visualThemeChannel?.close();
+    };
+  }, []);
+
+  useEffect(() => {
+    const previous = {
+      backgroundImage: document.body.style.backgroundImage,
+      backgroundSize: document.body.style.backgroundSize,
+      backgroundPosition: document.body.style.backgroundPosition,
+      backgroundRepeat: document.body.style.backgroundRepeat,
+      backgroundAttachment: document.body.style.backgroundAttachment,
+    };
+
+    if (timelineBackgroundUrl) {
+      const safeBackgroundUrl = `url("${timelineBackgroundUrl}")`;
+
+      if (isMobile) {
+        // iPhone / モバイルでは body background fixed が不安定なので、JSX 側の fixed レイヤーで表示する。
+        document.body.style.backgroundImage = 'none';
+        document.body.style.backgroundSize = '';
+        document.body.style.backgroundPosition = '';
+        document.body.style.backgroundRepeat = '';
+        document.body.style.backgroundAttachment = '';
+      } else {
+        document.body.style.backgroundImage = safeBackgroundUrl;
+        document.body.style.backgroundSize = 'cover';
+        document.body.style.backgroundPosition = 'center';
+        document.body.style.backgroundRepeat = 'no-repeat';
+        document.body.style.backgroundAttachment = 'fixed';
+      }
+    }
+
+    return () => {
+      document.body.style.backgroundImage = previous.backgroundImage;
+      document.body.style.backgroundSize = previous.backgroundSize;
+      document.body.style.backgroundPosition = previous.backgroundPosition;
+      document.body.style.backgroundRepeat = previous.backgroundRepeat;
+      document.body.style.backgroundAttachment = previous.backgroundAttachment;
+    };
+  }, [timelineBackgroundUrl, isMobile]);
+
+  useEffect(() => {
+    if (!timelineBackgroundUrl) {
+      setTimelineTheme('dark');
+      return;
+    }
+
+    let cancelled = false;
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = timelineBackgroundUrl;
+
+    img.onload = () => {
+      if (cancelled || !img.naturalWidth || !img.naturalHeight) return;
+
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) {
+        setTimelineTheme('dark');
+        return;
+      }
+
+      canvas.width = 48;
+      canvas.height = 48;
+
+      try {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+        const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+        const luminances: number[] = [];
+        let luminanceSum = 0;
+        let count = 0;
+        let brightPixels = 0;
+        let darkPixels = 0;
+        let veryDarkPixels = 0;
+
+        for (let i = 0; i < data.length; i += 4) {
+          const alpha = data[i + 3] / 255;
+          if (alpha < 0.1) continue;
+
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
+          const lum = getRelativeLuminance(r, g, b);
+
+          luminances.push(lum);
+          luminanceSum += lum;
+          count += 1;
+
+          if (lum >= 0.68) brightPixels += 1;
+          if (lum <= 0.30) darkPixels += 1;
+          if (lum <= 0.16) veryDarkPixels += 1;
+        }
+
+        if (!cancelled) {
+          luminances.sort((a, b) => a - b);
+
+          const pick = (ratio: number) => {
+            if (luminances.length === 0) return 0.5;
+            const index = Math.min(luminances.length - 1, Math.max(0, Math.floor((luminances.length - 1) * ratio)));
+            return luminances[index];
+          };
+
+          const averageLuminance = count > 0 ? luminanceSum / count : 0.5;
+          const medianLuminance = pick(0.5);
+          const lowerQuartileLuminance = pick(0.25);
+          const brightRatio = count > 0 ? brightPixels / count : 0;
+          const darkRatio = count > 0 ? darkPixels / count : 0;
+          const veryDarkRatio = count > 0 ? veryDarkPixels / count : 0;
+
+          setTimelineTheme(
+            getTimelineThemeFromImageStats({
+              averageLuminance,
+              medianLuminance,
+              lowerQuartileLuminance,
+              brightRatio,
+              darkRatio,
+              veryDarkRatio,
+            })
+          );
+        }
+      } catch (error) {
+        console.warn('Post detail luminance sampling failed:', error);
+        if (!cancelled) setTimelineTheme('dark');
+      }
+    };
+
+    img.onerror = () => {
+      if (!cancelled) setTimelineTheme('dark');
+    };
+
+    return () => {
+      cancelled = true;
+    };
+  }, [timelineBackgroundUrl]);
+
+  useEffect(() => {
+    const hasBackground = Boolean(timelineBackgroundUrl);
+    const payload = {
+      theme: timelineTheme,
+      hasTimelineBackground: hasBackground,
+      url: timelineBackgroundUrl ?? '',
+    };
+
+    localStorage.setItem('lime_timeline_visual_theme', timelineTheme);
+    localStorage.setItem('lime_timeline_background_enabled', String(hasBackground));
+
+    if (timelineBackgroundUrl) {
+      localStorage.setItem('lime_timeline_background_url', timelineBackgroundUrl);
+    } else {
+      localStorage.removeItem('lime_timeline_background_url');
+    }
+
+    window.dispatchEvent(
+      new CustomEvent('timeline-visual-theme-changed', {
+        detail: payload,
+      })
+    );
+
+    if ('BroadcastChannel' in window) {
+      const channel = new BroadcastChannel('timeline-visual-theme');
+      channel.postMessage(payload);
+      channel.close();
+    }
+  }, [timelineBackgroundUrl, timelineTheme]);
+
+  // 背景ありの投稿詳細画面では、body直下に出るHoverCard等にもテーマを渡す。
+  useEffect(() => {
+    const hasBackground = Boolean(timelineBackgroundUrl);
+
+    document.body.classList.toggle('post-detail-timeline-bg-active', hasBackground);
+    document.body.classList.toggle('post-detail-timeline-bg-dark', hasBackground && timelineTheme === 'dark');
+    document.body.classList.toggle('post-detail-timeline-bg-light', hasBackground && timelineTheme === 'light');
+
+    return () => {
+      document.body.classList.remove(
+        'post-detail-timeline-bg-active',
+        'post-detail-timeline-bg-dark',
+        'post-detail-timeline-bg-light'
+      );
+    };
+  }, [timelineBackgroundUrl, timelineTheme]);
+
+  // 画像拡大時だけスクロールを固定する。
+  // 絵文字ピッカーで body overflow を触ると、Header / Dropdown が巻き込まれて消えることがあるため触らない。
+  useEffect(() => {
+    if (selectedImageUrl) {
       document.body.style.overflow = 'hidden';
     } else {
       document.body.style.overflow = 'unset';
     }
     return () => { document.body.style.overflow = 'unset'; };
-  }, [selectedImageUrl, showPicker]);
+  }, [selectedImageUrl]);
 
   // リアクションとカスタム絵文字のデータ取得
   useEffect(() => {
@@ -449,8 +785,40 @@ export default function PostDetail() {
         .trim()
     : data?.content;
 
+  const hasTimelineBackground = Boolean(timelineBackgroundUrl);
+
   return (
-    <div className="space-y-5">
+    <>
+      {hasTimelineBackground && isMobile && timelineBackgroundUrl && (
+        <div
+          className="post-detail-mobile-background-layer pointer-events-none fixed left-0 top-0 z-0 overflow-hidden bg-background"
+          style={{
+            width: initialMobileBackgroundFrame.width ? `${initialMobileBackgroundFrame.width}px` : '100vw',
+            height: initialMobileBackgroundFrame.height ? `${initialMobileBackgroundFrame.height}px` : '100vh',
+          }}
+          aria-hidden="true"
+        >
+          <img
+            src={timelineBackgroundUrl}
+            alt=""
+            className="absolute left-0 top-0 h-full w-full object-cover"
+            style={{ objectPosition: 'center center' }}
+            draggable={false}
+          />
+          <div
+            className={`absolute inset-0 ${timelineTheme === 'dark' ? 'bg-black/8' : 'bg-white/0'}`}
+          />
+        </div>
+      )}
+      <div
+        className={`relative z-[1] space-y-5 ${
+          hasTimelineBackground
+            ? timelineTheme === 'dark'
+              ? 'pt-4 sm:pt-6 timeline-theme-scope timeline-theme-dark post-detail-background-mode'
+              : 'pt-4 sm:pt-6 timeline-theme-scope timeline-theme-light post-detail-background-mode'
+            : ''
+        }`}
+      >
       <style>{`
         @keyframes misskeyRingExpand {
           0% {
@@ -525,6 +893,377 @@ export default function PostDetail() {
         .animate-zoom-in-pc {
           animation: zoomInPc 160ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
         }
+
+        .post-detail-mobile-background-layer { max-width: 100vw !important; }
+
+        .timeline-theme-scope { color: hsl(var(--foreground)); }
+
+        .timeline-theme-dark {
+          --background: 222 47% 7%;
+          --foreground: 210 40% 98%;
+          --card: 222 36% 8%;
+          --card-foreground: 210 40% 98%;
+          --popover: 222 36% 9%;
+          --popover-foreground: 210 40% 98%;
+          --muted: 217 28% 17%;
+          --muted-foreground: 215 24% 82%;
+          --border: 217 18% 28%;
+          --timeline-link: 330 96% 66%;
+        }
+
+        .timeline-theme-light {
+          --background: 0 0% 100%;
+          --foreground: 24 12% 11%;
+          --card: 0 0% 100%;
+          --card-foreground: 24 12% 11%;
+          --popover: 0 0% 100%;
+          --popover-foreground: 24 12% 11%;
+          --muted: 24 16% 92%;
+          --muted-foreground: 24 8% 42%;
+          --border: 24 10% 82%;
+          --timeline-link: 330 88% 48%;
+        }
+
+        .post-detail-background-mode .text-pink-500 { color: hsl(var(--timeline-link)) !important; }
+
+        .post-detail-glass-card,
+        .post-detail-glass-section {
+          color: hsl(var(--foreground));
+          -webkit-backdrop-filter: blur(24px) saturate(165%);
+          backdrop-filter: blur(24px) saturate(165%);
+          box-shadow: none !important;
+        }
+
+        .timeline-theme-dark .post-detail-glass-card,
+        .timeline-theme-dark .post-detail-glass-section {
+          background: linear-gradient(135deg, rgba(12, 16, 28, 0.72), rgba(34, 24, 32, 0.66)) !important;
+          border-color: rgba(255, 255, 255, 0.045) !important;
+          color: rgba(255, 255, 255, 0.96) !important;
+        }
+
+        .timeline-theme-light .post-detail-glass-card,
+        .timeline-theme-light .post-detail-glass-section {
+          background: linear-gradient(135deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.54)) !important;
+          border-color: rgba(40, 30, 25, 0.045) !important;
+          color: rgba(24, 22, 20, 0.96) !important;
+        }
+
+        .post-detail-back-button {
+          border: 1px solid hsl(var(--border) / 0.08);
+          -webkit-backdrop-filter: blur(20px) saturate(160%);
+          backdrop-filter: blur(20px) saturate(160%);
+        }
+
+        .timeline-theme-dark .post-detail-back-button {
+          background: rgba(12, 16, 28, 0.62) !important;
+          color: rgba(255, 255, 255, 0.90) !important;
+          border-color: rgba(255, 255, 255, 0.06) !important;
+        }
+
+        .timeline-theme-light .post-detail-back-button {
+          background: rgba(255, 255, 255, 0.62) !important;
+          color: rgba(24, 22, 20, 0.84) !important;
+          border-color: rgba(24, 22, 20, 0.06) !important;
+        }
+
+        .post-detail-background-mode .text-foreground,
+        .post-detail-background-mode p {
+          color: hsl(var(--foreground) / 0.96) !important;
+          text-shadow: none !important;
+        }
+
+        .post-detail-background-mode .text-muted-foreground,
+        .post-detail-background-mode [class*="text-muted-foreground"] {
+          color: hsl(var(--muted-foreground) / 0.90) !important;
+          text-shadow: none !important;
+        }
+
+        .timeline-theme-dark .post-detail-picker-panel {
+          background: rgba(18, 21, 30, 0.96) !important;
+          color: rgba(255, 255, 255, 0.96) !important;
+          border-color: rgba(255, 255, 255, 0.10) !important;
+        }
+
+        .timeline-theme-light .post-detail-picker-panel {
+          background: rgba(255, 255, 255, 0.96) !important;
+          color: rgba(24, 22, 20, 0.96) !important;
+          border-color: rgba(24, 22, 20, 0.10) !important;
+        }
+
+        /*
+          背景あり時のコメント周り専用。
+          CommentForm / CommentList 側が元々カード枠を持っているので、
+          PostDetail 側でさらに大きな枠を重ねない。
+        */
+        .post-detail-comment-form-shell {
+          color: hsl(var(--foreground));
+        }
+
+        .post-detail-comment-form-shell > * {
+          -webkit-backdrop-filter: blur(24px) saturate(165%);
+          backdrop-filter: blur(24px) saturate(165%);
+          box-shadow: none !important;
+        }
+
+        .timeline-theme-dark .post-detail-comment-form-shell > * {
+          background: linear-gradient(135deg, rgba(12, 16, 28, 0.72), rgba(34, 24, 32, 0.66)) !important;
+          border-color: rgba(255, 255, 255, 0.045) !important;
+          color: rgba(255, 255, 255, 0.96) !important;
+        }
+
+        .timeline-theme-light .post-detail-comment-form-shell > * {
+          background: linear-gradient(135deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.54)) !important;
+          border-color: rgba(40, 30, 25, 0.045) !important;
+          color: rgba(24, 22, 20, 0.96) !important;
+        }
+
+        .post-detail-comments-shell {
+          color: hsl(var(--foreground));
+        }
+
+        /*
+          背景あり時は、コメント一覧の外側にはカード枠を作らない。
+          CommentList / 空状態 / 各コメントが持つ既存カードだけをテーマに合わせて薄いガラスにする。
+        */
+        .post-detail-comments-shell [class*="rounded-3xl"][class*="border"],
+        .post-detail-comments-shell [class*="rounded-2xl"][class*="border"],
+        .post-detail-comments-shell [class*="rounded-xl"][class*="border"] {
+          -webkit-backdrop-filter: blur(22px) saturate(160%);
+          backdrop-filter: blur(22px) saturate(160%);
+          box-shadow: none !important;
+        }
+
+        .timeline-theme-dark .post-detail-comments-shell [class*="rounded-3xl"][class*="border"],
+        .timeline-theme-dark .post-detail-comments-shell [class*="rounded-2xl"][class*="border"],
+        .timeline-theme-dark .post-detail-comments-shell [class*="rounded-xl"][class*="border"] {
+          background: rgba(5, 8, 16, 0.46) !important;
+          border-color: rgba(255, 255, 255, 0.050) !important;
+          color: rgba(255, 255, 255, 0.96) !important;
+        }
+
+        .timeline-theme-light .post-detail-comments-shell [class*="rounded-3xl"][class*="border"],
+        .timeline-theme-light .post-detail-comments-shell [class*="rounded-2xl"][class*="border"],
+        .timeline-theme-light .post-detail-comments-shell [class*="rounded-xl"][class*="border"] {
+          background: rgba(255, 255, 255, 0.50) !important;
+          border-color: rgba(24, 22, 20, 0.055) !important;
+          color: rgba(24, 22, 20, 0.96) !important;
+        }
+
+        /*
+          CommentForm / CommentList 内の bg-card, bg-muted, border-border, dark:* は
+          Feed側のタイムラインテーマ判定に従わせる。
+        */
+        .post-detail-background-mode .bg-card,
+        .post-detail-background-mode [class*="bg-card"] {
+          background-color: hsl(var(--card) / 0.48) !important;
+        }
+
+        .post-detail-background-mode .bg-muted,
+        .post-detail-background-mode [class*="bg-muted"] {
+          background-color: hsl(var(--muted) / 0.34) !important;
+        }
+
+        .post-detail-background-mode .border-border,
+        .post-detail-background-mode [class*="border-border"] {
+          border-color: hsl(var(--border) / 0.075) !important;
+        }
+
+        .timeline-theme-dark.post-detail-background-mode .border-t,
+        .timeline-theme-dark.post-detail-background-mode [class*="border-t"] {
+          border-color: rgba(255, 255, 255, 0.065) !important;
+        }
+
+        .timeline-theme-light.post-detail-background-mode .border-t,
+        .timeline-theme-light.post-detail-background-mode [class*="border-t"] {
+          border-color: rgba(24, 22, 20, 0.065) !important;
+        }
+
+        .timeline-theme-dark.post-detail-background-mode input,
+        .timeline-theme-dark.post-detail-background-mode textarea {
+          background: rgba(5, 8, 16, 0.46) !important;
+          color: rgba(255, 255, 255, 0.96) !important;
+          border-color: rgba(255, 255, 255, 0.070) !important;
+        }
+
+        .timeline-theme-light.post-detail-background-mode input,
+        .timeline-theme-light.post-detail-background-mode textarea {
+          background: rgba(255, 255, 255, 0.56) !important;
+          color: rgba(24, 22, 20, 0.96) !important;
+          border-color: rgba(24, 22, 20, 0.075) !important;
+        }
+
+        .timeline-theme-dark.post-detail-background-mode input::placeholder,
+        .timeline-theme-dark.post-detail-background-mode textarea::placeholder {
+          color: rgba(226, 232, 240, 0.58) !important;
+        }
+
+        .timeline-theme-light.post-detail-background-mode input::placeholder,
+        .timeline-theme-light.post-detail-background-mode textarea::placeholder {
+          color: rgba(86, 74, 66, 0.54) !important;
+        }
+
+
+        /*
+          モバイル背景あり時のコメント欄だけ、一枚の背景を持たせる。
+          投稿本体の透明度は前のまま維持し、CommentForm / CommentList の内側背景が
+          透明になっても、外側の一枚で読めるようにする。
+        */
+        @media (max-width: 639px) {
+          .post-detail-background-mode .post-detail-comment-form-shell,
+          .post-detail-background-mode .post-detail-comments-shell {
+            position: relative;
+            border-radius: 28px;
+            border: 1px solid hsl(var(--border) / 0.065);
+            padding: 16px;
+            color: hsl(var(--foreground));
+            -webkit-backdrop-filter: blur(24px) saturate(165%);
+            backdrop-filter: blur(24px) saturate(165%);
+            box-shadow: none !important;
+          }
+
+          .timeline-theme-dark.post-detail-background-mode .post-detail-comment-form-shell,
+          .timeline-theme-dark.post-detail-background-mode .post-detail-comments-shell {
+            background: linear-gradient(135deg, rgba(12, 16, 28, 0.72), rgba(34, 24, 32, 0.66)) !important;
+            border-color: rgba(255, 255, 255, 0.045) !important;
+          }
+
+          .timeline-theme-light.post-detail-background-mode .post-detail-comment-form-shell,
+          .timeline-theme-light.post-detail-background-mode .post-detail-comments-shell {
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.54)) !important;
+            border-color: rgba(40, 30, 25, 0.045) !important;
+          }
+
+          .post-detail-background-mode .post-detail-comment-form-shell > *,
+          .post-detail-background-mode .post-detail-comments-shell > [class*="rounded-3xl"][class*="border"],
+          .post-detail-background-mode .post-detail-comments-shell > [class*="rounded-2xl"][class*="border"],
+          .post-detail-background-mode .post-detail-comments-shell > [class*="rounded-xl"][class*="border"] {
+            background: transparent !important;
+            border-color: transparent !important;
+            box-shadow: none !important;
+            -webkit-backdrop-filter: none !important;
+            backdrop-filter: none !important;
+          }
+
+          .post-detail-background-mode .post-detail-comment-form-shell input,
+          .post-detail-background-mode .post-detail-comment-form-shell textarea,
+          .post-detail-background-mode .post-detail-comments-shell input,
+          .post-detail-background-mode .post-detail-comments-shell textarea {
+            -webkit-backdrop-filter: blur(18px) saturate(150%) !important;
+            backdrop-filter: blur(18px) saturate(150%) !important;
+          }
+
+          .timeline-theme-dark.post-detail-background-mode .post-detail-comment-form-shell input,
+          .timeline-theme-dark.post-detail-background-mode .post-detail-comment-form-shell textarea,
+          .timeline-theme-dark.post-detail-background-mode .post-detail-comments-shell input,
+          .timeline-theme-dark.post-detail-background-mode .post-detail-comments-shell textarea {
+            background: rgba(5, 8, 16, 0.46) !important;
+            border-color: rgba(255, 255, 255, 0.070) !important;
+          }
+
+          .timeline-theme-light.post-detail-background-mode .post-detail-comment-form-shell input,
+          .timeline-theme-light.post-detail-background-mode .post-detail-comment-form-shell textarea,
+          .timeline-theme-light.post-detail-background-mode .post-detail-comments-shell input,
+          .timeline-theme-light.post-detail-background-mode .post-detail-comments-shell textarea {
+            background: rgba(255, 255, 255, 0.56) !important;
+            border-color: rgba(24, 22, 20, 0.075) !important;
+          }
+        }
+
+        @media (max-width: 639px) {
+          /* 背景ありのモバイルだけ、投稿本体をPC版と同じカード風に戻す。 */
+          .post-detail-background-mode .post-detail-main-card {
+            width: calc(100vw - 32px);
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+            border-radius: 28px;
+            box-sizing: border-box;
+            overflow: hidden;
+            -webkit-backdrop-filter: blur(24px) saturate(165%);
+            backdrop-filter: blur(24px) saturate(165%);
+          }
+
+          .timeline-theme-dark.post-detail-background-mode .post-detail-main-card {
+            background: linear-gradient(135deg, rgba(12, 16, 28, 0.72), rgba(34, 24, 32, 0.66)) !important;
+            border-color: rgba(255, 255, 255, 0.045) !important;
+          }
+
+          .timeline-theme-light.post-detail-background-mode .post-detail-main-card {
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.54)) !important;
+            border-color: rgba(40, 30, 25, 0.045) !important;
+          }
+
+          /* コメント内の削除などの選択メニューは透明化しない。 */
+          .post-detail-background-mode .post-detail-comments-shell [role="menu"],
+          .post-detail-background-mode .post-detail-comments-shell [data-radix-menu-content],
+          .post-detail-background-mode .post-detail-comments-shell [data-radix-dropdown-menu-content],
+          .post-detail-background-mode .post-detail-comments-shell [class*="absolute"][class*="rounded"][class*="border"],
+          .post-detail-background-mode .post-detail-comments-shell [class*="fixed"][class*="rounded"][class*="border"] {
+            -webkit-backdrop-filter: blur(24px) saturate(170%) !important;
+            backdrop-filter: blur(24px) saturate(170%) !important;
+            box-shadow: 0 18px 48px rgba(0, 0, 0, 0.24) !important;
+          }
+
+          .timeline-theme-dark.post-detail-background-mode .post-detail-comments-shell [role="menu"],
+          .timeline-theme-dark.post-detail-background-mode .post-detail-comments-shell [data-radix-menu-content],
+          .timeline-theme-dark.post-detail-background-mode .post-detail-comments-shell [data-radix-dropdown-menu-content],
+          .timeline-theme-dark.post-detail-background-mode .post-detail-comments-shell [class*="absolute"][class*="rounded"][class*="border"],
+          .timeline-theme-dark.post-detail-background-mode .post-detail-comments-shell [class*="fixed"][class*="rounded"][class*="border"] {
+            background: rgba(12, 16, 28, 0.97) !important;
+            border-color: rgba(255, 255, 255, 0.12) !important;
+            color: rgba(255, 255, 255, 0.96) !important;
+          }
+
+          .timeline-theme-light.post-detail-background-mode .post-detail-comments-shell [role="menu"],
+          .timeline-theme-light.post-detail-background-mode .post-detail-comments-shell [data-radix-menu-content],
+          .timeline-theme-light.post-detail-background-mode .post-detail-comments-shell [data-radix-dropdown-menu-content],
+          .timeline-theme-light.post-detail-background-mode .post-detail-comments-shell [class*="absolute"][class*="rounded"][class*="border"],
+          .timeline-theme-light.post-detail-background-mode .post-detail-comments-shell [class*="fixed"][class*="rounded"][class*="border"] {
+            background: rgba(255, 255, 255, 0.97) !important;
+            border-color: rgba(24, 22, 20, 0.12) !important;
+            color: rgba(24, 22, 20, 0.96) !important;
+          }
+
+          .post-detail-background-mode .post-detail-comments-shell .text-destructive,
+          .post-detail-background-mode .post-detail-comments-shell [class*="text-destructive"] {
+            color: rgb(255, 77, 86) !important;
+          }
+        }
+
+        /* body直下に出るプロフィールHoverCard等も、投稿詳細の背景テーマに合わせる。 */
+        body.post-detail-timeline-bg-active [data-radix-popper-content-wrapper] [data-side] {
+          -webkit-backdrop-filter: blur(28px) saturate(175%) !important;
+          backdrop-filter: blur(28px) saturate(175%) !important;
+          box-shadow: 0 18px 50px rgba(0, 0, 0, 0.24) !important;
+        }
+
+        body.post-detail-timeline-bg-dark [data-radix-popper-content-wrapper] [data-side] {
+          background: rgba(12, 16, 28, 0.98) !important;
+          color: rgba(255, 255, 255, 0.96) !important;
+          border-color: rgba(255, 255, 255, 0.10) !important;
+        }
+
+        body.post-detail-timeline-bg-light [data-radix-popper-content-wrapper] [data-side] {
+          background: rgba(255, 255, 255, 0.98) !important;
+          color: rgba(24, 22, 20, 0.96) !important;
+          border-color: rgba(24, 22, 20, 0.10) !important;
+        }
+
+        body.post-detail-timeline-bg-dark [data-radix-popper-content-wrapper] [data-side] [class*="text-muted-foreground"] {
+          color: rgba(226, 232, 240, 0.78) !important;
+        }
+
+        body.post-detail-timeline-bg-light [data-radix-popper-content-wrapper] [data-side] [class*="text-muted-foreground"] {
+          color: rgba(86, 74, 66, 0.74) !important;
+        }
+
+
+        body.post-detail-timeline-bg-active [data-radix-popper-content-wrapper] [data-side] .text-destructive,
+        body.post-detail-timeline-bg-active [data-radix-popper-content-wrapper] [data-side] [class*="text-destructive"] {
+          color: rgb(255, 77, 86) !important;
+        }
+
+
       `}</style>
 
       {/* --- 高度グラフィックアニメーションレイヤー --- */}
@@ -570,16 +1309,35 @@ export default function PostDetail() {
         </div>
       )}
 
+      {isMobile && activePopupEmoji && (
+        <div
+          className="fixed inset-0 bg-transparent"
+          style={{ zIndex: 50 }}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setActivePopupEmoji(null);
+          }}
+          aria-hidden="true"
+        />
+      )}
+
       <button
         type="button"
         onClick={() => navigate(-1)}
-        className="inline-flex items-center gap-1 text-sm font-bold text-muted-foreground transition hover:text-primary"
+        className={hasTimelineBackground
+          ? "post-detail-back-button inline-flex items-center gap-1 rounded-full px-3 py-2 text-sm font-bold text-muted-foreground transition hover:text-primary"
+          : "inline-flex items-center gap-1 text-sm font-bold text-muted-foreground transition hover:text-primary"
+        }
       >
         <ArrowLeft className="h-4 w-4" /> 戻る
       </button>
 
       {isLoading && (
-        <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
+        <div className={hasTimelineBackground
+          ? "post-detail-glass-card rounded-3xl border border-border/60 p-5 shadow-soft"
+          : "rounded-3xl border border-border/60 bg-card p-5 shadow-soft"
+        }>
           <div className="flex gap-3">
             <Skeleton className="h-12 w-12 rounded-full" />
             <div className="flex-1 space-y-2">
@@ -592,19 +1350,28 @@ export default function PostDetail() {
       )}
       
       {isError && (
-        <div className="rounded-3xl border border-destructive/40 bg-destructive/5 p-6 text-center">
+        <div className={hasTimelineBackground
+          ? "post-detail-glass-section rounded-3xl border border-destructive/40 p-6 text-center"
+          : "rounded-3xl border border-destructive/40 bg-destructive/5 p-6 text-center"
+        }>
           <p className="text-sm text-destructive">投稿の読み込みに失敗しました。</p>
         </div>
       )}
 
       {data === null && (
-        <div className="rounded-3xl border border-border/60 bg-card p-8 text-center text-muted-foreground">
+        <div className={hasTimelineBackground
+          ? "post-detail-glass-section rounded-3xl border border-border/60 p-8 text-center text-muted-foreground"
+          : "rounded-3xl border border-border/60 bg-card p-8 text-center text-muted-foreground"
+        }>
           投稿が見つかりませんでした。
         </div>
       )}
 
       {data && (
-        <article className="rounded-3xl border border-border/60 bg-card p-6 shadow-soft relative">
+        <article className={hasTimelineBackground
+          ? "post-detail-glass-card post-detail-main-card rounded-3xl border border-border/60 p-6 shadow-soft relative"
+          : "rounded-3xl border border-border/60 bg-card p-6 shadow-soft relative"
+        }>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <Link to={`/u/${data.author.username}`}>
@@ -754,7 +1521,7 @@ export default function PostDetail() {
 
           <div className="mt-3 flex items-center gap-1 border-t border-border/60 pt-3 relative h-9">
             <div onClick={(e) => e.stopPropagation()} className="flex items-center h-full">
-              < LikeButton 
+              <LikeButton 
                 postId={data.id} 
                 liked={data.likedByMe} 
                 count={data.likesCount}
@@ -779,86 +1546,106 @@ export default function PostDetail() {
 
               {showPicker && (
                 <>
-                  {/* 背景レイヤー：最前面手前の z-[9998] で他の要素へのタップや背景スクロールを物理カット */}
-                  <div className="fixed inset-0 bg-transparent z-[9998]" onClick={() => setShowPicker(false)} />
-                  
-                  {isMobile ? (
-                    /* =========================================================================
-                       【スマートフォン専用ポップアップ：バー全体をスクロール対応化】
-                       ========================================================================= */
-                    <div 
-                      className="fixed bottom-[76px] left-1/2 transform -translate-x-1/2 w-[92vw] max-w-[340px] h-[430px] rounded-[24px] border border-border/80 bg-white dark:bg-[#1e222b] shadow-2xl z-[9999] p-4 animate-slide-up-mobile overflow-y-auto overflow-x-hidden touch-pan-y"
-                      onTouchStart={(e) => e.stopPropagation()}
-                      onScroll={(e) => e.stopPropagation()}
-                    >
-                      {/* デフォルト絵文字 */}
-                      <div className="grid grid-cols-5 gap-2.5 mb-3.5 shrink-0">
-                        {defaultEmojis.map((emoji) => (
-                          <button
-                            key={emoji}
-                            onClick={(e) => handleAddReaction(emoji, e)}
-                            className="flex items-center justify-center h-11 w-11 text-2xl rounded-2xl hover:bg-black/[0.05] dark:hover:bg-white/10 transition-all origin-center"
-                          >
-                            {emoji}
-                          </button>
-                        ))}
-                      </div>
-
-                      {recentEmojis.length > 0 && (
-                        <div className="mb-3.5 shrink-0">
-                          <div className="text-[11px] font-bold text-muted-foreground/60 mb-1.5 px-0.5">最近使用</div>
-                          <div className="flex flex-wrap gap-2.5">
-                            {recentEmojis.map((emoji) => (
-                              <button
-                                key={`recent-${emoji}`}
-                                onClick={(e) => handleAddReaction(emoji, e)}
-                                className="flex items-center justify-center h-9 w-9 rounded-xl hover:bg-black/[0.05] dark:hover:bg-white/10 transition-all origin-center"
-                              >
-                                {renderEmojiElement(emoji, "h-6 w-6 object-contain")}
-                              </button>
-                            ))}
-                          </div>
+                  {isMobile && typeof document !== 'undefined' ? createPortal(
+                    <>
+                      {/* コメント欄のピッカーと同じく body 直下に出して、親の backdrop/transform の影響を受けないようにする */}
+                      <div
+                        className="fixed inset-0 bg-transparent"
+                        style={{ zIndex: 2147483646 }}
+                        onPointerDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setShowPicker(false);
+                        }}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }}
+                      />
+                      <div
+                        ref={pickerPanelRef}
+                        className={`fixed left-1/2 w-[92vw] max-w-[340px] h-[430px] rounded-[24px] border border-border/80 bg-white dark:bg-[#1e222b] shadow-2xl p-4 animate-slide-up-mobile overflow-y-auto overflow-x-hidden touch-pan-y ${hasTimelineBackground ? 'post-detail-picker-panel' : ''}`}
+                        style={{
+                          bottom: 'calc(76px + env(safe-area-inset-bottom))',
+                          zIndex: 2147483647,
+                          transform: 'translateX(-50%)',
+                        }}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onTouchStart={(e) => e.stopPropagation()}
+                        onScroll={(e) => e.stopPropagation()}
+                      >
+                        {/* デフォルト絵文字 */}
+                        <div className="grid grid-cols-5 gap-2.5 mb-3.5 shrink-0">
+                          {defaultEmojis.map((emoji) => (
+                            <button
+                              key={emoji}
+                              onClick={(e) => handleAddReaction(emoji, e)}
+                              className="flex items-center justify-center h-11 w-11 text-2xl rounded-2xl hover:bg-black/[0.05] dark:hover:bg-white/10 transition-all origin-center"
+                            >
+                              {emoji}
+                            </button>
+                          ))}
                         </div>
-                      )}
 
-                      {/* カスタム絵文字：内側の高さ固定を解除しバー全体のスクロールに統合 */}
-                      <div className="flex flex-col border-t border-black/[0.08] dark:border-white/5 pt-2">
-                        <button
-                          onClick={() => setIsEmojisOpen(!isEmojisOpen)}
-                          className="flex items-center justify-between w-full px-0.5 py-1 text-[11px] font-black text-muted-foreground/80 hover:text-foreground transition-colors shrink-0"
-                        >
-                          <span className="truncate">カスタム絵文字</span>
-                          <span className="text-[10px] opacity-60">{isEmojisOpen ? '▲' : '▼'}</span>
-                        </button>
-
-                        {isEmojisOpen && (
-                          <div className="p-0.5 block mt-1">
-                            {filteredCustomEmojis.length > 0 ? (
-                              <div className="grid grid-cols-4 gap-2.5">
-                                {filteredCustomEmojis.map((emoji) => (
-                                  <button
-                                    key={emoji.id}
-                                    onClick={(e) => handleAddReaction(`:${emoji.name}:`, e)}
-                                    title={`:${emoji.name}:`}
-                                    className="flex items-center justify-center h-12 w-12 rounded-2xl hover:bg-black/[0.05] dark:hover:bg-white/10 transition-all p-1.5 origin-center"
-                                  >
-                                    {renderEmojiElement(`:${emoji.name}:`, "h-9 w-9 object-contain")}
-                                  </button>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="text-center text-[11px] text-muted-foreground/50 py-6">絵文字が見つかりません</div>
-                            )}
+                        {recentEmojis.length > 0 && (
+                          <div className="mb-3.5 shrink-0">
+                            <div className="text-[11px] font-bold text-muted-foreground/60 mb-1.5 px-0.5">最近使用</div>
+                            <div className="flex flex-wrap gap-2.5">
+                              {recentEmojis.map((emoji) => (
+                                <button
+                                  key={`recent-${emoji}`}
+                                  onClick={(e) => handleAddReaction(emoji, e)}
+                                  className="flex items-center justify-center h-9 w-9 rounded-xl hover:bg-black/[0.05] dark:hover:bg-white/10 transition-all origin-center"
+                                >
+                                  {renderEmojiElement(emoji, "h-6 w-6 object-contain")}
+                                </button>
+                              ))}
+                            </div>
                           </div>
                         )}
+
+                        {/* カスタム絵文字：内側の高さ固定を解除しバー全体のスクロールに統合 */}
+                        <div className="flex flex-col border-t border-black/[0.08] dark:border-white/5 pt-2">
+                          <button
+                            onClick={() => setIsEmojisOpen(!isEmojisOpen)}
+                            className="flex items-center justify-between w-full px-0.5 py-1 text-[11px] font-black text-muted-foreground/80 hover:text-foreground transition-colors shrink-0"
+                          >
+                            <span className="truncate">カスタム絵文字</span>
+                            <span className="text-[10px] opacity-60">{isEmojisOpen ? '▲' : '▼'}</span>
+                          </button>
+
+                          {isEmojisOpen && (
+                            <div className="p-0.5 block mt-1">
+                              {filteredCustomEmojis.length > 0 ? (
+                                <div className="grid grid-cols-4 gap-2.5">
+                                  {filteredCustomEmojis.map((emoji) => (
+                                    <button
+                                      key={emoji.id}
+                                      onClick={(e) => handleAddReaction(`:${emoji.name}:`, e)}
+                                      title={`:${emoji.name}:`}
+                                      className="flex items-center justify-center h-12 w-12 rounded-2xl hover:bg-black/[0.05] dark:hover:bg-white/10 transition-all p-1.5 origin-center"
+                                    >
+                                      {renderEmojiElement(`:${emoji.name}:`, "h-9 w-9 object-contain")}
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="text-center text-[11px] text-muted-foreground/50 py-6">絵文字が見つかりません</div>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
+                    </>,
+                    document.body
                   ) : (
-                    /* =========================================================================
-                       【PC専用ポップアップ：バー全体をスクロール対応化・縦幅 h-[280px]】
-                       ========================================================================= */
-                    <div 
-                      className="absolute bottom-full left-0 mb-2 w-[260px] h-[280px] rounded-[20px] border border-border/80 bg-white dark:bg-[#1e222b] shadow-2xl z-[9999] p-2.5 animate-zoom-in-pc overflow-y-auto overflow-x-hidden"
+                    <>
+                      <div className="fixed inset-0 bg-transparent z-[9998]" onClick={() => setShowPicker(false)} />
+                      {/* =========================================================================
+                         【PC専用ポップアップ：バー全体をスクロール対応化・縦幅 h-[280px]】
+                         ========================================================================= */}
+                      <div 
+                      className={`absolute bottom-full left-0 mb-2 w-[260px] h-[280px] rounded-[20px] border border-border/80 bg-white dark:bg-[#1e222b] shadow-2xl z-[9999] p-2.5 animate-zoom-in-pc overflow-y-auto overflow-x-hidden ${hasTimelineBackground ? 'post-detail-picker-panel' : ''}`}
                       onWheel={(e) => e.stopPropagation()}
                     >
                       {/* デフォルト絵文字 */}
@@ -934,6 +1721,7 @@ export default function PostDetail() {
                         />
                       </div>
                     </div>
+                    </>
                   )}
                 </>
               )}
@@ -945,8 +1733,10 @@ export default function PostDetail() {
 
       {data && (
         <>
-          <CommentForm postId={data.id} />
-          <div>
+          <div className={hasTimelineBackground ? "post-detail-comment-form-shell" : ""}>
+            <CommentForm postId={data.id} />
+          </div>
+          <div className={hasTimelineBackground ? "post-detail-comments-shell" : ""}>
             <h2 className="mb-3 font-display text-base font-bold text-foreground">コメント</h2>
             <CommentList postId={data.id} />
           </div>
@@ -984,7 +1774,7 @@ export default function PostDetail() {
           >
             <div className="flex items-center gap-8 rounded-full bg-black/40 px-6 py-3 backdrop-blur-md border border-white/10">
               <div className="scale-125">
-                < LikeButton 
+                <LikeButton 
                   postId={data.id} 
                   liked={data.likedByMe} 
                   count={data.likesCount}
@@ -998,6 +1788,7 @@ export default function PostDetail() {
           </div>
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }

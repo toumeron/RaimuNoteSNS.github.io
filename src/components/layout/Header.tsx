@@ -29,11 +29,17 @@ type TimelineChromeState = {
   hasTimelineBackground: boolean;
 };
 
-function isTimelinePath(pathname: string) {
+function normalizeAppPath(pathname: string) {
+  const normalized = pathname.replace(/^\/RaimuNoteSNS\.github\.io(?=\/|$)/, '') || '/';
+  return normalized === '' ? '/' : normalized;
+}
+
+function isTimelineVisualPath(pathname: string) {
+  const normalizedPath = normalizeAppPath(pathname);
+
   return (
-    pathname === '/' ||
-    pathname === '/RaimuNoteSNS.github.io' ||
-    pathname === '/RaimuNoteSNS.github.io/'
+    normalizedPath === '/' ||
+    normalizedPath.startsWith('/post/')
   );
 }
 
@@ -100,7 +106,7 @@ function useTimelineChrome(pathname: string) {
   }, []);
 
   return {
-    enabled: isTimelinePath(pathname) && state.hasTimelineBackground,
+    enabled: isTimelineVisualPath(pathname) && state.hasTimelineBackground,
     theme: state.theme,
   };
 }

@@ -49,11 +49,61 @@ function getTimelineThemeFromImageStats({
   return clearlyLightBackground ? 'light' : 'dark';
 }
 
+
+type TimelineVisualDesignCache = {
+  hasHydrated: boolean;
+  backgroundUrl: string | null;
+  theme: 'light' | 'dark';
+  themeSourceUrl: string | null;
+};
+
+// SPA内でホームから別ページへ移動して戻ってきた時だけ使う、Feed専用のメモリキャッシュ。
+// ページ再読み込みではJS実行環境ごと破棄されるため、通常通りSupabaseと画像判定から読み直す。
+const timelineVisualDesignCache: TimelineVisualDesignCache = {
+  hasHydrated: false,
+  backgroundUrl: null,
+  theme: 'dark',
+  themeSourceUrl: null,
+};
+
+function readCachedTimelineDesignForReturnNavigation() {
+  if (!timelineVisualDesignCache.hasHydrated) return null;
+
+  // Settings画面で背景を変更してから戻ったケースだけ、同一SPAセッション中のlocalStorage差分を拾う。
+  // ハードリロード時は hasHydrated=false なので、ここは使われない。
+  if (typeof window !== 'undefined') {
+    const storedUrl = localStorage.getItem('lime_timeline_background_url');
+    const storedEnabled =
+      localStorage.getItem('lime_timeline_background_enabled') === 'true' || Boolean(storedUrl);
+    const storedTheme = localStorage.getItem('lime_timeline_visual_theme') === 'light' ? 'light' : 'dark';
+
+    if (storedEnabled && storedUrl && storedUrl !== timelineVisualDesignCache.backgroundUrl) {
+      timelineVisualDesignCache.backgroundUrl = storedUrl;
+      timelineVisualDesignCache.theme = storedTheme;
+      timelineVisualDesignCache.themeSourceUrl = null;
+    }
+
+    if (!storedEnabled && timelineVisualDesignCache.backgroundUrl) {
+      timelineVisualDesignCache.backgroundUrl = null;
+      timelineVisualDesignCache.theme = 'dark';
+      timelineVisualDesignCache.themeSourceUrl = null;
+    }
+  }
+
+  return timelineVisualDesignCache;
+}
+
 export default function Feed() {
   const [activeTab, setActiveTab] = useState<'all' | 'following'>('all');
   const [isScrolled, setIsScrolled] = useState(false);
-  const [timelineBackgroundUrl, setTimelineBackgroundUrl] = useState<string | null>(null);
-  const [timelineTheme, setTimelineTheme] = useState<'light' | 'dark'>('dark');
+  const [timelineBackgroundUrl, setTimelineBackgroundUrl] = useState<string | null>(() => {
+    const cachedDesign = readCachedTimelineDesignForReturnNavigation();
+    return cachedDesign?.backgroundUrl ?? null;
+  });
+  const [timelineTheme, setTimelineTheme] = useState<'light' | 'dark'>(() => {
+    const cachedDesign = readCachedTimelineDesignForReturnNavigation();
+    return cachedDesign?.theme ?? 'dark';
+  });
 
   const queryClient = useQueryClient();
   const isPWA = useIsPWA();
@@ -70,6 +120,7 @@ export default function Feed() {
   });
   const isPWAMobile = isPWA && isMobile;
 
+  const feedRootRef = useRef<HTMLDivElement>(null);
   const touchStartYRef = useRef(0);
   const horizontalTouchStartXRef = useRef(0);
   const horizontalTouchStartYRef = useRef(0);
@@ -91,6 +142,13 @@ export default function Feed() {
   const { ref, inView } = useInView();
 
   useEffect(() => {
+    const cachedDesign = readCachedTimelineDesignForReturnNavigation();
+    if (cachedDesign) {
+      setTimelineBackgroundUrl(cachedDesign.backgroundUrl);
+      setTimelineTheme(cachedDesign.theme);
+      return;
+    }
+
     let cancelled = false;
 
     const fetchTimelineBackground = async () => {
@@ -100,7 +158,13 @@ export default function Feed() {
 
         const currentUser = authData.user;
         if (!currentUser) {
-          if (!cancelled) setTimelineBackgroundUrl(null);
+          if (!cancelled) {
+            timelineVisualDesignCache.hasHydrated = true;
+            timelineVisualDesignCache.backgroundUrl = null;
+            timelineVisualDesignCache.theme = 'dark';
+            timelineVisualDesignCache.themeSourceUrl = null;
+            setTimelineBackgroundUrl(null);
+          }
           return;
         }
 
@@ -113,11 +177,24 @@ export default function Feed() {
         if (error) throw error;
 
         if (!cancelled) {
-          setTimelineBackgroundUrl((profile?.timeline_background_url as string | null) ?? null);
+          const nextBackgroundUrl = (profile?.timeline_background_url as string | null) ?? null;
+          timelineVisualDesignCache.hasHydrated = true;
+          timelineVisualDesignCache.backgroundUrl = nextBackgroundUrl;
+          if (!nextBackgroundUrl) {
+            timelineVisualDesignCache.theme = 'dark';
+            timelineVisualDesignCache.themeSourceUrl = null;
+          }
+          setTimelineBackgroundUrl(nextBackgroundUrl);
         }
       } catch (err) {
         console.error('Fetch timeline background error:', err);
-        if (!cancelled) setTimelineBackgroundUrl(null);
+        if (!cancelled) {
+          timelineVisualDesignCache.hasHydrated = true;
+          timelineVisualDesignCache.backgroundUrl = null;
+          timelineVisualDesignCache.theme = 'dark';
+          timelineVisualDesignCache.themeSourceUrl = null;
+          setTimelineBackgroundUrl(null);
+        }
       }
     };
 
@@ -168,7 +245,20 @@ export default function Feed() {
 
   useEffect(() => {
     if (!timelineBackgroundUrl) {
+      timelineVisualDesignCache.hasHydrated = true;
+      timelineVisualDesignCache.backgroundUrl = null;
+      timelineVisualDesignCache.theme = 'dark';
+      timelineVisualDesignCache.themeSourceUrl = null;
       setTimelineTheme('dark');
+      return;
+    }
+
+    if (
+      timelineVisualDesignCache.hasHydrated &&
+      timelineVisualDesignCache.backgroundUrl === timelineBackgroundUrl &&
+      timelineVisualDesignCache.themeSourceUrl === timelineBackgroundUrl
+    ) {
+      setTimelineTheme(timelineVisualDesignCache.theme);
       return;
     }
 
@@ -237,25 +327,41 @@ export default function Feed() {
           const darkRatio = count > 0 ? darkPixels / count : 0;
           const veryDarkRatio = count > 0 ? veryDarkPixels / count : 0;
 
-          setTimelineTheme(
-            getTimelineThemeFromImageStats({
-              averageLuminance,
-              medianLuminance,
-              lowerQuartileLuminance,
-              brightRatio,
-              darkRatio,
-              veryDarkRatio,
-            })
-          );
+          const nextTheme = getTimelineThemeFromImageStats({
+            averageLuminance,
+            medianLuminance,
+            lowerQuartileLuminance,
+            brightRatio,
+            darkRatio,
+            veryDarkRatio,
+          });
+
+          timelineVisualDesignCache.hasHydrated = true;
+          timelineVisualDesignCache.backgroundUrl = timelineBackgroundUrl;
+          timelineVisualDesignCache.theme = nextTheme;
+          timelineVisualDesignCache.themeSourceUrl = timelineBackgroundUrl;
+          setTimelineTheme(nextTheme);
         }
       } catch (error) {
         console.warn('Timeline luminance sampling failed:', error);
-        if (!cancelled) setTimelineTheme('dark');
+        if (!cancelled) {
+          timelineVisualDesignCache.hasHydrated = true;
+          timelineVisualDesignCache.backgroundUrl = timelineBackgroundUrl;
+          timelineVisualDesignCache.theme = 'dark';
+          timelineVisualDesignCache.themeSourceUrl = timelineBackgroundUrl;
+          setTimelineTheme('dark');
+        }
       }
     };
 
     img.onerror = () => {
-      if (!cancelled) setTimelineTheme('dark');
+      if (!cancelled) {
+        timelineVisualDesignCache.hasHydrated = true;
+        timelineVisualDesignCache.backgroundUrl = timelineBackgroundUrl;
+        timelineVisualDesignCache.theme = 'dark';
+        timelineVisualDesignCache.themeSourceUrl = timelineBackgroundUrl;
+        setTimelineTheme('dark');
+      }
     };
 
     return () => {
@@ -271,6 +377,13 @@ export default function Feed() {
       hasTimelineBackground: hasBackground,
       url: timelineBackgroundUrl ?? '',
     };
+
+    timelineVisualDesignCache.hasHydrated = true;
+    timelineVisualDesignCache.backgroundUrl = timelineBackgroundUrl;
+    timelineVisualDesignCache.theme = timelineTheme;
+    if (!timelineBackgroundUrl) {
+      timelineVisualDesignCache.themeSourceUrl = null;
+    }
 
     localStorage.setItem('lime_timeline_visual_theme', timelineTheme);
     localStorage.setItem('lime_timeline_background_enabled', String(hasBackground));
@@ -293,6 +406,48 @@ export default function Feed() {
       channel.close();
     }
   }, [timelineBackgroundUrl, timelineTheme]);
+
+  useEffect(() => {
+    const handleBackgroundChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ url?: string | null; theme?: string; hasTimelineBackground?: boolean }>).detail;
+      const nextUrl = detail?.url ?? null;
+      const nextTheme = detail?.theme === 'light' ? 'light' : 'dark';
+
+      timelineVisualDesignCache.hasHydrated = true;
+      timelineVisualDesignCache.backgroundUrl = nextUrl;
+      timelineVisualDesignCache.theme = nextTheme;
+      timelineVisualDesignCache.themeSourceUrl = null;
+
+      setTimelineBackgroundUrl(nextUrl);
+      setTimelineTheme(nextTheme);
+    };
+
+    window.addEventListener('timeline-background-changed', handleBackgroundChanged as EventListener);
+
+    let channel: BroadcastChannel | null = null;
+    if ('BroadcastChannel' in window) {
+      channel = new BroadcastChannel('timeline-background');
+      channel.onmessage = (event) => {
+        const data = event.data as { url?: string | null; theme?: string } | undefined;
+        if (!data) return;
+        const nextUrl = data.url ?? null;
+        const nextTheme = data.theme === 'light' ? 'light' : 'dark';
+
+        timelineVisualDesignCache.hasHydrated = true;
+        timelineVisualDesignCache.backgroundUrl = nextUrl;
+        timelineVisualDesignCache.theme = nextTheme;
+        timelineVisualDesignCache.themeSourceUrl = null;
+
+        setTimelineBackgroundUrl(nextUrl);
+        setTimelineTheme(nextTheme);
+      };
+    }
+
+    return () => {
+      window.removeEventListener('timeline-background-changed', handleBackgroundChanged as EventListener);
+      channel?.close();
+    };
+  }, []);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -322,104 +477,66 @@ export default function Feed() {
     const root = document.documentElement;
     const body = document.body;
 
-    const previous = {
-      rootOverflowX: root.style.overflowX,
-      bodyOverflowX: body.style.overflowX,
-      rootOverscrollBehaviorX: root.style.overscrollBehaviorX,
-      bodyOverscrollBehaviorX: body.style.overscrollBehaviorX,
-      rootWidth: root.style.width,
-      bodyWidth: body.style.width,
-      rootMaxWidth: root.style.maxWidth,
-      bodyMaxWidth: body.style.maxWidth,
-    };
-
-    const horizontalScrollbarStyle = document.createElement('style');
-    horizontalScrollbarStyle.setAttribute('data-limenote-horizontal-scroll-lock', 'true');
-    horizontalScrollbarStyle.textContent = `
-      html,
-      body {
-        width: 100% !important;
-        max-width: 100vw !important;
-        overflow-x: hidden !important;
-        overscroll-behavior-x: none !important;
-      }
-
-      #root {
-        width: 100% !important;
-        max-width: 100vw !important;
-      }
-
+    const horizontalGuardStyle = document.createElement('style');
+    horizontalGuardStyle.setAttribute('data-limenote-horizontal-gesture-guard', 'true');
+    horizontalGuardStyle.textContent = `
       .limenote-feed-horizontal-guard {
-        width: 100% !important;
-        max-width: 100% !important;
-        min-width: 0 !important;
+        max-width: 100%;
+        min-width: 0;
+        overscroll-behavior-x: none;
       }
 
-      @supports (overflow: clip) {
-        html,
-        body {
-          overflow-x: clip !important;
-        }
+      .limenote-feed-horizontal-guard *,
+      .limenote-feed-horizontal-guard *::before,
+      .limenote-feed-horizontal-guard *::after {
+        min-width: 0;
+        box-sizing: border-box;
+      }
+
+      .limenote-feed-tabs-shell {
+        width: 100%;
+        max-width: 100%;
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+      }
+
+      .limenote-mobile-background-layer {
+        max-width: 100vw !important;
       }
 
       @media (max-width: 639px) {
-        html,
-        body,
-        #root {
-          scrollbar-width: none !important;
-          -ms-overflow-style: none !important;
-        }
-
-        html::-webkit-scrollbar,
-        body::-webkit-scrollbar,
-        #root::-webkit-scrollbar {
-          width: 0 !important;
-          height: 0 !important;
-          display: none !important;
-          background: transparent !important;
+        .limenote-feed-horizontal-guard,
+        .limenote-feed-horizontal-guard * {
+          touch-action: pan-y pinch-zoom;
         }
       }
     `;
-    document.head.appendChild(horizontalScrollbarStyle);
+    document.head.appendChild(horizontalGuardStyle);
 
     // 別ページ遷移や古いピッカー処理で body overflow:hidden が残ると、ホーム復帰後に縦スクロールできなくなる。
-    // ここでは縦方向のロックだけを解除し、X軸だけを閉じる。
+    // html/body の overflow-x を直接いじると sticky header / Radix Dropdown / Tabs の再配置に巻き込まれるため、ここでは触らない。
     if (root.style.overflow === 'hidden') root.style.overflow = '';
     if (body.style.overflow === 'hidden') body.style.overflow = '';
     if (root.style.overflowY === 'hidden') root.style.overflowY = '';
     if (body.style.overflowY === 'hidden') body.style.overflowY = '';
 
-    root.style.overflowX = 'hidden';
-    body.style.overflowX = 'hidden';
-    root.style.width = '100%';
-    body.style.width = '100%';
-    root.style.maxWidth = '100vw';
-    body.style.maxWidth = '100vw';
-    root.style.overscrollBehaviorX = 'none';
-    body.style.overscrollBehaviorX = 'none';
-
-    let animationFrame = 0;
-
     const forceScrollXToZero = () => {
-      if (window.scrollX !== 0) {
-        window.scrollTo(0, window.scrollY);
-      }
       if (root.scrollLeft !== 0) root.scrollLeft = 0;
       if (body.scrollLeft !== 0) body.scrollLeft = 0;
     };
 
-    const lockHorizontalScrollFrame = () => {
-      forceScrollXToZero();
-      animationFrame = window.requestAnimationFrame(lockHorizontalScrollFrame);
-    };
-
     const handleHorizontalTouchStart = (event: TouchEvent) => {
+      const target = event.target as Node | null;
+      if (!target || !feedRootRef.current?.contains(target)) return;
       if (event.touches.length !== 1) return;
+
       horizontalTouchStartXRef.current = event.touches[0].clientX;
       horizontalTouchStartYRef.current = event.touches[0].clientY;
     };
 
     const handleHorizontalTouchMove = (event: TouchEvent) => {
+      const target = event.target as Node | null;
+      if (!target || !feedRootRef.current?.contains(target)) return;
       if (event.touches.length !== 1) return;
 
       const currentX = event.touches[0].clientX;
@@ -429,54 +546,38 @@ export default function Feed() {
       const absX = Math.abs(diffX);
       const absY = Math.abs(diffY);
 
-      if (absX > 3 && absX > absY * 0.35) {
+      // Header は対象外にし、Feed 内だけ横ジェスチャーを強く止める。
+      // 「明確な横スワイプだけ」ではなく、斜め横ブレでも横移動に寄った時点で止める。
+      if (absX > 2 && absX >= absY * 0.15) {
         event.preventDefault();
         forceScrollXToZero();
       }
     };
 
-    const handleWheel = (event: WheelEvent) => {
-      if (Math.abs(event.deltaX) > 0 && Math.abs(event.deltaX) >= Math.abs(event.deltaY) * 0.35) {
-        event.preventDefault();
-        forceScrollXToZero();
-      }
-    };
-
-    const handleTouchEnd = () => {
+    const handleHorizontalTouchEnd = () => {
       forceScrollXToZero();
     };
 
-    window.addEventListener('scroll', forceScrollXToZero, { passive: true });
-    window.addEventListener('resize', forceScrollXToZero);
-    window.addEventListener('orientationchange', forceScrollXToZero);
-    window.addEventListener('touchstart', handleHorizontalTouchStart, { passive: true });
-    window.addEventListener('touchmove', handleHorizontalTouchMove, { passive: false });
-    window.addEventListener('touchend', handleTouchEnd, { passive: true });
-    window.addEventListener('wheel', handleWheel, { passive: false });
+    const handleViewportChange = () => {
+      window.requestAnimationFrame(forceScrollXToZero);
+    };
 
-    animationFrame = window.requestAnimationFrame(lockHorizontalScrollFrame);
+    window.addEventListener('resize', handleViewportChange);
+    window.addEventListener('orientationchange', handleViewportChange);
+    document.addEventListener('touchstart', handleHorizontalTouchStart, { passive: true, capture: true });
+    document.addEventListener('touchmove', handleHorizontalTouchMove, { passive: false, capture: true });
+    document.addEventListener('touchend', handleHorizontalTouchEnd, { passive: true, capture: true });
+
     forceScrollXToZero();
 
     return () => {
-      root.style.overflowX = previous.rootOverflowX;
-      body.style.overflowX = previous.bodyOverflowX;
-      root.style.overscrollBehaviorX = previous.rootOverscrollBehaviorX;
-      body.style.overscrollBehaviorX = previous.bodyOverscrollBehaviorX;
-      root.style.width = previous.rootWidth;
-      body.style.width = previous.bodyWidth;
-      root.style.maxWidth = previous.rootMaxWidth;
-      body.style.maxWidth = previous.bodyMaxWidth;
+      horizontalGuardStyle.remove();
 
-      horizontalScrollbarStyle.remove();
-
-      window.cancelAnimationFrame(animationFrame);
-      window.removeEventListener('scroll', forceScrollXToZero);
-      window.removeEventListener('resize', forceScrollXToZero);
-      window.removeEventListener('orientationchange', forceScrollXToZero);
-      window.removeEventListener('touchstart', handleHorizontalTouchStart);
-      window.removeEventListener('touchmove', handleHorizontalTouchMove);
-      window.removeEventListener('touchend', handleTouchEnd);
-      window.removeEventListener('wheel', handleWheel);
+      window.removeEventListener('resize', handleViewportChange);
+      window.removeEventListener('orientationchange', handleViewportChange);
+      document.removeEventListener('touchstart', handleHorizontalTouchStart, true);
+      document.removeEventListener('touchmove', handleHorizontalTouchMove, true);
+      document.removeEventListener('touchend', handleHorizontalTouchEnd, true);
     };
   }, []);
 
@@ -596,12 +697,39 @@ export default function Feed() {
     }
   }, [inView, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
+  const restoreScrollPositionAfterControlInteraction = (scrollY: number) => {
+    const restore = () => {
+      if (Math.abs(window.scrollY - scrollY) > 1) {
+        document.documentElement.scrollTop = scrollY;
+        document.body.scrollTop = scrollY;
+      }
+
+      if (document.documentElement.scrollLeft !== 0) {
+        document.documentElement.scrollLeft = 0;
+      }
+      if (document.body.scrollLeft !== 0) {
+        document.body.scrollLeft = 0;
+      }
+    };
+
+    window.requestAnimationFrame(restore);
+    window.setTimeout(restore, 0);
+    window.setTimeout(restore, 80);
+  };
+
+  const handleTabChange = (value: string) => {
+    const previousScrollY = window.scrollY;
+    setActiveTab(value as 'all' | 'following');
+    restoreScrollPositionAfterControlInteraction(previousScrollY);
+  };
+
   const allPosts = data?.pages.flatMap((page) => page) ?? [];
   const canReleaseToRefresh = pullDistance >= 58;
   const hasTimelineBackground = Boolean(timelineBackgroundUrl);
 
   return (
     <div
+      ref={feedRootRef}
       className={`limenote-feed-horizontal-guard space-y-5 ${
         hasTimelineBackground
           ? timelineTheme === 'dark'
@@ -612,7 +740,7 @@ export default function Feed() {
     >
       {hasTimelineBackground && isMobile && timelineBackgroundUrl && (
         <div
-          className="pointer-events-none fixed left-0 top-0 z-0 overflow-hidden bg-background"
+          className="limenote-mobile-background-layer pointer-events-none fixed left-0 top-0 z-0 overflow-hidden bg-background"
           style={{
             width: initialMobileBackgroundFrame.width ? `${initialMobileBackgroundFrame.width}px` : '100vw',
             height: initialMobileBackgroundFrame.height ? `${initialMobileBackgroundFrame.height}px` : '100vh',
@@ -819,7 +947,7 @@ export default function Feed() {
 
       {/* 特別扱い：ヘッダー統合タブ */}
       <div
-        className={`sticky top-0 transition-all duration-300 py-3 -mx-5 px-5 border-none pointer-events-none ${
+        className={`limenote-feed-tabs-shell sticky top-0 transition-all duration-300 py-3 px-0 border-none pointer-events-none ${
           isScrolled 
             ? 'z-[2147483647] h-16 flex items-center justify-center' 
             : 'z-[2147483647] bg-transparent h-auto'
@@ -830,7 +958,7 @@ export default function Feed() {
           <Tabs 
             defaultValue="all" 
             className="w-full border-none shadow-none" 
-            onValueChange={(v) => setActiveTab(v as 'all' | 'following')}
+            onValueChange={handleTabChange}
           >
             <TabsList
               className={`grid w-full grid-cols-2 h-11 items-center justify-center overflow-hidden rounded-full p-1 ring-0 border-none backdrop-blur-2xl ${
