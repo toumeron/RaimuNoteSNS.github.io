@@ -58,6 +58,16 @@ export default function Feed() {
   const queryClient = useQueryClient();
   const isPWA = useIsPWA();
   const [isMobile, setIsMobile] = useState(false);
+  const [initialMobileBackgroundFrame] = useState(() => {
+    if (typeof window === 'undefined') {
+      return { width: 0, height: 0 };
+    }
+
+    return {
+      width: Math.ceil(window.innerWidth),
+      height: Math.ceil(window.innerHeight),
+    };
+  });
   const isPWAMobile = isPWA && isMobile;
 
   const touchStartYRef = useRef(0);
@@ -119,6 +129,8 @@ export default function Feed() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
     const previous = {
       backgroundImage: document.body.style.backgroundImage,
       backgroundSize: document.body.style.backgroundSize,
@@ -128,21 +140,51 @@ export default function Feed() {
     };
 
     if (timelineBackgroundUrl) {
-      document.body.style.backgroundImage = `url("${timelineBackgroundUrl}")`;
-      document.body.style.backgroundSize = 'cover';
-      document.body.style.backgroundPosition = 'center';
+      const safeBackgroundUrl = `url("${timelineBackgroundUrl}")`;
+      document.body.style.backgroundImage = safeBackgroundUrl;
+      document.body.style.backgroundPosition = 'center center';
       document.body.style.backgroundRepeat = 'no-repeat';
       document.body.style.backgroundAttachment = 'fixed';
+
+      if (isMobile) {
+        // モバイルは初回アクセス時の画面サイズを基準に、画像比率を保ったまま中央 cover で固定する。
+        // これで URL バー開閉や viewport 再計算による拡大率の揺れを避ける。
+        const frameWidth = initialMobileBackgroundFrame.width || Math.ceil(window.innerWidth);
+        const frameHeight = initialMobileBackgroundFrame.height || Math.ceil(window.innerHeight);
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.src = timelineBackgroundUrl;
+
+        img.onload = () => {
+          if (cancelled || !img.naturalWidth || !img.naturalHeight) return;
+
+          const scale = Math.max(frameWidth / img.naturalWidth, frameHeight / img.naturalHeight);
+          const backgroundWidth = Math.ceil(img.naturalWidth * scale);
+          const backgroundHeight = Math.ceil(img.naturalHeight * scale);
+
+          document.body.style.backgroundSize = `${backgroundWidth}px ${backgroundHeight}px`;
+          document.body.style.backgroundPosition = 'center center';
+        };
+
+        img.onerror = () => {
+          if (cancelled) return;
+          document.body.style.backgroundSize = 'cover';
+          document.body.style.backgroundPosition = 'center center';
+        };
+      } else {
+        document.body.style.backgroundSize = 'cover';
+      }
     }
 
     return () => {
+      cancelled = true;
       document.body.style.backgroundImage = previous.backgroundImage;
       document.body.style.backgroundSize = previous.backgroundSize;
       document.body.style.backgroundPosition = previous.backgroundPosition;
       document.body.style.backgroundRepeat = previous.backgroundRepeat;
       document.body.style.backgroundAttachment = previous.backgroundAttachment;
     };
-  }, [timelineBackgroundUrl]);
+  }, [timelineBackgroundUrl, isMobile, initialMobileBackgroundFrame.width, initialMobileBackgroundFrame.height]);
 
   useEffect(() => {
     if (!timelineBackgroundUrl) {
@@ -301,13 +343,8 @@ export default function Feed() {
     const body = document.body;
 
     const previous = {
-      rootOverflowX: root.style.overflowX,
-      bodyOverflowX: body.style.overflowX,
-      rootMaxWidth: root.style.maxWidth,
-      bodyMaxWidth: body.style.maxWidth,
       rootOverscrollBehaviorX: root.style.overscrollBehaviorX,
       bodyOverscrollBehaviorX: body.style.overscrollBehaviorX,
-      bodyWidth: body.style.width,
     };
 
     // 別ページ遷移や古いピッカー処理で body overflow:hidden が残ると、ホーム復帰後に縦スクロールできなくなる。
@@ -317,23 +354,24 @@ export default function Feed() {
     if (root.style.overflowY === 'hidden') root.style.overflowY = '';
     if (body.style.overflowY === 'hidden') body.style.overflowY = '';
 
-    // タブ追従は元コード通り sticky top-0 のまま維持する。
-    // 横スクロール対策は Feed 本体やタブ親には overflow を付けず、html/body の X 軸だけを封じる。
-    root.style.overflowX = 'clip';
-    body.style.overflowX = 'clip';
-    root.style.maxWidth = '100%';
-    body.style.maxWidth = '100%';
-    body.style.width = '100%';
+    // タブ追従を壊さないため、html/body に overflow-x:hidden/clip は入れない。
+    // 横方向は scrollLeft を即座に0へ戻し、横ジェスチャーを preventDefault で止める。
     root.style.overscrollBehaviorX = 'none';
     body.style.overscrollBehaviorX = 'none';
 
-    const forceScrollXToZero = () => {
-      const x = window.scrollX || root.scrollLeft || body.scrollLeft;
-      if (x === 0) return;
+    let animationFrame = 0;
 
-      root.scrollLeft = 0;
-      body.scrollLeft = 0;
-      window.scrollTo(0, window.scrollY);
+    const forceScrollXToZero = () => {
+      if (window.scrollX !== 0) {
+        window.scrollTo(0, window.scrollY);
+      }
+      if (root.scrollLeft !== 0) root.scrollLeft = 0;
+      if (body.scrollLeft !== 0) body.scrollLeft = 0;
+    };
+
+    const lockHorizontalScrollFrame = () => {
+      forceScrollXToZero();
+      animationFrame = window.requestAnimationFrame(lockHorizontalScrollFrame);
     };
 
     const handleHorizontalTouchStart = (event: TouchEvent) => {
@@ -352,9 +390,14 @@ export default function Feed() {
       const absX = Math.abs(diffX);
       const absY = Math.abs(diffY);
 
-      // 前回の 0.35 判定は縦スクロール中のわずかな斜め入力まで止めていた。
-      // ここでは横方向が明確な操作だけ止め、縦スクロールは必ず通す。
-      if (absX > 12 && absX > absY * 1.25) {
+      if (absX > 4 && absX > absY * 0.35) {
+        event.preventDefault();
+        forceScrollXToZero();
+      }
+    };
+
+    const handleWheel = (event: WheelEvent) => {
+      if (Math.abs(event.deltaX) > 0 && Math.abs(event.deltaX) >= Math.abs(event.deltaY) * 0.35) {
         event.preventDefault();
         forceScrollXToZero();
       }
@@ -370,24 +413,23 @@ export default function Feed() {
     window.addEventListener('touchstart', handleHorizontalTouchStart, { passive: true });
     window.addEventListener('touchmove', handleHorizontalTouchMove, { passive: false });
     window.addEventListener('touchend', handleTouchEnd, { passive: true });
+    window.addEventListener('wheel', handleWheel, { passive: false });
 
+    animationFrame = window.requestAnimationFrame(lockHorizontalScrollFrame);
     forceScrollXToZero();
 
     return () => {
-      root.style.overflowX = previous.rootOverflowX;
-      body.style.overflowX = previous.bodyOverflowX;
-      root.style.maxWidth = previous.rootMaxWidth;
-      body.style.maxWidth = previous.bodyMaxWidth;
       root.style.overscrollBehaviorX = previous.rootOverscrollBehaviorX;
       body.style.overscrollBehaviorX = previous.bodyOverscrollBehaviorX;
-      body.style.width = previous.bodyWidth;
 
+      window.cancelAnimationFrame(animationFrame);
       window.removeEventListener('scroll', forceScrollXToZero);
       window.removeEventListener('resize', forceScrollXToZero);
       window.removeEventListener('orientationchange', forceScrollXToZero);
       window.removeEventListener('touchstart', handleHorizontalTouchStart);
       window.removeEventListener('touchmove', handleHorizontalTouchMove);
       window.removeEventListener('touchend', handleTouchEnd);
+      window.removeEventListener('wheel', handleWheel);
     };
   }, []);
 
