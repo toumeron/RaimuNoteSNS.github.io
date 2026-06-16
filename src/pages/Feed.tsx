@@ -323,19 +323,78 @@ export default function Feed() {
     const body = document.body;
 
     const previous = {
+      rootOverflowX: root.style.overflowX,
+      bodyOverflowX: body.style.overflowX,
       rootOverscrollBehaviorX: root.style.overscrollBehaviorX,
       bodyOverscrollBehaviorX: body.style.overscrollBehaviorX,
+      rootWidth: root.style.width,
+      bodyWidth: body.style.width,
+      rootMaxWidth: root.style.maxWidth,
+      bodyMaxWidth: body.style.maxWidth,
     };
 
+    const horizontalScrollbarStyle = document.createElement('style');
+    horizontalScrollbarStyle.setAttribute('data-limenote-horizontal-scroll-lock', 'true');
+    horizontalScrollbarStyle.textContent = `
+      html,
+      body {
+        width: 100% !important;
+        max-width: 100vw !important;
+        overflow-x: hidden !important;
+        overscroll-behavior-x: none !important;
+      }
+
+      #root {
+        width: 100% !important;
+        max-width: 100vw !important;
+      }
+
+      .limenote-feed-horizontal-guard {
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+      }
+
+      @supports (overflow: clip) {
+        html,
+        body {
+          overflow-x: clip !important;
+        }
+      }
+
+      @media (max-width: 639px) {
+        html,
+        body,
+        #root {
+          scrollbar-width: none !important;
+          -ms-overflow-style: none !important;
+        }
+
+        html::-webkit-scrollbar,
+        body::-webkit-scrollbar,
+        #root::-webkit-scrollbar {
+          width: 0 !important;
+          height: 0 !important;
+          display: none !important;
+          background: transparent !important;
+        }
+      }
+    `;
+    document.head.appendChild(horizontalScrollbarStyle);
+
     // 別ページ遷移や古いピッカー処理で body overflow:hidden が残ると、ホーム復帰後に縦スクロールできなくなる。
-    // Feed 表示時点ではモーダルを開いていないので、縦方向のスクロールロックだけ明示的に解除する。
+    // ここでは縦方向のロックだけを解除し、X軸だけを閉じる。
     if (root.style.overflow === 'hidden') root.style.overflow = '';
     if (body.style.overflow === 'hidden') body.style.overflow = '';
     if (root.style.overflowY === 'hidden') root.style.overflowY = '';
     if (body.style.overflowY === 'hidden') body.style.overflowY = '';
 
-    // タブ追従を壊さないため、html/body に overflow-x:hidden/clip は入れない。
-    // 横方向は scrollLeft を即座に0へ戻し、横ジェスチャーを preventDefault で止める。
+    root.style.overflowX = 'hidden';
+    body.style.overflowX = 'hidden';
+    root.style.width = '100%';
+    body.style.width = '100%';
+    root.style.maxWidth = '100vw';
+    body.style.maxWidth = '100vw';
     root.style.overscrollBehaviorX = 'none';
     body.style.overscrollBehaviorX = 'none';
 
@@ -370,7 +429,7 @@ export default function Feed() {
       const absX = Math.abs(diffX);
       const absY = Math.abs(diffY);
 
-      if (absX > 4 && absX > absY * 0.35) {
+      if (absX > 3 && absX > absY * 0.35) {
         event.preventDefault();
         forceScrollXToZero();
       }
@@ -399,8 +458,16 @@ export default function Feed() {
     forceScrollXToZero();
 
     return () => {
+      root.style.overflowX = previous.rootOverflowX;
+      body.style.overflowX = previous.bodyOverflowX;
       root.style.overscrollBehaviorX = previous.rootOverscrollBehaviorX;
       body.style.overscrollBehaviorX = previous.bodyOverscrollBehaviorX;
+      root.style.width = previous.rootWidth;
+      body.style.width = previous.bodyWidth;
+      root.style.maxWidth = previous.rootMaxWidth;
+      body.style.maxWidth = previous.bodyMaxWidth;
+
+      horizontalScrollbarStyle.remove();
 
       window.cancelAnimationFrame(animationFrame);
       window.removeEventListener('scroll', forceScrollXToZero);
@@ -535,7 +602,7 @@ export default function Feed() {
 
   return (
     <div
-      className={`space-y-5 ${
+      className={`limenote-feed-horizontal-guard space-y-5 ${
         hasTimelineBackground
           ? timelineTheme === 'dark'
             ? 'pt-4 sm:pt-6 timeline-theme-scope timeline-theme-dark'
@@ -733,7 +800,7 @@ export default function Feed() {
             {/* スマホ専用の LimeNoteBeta ボックス */}
             <span className="ribbon-tag sm:hidden">
               <Sparkles className="h-3 w-3" />
-              LimeNoteBeta 1.7
+              LimeNoteBeta 1.6
             </span>
           </div>
 
@@ -742,7 +809,7 @@ export default function Feed() {
         {/* PC専用の LimeNoteBeta ボックス */}
         <span className="ribbon-tag hidden sm:inline-flex">
           <Sparkles className="h-3 w-3" />
-          LimeNoteBeta 1.7
+          LimeNoteBeta 1.6
         </span>
       </div>
 
