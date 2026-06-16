@@ -95,6 +95,10 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
 
   // スマホ・PCのリアルタイム判定用ステート
   const [isMobile, setIsMobile] = useState(false);
+  const [timelinePortalTheme, setTimelinePortalTheme] = useState<'light' | 'dark'>(() => {
+    if (typeof window === 'undefined') return 'dark';
+    return localStorage.getItem('lime_timeline_visual_theme') === 'light' ? 'light' : 'dark';
+  });
 
   const buttonRef = useRef<HTMLButtonElement>(null);
   const pickerPanelRef = useRef<HTMLDivElement>(null);
@@ -160,6 +164,45 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
       supabase.removeChannel(channels);
     };
   }, [post.id]);
+
+  useEffect(() => {
+    if (!timelineGlass) return;
+
+    const syncTimelinePortalTheme = (theme?: string) => {
+      const nextTheme = theme === 'light' ? 'light' : 'dark';
+      setTimelinePortalTheme(nextTheme);
+    };
+
+    syncTimelinePortalTheme(localStorage.getItem('lime_timeline_visual_theme') ?? undefined);
+
+    const handleThemeEvent = (event: Event) => {
+      const detail = (event as CustomEvent<{ theme?: string }>).detail;
+      syncTimelinePortalTheme(detail?.theme);
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === 'lime_timeline_visual_theme') {
+        syncTimelinePortalTheme(event.newValue ?? undefined);
+      }
+    };
+
+    window.addEventListener('timeline-visual-theme-changed', handleThemeEvent as EventListener);
+    window.addEventListener('storage', handleStorage);
+
+    let channel: BroadcastChannel | null = null;
+    if ('BroadcastChannel' in window) {
+      channel = new BroadcastChannel('timeline-visual-theme');
+      channel.onmessage = (event) => {
+        syncTimelinePortalTheme(event.data?.theme);
+      };
+    }
+
+    return () => {
+      window.removeEventListener('timeline-visual-theme-changed', handleThemeEvent as EventListener);
+      window.removeEventListener('storage', handleStorage);
+      channel?.close();
+    };
+  }, [timelineGlass]);
 
   // ポップアップ表示時または画像拡大時に背後のスクロールを完全に禁止にする
   useEffect(() => {
@@ -665,6 +708,10 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
     </HoverCardContent>
   );
 
+  const timelinePortalThemeClass = timelineGlass
+    ? `timeline-portal-picker timeline-portal-picker-${timelinePortalTheme}`
+    : 'bg-white dark:bg-[#1e222b]';
+
   return (
     <>
       <style>{`
@@ -856,6 +903,61 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
         .timeline-glass-card svg,
         .timeline-mobile-readable svg {
           filter: none !important;
+        }
+
+        .timeline-portal-picker {
+          -webkit-font-smoothing: antialiased;
+          text-rendering: optimizeLegibility;
+          -webkit-backdrop-filter: blur(26px) saturate(170%);
+          backdrop-filter: blur(26px) saturate(170%);
+        }
+
+        .timeline-portal-picker-light {
+          background: rgba(255, 255, 255, 0.96) !important;
+          color: rgba(24, 22, 20, 0.96) !important;
+          border-color: rgba(24, 22, 20, 0.10) !important;
+        }
+
+        .timeline-portal-picker-dark {
+          background: rgba(18, 21, 30, 0.96) !important;
+          color: rgba(255, 255, 255, 0.96) !important;
+          border-color: rgba(255, 255, 255, 0.10) !important;
+        }
+
+        .timeline-portal-picker-light [class*="text-muted-foreground"] {
+          color: rgba(86, 74, 66, 0.72) !important;
+        }
+
+        .timeline-portal-picker-dark [class*="text-muted-foreground"] {
+          color: rgba(226, 232, 240, 0.72) !important;
+        }
+
+        .timeline-portal-picker-light button:hover {
+          background: rgba(24, 22, 20, 0.06) !important;
+        }
+
+        .timeline-portal-picker-dark button:hover {
+          background: rgba(255, 255, 255, 0.10) !important;
+        }
+
+        .timeline-portal-picker-light .timeline-portal-divider {
+          border-color: rgba(24, 22, 20, 0.10) !important;
+        }
+
+        .timeline-portal-picker-dark .timeline-portal-divider {
+          border-color: rgba(255, 255, 255, 0.10) !important;
+        }
+
+        .timeline-portal-picker-light .timeline-portal-search {
+          background: rgba(24, 22, 20, 0.035) !important;
+          border-color: rgba(24, 22, 20, 0.12) !important;
+          color: rgba(24, 22, 20, 0.96) !important;
+        }
+
+        .timeline-portal-picker-dark .timeline-portal-search {
+          background: rgba(0, 0, 0, 0.26) !important;
+          border-color: rgba(255, 255, 255, 0.12) !important;
+          color: rgba(255, 255, 255, 0.96) !important;
         }
 
         @media (max-width: 639px) {
@@ -1294,7 +1396,7 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
                     {/* スマホでは body 直下へ出す。backdrop-filter/transform の親に固定配置を壊されないようにする */}
                     <div 
                       ref={pickerPanelRef}
-                      className="fixed bottom-[76px] left-1/2 transform -translate-x-1/2 w-[92vw] max-w-[340px] h-[430px] rounded-[24px] border border-border/80 bg-white dark:bg-[#1e222b] shadow-2xl p-4 animate-slide-up-mobile overflow-y-auto overflow-x-hidden touch-pan-y"
+                      className={`fixed bottom-[76px] left-1/2 transform -translate-x-1/2 w-[92vw] max-w-[340px] h-[430px] rounded-[24px] border border-border/80 shadow-2xl p-4 animate-slide-up-mobile overflow-y-auto overflow-x-hidden touch-pan-y ${timelinePortalThemeClass}`} 
                       style={{ zIndex: 2147483647 }}
                       onPointerDown={(e) => e.stopPropagation()}
                       onTouchStart={(e) => e.stopPropagation()}
@@ -1331,7 +1433,7 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
                       )}
 
                       {/* カスタム絵文字：内側の高さ固定を解除しバー全体のスクロールに統合 */}
-                      <div className="flex flex-col border-t border-black/[0.08] dark:border-white/5 pt-2">
+                      <div className="timeline-portal-divider flex flex-col border-t border-black/[0.08] dark:border-white/5 pt-2">
                         <button
                           onClick={() => setIsEmojisOpen(!isEmojisOpen)}
                           className="flex items-center justify-between w-full px-0.5 py-1 text-[11px] font-black text-muted-foreground/80 hover:text-foreground transition-colors shrink-0"
@@ -1391,7 +1493,7 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
                        ========================================================================= */}
                     <div 
                       ref={pickerPanelRef}
-                      className="absolute bottom-full left-0 mb-2 w-[260px] h-[280px] rounded-[20px] border border-border/80 bg-white dark:bg-[#1e222b] shadow-2xl z-[100001] p-2.5 animate-zoom-in-pc overflow-y-auto overflow-x-hidden"
+                      className={`absolute bottom-full left-0 mb-2 w-[260px] h-[280px] rounded-[20px] border border-border/80 shadow-2xl z-[100001] p-2.5 animate-zoom-in-pc overflow-y-auto overflow-x-hidden ${timelinePortalThemeClass}`} 
                       onWheel={(e) => e.stopPropagation()}
                     >
                       {/* デフォルト絵文字 */}
@@ -1425,7 +1527,7 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
                       )}
 
                       {/* カスタム絵文字：内側の高さ制限を外し全体のスクロールに委ねる */}
-                      <div className="flex flex-col border-t border-black/[0.08] dark:border-white/5 pt-1.5">
+                      <div className="timeline-portal-divider flex flex-col border-t border-black/[0.08] dark:border-white/5 pt-1.5">
                         <button
                           onClick={() => setIsEmojisOpen(!isEmojisOpen)}
                           className="flex items-center justify-between w-full px-0.5 py-1 text-[11px] font-black text-muted-foreground/80 hover:text-foreground transition-colors shrink-0"
@@ -1457,13 +1559,13 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
                       </div>
 
                       {/* 検索バー */}
-                      <div className="mt-2 pt-1.5 border-t border-black/[0.08] dark:border-white/5 shrink-0">
+                      <div className="timeline-portal-divider mt-2 pt-1.5 border-t border-black/[0.08] dark:border-white/5 shrink-0">
                         <input
                           type="text"
                           placeholder="検索"
                           value={searchQuery}
                           onChange={(e) => setSearchQuery(e.target.value)}
-                          className="w-full h-8 bg-black/[0.03] dark:bg-black/30 border border-black/[0.08] dark:border-white/10 rounded-lg px-2.5 text-xs font-medium text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-pink-500/50 transition-colors"
+                          className="timeline-portal-search w-full h-8 bg-black/[0.03] dark:bg-black/30 border border-black/[0.08] dark:border-white/10 rounded-lg px-2.5 text-xs font-medium text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-pink-500/50 transition-colors"
                         />
                       </div>
                     </div>

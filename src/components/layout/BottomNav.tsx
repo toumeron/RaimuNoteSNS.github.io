@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { NavLink, useLocation } from 'react-router-dom';
 import { Home, User as UserIcon, Settings as SettingsIcon, Search, MessageSquare } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
@@ -91,6 +92,11 @@ export function BottomNav() {
   const { user } = useAuth();
   const location = useLocation();
   const timelineChrome = useTimelineChrome(location.pathname);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   if (!user) return null;
 
@@ -105,17 +111,19 @@ export function BottomNav() {
     { to: '/settings', icon: SettingsIcon, label: '設定' },
   ];
 
-  return (
+  const nav = (
     <nav
       className={cn(
-        'fixed bottom-0 left-0 right-0 z-[2147483646] border-t backdrop-blur-md md:hidden',
+        'fixed bottom-0 left-0 right-0 border-t backdrop-blur-md md:hidden',
         useTimelineChromeDesign
           ? isTimelineDark
             ? 'border-white/[0.06] bg-[#05070a]/82 text-white supports-[backdrop-filter]:bg-[#05070a]/74 backdrop-blur-2xl'
             : 'border-black/[0.08] bg-white/82 text-zinc-950 supports-[backdrop-filter]:bg-white/74 backdrop-blur-2xl'
-          : 'z-30 border-border/60 bg-background/90'
+          : 'border-border/60 bg-background/90'
       )}
       style={{
+        zIndex: 2147483647,
+        isolation: 'isolate',
         paddingBottom: 'calc(-15px + env(safe-area-inset-bottom))',
       }}
     >
@@ -148,4 +156,12 @@ export function BottomNav() {
       </ul>
     </nav>
   );
+
+  // fixed要素でも、親要素側にtransform/filter/z-indexなどのstacking contextがあると
+  // ページ内の要素に負けることがあるため、body直下へ逃がす。
+  if (mounted && typeof document !== 'undefined') {
+    return createPortal(nav, document.body);
+  }
+
+  return nav;
 }

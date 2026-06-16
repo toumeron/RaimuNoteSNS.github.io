@@ -58,6 +58,16 @@ export default function Feed() {
   const queryClient = useQueryClient();
   const isPWA = useIsPWA();
   const [isMobile, setIsMobile] = useState(false);
+  const [initialMobileBackgroundFrame] = useState(() => {
+    if (typeof window === 'undefined') {
+      return { width: 0, height: 0 };
+    }
+
+    return {
+      width: Math.ceil(window.innerWidth),
+      height: Math.ceil(window.innerHeight),
+    };
+  });
   const isPWAMobile = isPWA && isMobile;
 
   const touchStartYRef = useRef(0);
@@ -126,11 +136,24 @@ export default function Feed() {
     };
 
     if (timelineBackgroundUrl) {
-      document.body.style.backgroundImage = `url("${timelineBackgroundUrl}")`;
-      document.body.style.backgroundSize = 'cover';
-      document.body.style.backgroundPosition = 'center';
-      document.body.style.backgroundRepeat = 'no-repeat';
-      document.body.style.backgroundAttachment = 'fixed';
+      const safeBackgroundUrl = `url("${timelineBackgroundUrl}")`;
+
+      if (isMobile) {
+        // モバイルは body の background-size: cover / fixed に任せると、
+        // ブラウザのURLバーや viewport 計算の差で拡大され過ぎることがある。
+        // 画像自体の表示は JSX 側の固定レイヤーで行うため、ここでは body 背景を使わない。
+        document.body.style.backgroundImage = 'none';
+        document.body.style.backgroundSize = '';
+        document.body.style.backgroundPosition = '';
+        document.body.style.backgroundRepeat = '';
+        document.body.style.backgroundAttachment = '';
+      } else {
+        document.body.style.backgroundImage = safeBackgroundUrl;
+        document.body.style.backgroundSize = 'cover';
+        document.body.style.backgroundPosition = 'center';
+        document.body.style.backgroundRepeat = 'no-repeat';
+        document.body.style.backgroundAttachment = 'fixed';
+      }
     }
 
     return () => {
@@ -140,7 +163,7 @@ export default function Feed() {
       document.body.style.backgroundRepeat = previous.backgroundRepeat;
       document.body.style.backgroundAttachment = previous.backgroundAttachment;
     };
-  }, [timelineBackgroundUrl]);
+  }, [timelineBackgroundUrl, isMobile]);
 
   useEffect(() => {
     if (!timelineBackgroundUrl) {
@@ -291,6 +314,78 @@ export default function Feed() {
     };
   }, []);
 
+
+
+  useEffect(() => {
+    if (!isPWA) return;
+
+    const previous = {
+      htmlOverflowX: document.documentElement.style.overflowX,
+      bodyOverflowX: document.body.style.overflowX,
+      htmlWidth: document.documentElement.style.width,
+      bodyWidth: document.body.style.width,
+      htmlMaxWidth: document.documentElement.style.maxWidth,
+      bodyMaxWidth: document.body.style.maxWidth,
+      htmlOverscrollBehaviorX: document.documentElement.style.overscrollBehaviorX,
+      bodyOverscrollBehaviorX: document.body.style.overscrollBehaviorX,
+      htmlTouchAction: document.documentElement.style.touchAction,
+      bodyTouchAction: document.body.style.touchAction,
+    };
+
+    const clipValue = CSS.supports?.('overflow-x', 'clip') ? 'clip' : 'hidden';
+
+    /*
+      PWAでは横方向スワイプを「判定して止める」方式だと、斜めスワイプや
+      iOSのラバーバンドで横に動けてしまう。
+
+      ただし Feed の親要素に overflow-x-hidden を付けると sticky タブが死ぬ。
+      そのため、Feed 内部には overflow を掛けず、html/body だけを横方向に固定する。
+      touch-action: pan-y は縦スクロールを許可したまま横パンをブラウザ側で禁止する。
+    */
+    document.documentElement.style.overflowX = clipValue;
+    document.body.style.overflowX = clipValue;
+    document.documentElement.style.width = '100%';
+    document.body.style.width = '100%';
+    document.documentElement.style.maxWidth = '100vw';
+    document.body.style.maxWidth = '100vw';
+    document.documentElement.style.overscrollBehaviorX = 'none';
+    document.body.style.overscrollBehaviorX = 'none';
+    document.documentElement.style.touchAction = 'pan-y pinch-zoom';
+    document.body.style.touchAction = 'pan-y pinch-zoom';
+
+    const style = document.createElement('style');
+    style.setAttribute('data-limenote-pwa-no-horizontal-scroll', 'true');
+    style.textContent = `
+      html,
+      body {
+        overflow-x: ${clipValue} !important;
+        width: 100% !important;
+        max-width: 100vw !important;
+        overscroll-behavior-x: none !important;
+        touch-action: pan-y pinch-zoom !important;
+      }
+
+      body {
+        position: relative !important;
+      }
+    `;
+    document.head.appendChild(style);
+
+    return () => {
+      document.documentElement.style.overflowX = previous.htmlOverflowX;
+      document.body.style.overflowX = previous.bodyOverflowX;
+      document.documentElement.style.width = previous.htmlWidth;
+      document.body.style.width = previous.bodyWidth;
+      document.documentElement.style.maxWidth = previous.htmlMaxWidth;
+      document.body.style.maxWidth = previous.bodyMaxWidth;
+      document.documentElement.style.overscrollBehaviorX = previous.htmlOverscrollBehaviorX;
+      document.body.style.overscrollBehaviorX = previous.bodyOverscrollBehaviorX;
+      document.documentElement.style.touchAction = previous.htmlTouchAction;
+      document.body.style.touchAction = previous.bodyTouchAction;
+      style.remove();
+    };
+  }, [isPWA]);
+
   useEffect(() => {
     if (!isPWAMobile) {
       document.documentElement.style.overscrollBehaviorY = '';
@@ -413,14 +508,35 @@ export default function Feed() {
 
   return (
     <div
-      className={`space-y-5 ${
+      className={`relative isolate max-w-full min-w-0 space-y-5 ${
         hasTimelineBackground
           ? timelineTheme === 'dark'
-            ? 'pt-42 sm:pt-63 timeline-theme-scope timeline-theme-dark'
-            : 'pt-42 sm:pt-63 timeline-theme-scope timeline-theme-light'
+            ? 'pt-4 sm:pt-6 timeline-theme-scope timeline-theme-dark'
+            : 'pt-4 sm:pt-6 timeline-theme-scope timeline-theme-light'
           : ''
       }`}
     >
+      {hasTimelineBackground && isMobile && timelineBackgroundUrl && (
+        <div
+          className="pointer-events-none fixed left-0 top-0 -z-10 overflow-hidden bg-background"
+          style={{
+            width: initialMobileBackgroundFrame.width ? `${initialMobileBackgroundFrame.width}px` : '100vw',
+            height: initialMobileBackgroundFrame.height ? `${initialMobileBackgroundFrame.height}px` : '100vh',
+          }}
+          aria-hidden="true"
+        >
+          <img
+            src={timelineBackgroundUrl}
+            alt=""
+            className="absolute left-0 top-0 h-full w-full object-cover"
+            style={{ objectPosition: 'center center' }}
+            draggable={false}
+          />
+          <div
+            className={`absolute inset-0 ${timelineTheme === 'dark' ? 'bg-black/8' : 'bg-white/0'}`}
+          />
+        </div>
+      )}
       {hasTimelineBackground && (
         <style>{`
           .timeline-theme-scope {
