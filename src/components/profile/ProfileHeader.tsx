@@ -1,4 +1,3 @@
-import { useState, useEffect } from 'react';
 import { CalendarDays } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -20,6 +19,7 @@ export function ProfileHeader({ user }: { user: User }) {
     if (count >= 10000) {
       return (count / 10000).toFixed(1).replace(/\.0$/, '') + '万';
     }
+
     return count.toLocaleString();
   };
 
@@ -39,13 +39,14 @@ export function ProfileHeader({ user }: { user: User }) {
             href={part}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-pink-500 hover:underline transition-colors"
+            className="text-pink-500 transition-colors hover:underline"
             onClick={(e) => e.stopPropagation()}
           >
             {part}
           </a>
         );
       }
+
       return part;
     });
   };
@@ -53,24 +54,26 @@ export function ProfileHeader({ user }: { user: User }) {
   // --- メンションをリンク化する関数 ---
   const renderContentWithMentions = (text: string) => {
     if (!text) return null;
-    
+
     // @username 形式にマッチさせる正規表現
     const parts = text.split(/(@\w+)/g);
-    
+
     return parts.map((part, index) => {
       if (part.startsWith('@')) {
         const username = part.substring(1);
+
         return (
           <Link
             key={`mention-${index}`}
             to={`/u/${username}`}
-            className="text-pink-500 hover:underline transition-colors"
+            className="text-pink-500 transition-colors hover:underline"
             onClick={(e) => e.stopPropagation()}
           >
             {part}
           </Link>
         );
       }
+
       // メンション以外のテキストに対してハッシュタグ処理を適用
       return renderContentWithHashtags(part);
     });
@@ -88,102 +91,128 @@ export function ProfileHeader({ user }: { user: User }) {
         return (
           <button
             key={`hashtag-${index}`}
+            type="button"
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
+
               // 検索ページに「#タグ名」で遷移。
               navigate(`/search?q=${encodeURIComponent(part)}`);
             }}
-            className="text-pink-500 hover:underline transition-colors inline-block align-baseline"
+            className="inline-block align-baseline text-pink-500 transition-colors hover:underline"
           >
             {part}
           </button>
         );
       }
+
       // ハッシュタグ以外のテキストに対してURLリンク処理を適用
       return renderContentWithLinks(part);
     });
   };
 
   return (
-    <div className="overflow-hidden rounded-3xl border border-border/60 bg-card shadow-soft">
-      <div className="relative h-40 bg-gradient-cream sm:h-48">
-        {user.coverUrl && (
-          <img src={user.coverUrl} alt="" className="h-full w-full object-cover" />
+    <section className="relative left-1/2 -mt-5 w-screen -translate-x-1/2 overflow-hidden bg-transparent text-foreground sm:left-auto sm:mt-0 sm:w-auto sm:translate-x-0 sm:rounded-3xl sm:border sm:border-border/60 sm:bg-card sm:shadow-soft">
+      <div className="relative h-[150px] w-full overflow-hidden bg-gradient-cream sm:h-48">
+        {user.coverUrl ? (
+          <img
+            src={user.coverUrl}
+            alt=""
+            className="block h-full w-full object-cover object-center"
+          />
+        ) : (
+          <div className="h-full w-full bg-gradient-cream" />
         )}
-        <div className="absolute inset-0 bg-gradient-to-t from-card/40 to-transparent" />
+
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-background/20 to-transparent sm:from-card/40" />
       </div>
 
-      <div className="relative px-5 pb-5 sm:px-6">
-        <div className="-mt-12 flex items-end justify-between gap-3 sm:-mt-14">
-          <Avatar className="h-24 w-24 border-4 border-card sm:h-28 sm:w-28">
-            <AvatarImage src={user.avatarUrl} alt={user.displayName} />
-            <AvatarFallback>{user.displayName.slice(0, 1)}</AvatarFallback>
+      <div className="relative px-4 pb-4 sm:px-6 sm:pb-5">
+        <div className="relative flex min-h-[52px] items-start justify-between gap-3">
+          <Avatar className="-mt-[44px] h-[88px] w-[88px] shrink-0 overflow-hidden rounded-full border-4 border-background bg-background sm:-mt-14 sm:h-28 sm:w-28 sm:border-card">
+            <AvatarImage
+              src={user.avatarUrl}
+              alt={user.displayName}
+              className="h-full w-full object-cover"
+            />
+            <AvatarFallback className="h-full w-full text-2xl font-black">
+              {user.displayName.slice(0, 1)}
+            </AvatarFallback>
           </Avatar>
-          {isMe ? (
-            <Button asChild variant="outline" className="rounded-full border-primary/40 font-bold text-primary hover:bg-primary-soft">
-              <Link to="/settings">プロフィールを編集</Link>
-            </Button>
-          ) : (
-            <FollowButton userId={user.id} />
-          )}
+
+          <div className="mt-3 flex shrink-0 items-center">
+            {isMe ? (
+              <Button
+                asChild
+                variant="outline"
+                className="h-9 rounded-full border-primary/40 px-4 text-sm font-bold text-primary hover:bg-primary-soft sm:h-10"
+              >
+                <Link to="/settings">プロフィールを編集</Link>
+              </Button>
+            ) : (
+              <FollowButton userId={user.id} />
+            )}
+          </div>
         </div>
 
-        <div className="mt-3">
-          <div className="flex flex-col">
+        <div className="mt-2 min-w-0">
+          <div className="flex min-w-0 flex-col">
             {/* 名前が長すぎてもバッジを押し出さないよう min-w-0 を追加 */}
-            <div className="flex items-center gap-0.1 min-w-0">
-              <h1 className="font-display text-2xl font-black text-foreground truncate min-w-0">
+            <div className="flex min-w-0 items-center gap-1">
+              <h1 className="min-w-0 truncate font-display text-[22px] font-black leading-tight text-foreground sm:text-2xl">
                 {user.displayName}
               </h1>
-              
+
               {user.isOfficial && (
-                <img 
-                  src={`${import.meta.env.BASE_URL}verified.png`} 
-                  alt="Official" 
-                  className="h-[1.4em] w-[1.4em] shrink-0 transform translate-y-[2px]"
+                <img
+                  src={`${import.meta.env.BASE_URL}verified.png`}
+                  alt="Official"
+                  className="h-[1.25em] w-[1.25em] shrink-0 translate-y-[1px]"
                   loading="eager"
                 />
               )}
             </div>
 
-            <p className="text-[15px] text-muted-foreground truncate">@{user.username}</p>
+            <p className="truncate text-[15px] leading-5 text-muted-foreground">
+              @{user.username}
+            </p>
           </div>
         </div>
 
         {user.bio && (
-          <p className="mt-3 whitespace-pre-wrap text-[15px] leading-relaxed">
+          <p className="mt-3 whitespace-pre-wrap break-words text-[15px] leading-relaxed text-foreground">
             {renderContentWithMentions(user.bio)}
           </p>
         )}
 
-        <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
-          <CalendarDays className="h-3.5 w-3.5" />
-          {dayjs(user.createdAt).format('YYYY年M月')} から参加
+        <div className="mt-3 flex items-center gap-1.5 text-[13px] leading-5 text-muted-foreground">
+          <CalendarDays className="h-4 w-4 shrink-0" />
+          <span>{dayjs(user.createdAt).format('YYYY年M月')} から参加</span>
         </div>
 
-        <div className="mt-4 flex items-center gap-5 border-t border-border/60 pt-4 text-sm">
+        <div className="mt-4 flex items-center gap-5 text-sm">
           {/* items-baseline に変更して数字とテキストの文字底を統一 */}
-          <Link 
+          <Link
             to={`/u/${user.username}/followers_following?tab=following`}
             className="group flex items-baseline gap-1 hover:no-underline"
           >
-            <span className="font-display text-base font-bold tabular-nums group-hover:underline">
+            <span className="font-display text-base font-bold tabular-nums text-foreground group-hover:underline">
               {stats ? formatDisplayCount(stats.following) : 0}
             </span>
             <span className="text-muted-foreground">フォロー中</span>
           </Link>
-          <Link 
+
+          <Link
             to={`/u/${user.username}/followers_following?tab=followers`}
             className="group flex items-baseline gap-1 hover:no-underline"
           >
-            <span className="font-display text-base font-bold tabular-nums group-hover:underline">
+            <span className="font-display text-base font-bold tabular-nums text-foreground group-hover:underline">
               {stats ? formatDisplayCount(stats.followers) : 0}
             </span>
             <span className="text-muted-foreground">フォロワー</span>
           </Link>
         </div>
       </div>
-    </div>
+    </section>
   );
 }

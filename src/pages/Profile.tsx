@@ -8,26 +8,35 @@ import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { LikeButton } from '@/components/post/LikeButton';
-import { 
-  useProfile, 
-  useUserPostsInfinite, 
-  useUserLikesInfinite, 
+import {
+  useProfile,
+  useUserPostsInfinite,
+  useUserLikesInfinite,
   useUserMediaInfinite,
-  useUserReactionsInfinite
+  useUserReactionsInfinite,
 } from '@/hooks/useProfile';
+
+type ProfileTabValue = 'posts' | 'likes' | 'media' | 'reactions';
+
+const profileTabs: Array<{ value: ProfileTabValue; label: string }> = [
+  { value: 'posts', label: 'ポスト' },
+  { value: 'media', label: 'メディア' },
+  { value: 'likes', label: 'いいね' },
+  { value: 'reactions', label: 'リアクション' },
+];
 
 export default function Profile() {
   const { username = '' } = useParams();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'posts' | 'likes' | 'media' | 'reactions'>('posts');
-  
+  const [activeTab, setActiveTab] = useState<ProfileTabValue>('posts');
+
   // メディア拡大用のステート
   const [selectedMedia, setSelectedMedia] = useState<{ url: string; post: any } | null>(null);
   const [isScrolled, setIsScrolled] = useState(false);
   const tabsSentinelRef = useRef<HTMLDivElement>(null);
 
   const { data: user, isLoading: userLoading, isError: userError } = useProfile(username);
-  
+
   // 各無限スクロールクエリの定義
   const postsQuery = useUserPostsInfinite(user?.id);
   const likesQuery = useUserLikesInfinite(user?.id);
@@ -35,19 +44,22 @@ export default function Profile() {
   const reactionsQuery = useUserReactionsInfinite(user?.id);
 
   // タブに応じて使用するクエリを切り替え（Supabaseレベルでフィルタリングされた結果を取得）
-  const currentQuery = 
-    activeTab === 'likes' ? likesQuery : 
-    activeTab === 'media' ? mediaQuery : 
-    activeTab === 'reactions' ? reactionsQuery :
-    postsQuery;
+  const currentQuery =
+    activeTab === 'likes'
+      ? likesQuery
+      : activeTab === 'media'
+        ? mediaQuery
+        : activeTab === 'reactions'
+          ? reactionsQuery
+          : postsQuery;
 
-  const { 
-    data, 
-    isLoading: contentLoading, 
-    fetchNextPage, 
-    hasNextPage, 
+  const {
+    data,
+    isLoading: contentLoading,
+    fetchNextPage,
+    hasNextPage,
     isFetchingNextPage,
-    isError: contentError
+    isError: contentError,
   } = currentQuery;
 
   const { ref, inView } = useInView();
@@ -81,23 +93,29 @@ export default function Profile() {
     } else {
       document.body.style.overflow = 'unset';
     }
-    return () => { document.body.style.overflow = 'unset'; };
+
+    return () => {
+      document.body.style.overflow = 'unset';
+    };
   }, [selectedMedia]);
 
   // 数値をフォーマットする関数 (PostCardと同期)
   const formatDisplayCount = (count: number) => {
     const safeCount = Number(count) || 0;
+
     if (safeCount >= 10000) {
       return (safeCount / 10000).toFixed(1).replace(/\.0$/, '') + '万';
     }
+
     return safeCount.toLocaleString();
   };
 
   // 画像URLを判定する正規表現 (PostCardと同期)
-  const imageRegex = /https?:\/\/[^\s]+?\.(?:png|jpg|jpeg|gif|webp|svg)(?:\?[^\s]*)?|https?:\/\/pbs\.twimg\.com\/media\/[^\s?]+(?:\?[^\s]*)?/gi;
+  const imageRegex =
+    /https?:\/\/[^\s]+?\.(?:png|jpg|jpeg|gif|webp|svg)(?:\?[^\s]*)?|https?:\/\/pbs\.twimg\.com\/media\/[^\s?]+(?:\?[^\s]*)?/gi;
 
   // PostCardに渡す前に、undefinedになりやすい投稿者情報を補完する
-  const normalizeAuthor = (author: any, fallbackUserId = '') => {
+  const normalizeAuthor = (author: any, fallbackUserId = ''): any => {
     const safeUsername = author?.username ?? '';
     const safeDisplayName = author?.display_name ?? author?.displayName ?? safeUsername;
 
@@ -125,12 +143,12 @@ export default function Profile() {
       bot_interval_hours: author?.bot_interval_hours ?? author?.botIntervalHours ?? 5,
       botIntervalHours: author?.botIntervalHours ?? author?.bot_interval_hours ?? 5,
       prefecture: author?.prefecture ?? '',
-      city: author?.city ?? ''
+      city: author?.city ?? '',
     };
   };
 
   // PostCardに渡す前に、undefinedになりやすい投稿情報を補完する
-  const normalizePost = (post: any, reaction?: any) => {
+  const normalizePost = (post: any, reaction?: any): any | null => {
     if (!post) return null;
 
     const baseAuthor = post.author ?? post.profiles ?? post.user ?? null;
@@ -146,6 +164,7 @@ export default function Profile() {
       ...post,
 
       id: post.id ?? '',
+
       user_id: post.user_id ?? post.userId ?? safeAuthor.id,
       userId: post.userId ?? post.user_id ?? safeAuthor.id,
 
@@ -207,7 +226,7 @@ export default function Profile() {
         ? post.reactionEmojis
         : reaction?.emoji
           ? [reaction.emoji]
-          : []
+          : [],
     };
   };
 
@@ -246,7 +265,7 @@ export default function Profile() {
           reactionId: reaction.id ?? post.reactionId ?? post.id,
           reactionEmoji: nextEmoji,
           reactionCreatedAt: reaction.created_at ?? post.reactionCreatedAt ?? null,
-          reactionEmojis: nextEmoji ? [nextEmoji] : []
+          reactionEmojis: nextEmoji ? [nextEmoji] : [],
         });
         return;
       }
@@ -257,16 +276,17 @@ export default function Profile() {
           ? [existing.reactionEmoji]
           : [];
 
-      const mergedEmojis = nextEmoji && !currentEmojis.includes(nextEmoji)
-        ? [...currentEmojis, nextEmoji]
-        : currentEmojis;
+      const mergedEmojis =
+        nextEmoji && !currentEmojis.includes(nextEmoji)
+          ? [...currentEmojis, nextEmoji]
+          : currentEmojis;
 
       grouped.set(post.id, {
         ...existing,
         reactionId: existing.reactionId ?? reaction.id ?? post.id,
         reactionCreatedAt: existing.reactionCreatedAt ?? reaction.created_at ?? null,
         reactionEmojis: mergedEmojis,
-        reactionEmoji: mergedEmojis.join(' ')
+        reactionEmoji: mergedEmojis.join(' '),
       });
     });
 
@@ -274,7 +294,7 @@ export default function Profile() {
   };
 
   const pages = data?.pages ?? [];
-  const flatPageItems = pages.flatMap((page: any) => Array.isArray(page) ? page : []);
+  const flatPageItems = pages.flatMap((page: any) => (Array.isArray(page) ? page : []));
 
   // データのフラット化
   const items = (() => {
@@ -292,14 +312,16 @@ export default function Profile() {
 
     if (activeTab === 'media') {
       return flatPageItems.flatMap((rawPost: any) => {
-        const p = normalizePost(rawPost);
+        const p: any | null = normalizePost(rawPost);
         if (!p) return [];
 
-        const dbImages = Array.isArray(p.imageUrls) 
-          ? p.imageUrls 
-          : (Array.isArray(p.image_urls) ? p.image_urls : []);
-        
-        const extractedImages = p.content?.match(imageRegex) || [];
+        const dbImages = Array.isArray(p.imageUrls)
+          ? p.imageUrls
+          : Array.isArray(p.image_urls)
+            ? p.image_urls
+            : [];
+
+        const extractedImages = typeof p.content === 'string' ? p.content.match(imageRegex) || [] : [];
         const allUrls = Array.from(new Set([...dbImages, ...extractedImages]));
 
         if (allUrls.length === 0) return [];
@@ -313,7 +335,7 @@ export default function Profile() {
           // 確実に数値を維持
           likesCount: p.likesCount ?? p.likes_count ?? 0,
           commentsCount: p.commentsCount ?? p.comments_count ?? 0,
-          likedByMe: !!(p.likedByMe ?? p.liked_by_me)
+          likedByMe: !!(p.likedByMe ?? p.liked_by_me),
         }));
       });
     }
@@ -323,16 +345,29 @@ export default function Profile() {
 
   if (userLoading) {
     return (
-      <div className="space-y-5">
-        <Skeleton className="h-72 w-full rounded-3xl" />
-        <div className="flex gap-2">
+      <div className="-mt-[56px] space-y-0 sm:mt-0 sm:space-y-5">
+        <Skeleton className="h-72 w-full rounded-none sm:rounded-3xl" />
+
+        <div className="h-16 w-full sm:hidden">
+          <div className="grid h-full w-full grid-cols-4 rounded-none bg-transparent p-0">
+            <Skeleton className="h-full rounded-none bg-muted/40" />
+            <Skeleton className="h-full rounded-none bg-muted/40" />
+            <Skeleton className="h-full rounded-none bg-muted/40" />
+            <Skeleton className="h-full rounded-none bg-muted/40" />
+          </div>
+        </div>
+
+        <div className="hidden gap-2 sm:flex">
           <Skeleton className="h-10 w-1/4 rounded-xl" />
           <Skeleton className="h-10 w-1/4 rounded-xl" />
           <Skeleton className="h-10 w-1/4 rounded-xl" />
           <Skeleton className="h-10 w-1/4 rounded-xl" />
         </div>
-        <PostCardSkeleton />
-        <PostCardSkeleton />
+
+        <div className="space-y-0 sm:space-y-4">
+          <PostCardSkeleton />
+          <PostCardSkeleton />
+        </div>
       </div>
     );
   }
@@ -346,39 +381,87 @@ export default function Profile() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="-mt-[56px] space-y-0 sm:mt-0 sm:space-y-5">
+      <style>
+        {`
+          .profile-tabs-trigger[data-state='active'] {
+            color: hsl(var(--foreground));
+            font-weight: 900;
+          }
+
+          .profile-tabs-trigger[data-state='inactive'] {
+            color: hsl(var(--muted-foreground));
+            font-weight: 800;
+          }
+
+          .profile-tabs-trigger[data-state='active'] .profile-tabs-underline {
+            display: block;
+          }
+
+          .profile-tabs-trigger[data-state='inactive'] .profile-tabs-underline {
+            display: none;
+          }
+        `}
+      </style>
+
       {user && <ProfileHeader user={user} />}
 
-      <Tabs 
+      <Tabs
         value={activeTab}
-        defaultValue="posts" 
-        className="w-full" 
-        onValueChange={(value) => setActiveTab(value as 'posts' | 'likes' | 'media' | 'reactions')}
+        defaultValue="posts"
+        className="w-full"
+        onValueChange={(value) => setActiveTab(value as ProfileTabValue)}
       >
         <div ref={tabsSentinelRef} className="h-0" />
 
-        <div className={`sticky top-0 z-50 transition-all duration-300 w-full h-16 flex items-center ${
-          isScrolled 
-            ? 'bg-[#fbf9f2]/70 dark:bg-[#000000]/70 backdrop-blur-md border-b border-black/[0.03] dark:border-white/[0.05]' 
-            : 'bg-transparent'
-        }`}>
-          <TabsList className="grid w-full grid-cols-4 rounded-2xl bg-muted/50 p-1">
-            <TabsTrigger value="posts" className="rounded-xl font-bold transition-all">
-              投稿
-            </TabsTrigger>
-            <TabsTrigger value="media" className="rounded-xl font-bold transition-all">
-              メディア
-            </TabsTrigger>
-            <TabsTrigger value="likes" className="rounded-xl font-bold transition-all">
-              いいね
-            </TabsTrigger>
-            <TabsTrigger value="reactions" className="rounded-xl font-bold transition-all">
-              リアクション
-            </TabsTrigger>
+        <div
+          className={[
+            'relative sticky top-0 z-50 flex h-16 w-full items-center sm:transition-all sm:duration-300',
+            isScrolled
+              ? 'bg-[#fbf9f2]/65 backdrop-blur-md dark:bg-[#000000]/65 sm:border-b sm:border-black/[0.03] sm:bg-[#fbf9f2]/70 sm:dark:border-white/[0.05] sm:dark:bg-[#000000]/70'
+              : 'bg-transparent',
+          ].join(' ')}
+        >
+          <div
+            className={[
+              'pointer-events-none absolute h-px sm:hidden',
+              'left-1/2 w-screen -translate-x-1/2',
+              isScrolled
+                ? 'bottom-0 bg-black/[0.03] dark:bg-white/[0.05]'
+                : 'bottom-2 bg-border/50',
+            ].join(' ')}
+          />
+
+          <TabsList className="grid h-full w-full grid-cols-4 rounded-none bg-transparent p-0 shadow-none sm:hidden">
+            {profileTabs.map((tab) => (
+              <TabsTrigger
+                key={tab.value}
+                value={tab.value}
+                className="profile-tabs-trigger relative h-full min-h-15 min-w-0 rounded-none border-0 bg-transparent px-0 text-[16px] leading-none shadow-none outline-none transition-none duration-0 hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=inactive]:bg-transparent min-[390px]:text-[13px] sm:text-[14px]"
+              >
+                <span className="whitespace-nowrap">
+                  {tab.label}
+                </span>
+
+                <span className="profile-tabs-underline absolute bottom-2 left-1/2 h-[4px] w-16 -translate-x-1/2 rounded-full bg-pink-500 sm:w-10" />
+              </TabsTrigger>
+            ))}
+          </TabsList>
+
+          <TabsList className="hidden w-full grid-cols-4 rounded-2xl bg-muted/50 p-1 sm:grid">
+            {profileTabs.map((tab) => (
+              <TabsTrigger
+                key={`desktop-${tab.value}`}
+                value={tab.value}
+                className="rounded-xl font-bold transition-all"
+              >
+                {tab.label}
+              </TabsTrigger>
+            ))}
           </TabsList>
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-0 sm:space-y-4">
           {contentLoading && (
             <>
               <PostCardSkeleton />
@@ -387,7 +470,7 @@ export default function Profile() {
           )}
 
           {!contentLoading && contentError && (
-            <div className="rounded-3xl border border-dashed border-border bg-card/60 p-12 text-center text-sm text-muted-foreground animate-in fade-in zoom-in duration-300">
+            <div className="m-4 rounded-3xl border border-dashed border-border bg-card/60 p-10 text-center text-sm text-muted-foreground animate-in fade-in zoom-in duration-300 sm:m-0 sm:p-12">
               {activeTab === 'posts' && '投稿の取得に失敗しました。'}
               {activeTab === 'likes' && 'いいねした投稿の取得に失敗しました。'}
               {activeTab === 'media' && 'メディア投稿の取得に失敗しました。'}
@@ -396,7 +479,7 @@ export default function Profile() {
           )}
 
           {!contentLoading && !contentError && !isFetchingNextPage && items.length === 0 && (
-            <div className="rounded-3xl border border-dashed border-border bg-card/60 p-12 text-center text-sm text-muted-foreground animate-in fade-in zoom-in duration-300">
+            <div className="m-4 rounded-3xl border border-dashed border-border bg-card/60 p-10 text-center text-sm text-muted-foreground animate-in fade-in zoom-in duration-300 sm:m-0 sm:p-12">
               {activeTab === 'posts' && 'まだ投稿がありません。'}
               {activeTab === 'likes' && 'いいねした投稿がありません。'}
               {activeTab === 'media' && 'メディア投稿がありません。'}
@@ -405,11 +488,11 @@ export default function Profile() {
           )}
 
           {activeTab === 'media' ? (
-            <div className="grid grid-cols-3 gap-1 md:gap-2 px-0">
+            <div className="grid grid-cols-3 gap-1 px-0 md:gap-2">
               {items.map((p: any, idx: number) => (
-                <div 
-                  key={`media-${p.displayImageKey ?? `${p.id}-${idx}`}`} 
-                  className="relative aspect-square overflow-hidden rounded-md md:rounded-xl bg-muted cursor-pointer animate-float-up"
+                <div
+                  key={`media-${p.displayImageKey ?? `${p.id}-${idx}`}`}
+                  className="relative aspect-square cursor-pointer overflow-hidden rounded-md bg-muted animate-float-up md:rounded-xl"
                   onClick={() => setSelectedMedia({ url: p.displayImageUrl, post: p })}
                 >
                   <img
@@ -417,9 +500,10 @@ export default function Profile() {
                     alt=""
                     className="h-full w-full object-cover"
                   />
+
                   {p.isMulti && (
-                    <div className="absolute top-1.5 right-1.5 bg-black/40 p-1 rounded-md backdrop-blur-sm">
-                      <ImageIcon className="w-3.5 h-3.5 text-white" />
+                    <div className="absolute right-1.5 top-1.5 rounded-md bg-black/40 p-1 backdrop-blur-sm">
+                      <ImageIcon className="h-3.5 w-3.5 text-white" />
                     </div>
                   )}
                 </div>
@@ -447,16 +531,16 @@ export default function Profile() {
             ))
           )}
 
-          <div ref={ref} className="py-10 flex justify-center">
+          <div ref={ref} className="flex justify-center py-8 sm:py-10">
             {isFetchingNextPage ? (
               <div className="flex items-center gap-2 text-muted-foreground">
                 <Loader2 className="h-5 w-5 animate-spin" />
                 <span className="text-sm">さらに読み込み中...</span>
               </div>
             ) : hasNextPage ? (
-              <div className="h-10" />
+              <div className="h-8 sm:h-10" />
             ) : items.length > 0 ? (
-              <p className="text-xs text-muted-foreground text-center">
+              <p className="text-center text-xs text-muted-foreground">
                 すべての表示が完了しました
               </p>
             ) : null}
@@ -466,56 +550,60 @@ export default function Profile() {
 
       {/* メディア拡大オーバーレイ */}
       {selectedMedia && (
-        <div 
+        <div
           className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-black/95 backdrop-blur-sm animate-in fade-in duration-200"
-          style={{ 
-            position: 'fixed', 
-            top: 0, 
-            left: 0, 
-            width: '100vw', 
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100vw',
             height: '100vh',
             margin: 0,
-            padding: 0
+            padding: 0,
           }}
           onClick={() => setSelectedMedia(null)}
         >
-          <button 
-            className="absolute top-5 left-5 z-[10000] p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
+          <button
+            type="button"
+            className="absolute left-5 top-5 z-[10000] rounded-full bg-white/10 p-2 text-white transition-colors hover:bg-white/20"
             onClick={() => setSelectedMedia(null)}
           >
             <X className="h-6 w-6" />
           </button>
 
           <div className="relative flex h-full w-full items-center justify-center p-4">
-            <img 
-              src={selectedMedia.url} 
-              alt="Expanded view" 
+            <img
+              src={selectedMedia.url}
+              alt="Expanded view"
               className="max-h-[92vh] max-w-[95vw] object-contain shadow-2xl animate-in zoom-in-95 duration-200"
-              onClick={(e) => e.stopPropagation()} 
+              onClick={(e) => e.stopPropagation()}
             />
           </div>
 
-          <div 
+          <div
             className="absolute bottom-0 left-0 right-0 flex items-center justify-center bg-gradient-to-t from-black/90 to-transparent pb-10 pt-20"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center gap-8 rounded-full bg-black/60 px-8 py-4 backdrop-blur-md border border-white/10 shadow-xl">
+            <div className="flex items-center gap-8 rounded-full border border-white/10 bg-black/60 px-8 py-4 shadow-xl backdrop-blur-md">
               <div className="scale-125">
-                <LikeButton 
-                  postId={selectedMedia.post.id} 
-                  liked={selectedMedia.post.likedByMe} 
-                  count={Number(selectedMedia.post.likesCount)} 
+                <LikeButton
+                  postId={selectedMedia.post.id}
+                  liked={selectedMedia.post.likedByMe}
+                  count={Number(selectedMedia.post.likesCount)}
                 />
               </div>
+
               <button
+                type="button"
                 onClick={() => {
                   setSelectedMedia(null);
                   navigate(`/post/${selectedMedia.post.id}`);
                 }}
-                className="inline-flex items-center gap-2 text-white/90 hover:text-white transition-colors"
+                className="inline-flex items-center gap-2 text-white/90 transition-colors hover:text-white"
               >
                 <MessageCircle className="h-6 w-6" />
-                <span className="font-bold tabular-nums text-lg">
+
+                <span className="text-lg font-bold tabular-nums">
                   {formatDisplayCount(selectedMedia.post.commentsCount)}
                 </span>
               </button>
