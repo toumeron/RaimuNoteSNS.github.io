@@ -99,6 +99,7 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
     if (typeof window === 'undefined') return 'dark';
     return localStorage.getItem('lime_timeline_visual_theme') === 'light' ? 'light' : 'dark';
   });
+  const [singleImageNaturalSize, setSingleImageNaturalSize] = useState<{ width: number; height: number } | null>(null);
 
   const buttonRef = useRef<HTMLButtonElement>(null);
   const pickerPanelRef = useRef<HTMLDivElement>(null);
@@ -514,6 +515,78 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
   displayContent = displayContent.replace(imageRegex, '');
   displayContent = displayContent.replace(spotifyRegex, '');
   displayContent = displayContent.trim();
+
+
+  const singleImageUrl = allImageUrls.length === 1 ? allImageUrls[0] : null;
+
+  useEffect(() => {
+    setSingleImageNaturalSize(null);
+  }, [singleImageUrl]);
+
+  const getSingleImageFrameStyle = (): React.CSSProperties => {
+    if (!singleImageNaturalSize) {
+      return {
+        width: '100%',
+        maxWidth: '100%',
+      };
+    }
+
+    const naturalWidth = Math.max(1, singleImageNaturalSize.width);
+    const naturalHeight = Math.max(1, singleImageNaturalSize.height);
+    const ratio = naturalWidth / naturalHeight;
+
+    /*
+      1枚画像は X / Twitter のタイムライン表示に寄せる。
+      基本は画像比率をそのまま使うが、超縦長画像だけはタイムラインを占拠しないよう、
+      表示上限の高さから逆算して幅を段階的に狭める。
+      これで「縦に長いほど左寄せのまま細くなる」挙動になる。
+    */
+    const maxTimelineImageHeight = isMobile ? 300 : 480;
+    const minimumReadableWidth = isMobile ? 88 : 110;
+    const heightLimitedWidth = Math.max(
+      minimumReadableWidth,
+      Math.round(maxTimelineImageHeight * ratio)
+    );
+    const shouldLimitByHeight = ratio < (isMobile ? 1.64 : 1.72);
+    const shouldAvoidUpscale = naturalWidth <= (isMobile ? 360 : 520);
+    const shouldNarrowUltraWide = ratio >= 2.35;
+
+    if (shouldLimitByHeight) {
+      const width = shouldAvoidUpscale
+        ? Math.min(naturalWidth, heightLimitedWidth)
+        : heightLimitedWidth;
+
+      return {
+        width: `min(100%, ${Math.max(minimumReadableWidth, width)}px)`,
+        maxWidth: '100%',
+      };
+    }
+
+    if (shouldAvoidUpscale) {
+      return {
+        width: `${naturalWidth}px`,
+        maxWidth: '100%',
+      };
+    }
+
+    if (shouldNarrowUltraWide) {
+      return {
+        width: isMobile ? '100%' : 'min(100%, 560px)',
+        maxWidth: '100%',
+      };
+    }
+
+    return {
+      width: '100%',
+      maxWidth: '100%',
+    };
+  };
+
+  const getSingleImageDisplayStyle = (): React.CSSProperties => ({
+    width: '100%',
+    height: 'auto',
+    objectFit: 'contain',
+  });
 
   const renderContentWithLinks = (text: string) => {
     if (!text) return null;
@@ -1256,26 +1329,60 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
                   ))}
                 </div>
               )}
-              <div 
-                className="cursor-zoom-in"
-                onClick={(e) => {
-                  const target = e.target as HTMLElement;
-                  if (target.tagName === 'IMG' && (target as HTMLImageElement).src) {
-                    handleImageClick(e, (target as HTMLImageElement).src);
-                  } else {
-                    handleCardClick();
-                  }
-                }}
-              >
-                <PostImages 
-                  urls={allImageUrls} 
-                  onImageError={(url) => {
-                    if (!failedUrls.includes(url)) {
-                      setFailedUrls(prev => [...prev, url]);
+              {singleImageUrl ? (
+                <div className="mt-3 flex max-w-full justify-start" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    className="block max-w-full cursor-zoom-in overflow-hidden rounded-2xl border border-border/50 bg-black/[0.025] text-left shadow-none dark:bg-white/[0.035]"
+                    style={getSingleImageFrameStyle()}
+                    onClick={(e) => handleImageClick(e, singleImageUrl)}
+                    aria-label="画像を拡大表示"
+                  >
+                    <img
+                      src={singleImageUrl}
+                      alt="投稿画像"
+                      className="block select-none"
+                      style={getSingleImageDisplayStyle()}
+                      draggable={false}
+                      onLoad={(e) => {
+                        const img = e.currentTarget;
+                        if (img.naturalWidth && img.naturalHeight) {
+                          setSingleImageNaturalSize({
+                            width: img.naturalWidth,
+                            height: img.naturalHeight,
+                          });
+                        }
+                      }}
+                      onError={() => {
+                        setFailedUrls((prev) => (
+                          prev.includes(singleImageUrl) ? prev : [...prev, singleImageUrl]
+                        ));
+                      }}
+                    />
+                  </button>
+                </div>
+              ) : (
+                <div 
+                  className="cursor-zoom-in"
+                  onClick={(e) => {
+                    const target = e.target as HTMLElement;
+                    if (target.tagName === 'IMG' && (target as HTMLImageElement).src) {
+                      handleImageClick(e, (target as HTMLImageElement).src);
+                    } else {
+                      handleCardClick();
                     }
                   }}
-                />
-              </div>
+                >
+                  <PostImages 
+                    urls={allImageUrls} 
+                    onImageError={(url) => {
+                      if (!failedUrls.includes(url)) {
+                        setFailedUrls(prev => [...prev, url]);
+                      }
+                    }}
+                  />
+                </div>
+              )}
             </div>
 
             {/* --- リアクションバッジエリア（reactionsがある時のみレンダリングされ、ない時は完全に消滅） --- */}
