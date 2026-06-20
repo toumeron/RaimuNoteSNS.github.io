@@ -106,10 +106,33 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const ignoreNextCardClickRef = useRef(false);
+  const ignoreCardClickUntilRef = useRef(0);
 
   const isPWA = useIsPWA();
 
   const defaultEmojis = ['👍', '❤️', '😆', '🤔', '😮', '🎉', '💢', '😢', '😇', '🍮'];
+
+  const suppressCardClickAfterPopupClose = (duration = 500) => {
+    ignoreNextCardClickRef.current = true;
+    ignoreCardClickUntilRef.current = Date.now() + duration;
+
+    window.setTimeout(() => {
+      if (Date.now() >= ignoreCardClickUntilRef.current) {
+        ignoreNextCardClickRef.current = false;
+      }
+    }, duration);
+  };
+
+  const shouldSuppressCardNavigation = () => (
+    ignoreNextCardClickRef.current || Date.now() < ignoreCardClickUntilRef.current
+  );
+
+  const handleCardClickCapture = (e: React.MouseEvent<HTMLElement>) => {
+    if (!shouldSuppressCardNavigation()) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+  };
 
   const formatDisplayCount = (count: number) => {
     if (count >= 10000) {
@@ -224,12 +247,9 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
     if (!showMenu) return;
 
     const closeMenuFromOutside = () => {
-      ignoreNextCardClickRef.current = true;
+      suppressCardClickAfterPopupClose();
       setShowMenu(false);
       setMoreMenuPosition(null);
-      window.setTimeout(() => {
-        ignoreNextCardClickRef.current = false;
-      }, 0);
     };
 
     const handlePointerDown = (event: PointerEvent) => {
@@ -253,12 +273,9 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
     if (!showMenu) return;
 
     const closeOnViewportChange = () => {
-      ignoreNextCardClickRef.current = true;
+      suppressCardClickAfterPopupClose();
       setShowMenu(false);
       setMoreMenuPosition(null);
-      window.setTimeout(() => {
-        ignoreNextCardClickRef.current = false;
-      }, 0);
     };
 
     window.addEventListener('scroll', closeOnViewportChange, true);
@@ -282,11 +299,8 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
       if (buttonRef.current?.contains(target)) return;
       if (pickerPanelRef.current?.contains(target)) return;
 
-      ignoreNextCardClickRef.current = true;
+      suppressCardClickAfterPopupClose();
       setShowPicker(false);
-      window.setTimeout(() => {
-        ignoreNextCardClickRef.current = false;
-      }, 140);
     };
 
     document.addEventListener('pointerdown', handlePointerDown, true);
@@ -708,7 +722,7 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
   };
 
   const handleCardClick = () => {
-    if (showMenu || showPicker || ignoreNextCardClickRef.current) {
+    if (showMenu || showPicker || shouldSuppressCardNavigation()) {
       setShowMenu(false);
       if (showPicker) setShowPicker(false);
       return;
@@ -1118,6 +1132,7 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
       )}
 
       <article 
+        onClickCapture={handleCardClickCapture}
         onClick={handleCardClick}
         className={
           timelineGlass
@@ -1226,12 +1241,9 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
                         onPointerDown={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          ignoreNextCardClickRef.current = true;
+                          suppressCardClickAfterPopupClose();
                           setShowMenu(false);
                           setMoreMenuPosition(null);
-                          window.setTimeout(() => {
-                            ignoreNextCardClickRef.current = false;
-                          }, 0);
                         }}
                         onClick={(e) => {
                           e.preventDefault();
@@ -1293,7 +1305,7 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
             </div>
 
             <div>
-              <div onClick={(e) => { e.stopPropagation(); navigate(`/post/${post.id}`); }}>
+              <div onClick={(e) => { e.stopPropagation(); if (!shouldSuppressCardNavigation()) navigate(`/post/${post.id}`); }}>
                 {displayContent && (
                   <p className={isMobile ? "whitespace-pre-wrap break-words text-[16px] leading-normal text-foreground mt-1" : "whitespace-pre-wrap break-words text-base leading-relaxed text-foreground mt-1"}>
                     {renderContentWithMentions(displayContent)}
@@ -1469,7 +1481,11 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
               <div className="relative inline-flex items-center h-full" onClick={(e) => e.stopPropagation()}>
                 <button
                   ref={buttonRef}
-                  onClick={() => setShowPicker(!showPicker)}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setShowPicker(!showPicker);
+                  }}
                   className={
                     isMobile
                       ? `inline-flex items-center justify-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full origin-center ${

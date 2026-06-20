@@ -386,12 +386,12 @@ export default function Profile() {
         {`
           .profile-tabs-trigger[data-state='active'] {
             color: hsl(var(--foreground));
-            font-weight: 900;
+            font-weight: 1000;
           }
 
           .profile-tabs-trigger[data-state='inactive'] {
             color: hsl(var(--muted-foreground));
-            font-weight: 800;
+            font-weight: 500;
           }
 
           .profile-tabs-trigger[data-state='active'] .profile-tabs-underline {

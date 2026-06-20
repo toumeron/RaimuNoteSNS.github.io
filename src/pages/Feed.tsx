@@ -122,8 +122,6 @@ export default function Feed() {
 
   const feedRootRef = useRef<HTMLDivElement>(null);
   const touchStartYRef = useRef(0);
-  const horizontalTouchStartXRef = useRef(0);
-  const horizontalTouchStartYRef = useRef(0);
   const isPullingRef = useRef(false);
   const pullDistanceRef = useRef(0);
   const [pullDistance, setPullDistance] = useState(0);
@@ -472,116 +470,6 @@ export default function Feed() {
 
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    const root = document.documentElement;
-    const body = document.body;
-
-    const horizontalGuardStyle = document.createElement('style');
-    horizontalGuardStyle.setAttribute('data-limenote-horizontal-gesture-guard', 'true');
-    horizontalGuardStyle.textContent = `
-      .limenote-feed-horizontal-guard {
-        max-width: 100%;
-        min-width: 0;
-        overscroll-behavior-x: none;
-      }
-
-      .limenote-feed-horizontal-guard *,
-      .limenote-feed-horizontal-guard *::before,
-      .limenote-feed-horizontal-guard *::after {
-        min-width: 0;
-        box-sizing: border-box;
-      }
-
-      .limenote-feed-tabs-shell {
-        width: 100%;
-        max-width: 100%;
-        margin-left: 0 !important;
-        margin-right: 0 !important;
-      }
-
-      .limenote-mobile-background-layer {
-        max-width: 100vw !important;
-      }
-
-      @media (max-width: 639px) {
-        .limenote-feed-horizontal-guard,
-        .limenote-feed-horizontal-guard * {
-          touch-action: pan-y pinch-zoom;
-        }
-      }
-    `;
-    document.head.appendChild(horizontalGuardStyle);
-
-    // 別ページ遷移や古いピッカー処理で body overflow:hidden が残ると、ホーム復帰後に縦スクロールできなくなる。
-    // html/body の overflow-x を直接いじると sticky header / Radix Dropdown / Tabs の再配置に巻き込まれるため、ここでは触らない。
-    if (root.style.overflow === 'hidden') root.style.overflow = '';
-    if (body.style.overflow === 'hidden') body.style.overflow = '';
-    if (root.style.overflowY === 'hidden') root.style.overflowY = '';
-    if (body.style.overflowY === 'hidden') body.style.overflowY = '';
-
-    const forceScrollXToZero = () => {
-      if (root.scrollLeft !== 0) root.scrollLeft = 0;
-      if (body.scrollLeft !== 0) body.scrollLeft = 0;
-    };
-
-    const handleHorizontalTouchStart = (event: TouchEvent) => {
-      const target = event.target as Node | null;
-      if (!target || !feedRootRef.current?.contains(target)) return;
-      if (event.touches.length !== 1) return;
-
-      horizontalTouchStartXRef.current = event.touches[0].clientX;
-      horizontalTouchStartYRef.current = event.touches[0].clientY;
-    };
-
-    const handleHorizontalTouchMove = (event: TouchEvent) => {
-      const target = event.target as Node | null;
-      if (!target || !feedRootRef.current?.contains(target)) return;
-      if (event.touches.length !== 1) return;
-
-      const currentX = event.touches[0].clientX;
-      const currentY = event.touches[0].clientY;
-      const diffX = currentX - horizontalTouchStartXRef.current;
-      const diffY = currentY - horizontalTouchStartYRef.current;
-      const absX = Math.abs(diffX);
-      const absY = Math.abs(diffY);
-
-      // Header は対象外にし、Feed 内だけ横ジェスチャーを強く止める。
-      // 「明確な横スワイプだけ」ではなく、斜め横ブレでも横移動に寄った時点で止める。
-      if (absX > 2 && absX >= absY * 0.15) {
-        event.preventDefault();
-        forceScrollXToZero();
-      }
-    };
-
-    const handleHorizontalTouchEnd = () => {
-      forceScrollXToZero();
-    };
-
-    const handleViewportChange = () => {
-      window.requestAnimationFrame(forceScrollXToZero);
-    };
-
-    window.addEventListener('resize', handleViewportChange);
-    window.addEventListener('orientationchange', handleViewportChange);
-    document.addEventListener('touchstart', handleHorizontalTouchStart, { passive: true, capture: true });
-    document.addEventListener('touchmove', handleHorizontalTouchMove, { passive: false, capture: true });
-    document.addEventListener('touchend', handleHorizontalTouchEnd, { passive: true, capture: true });
-
-    forceScrollXToZero();
-
-    return () => {
-      horizontalGuardStyle.remove();
-
-      window.removeEventListener('resize', handleViewportChange);
-      window.removeEventListener('orientationchange', handleViewportChange);
-      document.removeEventListener('touchstart', handleHorizontalTouchStart, true);
-      document.removeEventListener('touchmove', handleHorizontalTouchMove, true);
-      document.removeEventListener('touchend', handleHorizontalTouchEnd, true);
-    };
-  }, []);
-
-  useEffect(() => {
     if (!isPWAMobile) {
       document.documentElement.style.overscrollBehaviorY = '';
       document.body.style.overscrollBehaviorY = '';
@@ -704,12 +592,6 @@ export default function Feed() {
         document.body.scrollTop = scrollY;
       }
 
-      if (document.documentElement.scrollLeft !== 0) {
-        document.documentElement.scrollLeft = 0;
-      }
-      if (document.body.scrollLeft !== 0) {
-        document.body.scrollLeft = 0;
-      }
     };
 
     window.requestAnimationFrame(restore);
@@ -730,7 +612,7 @@ export default function Feed() {
   return (
     <div
       ref={feedRootRef}
-      className={`limenote-feed-horizontal-guard space-y-5 ${
+      className={`space-y-5 ${
         hasTimelineBackground
           ? timelineTheme === 'dark'
             ? 'pt-4 sm:pt-6 timeline-theme-scope timeline-theme-dark'
@@ -740,7 +622,7 @@ export default function Feed() {
     >
       {hasTimelineBackground && isMobile && timelineBackgroundUrl && (
         <div
-          className="limenote-mobile-background-layer pointer-events-none fixed left-0 top-0 z-0 overflow-hidden bg-background"
+          className="pointer-events-none fixed left-0 top-0 z-0 bg-background"
           style={{
             width: initialMobileBackgroundFrame.width ? `${initialMobileBackgroundFrame.width}px` : '100vw',
             height: initialMobileBackgroundFrame.height ? `${initialMobileBackgroundFrame.height}px` : '100vh',
@@ -797,7 +679,6 @@ export default function Feed() {
 
           .timeline-tabs-list {
             position: relative;
-            overflow: hidden;
             gap: 0 !important;
             border: 0 !important;
             outline: none !important;
@@ -947,7 +828,7 @@ export default function Feed() {
 
       {/* 特別扱い：ヘッダー統合タブ */}
       <div
-        className={`limenote-feed-tabs-shell sticky top-0 transition-all duration-300 py-3 px-0 border-none pointer-events-none ${
+        className={`sticky top-0 transition-all duration-300 py-3 px-0 border-none pointer-events-none ${
           isScrolled 
             ? 'z-[2147483647] h-16 flex items-center justify-center' 
             : 'z-[2147483647] bg-transparent h-auto'
@@ -961,7 +842,7 @@ export default function Feed() {
             onValueChange={handleTabChange}
           >
             <TabsList
-              className={`grid w-full grid-cols-2 h-11 items-center justify-center overflow-hidden rounded-full p-1 ring-0 border-none backdrop-blur-2xl ${
+              className={`grid w-full grid-cols-2 h-11 items-center justify-center rounded-full p-1 ring-0 border-none backdrop-blur-2xl ${
                 hasTimelineBackground
                   ? 'timeline-tabs-list shadow-none'
                   : 'bg-muted/80 border-none shadow-none'
