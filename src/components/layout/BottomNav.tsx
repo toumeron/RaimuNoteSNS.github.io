@@ -128,7 +128,7 @@ export function BottomNav() {
           : 'border-border/60 bg-background/90'
       )}
       style={{
-        zIndex: 2147483647,
+        zIndex: 10,
         isolation: 'isolate',
         paddingBottom: 'calc(-15px + env(safe-area-inset-bottom))',
       }}

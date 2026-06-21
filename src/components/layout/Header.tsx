@@ -137,8 +137,8 @@ export const Header = () => {
 
   const dropdownClass = useTimelineChromeDesign
     ? isTimelineDark
-      ? 'z-[2147483647] w-56 rounded-xl border border-zinc-800 bg-zinc-950 text-zinc-50 shadow-xl'
-      : 'z-[2147483647] w-56 rounded-xl border border-zinc-200 bg-white text-zinc-950 shadow-xl'
+      ? 'z-[4000] w-56 rounded-xl border border-zinc-800 bg-zinc-950 text-zinc-50 shadow-xl'
+      : 'z-[4000] w-56 rounded-xl border border-zinc-200 bg-white text-zinc-950 shadow-xl'
     : 'z-[60] w-56 rounded-xl border-border/60 bg-popover text-popover-foreground shadow-xl';
 
   const separatorClass = useTimelineChromeDesign
@@ -150,7 +150,7 @@ export const Header = () => {
   return (
     <header
       className={cn(
-        'sticky top-0 z-[2147483646] border-b backdrop-blur-md',
+        'sticky top-0 z-[500] border-b backdrop-blur-md',
         useTimelineChromeDesign
           ? isTimelineDark
             ? 'border-white/[0.06] bg-[#090b10]/78 text-white supports-[backdrop-filter]:bg-[#090b10]/70 backdrop-blur-2xl'
@@ -194,7 +194,7 @@ export const Header = () => {
             <DropdownMenuContent
               align="end"
               className={dropdownClass}
-              style={{ zIndex: 2147483647 }}
+              style={{ zIndex: 500 }}
             >
               <DropdownMenuItem onClick={() => navigate('/search')} className={menuItemClass}>
                 <Search className="mr-2 h-4 w-4" /> 検索

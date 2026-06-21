@@ -830,10 +830,10 @@ export default function Feed() {
       <div
         className={`sticky top-0 transition-all duration-300 py-3 px-0 border-none pointer-events-none ${
           isScrolled 
-            ? 'z-[2147483647] h-16 flex items-center justify-center' 
-            : 'z-[2147483647] bg-transparent h-auto'
+            ? 'z-[500] h-16 flex items-center justify-center' 
+            : 'z-[500] bg-transparent h-auto'
         }`}
-        style={{ zIndex: 2147483647 }}
+        style={{ zIndex: 500 }}
       >
         <div className="max-w-md mx-auto w-full pointer-events-auto">
           <Tabs 

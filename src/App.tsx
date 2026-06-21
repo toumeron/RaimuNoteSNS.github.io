@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState, useRef, type ChangeEvent } from "react";
+import { createPortal } from "react-dom";
 import { useSearchParams } from 'react-router-dom';
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
@@ -97,6 +98,401 @@ const NotificationWatcher = () => {
   const { user } = useAuth();
   useOSNotification(user?.id ?? null);
   return null;
+};
+
+interface IncomingLimeDrop {
+  id: string;
+  sender_id: string;
+  recipient_id: string;
+  post_id: string;
+  post_url: string;
+  post_author_display_name: string | null;
+  post_author_username: string | null;
+  post_text: string | null;
+  created_at: string;
+  sender?: {
+    id: string;
+    username: string;
+    displayName: string;
+    avatarUrl: string;
+  };
+}
+
+const LimeDropReceiver = () => {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const [drops, setDrops] = useState<IncomingLimeDrop[]>([]);
+  const [busyDropId, setBusyDropId] = useState<string | null>(null);
+  const [swipeOffset, setSwipeOffset] = useState(0);
+  const swipeStartYRef = useRef<number | null>(null);
+
+  const attachSenderProfiles = async (rows: any[]): Promise<IncomingLimeDrop[]> => {
+    if (rows.length === 0) return [];
+
+    const senderIds = Array.from(
+      new Set(
+        rows
+          .map((row) => row.sender_id)
+          .filter(Boolean)
+      )
+    );
+
+    const { data: profiles, error } = await supabase
+      .from('profiles')
+      .select('id, username, display_name, avatar_url')
+      .in('id', senderIds);
+
+    if (error) {
+      console.error('Fetch LimeDrop sender profiles failed:', error);
+    }
+
+    const profileMap = new Map(
+      (profiles || []).map((profile: any) => [
+        profile.id,
+        {
+          id: profile.id,
+          username: profile.username || 'unknown',
+          displayName: profile.display_name || profile.username || 'ユーザー',
+          avatarUrl: profile.avatar_url || '',
+        },
+      ])
+    );
+
+    return rows.map((row) => ({
+      id: row.id,
+      sender_id: row.sender_id,
+      recipient_id: row.recipient_id,
+      post_id: row.post_id,
+      post_url: row.post_url,
+      post_author_display_name: row.post_author_display_name,
+      post_author_username: row.post_author_username,
+      post_text: row.post_text,
+      created_at: row.created_at,
+      sender: profileMap.get(row.sender_id),
+    }));
+  };
+
+  useEffect(() => {
+    if (!user?.id) {
+      setDrops([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadPendingDrops = async () => {
+      const { data, error } = await supabase
+        .from('lime_drops')
+        .select('id, sender_id, recipient_id, post_id, post_url, post_author_display_name, post_author_username, post_text, created_at, status')
+        .eq('recipient_id', user.id)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      if (error) {
+        console.error('Fetch pending LimeDrops failed:', error);
+        return;
+      }
+
+      const hydrated = await attachSenderProfiles(data || []);
+      if (!cancelled) {
+        setDrops(hydrated);
+      }
+    };
+
+    const hydrateRealtimeDrop = async (row: any) => {
+      if (!row || row.status !== 'pending') return;
+
+      const hydrated = await attachSenderProfiles([row]);
+      if (cancelled || hydrated.length === 0) return;
+
+      setDrops((prev) => {
+        if (prev.some((drop) => drop.id === hydrated[0].id)) return prev;
+        return [hydrated[0], ...prev].slice(0, 5);
+      });
+    };
+
+    loadPendingDrops();
+
+    const channel = supabase
+      .channel(`lime-drop-receiver-${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'lime_drops',
+          filter: `recipient_id=eq.${user.id}`,
+        },
+        (payload) => {
+          hydrateRealtimeDrop(payload.new);
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'lime_drops',
+          filter: `recipient_id=eq.${user.id}`,
+        },
+        (payload) => {
+          const next = payload.new as any;
+          if (next?.status === 'pending') {
+            hydrateRealtimeDrop(next);
+            return;
+          }
+
+          setDrops((prev) => prev.filter((drop) => drop.id !== next?.id));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id]);
+
+  const activeDrop = drops[0];
+
+  const removeDrop = (dropId: string) => {
+    setDrops((prev) => prev.filter((drop) => drop.id !== dropId));
+  };
+
+  const declineDrop = async () => {
+    if (!activeDrop || busyDropId) return;
+
+    setSwipeOffset(0);
+    setBusyDropId(activeDrop.id);
+    try {
+      const { error } = await supabase
+        .from('lime_drops')
+        .update({ status: 'declined' })
+        .eq('id', activeDrop.id)
+        .eq('recipient_id', user?.id);
+
+      if (error) throw error;
+      removeDrop(activeDrop.id);
+    } catch (error) {
+      console.error('Decline LimeDrop failed:', error);
+    } finally {
+      setBusyDropId(null);
+    }
+  };
+
+  const acceptDrop = async () => {
+    if (!activeDrop || busyDropId) return;
+
+    setSwipeOffset(0);
+    setBusyDropId(activeDrop.id);
+    try {
+      const { error } = await supabase
+        .from('lime_drops')
+        .update({ status: 'accepted' })
+        .eq('id', activeDrop.id)
+        .eq('recipient_id', user?.id);
+
+      if (error) throw error;
+      removeDrop(activeDrop.id);
+      navigate(`/post/${activeDrop.post_id}`);
+    } catch (error) {
+      console.error('Accept LimeDrop failed:', error);
+    } finally {
+      setBusyDropId(null);
+    }
+  };
+
+  const handleLimeDropTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    swipeStartYRef.current = event.touches[0]?.clientY ?? null;
+  };
+
+  const handleLimeDropTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (swipeStartYRef.current === null || busyDropId) return;
+
+    const currentY = event.touches[0]?.clientY ?? swipeStartYRef.current;
+    const deltaY = currentY - swipeStartYRef.current;
+
+    if (deltaY < 0) {
+      setSwipeOffset(Math.max(deltaY, -96));
+    }
+  };
+
+  const handleLimeDropTouchEnd = () => {
+    if (swipeOffset <= -48) {
+      declineDrop();
+    } else {
+      setSwipeOffset(0);
+    }
+
+    swipeStartYRef.current = null;
+  };
+
+  if (!activeDrop || typeof document === 'undefined') return null;
+
+  const senderName = activeDrop.sender?.displayName || 'ユーザー';
+  const senderUsername = activeDrop.sender?.username || 'unknown';
+  const postAuthorName = activeDrop.post_author_display_name || activeDrop.post_author_username || 'ポスト';
+  const postText = activeDrop.post_text || `${postAuthorName}さんのポスト`;
+  const isBusy = busyDropId === activeDrop.id;
+
+  return createPortal(
+    <>
+      <style>{`
+        @keyframes limedrop-pop-in {
+          0% {
+            opacity: 0;
+            transform: translate3d(0, -18px, 0) scale(0.94);
+            filter: blur(6px);
+          }
+          62% {
+            opacity: 1;
+            transform: translate3d(0, 3px, 0) scale(1.01);
+            filter: blur(0);
+          }
+          100% {
+            opacity: 1;
+            transform: translate3d(0, 0, 0) scale(1);
+            filter: blur(0);
+          }
+        }
+
+        @keyframes limedrop-signal-pulse {
+          0% {
+            transform: scale(0.72);
+            opacity: 0.85;
+          }
+          70% {
+            transform: scale(1.65);
+            opacity: 0;
+          }
+          100% {
+            transform: scale(1.65);
+            opacity: 0;
+          }
+        }
+      `}</style>
+
+      <div className="pointer-events-none fixed inset-x-0 top-0 z-[2147483647] px-4 pt-[max(10px,env(safe-area-inset-top))] md:inset-x-auto md:right-5 md:w-[372px] md:px-0 md:pt-5">
+        <div className="mx-auto w-full max-w-[430px] md:mx-0 md:max-w-none">
+          <div
+            className="pointer-events-auto overflow-hidden rounded-[24px] border border-white/45 bg-white/76 text-zinc-950 shadow-[0_18px_56px_rgba(0,0,0,0.24)] backdrop-blur-2xl transition-transform duration-200 dark:border-white/10 dark:bg-zinc-950/76 dark:text-white md:rounded-[22px]"
+            style={{
+              animation: 'limedrop-pop-in 420ms cubic-bezier(0.16, 1, 0.3, 1)',
+              transform: swipeOffset < 0 ? `translate3d(0, ${swipeOffset}px, 0) scale(${Math.max(0.96, 1 + swipeOffset / 900)})` : undefined,
+            }}
+            onTouchStart={handleLimeDropTouchStart}
+            onTouchMove={handleLimeDropTouchMove}
+            onTouchEnd={handleLimeDropTouchEnd}
+            onTouchCancel={handleLimeDropTouchEnd}
+          >
+            <div className="md:hidden">
+              <div className="flex items-start gap-3 px-3.5 pb-2.5 pt-3.5">
+                <div className="relative shrink-0">
+                  <Avatar className="h-10 w-10 border border-white/60 shadow-sm">
+                    <AvatarImage src={activeDrop.sender?.avatarUrl} alt={senderName} />
+                    <AvatarFallback>{senderName.slice(0, 1)}</AvatarFallback>
+                  </Avatar>
+                  <div className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-primary-foreground shadow">
+                    <Send className="h-2.5 w-2.5" />
+                  </div>
+                  <span className="absolute inset-0 rounded-full border-2 border-primary/40" style={{ animation: 'limedrop-signal-pulse 1.6s ease-out infinite' }} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[12px] font-black text-zinc-700 dark:text-zinc-300">LimeDrop</div>
+                  <div className="mt-0.5 text-[15px] font-black leading-tight text-zinc-950 dark:text-white">
+                    {senderName}さんがポストを共有しようとしています
+                  </div>
+                  <div className="mt-1 line-clamp-1 text-[12px] font-medium leading-snug text-zinc-700 dark:text-zinc-300">
+                    {postText}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={declineDrop}
+                  disabled={isBusy}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/60 text-zinc-900 transition hover:bg-white/80 disabled:opacity-60 dark:bg-white/10 dark:text-white dark:hover:bg-white/15"
+                  aria-label="LimeDropを閉じる"
+                >
+                  <X className="h-[18px] w-[18px]" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 border-t border-black/5 p-2.5 dark:border-white/10">
+                <button
+                  type="button"
+                  onClick={declineDrop}
+                  disabled={isBusy}
+                  className="h-10 rounded-xl bg-zinc-200/70 text-[14px] font-black text-zinc-950 transition hover:bg-zinc-200 disabled:opacity-60 dark:bg-white/10 dark:text-white dark:hover:bg-white/15"
+                >
+                  辞退
+                </button>
+                <button
+                  type="button"
+                  onClick={acceptDrop}
+                  disabled={isBusy}
+                  className="h-10 rounded-xl bg-zinc-200/70 text-[14px] font-black text-zinc-950 transition hover:bg-zinc-200 disabled:opacity-60 dark:bg-white/10 dark:text-white dark:hover:bg-white/15"
+                >
+                  受け入れる
+                </button>
+              </div>
+            </div>
+
+            <div className="hidden md:block">
+              <div className="flex items-start gap-3 px-4 pb-3 pt-4">
+                <div className="relative shrink-0">
+                  <Avatar className="h-11 w-11 border border-white/50 shadow-sm">
+                    <AvatarImage src={activeDrop.sender?.avatarUrl} alt={senderName} />
+                    <AvatarFallback>{senderName.slice(0, 1)}</AvatarFallback>
+                  </Avatar>
+                  <div className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-primary-foreground shadow">
+                    <Send className="h-2.5 w-2.5" />
+                  </div>
+                  <span className="absolute inset-0 rounded-full border-2 border-primary/35" style={{ animation: 'limedrop-signal-pulse 1.6s ease-out infinite' }} />
+                </div>
+
+                <div className="min-w-0 flex-1">
+                  <div className="text-[16px] font-black leading-none">LimeDrop</div>
+                  <div className="mt-1 line-clamp-2 text-[14px] font-bold leading-snug">
+                    {senderName}さんがポストを共有しようとしています
+                  </div>
+                  <div className="mt-1 truncate text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                    @{senderUsername} から {postAuthorName} さんのポスト
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 border-t border-black/5 p-2.5 dark:border-white/10">
+                <button
+                  type="button"
+                  onClick={declineDrop}
+                  disabled={isBusy}
+                  className="h-8 rounded-xl bg-zinc-200/70 text-sm font-bold text-zinc-950 transition hover:bg-zinc-200 disabled:opacity-60 dark:bg-white/10 dark:text-white dark:hover:bg-white/15"
+                >
+                  辞退
+                </button>
+                <button
+                  type="button"
+                  onClick={acceptDrop}
+                  disabled={isBusy}
+                  className="h-8 rounded-xl bg-zinc-200/70 text-sm font-bold text-zinc-950 transition hover:bg-zinc-200 disabled:opacity-60 dark:bg-white/10 dark:text-white dark:hover:bg-white/15"
+                >
+                  受け入れる
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {drops.length > 1 && (
+            <div className="pointer-events-none mx-auto mt-2 w-fit rounded-full bg-black/50 px-3 py-1 text-xs font-bold text-white backdrop-blur md:mr-0">
+              あと{drops.length - 1}件
+            </div>
+          )}
+        </div>
+      </div>
+    </>,
+    document.body
+  );
 };
 
 const EmojiRainEffect = () => {
@@ -720,6 +1116,7 @@ const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage |
       
       <AuthProvider>
         <NotificationWatcher />
+        <LimeDropReceiver />
         <EmojiRainEffect /> 
         
         <Routes>
