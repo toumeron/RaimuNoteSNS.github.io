@@ -1,16 +1,15 @@
-import { 
-  useMutation, 
-  useQuery, 
-  useInfiniteQuery, 
+import {
+  useMutation,
+  useQuery,
+  useInfiniteQuery,
   useQueryClient,
 } from '@tanstack/react-query';
 import { getUserByUsername, updateProfile } from '@/api/users';
 import { getFollowStats, toggleFollow } from '@/api/follows';
-import { getPostsByUser, getLikedPostsByUser } from '@/api/posts';
 import { supabase } from '@/lib/supabase';
 import { getCurrentUserId } from '@/lib/currentUser';
 import { toast } from 'sonner';
-import { User } from '@/types'; // User型をインポート
+import { User } from '@/types';
 
 export const profileKey = (username: string) => ['profile', username] as const;
 export const followStatsKey = (userId: string) => ['follow-stats', userId] as const;
@@ -20,7 +19,13 @@ export const userMediaKey = (userId: string) => ['posts', 'media', userId] as co
 export const userReactionsKey = (userId: string) => ['posts', 'reactions', userId] as const;
 
 const LIMIT = 10;
+const LIKES_FETCH_LIMIT = 30;
 const REACTIONS_FETCH_LIMIT = 30;
+
+type ViewerPostAccess = {
+  currentUserId: string | null;
+  authorIdsFollowingViewer: Set<string>;
+};
 
 const toSafeAuthor = (author: any, fallbackUserId: string = '') => {
   const safeUsername = author?.username ?? '';
@@ -49,7 +54,7 @@ const toSafeAuthor = (author: any, fallbackUserId: string = '') => {
     bot_interval_hours: author?.bot_interval_hours ?? author?.botIntervalHours ?? 5,
     botIntervalHours: author?.botIntervalHours ?? author?.bot_interval_hours ?? 5,
     prefecture: author?.prefecture ?? '',
-    city: author?.city ?? ''
+    city: author?.city ?? '',
   };
 };
 
@@ -58,7 +63,7 @@ const toSafePost = (post: any, reaction?: any) => {
 
   const safeAuthor = toSafeAuthor(
     post.author ?? post.profiles ?? post.user,
-    post.user_id ?? post.userId ?? ''
+    post.user_id ?? post.userId ?? '',
   );
 
   const imageUrls = Array.isArray(post.imageUrls)
@@ -134,27 +139,72 @@ const toSafePost = (post: any, reaction?: any) => {
       ? post.reactionEmojis
       : reaction?.emoji
         ? [reaction.emoji]
-        : []
+        : [],
+  };
+};
+
+const getPostAuthorId = (post: any) => {
+  return post?.user_id ?? post?.userId ?? post?.author?.id ?? post?.profiles?.id ?? '';
+};
+
+const getViewerPostAccess = async (): Promise<ViewerPostAccess> => {
+  const currentUserId = await getCurrentUserId();
+
+  if (!currentUserId) {
+    return {
+      currentUserId: null,
+      authorIdsFollowingViewer: new Set<string>(),
+    };
+  }
+
+  const { data, error } = await supabase
+    .from('follows')
+    .select('follower_id')
+    .eq('followee_id', currentUserId);
+
+  if (error) throw error;
+
+  return {
+    currentUserId,
+    authorIdsFollowingViewer: new Set(
+      (data || [])
+        .map((follow: any) => follow.follower_id)
+        .filter(Boolean),
+    ),
   };
 };
 
 const canViewPost = (
   post: any,
   currentUserId: string | null,
-  followingUserIds: Set<string>
+  authorIdsFollowingViewer: Set<string>,
 ) => {
   const visibility = post?.visibility ?? 'public';
-  const postAuthorId = post?.user_id ?? post?.userId ?? post?.author?.id ?? post?.profiles?.id ?? '';
+  const postAuthorId = getPostAuthorId(post);
 
   if (visibility === 'public') return true;
 
+  if (!currentUserId) return false;
+
+  if (currentUserId === postAuthorId) return true;
+
   if (visibility === 'following') {
-    if (!currentUserId) return false;
-    if (currentUserId === postAuthorId) return true;
-    return followingUserIds.has(postAuthorId);
+    return authorIdsFollowingViewer.has(postAuthorId);
   }
 
   return false;
+};
+
+const canViewProfileOwnerFollowingPosts = (
+  profileOwnerId: string,
+  currentUserId: string | null,
+  authorIdsFollowingViewer: Set<string>,
+) => {
+  if (!currentUserId) return false;
+
+  if (currentUserId === profileOwnerId) return true;
+
+  return authorIdsFollowingViewer.has(profileOwnerId);
 };
 
 /**
@@ -169,11 +219,53 @@ export const useProfile = (username: string | undefined) =>
 
 /**
  * プロフィール画面用：投稿一覧
+ *
+ * 限定公開 following の正しい条件:
+ * 投稿者が閲覧者をフォローしている場合のみ表示する。
  */
 export const useUserPostsInfinite = (userId: string | undefined) =>
   useInfiniteQuery({
     queryKey: userPostsKey(userId ?? ''),
-    queryFn: ({ pageParam = 0 }) => getPostsByUser(userId!, pageParam as number, LIMIT),
+    queryFn: async ({ pageParam = 0 }) => {
+      if (!userId) return [];
+
+      const from = (pageParam as number) * LIMIT;
+      const to = from + LIMIT - 1;
+
+      const { currentUserId, authorIdsFollowingViewer } = await getViewerPostAccess();
+
+      const canSeeFollowingPosts = canViewProfileOwnerFollowingPosts(
+        userId,
+        currentUserId,
+        authorIdsFollowingViewer,
+      );
+
+      let query = supabase
+        .from('posts')
+        .select(`
+          *,
+          author:user_id(*)
+        `)
+        .eq('user_id', userId);
+
+      if (currentUserId === userId) {
+        // 自分のプロフィールでは全て表示
+      } else if (canSeeFollowingPosts) {
+        query = query.in('visibility', ['public', 'following']);
+      } else {
+        query = query.eq('visibility', 'public');
+      }
+
+      const { data, error } = await query
+        .order('created_at', { ascending: false })
+        .range(from, to);
+
+      if (error) throw error;
+
+      return (data || [])
+        .map((post: any) => toSafePost(post))
+        .filter(Boolean);
+    },
     initialPageParam: 0,
     getNextPageParam: (lastPage, allPages) => {
       return (lastPage?.length ?? 0) < LIMIT ? undefined : allPages.length;
@@ -183,21 +275,84 @@ export const useUserPostsInfinite = (userId: string | undefined) =>
 
 /**
  * プロフィール画面用：いいねした投稿一覧
+ *
+ * いいね欄でも、いいねした投稿そのものの閲覧権限を必ず見る。
+ * 投稿者が閲覧者をフォローしていない following 投稿は表示しない。
  */
 export const useUserLikesInfinite = (userId: string | undefined) =>
   useInfiniteQuery({
     queryKey: userLikesKey(userId ?? ''),
-    queryFn: ({ pageParam = 0 }) => getLikedPostsByUser(userId!, pageParam as number, LIMIT),
+    queryFn: async ({ pageParam = 0 }) => {
+      if (!userId) return [];
+
+      const from = (pageParam as number) * LIKES_FETCH_LIMIT;
+      const to = from + LIKES_FETCH_LIMIT - 1;
+
+      const { currentUserId, authorIdsFollowingViewer } = await getViewerPostAccess();
+
+      const { data, error } = await supabase
+        .from('likes')
+        .select(`
+          *,
+          posts!inner (
+            *,
+            author:user_id (
+              id,
+              username,
+              display_name,
+              bio,
+              avatar_url,
+              cover_url,
+              created_at,
+              is_official,
+              emoji_effect,
+              bot_enabled,
+              bot_prompt,
+              bot_interval_hours,
+              prefecture,
+              city
+            )
+          )
+        `)
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .range(from, to);
+
+      if (error) throw error;
+
+      const visibleLikes = (data || [])
+        .map((like: any) => {
+          const post = toSafePost(like.posts);
+
+          if (!post) return null;
+
+          if (!canViewPost(post, currentUserId, authorIdsFollowingViewer)) {
+            return null;
+          }
+
+          return {
+            ...like,
+            posts: post,
+          };
+        })
+        .filter(Boolean);
+
+      (visibleLikes as any).__hasMore = (data?.length ?? 0) === LIKES_FETCH_LIMIT;
+
+      return visibleLikes;
+    },
     initialPageParam: 0,
     getNextPageParam: (lastPage, allPages) => {
-      return (lastPage?.length ?? 0) < LIMIT ? undefined : allPages.length;
+      return (lastPage as any)?.__hasMore ? allPages.length : undefined;
     },
     enabled: !!userId,
   });
 
 /**
  * プロフィール画面用：メディア投稿一覧
- * 閲覧権限（自分、フォロワー、外部）に応じて取得対象を厳格に制限する
+ *
+ * 限定公開 following の正しい条件:
+ * 投稿者が閲覧者をフォローしている場合のみ表示する。
  */
 export const useUserMediaInfinite = (userId: string | undefined) =>
   useInfiniteQuery({
@@ -208,24 +363,14 @@ export const useUserMediaInfinite = (userId: string | undefined) =>
       const from = (pageParam as number) * LIMIT;
       const to = from + LIMIT - 1;
 
-      // 1. 閲覧者の特定
-      const currentUserId = await getCurrentUserId();
-      const isOwner = currentUserId === userId;
+      const { currentUserId, authorIdsFollowingViewer } = await getViewerPostAccess();
 
-      // 2. フォロー状態の確認（自分自身でない場合のみ）
-      let isFollowing = false;
-      if (currentUserId && !isOwner) {
-        const { data: follow } = await supabase
-          .from('follows')
-          .select('follower_id')
-          .eq('follower_id', currentUserId)
-          .eq('followee_id', userId)
-          .maybeSingle();
+      const canSeeFollowingPosts = canViewProfileOwnerFollowingPosts(
+        userId,
+        currentUserId,
+        authorIdsFollowingViewer,
+      );
 
-        isFollowing = !!follow;
-      }
-
-      // 3. クエリ構築
       let query = supabase
         .from('posts')
         .select(`
@@ -234,25 +379,28 @@ export const useUserMediaInfinite = (userId: string | undefined) =>
         `)
         .eq('user_id', userId);
 
-      // 画像判定フィルタ
       const imagePatterns = [
-        '%.jpg%', '%.jpeg%', '%.png%', '%.webp%', '%.gif%', '%.svg%',
-        '%pbs.twimg.com/media%', '%res.cloudinary.com%'
+        '%.jpg%',
+        '%.jpeg%',
+        '%.png%',
+        '%.webp%',
+        '%.gif%',
+        '%.svg%',
+        '%pbs.twimg.com/media%',
+        '%res.cloudinary.com%',
       ];
-      const contentFilter = imagePatterns.map(p => `content.ilike.${p}`).join(',');
+
+      const contentFilter = imagePatterns.map((pattern) => `content.ilike.${pattern}`).join(',');
       const orFilter = `image_urls.not.is.null,image_urls.neq.{},${contentFilter}`;
+
       query = query.or(orFilter);
 
-      // 4. 閲覧制限の適用（PostCard.tsx の visibility ロジックに準拠）
-      // 「閲覧制限＝その権限がない場合は画像（投稿）を取得させない」
-      if (!isOwner) {
-        if (isFollowing) {
-          // フォロワーなら public と following の両方を取得可能
-          query = query.in('visibility', ['public', 'following']);
-        } else {
-          // 非フォロワーなら public のみ
-          query = query.eq('visibility', 'public');
-        }
+      if (currentUserId === userId) {
+        // 自分のプロフィールでは全て表示
+      } else if (canSeeFollowingPosts) {
+        query = query.in('visibility', ['public', 'following']);
+      } else {
+        query = query.eq('visibility', 'public');
       }
 
       const { data, error } = await query
@@ -274,8 +422,9 @@ export const useUserMediaInfinite = (userId: string | undefined) =>
 
 /**
  * プロフィール画面用：リアクションした投稿一覧
- * post_reactions.user_id から対象ユーザーがリアクションした投稿を取得する
- * 限定投稿は「リアクションしたユーザー」ではなく「閲覧者が投稿者をフォローしているか」で表示可否を判定する
+ *
+ * リアクション欄でも、リアクション対象投稿の投稿者ごとに閲覧権限を判定する。
+ * 投稿者が閲覧者をフォローしていない following 投稿は表示しない。
  */
 export const useUserReactionsInfinite = (userId: string | undefined) =>
   useInfiniteQuery({
@@ -286,31 +435,8 @@ export const useUserReactionsInfinite = (userId: string | undefined) =>
       const from = (pageParam as number) * REACTIONS_FETCH_LIMIT;
       const to = from + REACTIONS_FETCH_LIMIT - 1;
 
-      // 1. 閲覧者の特定
-      const currentUserId = await getCurrentUserId();
+      const { currentUserId, authorIdsFollowingViewer } = await getViewerPostAccess();
 
-      // 2. 閲覧者がフォローしているユーザー一覧を取得
-      // リアクション欄では、投稿者がプロフィール主とは限らないため、
-      // 「プロフィール主をフォローしているか」ではなく「投稿者をフォローしているか」で判定する
-      let followingUserIds = new Set<string>();
-
-      if (currentUserId) {
-        const { data: follows, error: followsError } = await supabase
-          .from('follows')
-          .select('followee_id')
-          .eq('follower_id', currentUserId);
-
-        if (followsError) throw followsError;
-
-        followingUserIds = new Set(
-          (follows || [])
-            .map((follow: any) => follow.followee_id)
-            .filter(Boolean)
-        );
-      }
-
-      // 3. リアクション一覧を取得
-      // DB側では visibility で絞りすぎず、取得後に投稿ごとの投稿者に対して閲覧判定する
       const { data, error } = await supabase
         .from('post_reactions')
         .select(`
@@ -346,15 +472,16 @@ export const useUserReactionsInfinite = (userId: string | undefined) =>
       const visibleReactions = (data || [])
         .map((reaction: any) => {
           const post = toSafePost(reaction.posts, reaction);
+
           if (!post) return null;
 
-          if (!canViewPost(post, currentUserId, followingUserIds)) {
+          if (!canViewPost(post, currentUserId, authorIdsFollowingViewer)) {
             return null;
           }
 
           return {
             ...reaction,
-            posts: post
+            posts: post,
           };
         })
         .filter(Boolean);
@@ -425,7 +552,6 @@ export const useUpdateProfile = (userId: string) => {
   const qc = useQueryClient();
 
   return useMutation({
-    // patch の中身を Partial<User> としてそのまま渡すことで、false値の脱落を防ぎます
     mutationFn: (patch: Partial<User>) => updateProfile(userId, patch),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['profile'] });
@@ -433,7 +559,7 @@ export const useUpdateProfile = (userId: string) => {
       qc.invalidateQueries({ queryKey: ['posts', 'likes', userId] });
       qc.invalidateQueries({ queryKey: ['posts', 'media', userId] });
       qc.invalidateQueries({ queryKey: ['posts', 'reactions', userId] });
-      qc.invalidateQueries({ queryKey: ['auth-user'] }); 
+      qc.invalidateQueries({ queryKey: ['auth-user'] });
       toast.success('プロフィールを更新しました');
     },
     onError: () => toast.error('プロフィールの更新に失敗しました'),
