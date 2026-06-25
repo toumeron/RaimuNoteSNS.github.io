@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, MessageCircle, X, Plus, Link as LinkIcon, Upload, Send } from 'lucide-react'; // Plusを追加
@@ -91,6 +91,7 @@ export default function PostDetail() {
   
   // スマホ・PC判定用
   const [isMobile, setIsMobile] = useState(false);
+  const [singleImageNaturalSize, setSingleImageNaturalSize] = useState<{ width: number; height: number } | null>(null);
 
   // --- 画像再現エフェクト用のステート ---
   const [activeRings, setActiveRings] = useState<ReplicatedRing[]>([]);
@@ -523,6 +524,70 @@ export default function PostDetail() {
   
   // 元々の画像配列と、本文から抽出した画像を合体させ、最大4枚に制限
   const allImageUrls = data ? [...(data.imageUrls || []), ...extractedImageUrls].slice(0, 4) : [];
+  const singleImageUrl = allImageUrls.length === 1 ? allImageUrls[0] : null;
+
+  useEffect(() => {
+    setSingleImageNaturalSize(null);
+  }, [singleImageUrl]);
+
+  const getSingleImageFrameStyle = (): CSSProperties => {
+    if (!singleImageNaturalSize) {
+      return {
+        width: '100%',
+        maxWidth: '100%',
+      };
+    }
+
+    const naturalWidth = Math.max(1, singleImageNaturalSize.width);
+    const naturalHeight = Math.max(1, singleImageNaturalSize.height);
+    const ratio = naturalWidth / naturalHeight;
+
+    const maxTimelineImageHeight = isMobile ? 300 : 480;
+    const minimumReadableWidth = isMobile ? 88 : 110;
+    const heightLimitedWidth = Math.max(
+      minimumReadableWidth,
+      Math.round(maxTimelineImageHeight * ratio)
+    );
+    const shouldLimitByHeight = ratio < (isMobile ? 1.64 : 1.72);
+    const shouldAvoidUpscale = naturalWidth <= (isMobile ? 360 : 520);
+    const shouldNarrowUltraWide = ratio >= 2.35;
+
+    if (shouldLimitByHeight) {
+      const width = shouldAvoidUpscale
+        ? Math.min(naturalWidth, heightLimitedWidth)
+        : heightLimitedWidth;
+
+      return {
+        width: `min(100%, ${Math.max(minimumReadableWidth, width)}px)`,
+        maxWidth: '100%',
+      };
+    }
+
+    if (shouldAvoidUpscale) {
+      return {
+        width: `${naturalWidth}px`,
+        maxWidth: '100%',
+      };
+    }
+
+    if (shouldNarrowUltraWide) {
+      return {
+        width: isMobile ? '100%' : 'min(100%, 560px)',
+        maxWidth: '100%',
+      };
+    }
+
+    return {
+      width: '100%',
+      maxWidth: '100%',
+    };
+  };
+
+  const getSingleImageDisplayStyle = (): CSSProperties => ({
+    width: '100%',
+    height: 'auto',
+    objectFit: 'contain',
+  });
 
   // YouTube IDの抽出と本文の加工（YouTube URLと画像URLを除去）
   const youtubeId = data ? getYouTubeId(data.content) : null;
@@ -909,7 +974,7 @@ export default function PostDetail() {
             min-height: 100dvh;
             margin-left: calc(50% - 50vw);
             margin-right: calc(50% - 50vw);
-            padding-bottom: calc(148px + env(safe-area-inset-bottom));
+            padding-bottom: 16px;
             color: hsl(var(--foreground));
           }
 
@@ -973,8 +1038,9 @@ export default function PostDetail() {
           .post-detail-mobile-action-row {
             height: 42px !important;
             margin-top: 8px !important;
-            padding-top: 0 !important;
-            padding-bottom: 7px !important;
+            margin-left: -16px !important;
+            margin-right: -16px !important;
+            padding: 0 16px 7px !important;
             border-top: 0 !important;
             border-bottom: 1px solid hsl(var(--border) / 0.62) !important;
           }
@@ -1179,24 +1245,58 @@ export default function PostDetail() {
           {/* YouTube埋め込みを追加 */}
           {youtubeId && <YouTubeEmbed videoId={youtubeId} />}
 
-          <div 
-            className="cursor-zoom-in"
-            onClick={(e) => {
-              const target = e.target as HTMLElement;
-              if (target.tagName === 'IMG' && (target as HTMLImageElement).src) {
-                handleImageClick(e, (target as HTMLImageElement).src);
-              }
-            }}
-          >
-            <PostImages 
-              urls={allImageUrls} 
-              onImageError={(url) => {
-                if (!failedUrls.includes(url)) {
-                  setFailedUrls(prev => [...prev, url]);
+          {singleImageUrl ? (
+            <div className="mt-3 flex max-w-full justify-start" onClick={(e) => e.stopPropagation()}>
+              <button
+                type="button"
+                className="block max-w-full cursor-zoom-in overflow-hidden rounded-2xl border border-border/50 bg-black/[0.025] text-left shadow-none dark:bg-white/[0.035]"
+                style={getSingleImageFrameStyle()}
+                onClick={(e) => handleImageClick(e, singleImageUrl)}
+                aria-label="画像を拡大表示"
+              >
+                <img
+                  src={singleImageUrl}
+                  alt="投稿画像"
+                  className="block select-none"
+                  style={getSingleImageDisplayStyle()}
+                  draggable={false}
+                  onLoad={(e) => {
+                    const img = e.currentTarget;
+                    if (img.naturalWidth && img.naturalHeight) {
+                      setSingleImageNaturalSize({
+                        width: img.naturalWidth,
+                        height: img.naturalHeight,
+                      });
+                    }
+                  }}
+                  onError={() => {
+                    if (!failedUrls.includes(singleImageUrl)) {
+                      setFailedUrls((prev) => [...prev, singleImageUrl]);
+                    }
+                  }}
+                />
+              </button>
+            </div>
+          ) : (
+            <div 
+              className="cursor-zoom-in"
+              onClick={(e) => {
+                const target = e.target as HTMLElement;
+                if (target.tagName === 'IMG' && (target as HTMLImageElement).src) {
+                  handleImageClick(e, (target as HTMLImageElement).src);
                 }
               }}
-            />
-          </div>
+            >
+              <PostImages 
+                urls={allImageUrls} 
+                onImageError={(url) => {
+                  if (!failedUrls.includes(url)) {
+                    setFailedUrls(prev => [...prev, url]);
+                  }
+                }}
+              />
+            </div>
+          )}
 
           {/* --- リアクションバッジエリア（本文・画像と日時表示の間に挿入） --- */}
           {reactions.length > 0 && (
@@ -1555,9 +1655,11 @@ export default function PostDetail() {
 
       {data && (
         <>
-          <div className={useMobileThreadLayout ? "post-detail-mobile-comment-form-shell" : ""}>
-            <CommentForm postId={data.id} variant={useMobileThreadLayout ? 'mobileDock' : 'default'} />
-          </div>
+          {!useMobileThreadLayout && (
+            <div>
+              <CommentForm postId={data.id} variant="default" />
+            </div>
+          )}
           <div className={useMobileThreadLayout ? "post-detail-mobile-comments-shell" : ""}>
             {!useMobileThreadLayout && (
               <h2 className="mb-3 font-display text-base font-bold text-foreground">コメント</h2>

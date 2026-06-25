@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { NavLink, useLocation } from 'react-router-dom';
 import { Home, User as UserIcon, Settings as SettingsIcon, Search, MessageSquare } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
+import { CommentForm } from '@/components/post/CommentForm';
 
 type TimelineChromeTheme = 'light' | 'dark';
 
@@ -26,18 +27,15 @@ function isTimelineVisualPath(pathname: string) {
   );
 }
 
-function isPostBorderHiddenUrl() {
-  if (typeof window === 'undefined') {
-    return false;
-  }
+function getPostDetailId(pathname: string) {
+  const normalizedPath = normalizeAppPath(pathname);
+  const match = normalizedPath.match(/^\/post\/([^/]+)$/);
+  return match?.[1] ?? null;
+}
 
-  const url = new URL(window.location.href);
-  const normalizedPath = normalizeAppPath(url.pathname);
-
-  return (
-    (url.hostname === 'toumeron.github.io' && url.pathname.startsWith('/RaimuNoteSNS.github.io/post/')) ||
-    (url.origin === 'http://localhost:8080' && normalizedPath.startsWith('/post/'))
-  );
+function isPostBorderHiddenPath(pathname: string) {
+  const normalizedPath = normalizeAppPath(pathname);
+  return /^\/post\/[^/]+$/.test(normalizedPath);
 }
 
 function readTimelineChromeState(): TimelineChromeState {
@@ -113,16 +111,56 @@ export function BottomNav() {
   const location = useLocation();
   const timelineChrome = useTimelineChrome(location.pathname);
   const [mounted, setMounted] = useState(false);
+  const navRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
+  const postDetailId = getPostDetailId(location.pathname);
+  const showPostCommentForm = Boolean(postDetailId);
+
+  useEffect(() => {
+    if (!mounted || typeof window === 'undefined') return;
+
+    let frameId = 0;
+
+    const updateBottomNavHeight = () => {
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(() => {
+        const height = navRef.current?.getBoundingClientRect().height ?? 0;
+        document.documentElement.style.setProperty(
+          '--lime-bottom-nav-height',
+          `${Math.ceil(height)}px`
+        );
+      });
+    };
+
+    updateBottomNavHeight();
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (navRef.current && 'ResizeObserver' in window) {
+      resizeObserver = new ResizeObserver(updateBottomNavHeight);
+      resizeObserver.observe(navRef.current);
+    }
+
+    window.addEventListener('resize', updateBottomNavHeight);
+    window.addEventListener('orientationchange', updateBottomNavHeight);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', updateBottomNavHeight);
+      window.removeEventListener('orientationchange', updateBottomNavHeight);
+      document.documentElement.style.removeProperty('--lime-bottom-nav-height');
+    };
+  }, [mounted, location.pathname, showPostCommentForm]);
+
   if (!user) return null;
 
   const useTimelineChromeDesign = timelineChrome.enabled;
   const isTimelineDark = timelineChrome.theme === 'dark';
-  const hideTopBorder = isPostBorderHiddenUrl();
+  const hideTopBorder = isPostBorderHiddenPath(location.pathname);
 
   const items = [
     { to: '/', icon: Home, label: 'ホーム', end: true },
@@ -134,21 +172,40 @@ export function BottomNav() {
 
   const nav = (
     <nav
+      ref={navRef}
       className={cn(
-        'fixed bottom-0 left-0 right-0 border-t md:hidden',
+        'fixed bottom-0 left-0 right-0 md:hidden',
+        hideTopBorder ? 'border-t-0' : 'border-t',
         useTimelineChromeDesign
           ? isTimelineDark
             ? 'border-white/[0.06] bg-[#05070a]/82 text-white supports-[backdrop-filter]:bg-[#05070a]/74 backdrop-blur-md backdrop-blur-2xl'
             : 'border-black/[0.08] bg-white/82 text-zinc-950 supports-[backdrop-filter]:bg-white/74 backdrop-blur-md backdrop-blur-2xl'
           : 'border-border/60 bg-background',
-        hideTopBorder && 'border-t-0'
       )}
       style={{
-        zIndex: 10,
+        zIndex: 120,
         isolation: 'isolate',
-        paddingBottom: 'calc(-15px + env(safe-area-inset-bottom))',
+        borderTopWidth: hideTopBorder ? 0 : undefined,
+        paddingBottom: 'max(0px, env(safe-area-inset-bottom))',
       }}
     >
+      {showPostCommentForm && postDetailId && (
+        <div
+          className={cn(
+            'border-b px-3 pb-2 pt-2',
+            useTimelineChromeDesign
+              ? isTimelineDark
+                ? 'border-white/[0.06]'
+                : 'border-black/[0.08]'
+              : 'border-border/60'
+          )}
+        >
+          <div className="mx-auto max-w-md">
+            <CommentForm postId={postDetailId} variant="bottomNav" />
+          </div>
+        </div>
+      )}
+
       <ul className="mx-auto grid max-w-md grid-cols-5">
         {items.map((it) => (
           <li key={it.to}>
