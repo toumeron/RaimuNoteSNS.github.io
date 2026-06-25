@@ -9,7 +9,13 @@ import { toast } from 'sonner';
 
 const MAX = 280;
 
-export function CommentForm({ postId }: { postId: string }) {
+export function CommentForm({
+  postId,
+  variant = 'default',
+}: {
+  postId: string;
+  variant?: 'default' | 'mobileDock';
+}) {
   const { user } = useAuth();
   const { mutateAsync, isPending } = useCreateComment(postId);
   const [text, setText] = useState('');
@@ -26,32 +32,119 @@ export function CommentForm({ postId }: { postId: string }) {
     try {
       await mutateAsync(t);
       setText('');
-    } catch {/* hook側でtoast */}
+    } catch {
+      /* hook側でtoast */
+    }
   };
 
   return (
-    <div className="flex items-center gap-3 rounded-3xl border border-border/60 bg-card p-3 shadow-soft">
-      <Avatar className="h-9 w-9 border border-primary/30">
-        <AvatarImage src={user.avatarUrl} alt={user.displayName} />
-        <AvatarFallback>{user.displayName.slice(0, 1)}</AvatarFallback>
-      </Avatar>
-      <Input
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        placeholder="コメントを書く…"
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit();
-        }}
-        className="flex-1 rounded-full border-0 bg-secondary/60 focus-visible:ring-1 focus-visible:ring-primary/40"
-      />
-      <Button
-        onClick={submit}
-        disabled={isPending || !text.trim()}
-        size="icon"
-        className="h-9 w-9 shrink-0 rounded-full bg-gradient-primary shadow-soft"
+    <>
+      <style>{`
+        @media (max-width: 639px) {
+          .comment-form-mobile-dock {
+            position: fixed;
+            left: 0;
+            right: 0;
+            bottom: calc(58px + env(safe-area-inset-bottom));
+            z-index: 120;
+            display: grid;
+            grid-template-columns: 40px minmax(0, 1fr) 38px;
+            align-items: center;
+            gap: 9px;
+            min-height: 58px;
+            padding: 8px 12px;
+            border: 0 !important;
+            border-top: 1px solid hsl(var(--border) / 0.62) !important;
+            border-radius: 0 !important;
+            background: hsl(var(--background)) !important;
+            box-shadow: none !important;
+            -webkit-backdrop-filter: none !important;
+            backdrop-filter: none !important;
+          }
+
+          .comment-form-mobile-dock-avatar {
+            width: 38px !important;
+            height: 38px !important;
+            border-color: hsl(var(--border) / 0.62) !important;
+          }
+
+          .comment-form-mobile-dock-input {
+            height: 42px !important;
+            border: 0 !important;
+            border-radius: 9999px !important;
+            background: hsl(var(--muted) / 0.72) !important;
+            color: hsl(var(--foreground)) !important;
+            caret-color: hsl(var(--primary)) !important;
+            padding-left: 16px !important;
+            padding-right: 16px !important;
+            font-size: 16px !important;
+            font-weight: 500 !important;
+            box-shadow: none !important;
+          }
+
+          .comment-form-mobile-dock-input::placeholder {
+            color: hsl(var(--muted-foreground)) !important;
+            opacity: 1 !important;
+          }
+
+          .comment-form-mobile-dock-input:focus-visible {
+            --tw-ring-color: hsl(var(--primary) / 0.55) !important;
+            --tw-ring-offset-color: transparent !important;
+            outline: none !important;
+            box-shadow: 0 0 0 1px hsl(var(--primary) / 0.55) !important;
+          }
+
+          .comment-form-mobile-dock-submit {
+            width: 36px !important;
+            height: 36px !important;
+            border-radius: 9999px !important;
+            background: hsl(var(--primary)) !important;
+            color: white !important;
+            box-shadow: none !important;
+          }
+
+          .comment-form-mobile-dock-submit:disabled {
+            opacity: 0.42 !important;
+          }
+        }
+      `}</style>
+
+      <div
+        className={`flex items-center gap-3 rounded-3xl border border-border/60 bg-card p-3 shadow-soft ${
+          variant === 'mobileDock' ? 'comment-form-mobile-dock' : ''
+        }`}
       >
-        {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-      </Button>
-    </div>
+        <Avatar
+          className={`h-9 w-9 border border-primary/30 ${
+            variant === 'mobileDock' ? 'comment-form-mobile-dock-avatar' : ''
+          }`}
+        >
+          <AvatarImage src={user.avatarUrl} alt={user.displayName} />
+          <AvatarFallback>{user.displayName.slice(0, 1)}</AvatarFallback>
+        </Avatar>
+        <Input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="返信をポスト"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit();
+          }}
+          className={`flex-1 rounded-full border-0 bg-secondary/60 focus-visible:ring-1 focus-visible:ring-primary/40 ${
+            variant === 'mobileDock' ? 'comment-form-mobile-dock-input' : ''
+          }`}
+        />
+        <Button
+          onClick={submit}
+          disabled={isPending || !text.trim()}
+          size="icon"
+          className={`h-9 w-9 shrink-0 rounded-full bg-gradient-primary shadow-soft ${
+            variant === 'mobileDock' ? 'comment-form-mobile-dock-submit' : ''
+          }`}
+          aria-label="コメントを送信"
+        >
+          {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+        </Button>
+      </div>
+    </>
   );
 }

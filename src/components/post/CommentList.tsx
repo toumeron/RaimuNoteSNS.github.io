@@ -109,9 +109,11 @@ const getChannelSuffix = () => {
 function CommentCard({
   comment,
   currentUserId,
+  mobileFlat,
 }: {
   comment: Comment;
   currentUserId: string | null;
+  mobileFlat: boolean;
 }) {
   const navigate = useNavigate();
 
@@ -727,6 +729,41 @@ function CommentCard({
         .animate-zoom-in-pc {
           animation: zoomInPc 160ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
         }
+
+        @media (max-width: 639px) {
+          .comment-list-mobile-item {
+            max-width: none !important;
+            padding: 12px 16px !important;
+            border: 0 !important;
+            border-bottom: 1px solid hsl(var(--border) / 0.62) !important;
+            border-radius: 0 !important;
+            background: transparent !important;
+            box-shadow: none !important;
+          }
+
+          .comment-list-mobile-stack {
+            margin: 0 !important;
+          }
+
+          .comment-list-mobile-stack > li {
+            margin-top: 0 !important;
+          }
+
+          .comment-list-mobile-state {
+            border: 0 !important;
+            border-bottom: 1px solid hsl(var(--border) / 0.62) !important;
+            border-radius: 0 !important;
+            background: transparent !important;
+            box-shadow: none !important;
+          }
+
+          .comment-list-mobile-empty {
+            border: 0 !important;
+            border-radius: 0 !important;
+            background: transparent !important;
+            box-shadow: none !important;
+          }
+        }
       `}</style>
 
       {(activeRings.length > 0 || activeDots.length > 0) && (
@@ -774,8 +811,10 @@ function CommentCard({
       <article
         onClick={handleCardClick}
         className={
-          isMobile
-            ? 'relative mx-auto w-full max-w-[600px] px-0 py-3 cursor-pointer'
+          mobileFlat
+            ? 'comment-list-mobile-item relative mx-auto w-full max-w-[600px] px-0 py-3 cursor-pointer'
+            : isMobile
+              ? 'relative mx-auto w-full max-w-[600px] px-0 py-3 cursor-pointer'
             : 'rounded-3xl border border-border/60 bg-card p-5 shadow-soft transition hover:shadow-card-soft relative cursor-pointer'
         }
       >
@@ -842,33 +881,34 @@ function CommentCard({
                 </span>
               </div>
 
-              <div className="relative ml-2 shrink-0">
-                <button
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setShowMenu(!showMenu);
-                  }}
-                  className="p-1 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                >
-                  <MoreHorizontal className="h-5 w-5" />
-                </button>
+              {isMyComment && (
+                <div className="relative ml-2 shrink-0">
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setShowMenu(!showMenu);
+                    }}
+                    className="p-1 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                    aria-label="コメントのメニュー"
+                  >
+                    <MoreHorizontal className="h-5 w-5" />
+                  </button>
 
-                {showMenu && (
-                  <>
-                    <div
-                      className="fixed inset-0 z-10"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowMenu(false);
-                      }}
-                    />
+                  {showMenu && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-10"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowMenu(false);
+                        }}
+                      />
 
-                    <div
-                      className="absolute right-0 mt-1 w-44 rounded-xl border border-border bg-card p-1 shadow-lg z-20 overflow-hidden animate-in fade-in zoom-in duration-100"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {isMyComment && (
+                      <div
+                        className="absolute right-0 mt-1 w-44 rounded-xl border border-border bg-card p-1 shadow-lg z-20 overflow-hidden animate-in fade-in zoom-in duration-100"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         <button
                           onClick={handleDelete}
                           className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-destructive hover:bg-destructive/10 transition-colors border-t border-border/50 mt-1"
@@ -876,11 +916,11 @@ function CommentCard({
                           <Trash2 className="h-4 w-4" />
                           削除
                         </button>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
 
             <div>
@@ -1254,7 +1294,13 @@ function CommentCard({
 }
 
 // ─── CommentList ──────────────────────────────────────────────────────────────
-export function CommentList({ postId }: { postId: string }) {
+export function CommentList({
+  postId,
+  mobileFlat = false,
+}: {
+  postId: string;
+  mobileFlat?: boolean;
+}) {
   const { data, isLoading, isError } = useComments(postId);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [, setTick] = useState(0);
@@ -1273,7 +1319,7 @@ export function CommentList({ postId }: { postId: string }) {
     return (
       <div className="space-y-3">
         {Array.from({ length: 2 }).map((_, i) => (
-          <div key={i} className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
+          <div key={i} className={`${mobileFlat ? 'comment-list-mobile-state ' : ''}rounded-3xl border border-border/60 bg-card p-5 shadow-soft`}>
             <div className="flex gap-3">
               <Skeleton className="h-11 w-11 shrink-0 rounded-full" />
               <div className="flex-1 space-y-2">
@@ -1290,7 +1336,7 @@ export function CommentList({ postId }: { postId: string }) {
 
   if (isError) {
     return (
-      <div className="rounded-3xl border border-destructive/40 bg-destructive/5 p-6 text-center">
+      <div className={`${mobileFlat ? 'comment-list-mobile-state ' : ''}rounded-3xl border border-destructive/40 bg-destructive/5 p-6 text-center`}>
         <p className="text-sm text-destructive">コメントの読み込みに失敗しました。</p>
       </div>
     );
@@ -1298,15 +1344,22 @@ export function CommentList({ postId }: { postId: string }) {
 
   if (!data || data.length === 0) {
     return (
-      <div className="rounded-3xl border border-border/60 bg-card p-8 text-center text-muted-foreground">
+      <div className={mobileFlat
+        ? 'comment-list-mobile-empty p-8 text-center text-muted-foreground'
+        : 'rounded-3xl border border-border/60 bg-card p-8 text-center text-muted-foreground'
+      }>
         まだコメントはありません。
       </div>
     );
   }
 
+  const sortedComments = [...data].sort((a, b) => {
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
+
   return (
-    <ul className="space-y-4">
-      {data.map((c) => (
+    <ul className={`${mobileFlat ? 'comment-list-mobile-stack ' : ''}space-y-4`}>
+      {sortedComments.map((c) => (
         <li key={c.id} className="animate-float-up">
           <CommentCard
             comment={{
@@ -1314,6 +1367,7 @@ export function CommentList({ postId }: { postId: string }) {
               likedByMe: !!(c as any).likedByMe,
             } as unknown as Comment}
             currentUserId={currentUserId}
+            mobileFlat={mobileFlat}
           />
         </li>
       ))}

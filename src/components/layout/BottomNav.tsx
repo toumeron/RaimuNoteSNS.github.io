@@ -26,6 +26,20 @@ function isTimelineVisualPath(pathname: string) {
   );
 }
 
+function isPostBorderHiddenUrl() {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  const url = new URL(window.location.href);
+  const normalizedPath = normalizeAppPath(url.pathname);
+
+  return (
+    (url.hostname === 'toumeron.github.io' && url.pathname.startsWith('/RaimuNoteSNS.github.io/post/')) ||
+    (url.origin === 'http://localhost:8080' && normalizedPath.startsWith('/post/'))
+  );
+}
+
 function readTimelineChromeState(): TimelineChromeState {
   if (typeof window === 'undefined') {
     return { theme: 'dark', hasTimelineBackground: false };
@@ -108,6 +122,7 @@ export function BottomNav() {
 
   const useTimelineChromeDesign = timelineChrome.enabled;
   const isTimelineDark = timelineChrome.theme === 'dark';
+  const hideTopBorder = isPostBorderHiddenUrl();
 
   const items = [
     { to: '/', icon: Home, label: 'ホーム', end: true },
@@ -120,12 +135,13 @@ export function BottomNav() {
   const nav = (
     <nav
       className={cn(
-        'fixed bottom-0 left-0 right-0 border-t backdrop-blur-md md:hidden',
+        'fixed bottom-0 left-0 right-0 border-t md:hidden',
         useTimelineChromeDesign
           ? isTimelineDark
-            ? 'border-white/[0.06] bg-[#05070a]/82 text-white supports-[backdrop-filter]:bg-[#05070a]/74 backdrop-blur-2xl'
-            : 'border-black/[0.08] bg-white/82 text-zinc-950 supports-[backdrop-filter]:bg-white/74 backdrop-blur-2xl'
-          : 'border-border/60 bg-background/90'
+            ? 'border-white/[0.06] bg-[#05070a]/82 text-white supports-[backdrop-filter]:bg-[#05070a]/74 backdrop-blur-md backdrop-blur-2xl'
+            : 'border-black/[0.08] bg-white/82 text-zinc-950 supports-[backdrop-filter]:bg-white/74 backdrop-blur-md backdrop-blur-2xl'
+          : 'border-border/60 bg-background',
+        hideTopBorder && 'border-t-0'
       )}
       style={{
         zIndex: 10,

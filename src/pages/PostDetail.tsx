@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, MessageCircle, X, Plus } from 'lucide-react'; // Plusを追加
+import { ArrowLeft, MessageCircle, X, Plus, Link as LinkIcon, Upload, Send } from 'lucide-react'; // Plusを追加
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { LikeButton } from '@/components/post/LikeButton';
@@ -38,6 +38,13 @@ interface ReactionGroup {
   users: ReactionUser[]; 
 }
 
+interface LimeDropTarget {
+  id: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string;
+}
+
 interface ReplicatedRing {
   id: string;
   x: number;
@@ -57,52 +64,12 @@ interface ReplicatedDot {
   delay: number;
 }
 
-function getRelativeLuminance(r: number, g: number, b: number) {
-  const [rs, gs, bs] = [r, g, b].map((value) => {
-    const v = value / 255;
-    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
-  });
-
-  return 0.2126 * rs + 0.7152 * gs + 0.0722 * bs;
-}
-
-function getTimelineThemeFromImageStats({
-  averageLuminance,
-  medianLuminance,
-  lowerQuartileLuminance,
-  brightRatio,
-  darkRatio,
-  veryDarkRatio,
-}: {
-  averageLuminance: number;
-  medianLuminance: number;
-  lowerQuartileLuminance: number;
-  brightRatio: number;
-  darkRatio: number;
-  veryDarkRatio: number;
-}): 'light' | 'dark' {
-  const clearlyLightBackground =
-    lowerQuartileLuminance >= 0.58 ||
-    (medianLuminance >= 0.70 && darkRatio <= 0.18) ||
-    (averageLuminance >= 0.68 && brightRatio >= 0.50 && darkRatio <= 0.24 && veryDarkRatio <= 0.08);
-
-  return clearlyLightBackground ? 'light' : 'dark';
-}
-
 export default function PostDetail() {
   const { id = '' } = useParams();
   const { data, isLoading, isError } = usePost(id);
   const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null); // 拡大用
   const [failedUrls, setFailedUrls] = useState<string[]>([]); // 読み込み失敗URL管理
   const navigate = useNavigate();
-  const [timelineBackgroundUrl, setTimelineBackgroundUrl] = useState<string | null>(() => {
-    if (typeof window === 'undefined') return null;
-    return localStorage.getItem('lime_timeline_background_url') || null;
-  });
-  const [timelineTheme, setTimelineTheme] = useState<'light' | 'dark'>(() => {
-    if (typeof window === 'undefined') return 'dark';
-    return localStorage.getItem('lime_timeline_visual_theme') === 'light' ? 'light' : 'dark';
-  });
 
   // --- カスタム絵文字・リアクション用ステート群 ---
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -113,19 +80,17 @@ export default function PostDetail() {
   const [showPicker, setShowPicker] = useState(false); // ピッカー表示
   const [searchQuery, setSearchQuery] = useState(''); // 絵文字検索
   const [isEmojisOpen, setIsEmojisOpen] = useState(true); // アコーディオン
+  const [showShareMenu, setShowShareMenu] = useState(false);
+  const [shareMenuPosition, setShareMenuPosition] = useState<{ top: number; right: number } | null>(null);
+  const [shareFeedback, setShareFeedback] = useState<string | null>(null);
+  const [showLimeDropPanel, setShowLimeDropPanel] = useState(false);
+  const [limeDropTargets, setLimeDropTargets] = useState<LimeDropTarget[]>([]);
+  const [limeDropLoading, setLimeDropLoading] = useState(false);
+  const [limeDropSendingUserId, setLimeDropSendingUserId] = useState<string | null>(null);
+  const [limeDropFeedback, setLimeDropFeedback] = useState<string | null>(null);
   
   // スマホ・PC判定用
   const [isMobile, setIsMobile] = useState(false);
-  const [initialMobileBackgroundFrame] = useState(() => {
-    if (typeof window === 'undefined') {
-      return { width: 0, height: 0 };
-    }
-
-    return {
-      width: Math.ceil(window.innerWidth),
-      height: Math.ceil(window.innerHeight),
-    };
-  });
 
   // --- 画像再現エフェクト用のステート ---
   const [activeRings, setActiveRings] = useState<ReplicatedRing[]>([]);
@@ -133,6 +98,9 @@ export default function PostDetail() {
 
   const buttonRef = useRef<HTMLButtonElement>(null);
   const pickerPanelRef = useRef<HTMLDivElement>(null);
+  const shareButtonRef = useRef<HTMLButtonElement>(null);
+  const shareMenuRef = useRef<HTMLDivElement>(null);
+  const limeDropPanelRef = useRef<HTMLDivElement>(null);
   let longPressTimer: NodeJS.Timeout;
 
   const defaultEmojis = ['👍', '❤️', '😆', '🤔', '😮', '🎉', '💢', '😢', '😇', '🍮'];
@@ -155,289 +123,6 @@ export default function PostDetail() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const applyLocalBackground = () => {
-      const storedUrl = localStorage.getItem('lime_timeline_background_url');
-      const storedTheme = localStorage.getItem('lime_timeline_visual_theme');
-
-      setTimelineBackgroundUrl(storedUrl || null);
-      if (storedTheme === 'light' || storedTheme === 'dark') {
-        setTimelineTheme(storedTheme);
-      }
-    };
-
-    const fetchTimelineBackground = async () => {
-      try {
-        const { data: authData, error: authError } = await supabase.auth.getUser();
-        if (authError) throw authError;
-
-        const currentUser = authData.user;
-        if (!currentUser) {
-          if (!cancelled) applyLocalBackground();
-          return;
-        }
-
-        const { data: profile, error } = await supabase
-          .from('profiles')
-          .select('timeline_background_url')
-          .eq('id', currentUser.id)
-          .maybeSingle();
-
-        if (error) throw error;
-
-        if (!cancelled) {
-          const url = (profile?.timeline_background_url as string | null) ?? null;
-          setTimelineBackgroundUrl(url);
-
-          if (url) {
-            localStorage.setItem('lime_timeline_background_url', url);
-          } else {
-            localStorage.removeItem('lime_timeline_background_url');
-          }
-        }
-      } catch (err) {
-        console.error('Fetch post detail timeline background error:', err);
-        if (!cancelled) applyLocalBackground();
-      }
-    };
-
-    const handleBackgroundChanged = (event: Event) => {
-      const detail = (event as CustomEvent<{ url?: string }>).detail;
-      setTimelineBackgroundUrl(detail?.url || null);
-    };
-
-    const handleVisualThemeChanged = (event: Event) => {
-      const detail = (event as CustomEvent<{
-        theme?: 'light' | 'dark';
-        hasTimelineBackground?: boolean;
-        url?: string;
-      }>).detail;
-
-      if (detail?.theme === 'light' || detail?.theme === 'dark') {
-        setTimelineTheme(detail.theme);
-      }
-
-      if (typeof detail?.hasTimelineBackground === 'boolean') {
-        setTimelineBackgroundUrl(detail.hasTimelineBackground ? detail.url || localStorage.getItem('lime_timeline_background_url') : null);
-      }
-    };
-
-    fetchTimelineBackground();
-
-    window.addEventListener('timeline-background-changed', handleBackgroundChanged as EventListener);
-    window.addEventListener('timeline-visual-theme-changed', handleVisualThemeChanged as EventListener);
-
-    let backgroundChannel: BroadcastChannel | null = null;
-    let visualThemeChannel: BroadcastChannel | null = null;
-
-    if ('BroadcastChannel' in window) {
-      backgroundChannel = new BroadcastChannel('timeline-background');
-      backgroundChannel.onmessage = (event) => {
-        setTimelineBackgroundUrl(event.data?.url || null);
-      };
-
-      visualThemeChannel = new BroadcastChannel('timeline-visual-theme');
-      visualThemeChannel.onmessage = (event) => {
-        if (event.data?.theme === 'light' || event.data?.theme === 'dark') {
-          setTimelineTheme(event.data.theme);
-        }
-        if (typeof event.data?.hasTimelineBackground === 'boolean') {
-          setTimelineBackgroundUrl(event.data.hasTimelineBackground ? event.data.url || localStorage.getItem('lime_timeline_background_url') : null);
-        }
-      };
-    }
-
-    return () => {
-      cancelled = true;
-      window.removeEventListener('timeline-background-changed', handleBackgroundChanged as EventListener);
-      window.removeEventListener('timeline-visual-theme-changed', handleVisualThemeChanged as EventListener);
-      backgroundChannel?.close();
-      visualThemeChannel?.close();
-    };
-  }, []);
-
-  useEffect(() => {
-    const previous = {
-      backgroundImage: document.body.style.backgroundImage,
-      backgroundSize: document.body.style.backgroundSize,
-      backgroundPosition: document.body.style.backgroundPosition,
-      backgroundRepeat: document.body.style.backgroundRepeat,
-      backgroundAttachment: document.body.style.backgroundAttachment,
-    };
-
-    if (timelineBackgroundUrl) {
-      const safeBackgroundUrl = `url("${timelineBackgroundUrl}")`;
-
-      if (isMobile) {
-        // iPhone / モバイルでは body background fixed が不安定なので、JSX 側の fixed レイヤーで表示する。
-        document.body.style.backgroundImage = 'none';
-        document.body.style.backgroundSize = '';
-        document.body.style.backgroundPosition = '';
-        document.body.style.backgroundRepeat = '';
-        document.body.style.backgroundAttachment = '';
-      } else {
-        document.body.style.backgroundImage = safeBackgroundUrl;
-        document.body.style.backgroundSize = 'cover';
-        document.body.style.backgroundPosition = 'center';
-        document.body.style.backgroundRepeat = 'no-repeat';
-        document.body.style.backgroundAttachment = 'fixed';
-      }
-    }
-
-    return () => {
-      document.body.style.backgroundImage = previous.backgroundImage;
-      document.body.style.backgroundSize = previous.backgroundSize;
-      document.body.style.backgroundPosition = previous.backgroundPosition;
-      document.body.style.backgroundRepeat = previous.backgroundRepeat;
-      document.body.style.backgroundAttachment = previous.backgroundAttachment;
-    };
-  }, [timelineBackgroundUrl, isMobile]);
-
-  useEffect(() => {
-    if (!timelineBackgroundUrl) {
-      setTimelineTheme('dark');
-      return;
-    }
-
-    let cancelled = false;
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.src = timelineBackgroundUrl;
-
-    img.onload = () => {
-      if (cancelled || !img.naturalWidth || !img.naturalHeight) return;
-
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      if (!ctx) {
-        setTimelineTheme('dark');
-        return;
-      }
-
-      canvas.width = 48;
-      canvas.height = 48;
-
-      try {
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-        const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-        const luminances: number[] = [];
-        let luminanceSum = 0;
-        let count = 0;
-        let brightPixels = 0;
-        let darkPixels = 0;
-        let veryDarkPixels = 0;
-
-        for (let i = 0; i < data.length; i += 4) {
-          const alpha = data[i + 3] / 255;
-          if (alpha < 0.1) continue;
-
-          const r = data[i];
-          const g = data[i + 1];
-          const b = data[i + 2];
-          const lum = getRelativeLuminance(r, g, b);
-
-          luminances.push(lum);
-          luminanceSum += lum;
-          count += 1;
-
-          if (lum >= 0.68) brightPixels += 1;
-          if (lum <= 0.30) darkPixels += 1;
-          if (lum <= 0.16) veryDarkPixels += 1;
-        }
-
-        if (!cancelled) {
-          luminances.sort((a, b) => a - b);
-
-          const pick = (ratio: number) => {
-            if (luminances.length === 0) return 0.5;
-            const index = Math.min(luminances.length - 1, Math.max(0, Math.floor((luminances.length - 1) * ratio)));
-            return luminances[index];
-          };
-
-          const averageLuminance = count > 0 ? luminanceSum / count : 0.5;
-          const medianLuminance = pick(0.5);
-          const lowerQuartileLuminance = pick(0.25);
-          const brightRatio = count > 0 ? brightPixels / count : 0;
-          const darkRatio = count > 0 ? darkPixels / count : 0;
-          const veryDarkRatio = count > 0 ? veryDarkPixels / count : 0;
-
-          setTimelineTheme(
-            getTimelineThemeFromImageStats({
-              averageLuminance,
-              medianLuminance,
-              lowerQuartileLuminance,
-              brightRatio,
-              darkRatio,
-              veryDarkRatio,
-            })
-          );
-        }
-      } catch (error) {
-        console.warn('Post detail luminance sampling failed:', error);
-        if (!cancelled) setTimelineTheme('dark');
-      }
-    };
-
-    img.onerror = () => {
-      if (!cancelled) setTimelineTheme('dark');
-    };
-
-    return () => {
-      cancelled = true;
-    };
-  }, [timelineBackgroundUrl]);
-
-  useEffect(() => {
-    const hasBackground = Boolean(timelineBackgroundUrl);
-    const payload = {
-      theme: timelineTheme,
-      hasTimelineBackground: hasBackground,
-      url: timelineBackgroundUrl ?? '',
-    };
-
-    localStorage.setItem('lime_timeline_visual_theme', timelineTheme);
-    localStorage.setItem('lime_timeline_background_enabled', String(hasBackground));
-
-    if (timelineBackgroundUrl) {
-      localStorage.setItem('lime_timeline_background_url', timelineBackgroundUrl);
-    } else {
-      localStorage.removeItem('lime_timeline_background_url');
-    }
-
-    window.dispatchEvent(
-      new CustomEvent('timeline-visual-theme-changed', {
-        detail: payload,
-      })
-    );
-
-    if ('BroadcastChannel' in window) {
-      const channel = new BroadcastChannel('timeline-visual-theme');
-      channel.postMessage(payload);
-      channel.close();
-    }
-  }, [timelineBackgroundUrl, timelineTheme]);
-
-  // 背景ありの投稿詳細画面では、body直下に出るHoverCard等にもテーマを渡す。
-  useEffect(() => {
-    const hasBackground = Boolean(timelineBackgroundUrl);
-
-    document.body.classList.toggle('post-detail-timeline-bg-active', hasBackground);
-    document.body.classList.toggle('post-detail-timeline-bg-dark', hasBackground && timelineTheme === 'dark');
-    document.body.classList.toggle('post-detail-timeline-bg-light', hasBackground && timelineTheme === 'light');
-
-    return () => {
-      document.body.classList.remove(
-        'post-detail-timeline-bg-active',
-        'post-detail-timeline-bg-dark',
-        'post-detail-timeline-bg-light'
-      );
-    };
-  }, [timelineBackgroundUrl, timelineTheme]);
-
   // 画像拡大時だけスクロールを固定する。
   // 絵文字ピッカーで body overflow を触ると、Header / Dropdown が巻き込まれて消えることがあるため触らない。
   useEffect(() => {
@@ -448,6 +133,69 @@ export default function PostDetail() {
     }
     return () => { document.body.style.overflow = 'unset'; };
   }, [selectedImageUrl]);
+
+  useEffect(() => {
+    if (!showShareMenu) return;
+
+    const closeShareMenuFromOutside = () => {
+      setShowShareMenu(false);
+      setShareMenuPosition(null);
+    };
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+
+      if (shareButtonRef.current?.contains(target)) return;
+      if (shareMenuRef.current?.contains(target)) return;
+
+      closeShareMenuFromOutside();
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown, true);
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+    };
+  }, [showShareMenu]);
+
+  useEffect(() => {
+    if (!showShareMenu) return;
+
+    const closeOnViewportChange = () => {
+      setShowShareMenu(false);
+      setShareMenuPosition(null);
+    };
+
+    window.addEventListener('scroll', closeOnViewportChange, true);
+    window.addEventListener('resize', closeOnViewportChange);
+
+    return () => {
+      window.removeEventListener('scroll', closeOnViewportChange, true);
+      window.removeEventListener('resize', closeOnViewportChange);
+    };
+  }, [showShareMenu]);
+
+  useEffect(() => {
+    if (!showLimeDropPanel) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowLimeDropPanel(false);
+        setLimeDropSendingUserId(null);
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showLimeDropPanel]);
 
   // リアクションとカスタム絵文字のデータ取得
   useEffect(() => {
@@ -785,40 +533,301 @@ export default function PostDetail() {
         .trim()
     : data?.content;
 
-  const hasTimelineBackground = Boolean(timelineBackgroundUrl);
+  const useMobileThreadLayout = isMobile;
+
+  const getPostShareUrl = () => {
+    if (!data) return '';
+
+    if (typeof window === 'undefined') {
+      return `/post/${data.id}`;
+    }
+
+    const baseUrl = import.meta.env.BASE_URL || '/';
+    const normalizedBaseUrl = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+    return new URL(`post/${data.id}`, new URL(normalizedBaseUrl, window.location.origin)).toString();
+  };
+
+  const getPostShareText = () => {
+    if (!data) return 'ポスト';
+
+    const rawText = (displayContent || data.content || '').replace(/\s+/g, ' ').trim();
+    if (!rawText) {
+      return `${data.author.displayName}さんのポスト`;
+    }
+
+    const clippedText = rawText.length > 120 ? `${rawText.slice(0, 120)}...` : rawText;
+    return `${data.author.displayName}さんのポスト: ${clippedText}`;
+  };
+
+  const copyTextToClipboard = async (text: string) => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.top = '-9999px';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+
+    try {
+      document.execCommand('copy');
+    } finally {
+      document.body.removeChild(textarea);
+    }
+  };
+
+  const closeShareMenu = () => {
+    setShowShareMenu(false);
+    setShareMenuPosition(null);
+  };
+
+  const handleShareButtonClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (showShareMenu) {
+      closeShareMenu();
+      return;
+    }
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    setShareMenuPosition({
+      top: rect.bottom + 4,
+      right: Math.max(8, window.innerWidth - rect.right),
+    });
+    setShowPicker(false);
+    setShowShareMenu(true);
+  };
+
+  const handleCopyPostLink = async (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    try {
+      await copyTextToClipboard(getPostShareUrl());
+      setShareFeedback('リンクをコピーしました');
+      window.setTimeout(() => {
+        setShareFeedback(null);
+      }, 1400);
+      closeShareMenu();
+    } catch (err) {
+      console.error('Copy post link failed:', err);
+      setShareFeedback('コピーに失敗しました');
+      window.setTimeout(() => {
+        setShareFeedback(null);
+      }, 1400);
+    }
+  };
+
+  const handleNativePostShare = async (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!data) return;
+
+    const url = getPostShareUrl();
+    const title = `${data.author.displayName}さんのポスト`;
+    const text = getPostShareText();
+
+    try {
+      if (typeof navigator !== 'undefined' && navigator.share) {
+        await navigator.share({ title, text, url });
+        closeShareMenu();
+        return;
+      }
+
+      await copyTextToClipboard(url);
+      setShareFeedback('共有非対応のためリンクをコピーしました');
+      window.setTimeout(() => {
+        setShareFeedback(null);
+      }, 1800);
+      closeShareMenu();
+    } catch (err) {
+      if ((err as DOMException)?.name === 'AbortError') {
+        closeShareMenu();
+        return;
+      }
+
+      console.error('Native post share failed:', err);
+      setShareFeedback('共有に失敗しました');
+      window.setTimeout(() => {
+        setShareFeedback(null);
+      }, 1400);
+    }
+  };
+
+  const fetchLimeDropTargets = async () => {
+    if (!currentUserId) {
+      setLimeDropTargets([]);
+      setLimeDropFeedback('ログイン状態を確認できません');
+      return;
+    }
+
+    setLimeDropLoading(true);
+    setLimeDropFeedback(null);
+
+    try {
+      const { data: currentProfile, error: currentProfileError } = await supabase
+        .from('profiles')
+        .select('is_official')
+        .eq('id', currentUserId)
+        .maybeSingle();
+
+      if (currentProfileError) throw currentProfileError;
+
+      if (currentProfile?.is_official === true) {
+        const { data: allProfileRows, error: allProfileError } = await supabase
+          .from('profiles')
+          .select('id, username, display_name, avatar_url')
+          .neq('id', currentUserId)
+          .order('display_name', { ascending: true });
+
+        if (allProfileError) throw allProfileError;
+
+        const targets: LimeDropTarget[] = (allProfileRows || []).map((profile: any) => ({
+          id: profile.id,
+          username: profile.username || 'unknown',
+          displayName: profile.display_name || profile.username || 'ユーザー',
+          avatarUrl: profile.avatar_url || '',
+        }));
+
+        setLimeDropTargets(targets);
+        return;
+      }
+
+      const { data: followingRows, error: followingError } = await supabase
+        .from('follows')
+        .select('followee_id')
+        .eq('follower_id', currentUserId);
+
+      if (followingError) throw followingError;
+
+      const followingIds = Array.from(
+        new Set(
+          (followingRows || [])
+            .map((row: any) => row.followee_id)
+            .filter(Boolean)
+        )
+      );
+
+      const { data: followerRows, error: followerError } = followingIds.length > 0
+        ? await supabase
+            .from('follows')
+            .select('follower_id')
+            .eq('followee_id', currentUserId)
+            .in('follower_id', followingIds)
+        : { data: [], error: null };
+
+      if (followerError) throw followerError;
+
+      const mutualIds = Array.from(
+        new Set(
+          (followerRows || [])
+            .map((row: any) => row.follower_id)
+            .filter(Boolean)
+        )
+      );
+
+      const { data: mutualProfileRows, error: mutualProfileError } = mutualIds.length > 0
+        ? await supabase
+            .from('profiles')
+            .select('id, username, display_name, avatar_url')
+            .in('id', mutualIds)
+        : { data: [], error: null };
+
+      if (mutualProfileError) throw mutualProfileError;
+
+      const targets: LimeDropTarget[] = (mutualProfileRows || [])
+        .map((profile: any) => ({
+          id: profile.id,
+          username: profile.username || 'unknown',
+          displayName: profile.display_name || profile.username || 'ユーザー',
+          avatarUrl: profile.avatar_url || '',
+        }))
+        .sort((a, b) => a.displayName.localeCompare(b.displayName, 'ja'));
+
+      setLimeDropTargets(targets);
+    } catch (err) {
+      console.error('Fetch LimeDrop targets failed:', err);
+      setLimeDropTargets([]);
+      setLimeDropFeedback('送信先の取得に失敗しました');
+    } finally {
+      setLimeDropLoading(false);
+    }
+  };
+
+  const handleOpenLimeDropPanel = async (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    closeShareMenu();
+    setShowPicker(false);
+    setLimeDropFeedback(null);
+    setShowLimeDropPanel(true);
+    await fetchLimeDropTargets();
+  };
+
+  const handleCloseLimeDropPanel = () => {
+    setShowLimeDropPanel(false);
+    setLimeDropSendingUserId(null);
+  };
+
+  const handleSendLimeDrop = async (target: LimeDropTarget) => {
+    if (!currentUserId) {
+      setLimeDropFeedback('ログイン状態を確認できません');
+      return;
+    }
+
+    if (!data) {
+      setLimeDropFeedback('ポストを確認できません');
+      return;
+    }
+
+    setLimeDropSendingUserId(target.id);
+    setLimeDropFeedback(null);
+
+    try {
+      const url = getPostShareUrl();
+      const text = getPostShareText();
+
+      const { error } = await supabase
+        .from('lime_drops')
+        .insert({
+          sender_id: currentUserId,
+          recipient_id: target.id,
+          post_id: data.id,
+          post_url: url,
+          post_author_id: data.author.id,
+          post_author_username: data.author.username,
+          post_author_display_name: data.author.displayName,
+          post_text: text,
+          status: 'pending',
+        });
+
+      if (error) throw error;
+
+      setLimeDropFeedback(`${target.displayName}さんに送信しました`);
+      window.setTimeout(() => {
+        handleCloseLimeDropPanel();
+        setLimeDropFeedback(null);
+      }, 900);
+    } catch (err) {
+      console.error('Send LimeDrop failed:', err);
+      setLimeDropFeedback('LimeDropの送信に失敗しました');
+    } finally {
+      setLimeDropSendingUserId(null);
+    }
+  };
 
   return (
     <>
-      {hasTimelineBackground && isMobile && timelineBackgroundUrl && (
-        <div
-          className="post-detail-mobile-background-layer pointer-events-none fixed left-0 top-0 z-0 overflow-hidden bg-background"
-          style={{
-            width: initialMobileBackgroundFrame.width ? `${initialMobileBackgroundFrame.width}px` : '100vw',
-            height: initialMobileBackgroundFrame.height ? `${initialMobileBackgroundFrame.height}px` : '100vh',
-          }}
-          aria-hidden="true"
-        >
-          <img
-            src={timelineBackgroundUrl}
-            alt=""
-            className="absolute left-0 top-0 h-full w-full object-cover"
-            style={{ objectPosition: 'center center' }}
-            draggable={false}
-          />
-          <div
-            className={`absolute inset-0 ${timelineTheme === 'dark' ? 'bg-black/8' : 'bg-white/0'}`}
-          />
-        </div>
-      )}
-      <div
-        className={`relative z-[1] space-y-5 ${
-          hasTimelineBackground
-            ? timelineTheme === 'dark'
-              ? 'pt-4 sm:pt-6 timeline-theme-scope timeline-theme-dark post-detail-background-mode'
-              : 'pt-4 sm:pt-6 timeline-theme-scope timeline-theme-light post-detail-background-mode'
-            : ''
-        }`}
-      >
+      <div className={useMobileThreadLayout ? 'post-detail-mobile-thread relative z-[1]' : 'relative z-[1] space-y-5'}>
       <style>{`
         @keyframes misskeyRingExpand {
           0% {
@@ -894,373 +903,123 @@ export default function PostDetail() {
           animation: zoomInPc 160ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
         }
 
-        .post-detail-mobile-background-layer { max-width: 100vw !important; }
-
-        .timeline-theme-scope { color: hsl(var(--foreground)); }
-
-        .timeline-theme-dark {
-          --background: 222 47% 7%;
-          --foreground: 210 40% 98%;
-          --card: 222 36% 8%;
-          --card-foreground: 210 40% 98%;
-          --popover: 222 36% 9%;
-          --popover-foreground: 210 40% 98%;
-          --muted: 217 28% 17%;
-          --muted-foreground: 215 24% 82%;
-          --border: 217 18% 28%;
-          --timeline-link: 330 96% 66%;
-        }
-
-        .timeline-theme-light {
-          --background: 0 0% 100%;
-          --foreground: 24 12% 11%;
-          --card: 0 0% 100%;
-          --card-foreground: 24 12% 11%;
-          --popover: 0 0% 100%;
-          --popover-foreground: 24 12% 11%;
-          --muted: 24 16% 92%;
-          --muted-foreground: 24 8% 42%;
-          --border: 24 10% 82%;
-          --timeline-link: 330 88% 48%;
-        }
-
-        .post-detail-background-mode .text-pink-500 { color: hsl(var(--timeline-link)) !important; }
-
-        .post-detail-glass-card,
-        .post-detail-glass-section {
-          color: hsl(var(--foreground));
-          -webkit-backdrop-filter: blur(24px) saturate(165%);
-          backdrop-filter: blur(24px) saturate(165%);
-          box-shadow: none !important;
-        }
-
-        .timeline-theme-dark .post-detail-glass-card,
-        .timeline-theme-dark .post-detail-glass-section {
-          background: linear-gradient(135deg, rgba(12, 16, 28, 0.72), rgba(34, 24, 32, 0.66)) !important;
-          border-color: rgba(255, 255, 255, 0.045) !important;
-          color: rgba(255, 255, 255, 0.96) !important;
-        }
-
-        .timeline-theme-light .post-detail-glass-card,
-        .timeline-theme-light .post-detail-glass-section {
-          background: linear-gradient(135deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.54)) !important;
-          border-color: rgba(40, 30, 25, 0.045) !important;
-          color: rgba(24, 22, 20, 0.96) !important;
-        }
-
-        .post-detail-back-button {
-          border: 1px solid hsl(var(--border) / 0.08);
-          -webkit-backdrop-filter: blur(20px) saturate(160%);
-          backdrop-filter: blur(20px) saturate(160%);
-        }
-
-        .timeline-theme-dark .post-detail-back-button {
-          background: rgba(12, 16, 28, 0.62) !important;
-          color: rgba(255, 255, 255, 0.90) !important;
-          border-color: rgba(255, 255, 255, 0.06) !important;
-        }
-
-        .timeline-theme-light .post-detail-back-button {
-          background: rgba(255, 255, 255, 0.62) !important;
-          color: rgba(24, 22, 20, 0.84) !important;
-          border-color: rgba(24, 22, 20, 0.06) !important;
-        }
-
-        .post-detail-background-mode .text-foreground,
-        .post-detail-background-mode p {
-          color: hsl(var(--foreground) / 0.96) !important;
-          text-shadow: none !important;
-        }
-
-        .post-detail-background-mode .text-muted-foreground,
-        .post-detail-background-mode [class*="text-muted-foreground"] {
-          color: hsl(var(--muted-foreground) / 0.90) !important;
-          text-shadow: none !important;
-        }
-
-        .timeline-theme-dark .post-detail-picker-panel {
-          background: rgba(18, 21, 30, 0.96) !important;
-          color: rgba(255, 255, 255, 0.96) !important;
-          border-color: rgba(255, 255, 255, 0.10) !important;
-        }
-
-        .timeline-theme-light .post-detail-picker-panel {
-          background: rgba(255, 255, 255, 0.96) !important;
-          color: rgba(24, 22, 20, 0.96) !important;
-          border-color: rgba(24, 22, 20, 0.10) !important;
-        }
-
-        /*
-          背景あり時のコメント周り専用。
-          CommentForm / CommentList 側が元々カード枠を持っているので、
-          PostDetail 側でさらに大きな枠を重ねない。
-        */
-        .post-detail-comment-form-shell {
-          color: hsl(var(--foreground));
-        }
-
-        .post-detail-comment-form-shell > * {
-          -webkit-backdrop-filter: blur(24px) saturate(165%);
-          backdrop-filter: blur(24px) saturate(165%);
-          box-shadow: none !important;
-        }
-
-        .timeline-theme-dark .post-detail-comment-form-shell > * {
-          background: linear-gradient(135deg, rgba(12, 16, 28, 0.72), rgba(34, 24, 32, 0.66)) !important;
-          border-color: rgba(255, 255, 255, 0.045) !important;
-          color: rgba(255, 255, 255, 0.96) !important;
-        }
-
-        .timeline-theme-light .post-detail-comment-form-shell > * {
-          background: linear-gradient(135deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.54)) !important;
-          border-color: rgba(40, 30, 25, 0.045) !important;
-          color: rgba(24, 22, 20, 0.96) !important;
-        }
-
-        .post-detail-comments-shell {
-          color: hsl(var(--foreground));
-        }
-
-        /*
-          背景あり時は、コメント一覧の外側にはカード枠を作らない。
-          CommentList / 空状態 / 各コメントが持つ既存カードだけをテーマに合わせて薄いガラスにする。
-        */
-        .post-detail-comments-shell [class*="rounded-3xl"][class*="border"],
-        .post-detail-comments-shell [class*="rounded-2xl"][class*="border"],
-        .post-detail-comments-shell [class*="rounded-xl"][class*="border"] {
-          -webkit-backdrop-filter: blur(22px) saturate(160%);
-          backdrop-filter: blur(22px) saturate(160%);
-          box-shadow: none !important;
-        }
-
-        .timeline-theme-dark .post-detail-comments-shell [class*="rounded-3xl"][class*="border"],
-        .timeline-theme-dark .post-detail-comments-shell [class*="rounded-2xl"][class*="border"],
-        .timeline-theme-dark .post-detail-comments-shell [class*="rounded-xl"][class*="border"] {
-          background: rgba(5, 8, 16, 0.46) !important;
-          border-color: rgba(255, 255, 255, 0.050) !important;
-          color: rgba(255, 255, 255, 0.96) !important;
-        }
-
-        .timeline-theme-light .post-detail-comments-shell [class*="rounded-3xl"][class*="border"],
-        .timeline-theme-light .post-detail-comments-shell [class*="rounded-2xl"][class*="border"],
-        .timeline-theme-light .post-detail-comments-shell [class*="rounded-xl"][class*="border"] {
-          background: rgba(255, 255, 255, 0.50) !important;
-          border-color: rgba(24, 22, 20, 0.055) !important;
-          color: rgba(24, 22, 20, 0.96) !important;
-        }
-
-        /*
-          CommentForm / CommentList 内の bg-card, bg-muted, border-border, dark:* は
-          Feed側のタイムラインテーマ判定に従わせる。
-        */
-        .post-detail-background-mode .bg-card,
-        .post-detail-background-mode [class*="bg-card"] {
-          background-color: hsl(var(--card) / 0.48) !important;
-        }
-
-        .post-detail-background-mode .bg-muted,
-        .post-detail-background-mode [class*="bg-muted"] {
-          background-color: hsl(var(--muted) / 0.34) !important;
-        }
-
-        .post-detail-background-mode .border-border,
-        .post-detail-background-mode [class*="border-border"] {
-          border-color: hsl(var(--border) / 0.075) !important;
-        }
-
-        .timeline-theme-dark.post-detail-background-mode .border-t,
-        .timeline-theme-dark.post-detail-background-mode [class*="border-t"] {
-          border-color: rgba(255, 255, 255, 0.065) !important;
-        }
-
-        .timeline-theme-light.post-detail-background-mode .border-t,
-        .timeline-theme-light.post-detail-background-mode [class*="border-t"] {
-          border-color: rgba(24, 22, 20, 0.065) !important;
-        }
-
-        .timeline-theme-dark.post-detail-background-mode input,
-        .timeline-theme-dark.post-detail-background-mode textarea {
-          background: rgba(5, 8, 16, 0.46) !important;
-          color: rgba(255, 255, 255, 0.96) !important;
-          border-color: rgba(255, 255, 255, 0.070) !important;
-        }
-
-        .timeline-theme-light.post-detail-background-mode input,
-        .timeline-theme-light.post-detail-background-mode textarea {
-          background: rgba(255, 255, 255, 0.56) !important;
-          color: rgba(24, 22, 20, 0.96) !important;
-          border-color: rgba(24, 22, 20, 0.075) !important;
-        }
-
-        .timeline-theme-dark.post-detail-background-mode input::placeholder,
-        .timeline-theme-dark.post-detail-background-mode textarea::placeholder {
-          color: rgba(226, 232, 240, 0.58) !important;
-        }
-
-        .timeline-theme-light.post-detail-background-mode input::placeholder,
-        .timeline-theme-light.post-detail-background-mode textarea::placeholder {
-          color: rgba(86, 74, 66, 0.54) !important;
-        }
-
-
-        /*
-          モバイル背景あり時のコメント欄だけ、一枚の背景を持たせる。
-          投稿本体の透明度は前のまま維持し、CommentForm / CommentList の内側背景が
-          透明になっても、外側の一枚で読めるようにする。
-        */
         @media (max-width: 639px) {
-          .post-detail-background-mode .post-detail-comment-form-shell,
-          .post-detail-background-mode .post-detail-comments-shell {
-            position: relative;
-            border-radius: 28px;
-            border: 1px solid hsl(var(--border) / 0.065);
-            padding: 16px;
+          .post-detail-mobile-thread {
+            width: 100vw;
+            min-height: 100dvh;
+            margin-left: calc(50% - 50vw);
+            margin-right: calc(50% - 50vw);
+            padding-bottom: calc(148px + env(safe-area-inset-bottom));
             color: hsl(var(--foreground));
-            -webkit-backdrop-filter: blur(24px) saturate(165%);
-            backdrop-filter: blur(24px) saturate(165%);
-            box-shadow: none !important;
           }
 
-          .timeline-theme-dark.post-detail-background-mode .post-detail-comment-form-shell,
-          .timeline-theme-dark.post-detail-background-mode .post-detail-comments-shell {
-            background: linear-gradient(135deg, rgba(12, 16, 28, 0.72), rgba(34, 24, 32, 0.66)) !important;
-            border-color: rgba(255, 255, 255, 0.045) !important;
+          .post-detail-mobile-simple-back {
+            margin: 8px 16px 6px !important;
           }
 
-          .timeline-theme-light.post-detail-background-mode .post-detail-comment-form-shell,
-          .timeline-theme-light.post-detail-background-mode .post-detail-comments-shell {
-            background: linear-gradient(135deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.54)) !important;
-            border-color: rgba(40, 30, 25, 0.045) !important;
-          }
-
-          .post-detail-background-mode .post-detail-comment-form-shell > *,
-          .post-detail-background-mode .post-detail-comments-shell > [class*="rounded-3xl"][class*="border"],
-          .post-detail-background-mode .post-detail-comments-shell > [class*="rounded-2xl"][class*="border"],
-          .post-detail-background-mode .post-detail-comments-shell > [class*="rounded-xl"][class*="border"] {
+          .post-detail-mobile-article {
+            border: 0 !important;
+            border-bottom: 0 !important;
+            border-radius: 0 !important;
             background: transparent !important;
-            border-color: transparent !important;
+            margin-top: 0 !important;
+            padding: 10px 16px 0 !important;
             box-shadow: none !important;
-            -webkit-backdrop-filter: none !important;
-            backdrop-filter: none !important;
           }
 
-          .post-detail-background-mode .post-detail-comment-form-shell input,
-          .post-detail-background-mode .post-detail-comment-form-shell textarea,
-          .post-detail-background-mode .post-detail-comments-shell input,
-          .post-detail-background-mode .post-detail-comments-shell textarea {
-            -webkit-backdrop-filter: blur(18px) saturate(150%) !important;
-            backdrop-filter: blur(18px) saturate(150%) !important;
+          .post-detail-mobile-author-row {
+            gap: 12px !important;
           }
 
-          .timeline-theme-dark.post-detail-background-mode .post-detail-comment-form-shell input,
-          .timeline-theme-dark.post-detail-background-mode .post-detail-comment-form-shell textarea,
-          .timeline-theme-dark.post-detail-background-mode .post-detail-comments-shell input,
-          .timeline-theme-dark.post-detail-background-mode .post-detail-comments-shell textarea {
-            background: rgba(5, 8, 16, 0.46) !important;
-            border-color: rgba(255, 255, 255, 0.070) !important;
+          .post-detail-mobile-avatar {
+            width: 48px !important;
+            height: 48px !important;
+            border: 1px solid hsl(var(--border) / 0.62) !important;
           }
 
-          .timeline-theme-light.post-detail-background-mode .post-detail-comment-form-shell input,
-          .timeline-theme-light.post-detail-background-mode .post-detail-comment-form-shell textarea,
-          .timeline-theme-light.post-detail-background-mode .post-detail-comments-shell input,
-          .timeline-theme-light.post-detail-background-mode .post-detail-comments-shell textarea {
-            background: rgba(255, 255, 255, 0.56) !important;
-            border-color: rgba(24, 22, 20, 0.075) !important;
-          }
-        }
-
-        @media (max-width: 639px) {
-          /* 背景ありのモバイルだけ、投稿本体をPC版と同じカード風に戻す。 */
-          .post-detail-background-mode .post-detail-main-card {
-            width: calc(100vw - 32px);
-            max-width: 600px;
-            margin-left: auto;
-            margin-right: auto;
-            border-radius: 28px;
-            box-sizing: border-box;
-            overflow: hidden;
-            -webkit-backdrop-filter: blur(24px) saturate(165%);
-            backdrop-filter: blur(24px) saturate(165%);
+          .post-detail-mobile-name {
+            font-size: 16px;
+            font-weight: 700;
+            line-height: 1.15;
+            color: hsl(var(--foreground));
           }
 
-          .timeline-theme-dark.post-detail-background-mode .post-detail-main-card {
-            background: linear-gradient(135deg, rgba(12, 16, 28, 0.72), rgba(34, 24, 32, 0.66)) !important;
-            border-color: rgba(255, 255, 255, 0.045) !important;
+          .post-detail-mobile-username {
+            margin-top: 2px;
+            font-size: 15px !important;
+            line-height: 1.2;
+            color: hsl(var(--muted-foreground)) !important;
           }
 
-          .timeline-theme-light.post-detail-background-mode .post-detail-main-card {
-            background: linear-gradient(135deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.54)) !important;
-            border-color: rgba(40, 30, 25, 0.045) !important;
+          .post-detail-mobile-content {
+            margin-top: 20px !important;
+            font-size: 18px !important;
+            font-weight: 400;
+            line-height: 1.5 !important;
+            color: hsl(var(--foreground)) !important;
           }
 
-          /* コメント内の削除などの選択メニューは透明化しない。 */
-          .post-detail-background-mode .post-detail-comments-shell [role="menu"],
-          .post-detail-background-mode .post-detail-comments-shell [data-radix-menu-content],
-          .post-detail-background-mode .post-detail-comments-shell [data-radix-dropdown-menu-content],
-          .post-detail-background-mode .post-detail-comments-shell [class*="absolute"][class*="rounded"][class*="border"],
-          .post-detail-background-mode .post-detail-comments-shell [class*="fixed"][class*="rounded"][class*="border"] {
-            -webkit-backdrop-filter: blur(24px) saturate(170%) !important;
-            backdrop-filter: blur(24px) saturate(170%) !important;
-            box-shadow: 0 18px 48px rgba(0, 0, 0, 0.24) !important;
+          .post-detail-mobile-meta {
+            margin-top: 18px !important;
+            font-size: 13px !important;
+            line-height: 1.35;
+            color: hsl(var(--muted-foreground)) !important;
           }
 
-          .timeline-theme-dark.post-detail-background-mode .post-detail-comments-shell [role="menu"],
-          .timeline-theme-dark.post-detail-background-mode .post-detail-comments-shell [data-radix-menu-content],
-          .timeline-theme-dark.post-detail-background-mode .post-detail-comments-shell [data-radix-dropdown-menu-content],
-          .timeline-theme-dark.post-detail-background-mode .post-detail-comments-shell [class*="absolute"][class*="rounded"][class*="border"],
-          .timeline-theme-dark.post-detail-background-mode .post-detail-comments-shell [class*="fixed"][class*="rounded"][class*="border"] {
-            background: rgba(12, 16, 28, 0.97) !important;
-            border-color: rgba(255, 255, 255, 0.12) !important;
-            color: rgba(255, 255, 255, 0.96) !important;
+          .post-detail-mobile-comments-shell {
+            margin-top: 0 !important;
           }
 
-          .timeline-theme-light.post-detail-background-mode .post-detail-comments-shell [role="menu"],
-          .timeline-theme-light.post-detail-background-mode .post-detail-comments-shell [data-radix-menu-content],
-          .timeline-theme-light.post-detail-background-mode .post-detail-comments-shell [data-radix-dropdown-menu-content],
-          .timeline-theme-light.post-detail-background-mode .post-detail-comments-shell [class*="absolute"][class*="rounded"][class*="border"],
-          .timeline-theme-light.post-detail-background-mode .post-detail-comments-shell [class*="fixed"][class*="rounded"][class*="border"] {
-            background: rgba(255, 255, 255, 0.97) !important;
-            border-color: rgba(24, 22, 20, 0.12) !important;
-            color: rgba(24, 22, 20, 0.96) !important;
+          .post-detail-mobile-action-row {
+            height: 42px !important;
+            margin-top: 8px !important;
+            padding-top: 0 !important;
+            padding-bottom: 7px !important;
+            border-top: 0 !important;
+            border-bottom: 1px solid hsl(var(--border) / 0.62) !important;
           }
 
-          .post-detail-background-mode .post-detail-comments-shell .text-destructive,
-          .post-detail-background-mode .post-detail-comments-shell [class*="text-destructive"] {
-            color: rgb(255, 77, 86) !important;
+          .post-detail-mobile-action-hit,
+          .post-detail-mobile-reply-count,
+          .post-detail-mobile-plus-button,
+          .post-detail-mobile-share-button {
+            display: inline-flex !important;
+            min-width: 46px !important;
+            height: 32px !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 6px !important;
+            padding: 0 8px !important;
+            border-radius: 9999px !important;
+            font-size: 15px !important;
+            line-height: 1 !important;
           }
-        }
 
-        /* body直下に出るプロフィールHoverCard等も、投稿詳細の背景テーマに合わせる。 */
-        body.post-detail-timeline-bg-active [data-radix-popper-content-wrapper] [data-side] {
-          -webkit-backdrop-filter: blur(28px) saturate(175%) !important;
-          backdrop-filter: blur(28px) saturate(175%) !important;
-          box-shadow: 0 18px 50px rgba(0, 0, 0, 0.24) !important;
-        }
+          .post-detail-mobile-action-hit > *,
+          .post-detail-mobile-action-hit button,
+          .post-detail-mobile-reply-count > *,
+          .post-detail-mobile-plus-button > *,
+          .post-detail-mobile-share-button > * {
+            display: inline-flex !important;
+            height: 32px !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 6px !important;
+            padding-top: 0 !important;
+            padding-bottom: 0 !important;
+          }
 
-        body.post-detail-timeline-bg-dark [data-radix-popper-content-wrapper] [data-side] {
-          background: rgba(12, 16, 28, 0.98) !important;
-          color: rgba(255, 255, 255, 0.96) !important;
-          border-color: rgba(255, 255, 255, 0.10) !important;
-        }
+          .post-detail-mobile-action-row svg {
+            width: 20px !important;
+            height: 20px !important;
+          }
 
-        body.post-detail-timeline-bg-light [data-radix-popper-content-wrapper] [data-side] {
-          background: rgba(255, 255, 255, 0.98) !important;
-          color: rgba(24, 22, 20, 0.96) !important;
-          border-color: rgba(24, 22, 20, 0.10) !important;
-        }
+          .post-detail-mobile-action-row .tabular-nums,
+          .post-detail-mobile-action-row span {
+            font-size: 15px !important;
+            line-height: 1 !important;
+          }
 
-        body.post-detail-timeline-bg-dark [data-radix-popper-content-wrapper] [data-side] [class*="text-muted-foreground"] {
-          color: rgba(226, 232, 240, 0.78) !important;
-        }
-
-        body.post-detail-timeline-bg-light [data-radix-popper-content-wrapper] [data-side] [class*="text-muted-foreground"] {
-          color: rgba(86, 74, 66, 0.74) !important;
-        }
-
-
-        body.post-detail-timeline-bg-active [data-radix-popper-content-wrapper] [data-side] .text-destructive,
-        body.post-detail-timeline-bg-active [data-radix-popper-content-wrapper] [data-side] [class*="text-destructive"] {
-          color: rgb(255, 77, 86) !important;
         }
 
 
@@ -1325,8 +1084,8 @@ export default function PostDetail() {
       <button
         type="button"
         onClick={() => navigate(-1)}
-        className={hasTimelineBackground
-          ? "post-detail-back-button inline-flex items-center gap-1 rounded-full px-3 py-2 text-sm font-bold text-muted-foreground transition hover:text-primary"
+        className={useMobileThreadLayout
+          ? "post-detail-mobile-simple-back inline-flex items-center gap-1 text-sm font-bold text-muted-foreground transition hover:text-primary"
           : "inline-flex items-center gap-1 text-sm font-bold text-muted-foreground transition hover:text-primary"
         }
       >
@@ -1334,10 +1093,7 @@ export default function PostDetail() {
       </button>
 
       {isLoading && (
-        <div className={hasTimelineBackground
-          ? "post-detail-glass-card rounded-3xl border border-border/60 p-5 shadow-soft"
-          : "rounded-3xl border border-border/60 bg-card p-5 shadow-soft"
-        }>
+        <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
           <div className="flex gap-3">
             <Skeleton className="h-12 w-12 rounded-full" />
             <div className="flex-1 space-y-2">
@@ -1350,39 +1106,35 @@ export default function PostDetail() {
       )}
       
       {isError && (
-        <div className={hasTimelineBackground
-          ? "post-detail-glass-section rounded-3xl border border-destructive/40 p-6 text-center"
-          : "rounded-3xl border border-destructive/40 bg-destructive/5 p-6 text-center"
-        }>
+        <div className="rounded-3xl border border-destructive/40 bg-destructive/5 p-6 text-center">
           <p className="text-sm text-destructive">投稿の読み込みに失敗しました。</p>
         </div>
       )}
 
       {data === null && (
-        <div className={hasTimelineBackground
-          ? "post-detail-glass-section rounded-3xl border border-border/60 p-8 text-center text-muted-foreground"
-          : "rounded-3xl border border-border/60 bg-card p-8 text-center text-muted-foreground"
-        }>
+        <div className="rounded-3xl border border-border/60 bg-card p-8 text-center text-muted-foreground">
           投稿が見つかりませんでした。
         </div>
       )}
 
       {data && (
-        <article className={hasTimelineBackground
-          ? "post-detail-glass-card post-detail-main-card rounded-3xl border border-border/60 p-6 shadow-soft relative"
+        <article className={useMobileThreadLayout
+          ? "post-detail-mobile-article relative"
           : "rounded-3xl border border-border/60 bg-card p-6 shadow-soft relative"
         }>
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
+            <div className={`flex items-center gap-3 ${useMobileThreadLayout ? 'post-detail-mobile-author-row' : ''}`}>
               <Link to={`/u/${data.author.username}`}>
-                <Avatar className="h-12 w-12 border-2 border-primary/30">
+                <Avatar className={useMobileThreadLayout ? "post-detail-mobile-avatar" : "h-12 w-12 border-2 border-primary/30"}>
                   <AvatarImage src={data.author.avatarUrl} alt={data.author.displayName} />
                   <AvatarFallback>{data.author.displayName.slice(0, 1)}</AvatarFallback>
                 </Avatar>
               </Link>
               <div className="min-w-0">
                 <Link to={`/u/${data.author.username}`} className="flex items-center gap-0.5 min-w-0 font-display font-bold hover:underline">
-                  <span className="truncate">{data.author.displayName}</span>
+                  <span className={`truncate ${useMobileThreadLayout ? 'post-detail-mobile-name' : ''}`}>
+                    {data.author.displayName}
+                  </span>
                   {data.author.isOfficial && (
                     <img 
                       src={`${import.meta.env.BASE_URL}verified.png`}
@@ -1392,7 +1144,9 @@ export default function PostDetail() {
                     />
                   )}
                 </Link>
-                <p className="truncate text-xs text-muted-foreground">@{data.author.username}</p>
+                <p className={`truncate text-xs text-muted-foreground ${useMobileThreadLayout ? 'post-detail-mobile-username' : ''}`}>
+                  @{data.author.username}
+                </p>
               </div>
             </div>
 
@@ -1406,7 +1160,7 @@ export default function PostDetail() {
 
           {/* 加工した本文を表示（メンション・ハッシュタグ・URL処理を適用） */}
           {displayContent && (
-            <p className="mt-4 whitespace-pre-wrap break-words text-base leading-relaxed text-foreground">
+            <p className={`mt-4 whitespace-pre-wrap break-words text-base leading-relaxed text-foreground ${useMobileThreadLayout ? 'post-detail-mobile-content' : ''}`}>
               {renderContentWithLinks(displayContent)}
             </p>
           )}
@@ -1507,7 +1261,7 @@ export default function PostDetail() {
             </div>
           )}
 
-          <p className="mt-4 text-xs text-muted-foreground" title={formatDate(data.createdAt)}>
+          <p className={`mt-4 text-xs text-muted-foreground ${useMobileThreadLayout ? 'post-detail-mobile-meta' : ''}`} title={formatDate(data.createdAt)}>
             {formatDate(data.createdAt)} · {formatRelative(data.createdAt)}
             {data.clientName && (
               <>
@@ -1519,15 +1273,15 @@ export default function PostDetail() {
             )}
           </p>
 
-          <div className="mt-3 flex items-center gap-1 border-t border-border/60 pt-3 relative h-9">
-            <div onClick={(e) => e.stopPropagation()} className="flex items-center h-full">
+          <div className={isMobile ? "mt-3 flex items-center gap-1 relative h-9 post-detail-mobile-action-row" : "mt-3 flex items-center gap-1 border-t border-border/60 pt-3 relative h-9"}>
+            <div onClick={(e) => e.stopPropagation()} className={`flex items-center h-full ${isMobile ? 'post-detail-mobile-action-hit' : ''}`}>
               <LikeButton 
                 postId={data.id} 
                 liked={data.likedByMe} 
                 count={data.likesCount}
               />
             </div>
-            <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm text-muted-foreground">
+            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm text-muted-foreground ${isMobile ? 'post-detail-mobile-reply-count' : ''}`}>
               <MessageCircle className="h-5 w-5" />
               <span className="font-bold tabular-nums">{formatDisplayCount(data.commentsCount)}</span>
             </span>
@@ -1537,7 +1291,7 @@ export default function PostDetail() {
               <button
                 ref={buttonRef}
                 onClick={() => setShowPicker(!showPicker)}
-                className={`inline-flex items-center justify-center p-1.5 rounded-full transition-colors hover:text-accent h-8 w-8 origin-center ${
+                className={`inline-flex items-center justify-center p-1.5 rounded-full transition-colors hover:text-accent h-8 w-8 origin-center ${isMobile ? 'post-detail-mobile-plus-button' : ''} ${
                   showPicker ? 'text-accent bg-accent/10' : 'text-muted-foreground'
                 }`}
               >
@@ -1564,7 +1318,7 @@ export default function PostDetail() {
                       />
                       <div
                         ref={pickerPanelRef}
-                        className={`fixed left-1/2 w-[92vw] max-w-[340px] h-[430px] rounded-[24px] border border-border/80 bg-white dark:bg-[#1e222b] shadow-2xl p-4 animate-slide-up-mobile overflow-y-auto overflow-x-hidden touch-pan-y ${hasTimelineBackground ? 'post-detail-picker-panel' : ''}`}
+                        className="fixed left-1/2 w-[92vw] max-w-[340px] h-[430px] rounded-[24px] border border-border/80 bg-white dark:bg-[#1e222b] shadow-2xl p-4 animate-slide-up-mobile overflow-y-auto overflow-x-hidden touch-pan-y"
                         style={{
                           bottom: 'calc(76px + env(safe-area-inset-bottom))',
                           zIndex: 2147483647,
@@ -1645,7 +1399,7 @@ export default function PostDetail() {
                          【PC専用ポップアップ：バー全体をスクロール対応化・縦幅 h-[280px]】
                          ========================================================================= */}
                       <div 
-                      className={`absolute bottom-full left-0 mb-2 w-[260px] h-[280px] rounded-[20px] border border-border/80 bg-white dark:bg-[#1e222b] shadow-2xl z-[9999] p-2.5 animate-zoom-in-pc overflow-y-auto overflow-x-hidden ${hasTimelineBackground ? 'post-detail-picker-panel' : ''}`}
+                      className="absolute bottom-full left-0 mb-2 w-[260px] h-[280px] rounded-[20px] border border-border/80 bg-white dark:bg-[#1e222b] shadow-2xl z-[9999] p-2.5 animate-zoom-in-pc overflow-y-auto overflow-x-hidden"
                       onWheel={(e) => e.stopPropagation()}
                     >
                       {/* デフォルト絵文字 */}
@@ -1727,20 +1481,190 @@ export default function PostDetail() {
               )}
             </div>
 
+            {/* --- 共有ボタンエリア --- */}
+            <div className="relative ml-auto inline-flex items-center h-full shrink-0" onClick={(e) => e.stopPropagation()}>
+              <button
+                ref={shareButtonRef}
+                onClick={handleShareButtonClick}
+                aria-label="ポストを共有"
+                className={`inline-flex items-center justify-center p-1.5 rounded-full transition-colors hover:text-accent h-8 w-8 origin-center ${isMobile ? 'post-detail-mobile-share-button' : ''} ${
+                  showShareMenu ? 'text-accent bg-accent/10' : 'text-muted-foreground'
+                }`}
+              >
+                <Upload className="h-5 w-5" />
+              </button>
+
+              {showShareMenu && typeof document !== 'undefined' && createPortal(
+                <>
+                  <div
+                    className="fixed inset-0 bg-transparent"
+                    style={{ zIndex: 2147483646 }}
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      closeShareMenu();
+                    }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                  />
+                  <div
+                    ref={shareMenuRef}
+                    className="fixed w-[min(calc(100vw-16px),16rem)] rounded-xl border border-border bg-card p-1 shadow-lg overflow-hidden animate-in fade-in zoom-in duration-100"
+                    style={{
+                      top: shareMenuPosition?.top ?? 0,
+                      right: shareMenuPosition?.right ?? 8,
+                      zIndex: 2147483647,
+                    }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      onClick={handleOpenLimeDropPanel}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
+                    >
+                      <Send className="h-4 w-4 shrink-0" />
+                      <span>LimeDropで送信</span>
+                    </button>
+
+                    <button
+                      onClick={handleCopyPostLink}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
+                    >
+                      <LinkIcon className="h-4 w-4 shrink-0" />
+                      <span>{shareFeedback ?? 'リンクをコピー'}</span>
+                    </button>
+
+                    <button
+                      onClick={handleNativePostShare}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
+                    >
+                      <Upload className="h-4 w-4 shrink-0" />
+                      <span>その他の方法でポストを送信</span>
+                    </button>
+                  </div>
+                </>,
+                document.body
+              )}
+            </div>
+
           </div>
         </article>
       )}
 
       {data && (
         <>
-          <div className={hasTimelineBackground ? "post-detail-comment-form-shell" : ""}>
-            <CommentForm postId={data.id} />
+          <div className={useMobileThreadLayout ? "post-detail-mobile-comment-form-shell" : ""}>
+            <CommentForm postId={data.id} variant={useMobileThreadLayout ? 'mobileDock' : 'default'} />
           </div>
-          <div className={hasTimelineBackground ? "post-detail-comments-shell" : ""}>
-            <h2 className="mb-3 font-display text-base font-bold text-foreground">コメント</h2>
-            <CommentList postId={data.id} />
+          <div className={useMobileThreadLayout ? "post-detail-mobile-comments-shell" : ""}>
+            {!useMobileThreadLayout && (
+              <h2 className="mb-3 font-display text-base font-bold text-foreground">コメント</h2>
+            )}
+            <CommentList postId={data.id} mobileFlat={useMobileThreadLayout} />
           </div>
         </>
+      )}
+
+      {showLimeDropPanel && data && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed inset-0 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
+          style={{ zIndex: 2147483647 }}
+          onPointerDown={(e) => {
+            if (e.target === e.currentTarget) {
+              handleCloseLimeDropPanel();
+            }
+          }}
+        >
+          <div
+            ref={limeDropPanelRef}
+            className="w-full max-w-[520px] overflow-hidden rounded-t-[28px] border border-border bg-card shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-200 sm:rounded-[28px]"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 border-b border-border/70 px-5 py-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                <Send className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-bold text-muted-foreground">LimeDrop</p>
+                <h2 className="truncate text-lg font-black text-foreground">相互フォローにポストを送信</h2>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseLimeDropPanel}
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted text-foreground transition-colors hover:bg-muted/80"
+                aria-label="LimeDropを閉じる"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="px-5 py-4">
+              <div className="mb-4 rounded-2xl border border-border/70 bg-muted/35 px-4 py-3">
+                <p className="line-clamp-2 text-sm font-medium leading-relaxed text-foreground">
+                  {getPostShareText()}
+                </p>
+                <p className="mt-1 truncate text-xs text-muted-foreground">
+                  {getPostShareUrl()}
+                </p>
+              </div>
+
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h3 className="text-sm font-black text-foreground">人</h3>
+                {limeDropLoading && (
+                  <span className="text-xs font-bold text-muted-foreground">読み込み中...</span>
+                )}
+              </div>
+
+              {limeDropFeedback && (
+                <div className="mb-3 rounded-xl bg-primary/10 px-3 py-2 text-sm font-bold text-primary">
+                  {limeDropFeedback}
+                </div>
+              )}
+
+              {!limeDropLoading && limeDropTargets.length === 0 && (
+                <div className="rounded-2xl border border-dashed border-border px-4 py-8 text-center">
+                  <p className="text-sm font-bold text-foreground">送信できる相互フォローがいません</p>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    LimeDropは相互フォロー中のユーザーにだけ送信できます。
+                  </p>
+                </div>
+              )}
+
+              {limeDropTargets.length > 0 && (
+                <div className="grid max-h-[320px] grid-cols-3 gap-3 overflow-y-auto pb-1 sm:grid-cols-4">
+                  {limeDropTargets.map((target) => {
+                    const isSending = limeDropSendingUserId === target.id;
+
+                    return (
+                      <button
+                        key={target.id}
+                        type="button"
+                        disabled={Boolean(limeDropSendingUserId)}
+                        onClick={() => handleSendLimeDrop(target)}
+                        className="flex min-w-0 flex-col items-center rounded-2xl px-2 py-3 text-center transition-colors hover:bg-muted disabled:cursor-wait disabled:opacity-70"
+                      >
+                        <Avatar className="h-14 w-14 border border-border">
+                          <AvatarImage src={target.avatarUrl} alt={target.displayName} />
+                          <AvatarFallback>{target.displayName.slice(0, 1)}</AvatarFallback>
+                        </Avatar>
+                        <span className="mt-2 w-full truncate text-xs font-black text-foreground">
+                          {isSending ? '送信中...' : target.displayName}
+                        </span>
+                        <span className="mt-0.5 w-full truncate text-[11px] text-muted-foreground">
+                          @{target.username}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
 
       {/* 画像拡大オーバーレイ（モーダル） */}

@@ -8,6 +8,8 @@ export function AppLayout() {
   const { user, loading } = useAuth();
   const location = useLocation();
 
+  const isPostDetailPage = /^\/post\/[^/]+$/.test(location.pathname);
+
   if (loading) {
     return (
       <div className="min-h-screen p-8">
@@ -21,7 +23,13 @@ export function AppLayout() {
   return (
     <div className="min-h-screen pb-20 md:pb-0">
       <Header />
-      <main className="mx-auto max-w-2xl px-4 py-6">
+      <main
+        className={
+          isPostDetailPage
+            ? 'mx-auto max-w-2xl px-4 pb-6 pt-0'
+            : 'mx-auto max-w-2xl px-4 py-6'
+        }
+      >
         <Outlet />
       </main>
       <BottomNav />
