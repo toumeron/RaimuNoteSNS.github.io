@@ -34,6 +34,33 @@ function normalizeAppPath(pathname: string) {
   return normalized === '' ? '/' : normalized;
 }
 
+function hasGithubPagesBasePath(pathname: string) {
+  return /^\/RaimuNoteSNS\.github\.io(?=\/|$)/.test(pathname);
+}
+
+function isProfilePath(pathname: string) {
+  return /^\/u\/[^/]+\/?$/.test(normalizeAppPath(pathname));
+}
+
+function getBrowserPathname() {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+
+  return window.location.pathname;
+}
+
+function isGithubPagesProfilePath(pathname: string) {
+  const browserPathname = getBrowserPathname();
+  const hasBasePath = hasGithubPagesBasePath(pathname) || hasGithubPagesBasePath(browserPathname);
+
+  if (!hasBasePath) {
+    return false;
+  }
+
+  return isProfilePath(pathname) || isProfilePath(browserPathname);
+}
+
 function isTimelineVisualPath(pathname: string) {
   const normalizedPath = normalizeAppPath(pathname);
 
@@ -117,7 +144,8 @@ export const Header = () => {
   const location = useLocation();
   const timelineChrome = useTimelineChrome(location.pathname);
 
-  const isSearchPage = location.pathname === '/u/LimeBiz';
+  const isSearchPage = normalizeAppPath(location.pathname) === '/u/LimeBiz';
+  const hideHeaderOnMobileProfile = isGithubPagesProfilePath(location.pathname);
   const useTimelineChromeDesign = timelineChrome.enabled;
   const isTimelineDark = timelineChrome.theme === 'dark';
 
@@ -147,8 +175,30 @@ export const Header = () => {
       : 'bg-zinc-200'
     : undefined;
 
+  useEffect(() => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+
+    const root = document.documentElement;
+
+    if (hideHeaderOnMobileProfile) {
+      root.setAttribute('data-lime-mobile-profile-page', 'true');
+    } else {
+      root.removeAttribute('data-lime-mobile-profile-page');
+    }
+
+    return () => {
+      if (root.getAttribute('data-lime-mobile-profile-page') === 'true') {
+        root.removeAttribute('data-lime-mobile-profile-page');
+      }
+    };
+  }, [hideHeaderOnMobileProfile]);
+
   return (
     <header
+      data-lime-app-header="true"
+      data-lime-mobile-profile-header-hidden={hideHeaderOnMobileProfile ? 'true' : undefined}
       className={cn(
         'sticky top-0 z-[500] border-b backdrop-blur-md',
         useTimelineChromeDesign
@@ -171,6 +221,17 @@ export const Header = () => {
 
           .notice-scroll:hover {
             animation-play-state: paused;
+          }
+
+          @media (max-width: 639px) {
+            header[data-lime-app-header="true"][data-lime-mobile-profile-header-hidden="true"],
+            html[data-lime-mobile-profile-page="true"] header[data-lime-app-header="true"] {
+              display: none !important;
+              height: 0 !important;
+              min-height: 0 !important;
+              border: 0 !important;
+              overflow: hidden !important;
+            }
           }
         `}
       </style>

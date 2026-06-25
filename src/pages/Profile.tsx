@@ -39,10 +39,40 @@ const PROFILE_REPLY_ITEM = 'profile-reply';
 const PROFILE_POST_ITEM = 'profile-post';
 const PROFILE_REPLY_LIMIT = 80;
 
+const normalizePostVisibility = (visibility: unknown) => (
+  typeof visibility === 'string' ? visibility.trim().toLowerCase() : ''
+);
+
+const getPostOwnerId = (post: any) => (
+  post?.user_id ?? post?.userId ?? post?.author?.id ?? post?.profiles?.id ?? post?.user?.id ?? ''
+);
+
+const canShowParentPostInsideProfileReplies = ({
+  post,
+  currentUserId,
+}: {
+  post: any;
+  currentUserId: string | null;
+}) => {
+  if (!post?.id) return false;
+
+  const authorId = getPostOwnerId(post);
+  const visibility = normalizePostVisibility(post.visibility);
+
+  if (visibility === 'public') return true;
+
+  // プロフィールの返信欄は公開プロフィール面なので、親投稿が非公開/限定公開なら通常は出さない。
+  // 例外は、その親投稿の作者本人が見ている場合だけ。
+  if (currentUserId && authorId && authorId === currentUserId) return true;
+
+  return false;
+};
+
 const imageRegex =
   /https?:\/\/[^\s]+?\.(?:png|jpg|jpeg|gif|webp|svg)(?:\?[^\s]*)?|https?:\/\/pbs\.twimg\.com\/media\/[^\s?]+(?:\?[^\s]*)?/gi;
 
 const spotifyRegex = /https:\/\/open\.spotify\.com\/(?:[\w-]+\/)?(track|album|playlist)\/[a-zA-Z0-9._?=&/%-]+/gi;
+const youtubeUrlRegex = /(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|embed\/|shorts\/)?([a-zA-Z0-9_-]{11})([^?\s\n]*)?(\S+)?/g;
 
 interface ProfileThreadReactionGroup {
   emoji: string;
@@ -128,6 +158,39 @@ interface ReplicatedDot {
   size: number;
   delay: number;
 }
+
+const createProfileReactionBurst = (targetElement: HTMLElement) => {
+  const rect = targetElement.getBoundingClientRect();
+  const centerX = rect.left + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+
+  targetElement.classList.remove('misskey-elastic-active');
+  void targetElement.offsetWidth;
+  targetElement.classList.add('misskey-elastic-active');
+
+  const batchId = Math.random().toString(36).substring(2, 9);
+  const ring: ReplicatedRing = {
+    id: `ring-${batchId}`,
+    x: centerX,
+    y: centerY,
+    width: rect.width + 4,
+    height: rect.height + 4,
+  };
+
+  const colors = ['#d4f022', '#e6007e', '#22f0d8', '#d4f022', '#e6007e'];
+  const dots: ReplicatedDot[] = Array.from({ length: 16 }).map((_, index) => ({
+    id: `dot-${batchId}-${index}`,
+    x: centerX,
+    y: centerY,
+    angle: (index / 16) * 360 + (Math.random() * 20 - 10),
+    distance: rect.width / 2 + (Math.random() * 16 - 4),
+    color: colors[Math.floor(Math.random() * colors.length)],
+    size: Math.random() * 5 + 5,
+    delay: Math.random() * 40,
+  }));
+
+  return { batchId, ring, dots };
+};
 
 let cachedProfileCurrentUserId: string | null | undefined;
 let cachedProfileCurrentUserIdPromise: Promise<string | null> | null = null;
@@ -250,9 +313,88 @@ const getSpotifyUrls = (content: string) => {
 
 const stripPreviewUrls = (content: string) => {
   return content
+    .replace(youtubeUrlRegex, '')
     .replace(imageRegex, '')
     .replace(spotifyRegex, '')
     .trim();
+};
+
+const renderProfileThreadTextWithUrls = (text: string) => {
+  if (!text) return null;
+
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  const parts = text.split(urlRegex);
+
+  return parts.map((part, index) => {
+    if (part.match(urlRegex)) {
+      return (
+        <a
+          key={`profile-thread-url-${index}`}
+          href={part}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-pink-500 hover:underline transition-colors"
+          onClick={(event) => event.stopPropagation()}
+        >
+          {part}
+        </a>
+      );
+    }
+
+    return part;
+  });
+};
+
+const renderProfileThreadTextWithHashtags = (text: string, navigate: (to: string) => void) => {
+  if (!text) return null;
+
+  const parts = text.split(/(#[^\s#　.,!?:;'"()\[\]{}<>]+)/g);
+
+  return parts.map((part, index) => {
+    if (part.startsWith('#')) {
+      return (
+        <button
+          key={`profile-thread-hashtag-${index}`}
+          type="button"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            navigate(`/search?q=${encodeURIComponent(part)}`);
+          }}
+          className="text-pink-500 hover:underline transition-colors inline-block align-baseline"
+        >
+          {part}
+        </button>
+      );
+    }
+
+    return renderProfileThreadTextWithUrls(part);
+  });
+};
+
+const renderProfileThreadTextWithMentions = (text: string, navigate: (to: string) => void) => {
+  if (!text) return null;
+
+  const parts = text.split(/(@\w+)/g);
+
+  return parts.map((part, index) => {
+    if (part.startsWith('@')) {
+      const username = part.substring(1);
+
+      return (
+        <Link
+          key={`profile-thread-mention-${index}`}
+          to={`/u/${username}`}
+          className="text-pink-500 hover:underline transition-colors"
+          onClick={(event) => event.stopPropagation()}
+        >
+          {part}
+        </Link>
+      );
+    }
+
+    return renderProfileThreadTextWithHashtags(part, navigate);
+  });
 };
 
 const normalizeInlineAuthor = (author: any, fallbackUserId = ''): any => {
@@ -394,7 +536,7 @@ const ProfileThreadEmbeds = memo(function ProfileThreadEmbeds({
       )}
 
       {singleImageUrl ? (
-        <div className="mt-3 flex max-w-full justify-start" onClick={(e) => e.stopPropagation()}>
+        <div className="mt-3 flex max-w-full justify-start">
           <button
             type="button"
             className="block max-w-full cursor-zoom-in overflow-hidden rounded-2xl border border-border/50 bg-black/[0.025] text-left shadow-none dark:bg-white/[0.035]"
@@ -740,34 +882,7 @@ const ProfileReactionButton = memo(function ProfileReactionButton({
   };
 
   const triggerImageReplicatedEffect = (targetElement: HTMLElement) => {
-    const rect = targetElement.getBoundingClientRect();
-    const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height / 2;
-
-    targetElement.classList.remove('misskey-elastic-active');
-    void targetElement.offsetWidth;
-    targetElement.classList.add('misskey-elastic-active');
-
-    const batchId = Math.random().toString(36).substring(2, 9);
-    const ring: ReplicatedRing = {
-      id: `ring-${batchId}`,
-      x: centerX,
-      y: centerY,
-      width: rect.width + 4,
-      height: rect.height + 4,
-    };
-
-    const colors = ['#d4f022', '#e6007e', '#22f0d8', '#d4f022', '#e6007e'];
-    const dots: ReplicatedDot[] = Array.from({ length: 16 }).map((_, index) => ({
-      id: `dot-${batchId}-${index}`,
-      x: centerX,
-      y: centerY,
-      angle: (index / 16) * 360 + (Math.random() * 20 - 10),
-      distance: rect.width / 2 + (Math.random() * 16 - 4),
-      color: colors[Math.floor(Math.random() * colors.length)],
-      size: Math.random() * 5 + 5,
-      delay: Math.random() * 40,
-    }));
+    const { batchId, ring, dots } = createProfileReactionBurst(targetElement);
 
     setActiveRings((prev) => [...prev, ring]);
     setActiveDots((prev) => [...prev, ...dots]);
@@ -1029,6 +1144,8 @@ const ProfileThreadReactionBadges = memo(function ProfileThreadReactionBadges({
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [customEmojis, setCustomEmojis] = useState<CustomEmoji[]>([]);
   const [pendingEmoji, setPendingEmoji] = useState<string | null>(null);
+  const [activeRings, setActiveRings] = useState<ReplicatedRing[]>([]);
+  const [activeDots, setActiveDots] = useState<ReplicatedDot[]>([]);
 
   useEffect(() => {
     getCachedCurrentUserId().then(setCurrentUserId);
@@ -1084,11 +1201,27 @@ const ProfileThreadReactionBadges = memo(function ProfileThreadReactionBadges({
     return <span className="text-base leading-none">{emojiStr}</span>;
   };
 
+  const triggerBadgeReactionEffect = (targetElement: HTMLElement) => {
+    const { batchId, ring, dots } = createProfileReactionBurst(targetElement);
+
+    setActiveRings((prev) => [...prev, ring]);
+    setActiveDots((prev) => [...prev, ...dots]);
+
+    window.setTimeout(() => {
+      setActiveRings((prev) => prev.filter((item) => item.id !== `ring-${batchId}`));
+      setActiveDots((prev) => prev.filter((item) => !item.id.startsWith(`dot-${batchId}-`)));
+    }, 550);
+  };
+
   const handleBadgeClick = async (emoji: string, event: ReactMouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
 
     if (pendingEmoji) return;
+
+    if (event.currentTarget) {
+      triggerBadgeReactionEffect(event.currentTarget as HTMLElement);
+    }
 
     const userId = currentUserId ?? await getCachedCurrentUserId();
     if (!userId) {
@@ -1110,8 +1243,51 @@ const ProfileThreadReactionBadges = memo(function ProfileThreadReactionBadges({
   };
 
   return (
-    <div className="mt-3 flex flex-wrap gap-1.5 relative" onClick={(event) => event.stopPropagation()}>
-      {groups.map((group) => {
+    <>
+      {(activeRings.length > 0 || activeDots.length > 0) && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 pointer-events-none z-[9999] overflow-hidden">
+          {activeRings.map((ring) => (
+            <div
+              key={ring.id}
+              style={{
+                position: 'fixed',
+                left: ring.x,
+                top: ring.y,
+                width: `${ring.width}px`,
+                height: `${ring.height}px`,
+                borderRadius: '9999px',
+                border: '4px solid #d4f022',
+                backgroundColor: 'transparent',
+                transformOrigin: 'center center',
+                animation: 'misskeyRingExpand 460ms cubic-bezier(0.1, 0.8, 0.3, 1) forwards',
+              }}
+            />
+          ))}
+          {activeDots.map((dot) => (
+            <div
+              key={dot.id}
+              style={{
+                position: 'fixed',
+                left: dot.x,
+                top: dot.y,
+                width: `${dot.size}px`,
+                height: `${dot.size}px`,
+                backgroundColor: dot.color,
+                borderRadius: '50%',
+                transformOrigin: 'center center',
+                ['--mk-angle' as any]: `${dot.angle}deg`,
+                ['--mk-dist' as any]: `${dot.distance}px`,
+                animation: 'misskeyDotBurst 480ms cubic-bezier(0.12, 0.85, 0.3, 1) forwards',
+                animationDelay: `${dot.delay}ms`,
+              }}
+            />
+          ))}
+        </div>,
+        document.body
+      )}
+
+      <div className="mt-3 flex flex-wrap gap-1.5 relative" onClick={(event) => event.stopPropagation()}>
+        {groups.map((group) => {
         const reactedByMe = Boolean(currentUserId && group.userIds.includes(currentUserId));
 
         return (
@@ -1130,8 +1306,9 @@ const ProfileThreadReactionBadges = memo(function ProfileThreadReactionBadges({
             <span className="tabular-nums text-sm font-black">{formatDisplayCount(group.count)}</span>
           </button>
         );
-      })}
-    </div>
+        })}
+      </div>
+    </>
   );
 });
 
@@ -1739,7 +1916,7 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
 
             {parentContent ? (
               <p className="whitespace-pre-wrap break-words text-[16px] leading-normal text-foreground mt-1 sm:text-base sm:leading-relaxed">
-                {parentContent}
+                {renderProfileThreadTextWithMentions(parentContent, navigate)}
               </p>
             ) : null}
 
@@ -1794,7 +1971,7 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
             key={comment.id}
             className={`${commentIndex > 0 ? 'mt-3' : ''} grid grid-cols-[44px_minmax(0,1fr)] gap-3 sm:grid-cols-[44px_minmax(0,1fr)]`}
           >
-            <div className="flex justify-center">
+            <div className="relative flex justify-center">
               <Link
                 to={`/u/${commentAuthor?.username ?? 'unknown'}`}
                 className="shrink-0"
@@ -1805,6 +1982,9 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
                   <AvatarFallback>{(commentAuthor?.displayName ?? commentAuthor?.display_name ?? commentAuthor?.username ?? 'U').slice(0, 1)}</AvatarFallback>
                 </Avatar>
               </Link>
+              {commentIndex < comments.length - 1 && (
+                <span className="absolute -bottom-2 left-1/2 top-12 w-0.5 -translate-x-1/2 rounded-full bg-border" />
+              )}
             </div>
 
             <div className="min-w-0">
@@ -1812,7 +1992,7 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
 
               {replyContent ? (
                 <p className="whitespace-pre-wrap break-words text-[16px] leading-normal text-foreground mt-1 sm:text-base sm:leading-relaxed">
-                  {replyContent}
+                  {renderProfileThreadTextWithMentions(replyContent, navigate)}
                 </p>
               ) : null}
 
@@ -1977,41 +2157,14 @@ export default function Profile() {
           parentMetadataRows = postMetadata || [];
         }
 
-        const limitedParentAuthorIds = uniqueStrings(
+        const parentMetadataMap = new Map<string, any>(
           parentMetadataRows
-            .filter((post: any) => post?.visibility === 'following')
-            .map((post: any) => post.user_id)
+            .filter((post: any) => post?.id)
+            .map((post: any) => [post.id, post])
         );
 
-        let allowedLimitedAuthorIds = new Set<string>();
-        if (currentUserId && limitedParentAuthorIds.length > 0) {
-          const { data: followRows, error: followRowsError } = await supabase
-            .from('follows')
-            .select('followee_id')
-            .eq('follower_id', currentUserId)
-            .in('followee_id', limitedParentAuthorIds);
-
-          if (followRowsError) throw followRowsError;
-          allowedLimitedAuthorIds = new Set((followRows || []).map((row: any) => row.followee_id).filter(Boolean));
-        }
-
-        const isParentVisibleToViewer = (post: any) => {
-          const authorId = post?.user_id ?? post?.userId ?? '';
-          const visibility = post?.visibility;
-
-          if (currentUserId && authorId === currentUserId) return true;
-          if (visibility === 'public') return true;
-
-          if (visibility === 'following') {
-            return Boolean(currentUserId && allowedLimitedAuthorIds.has(authorId));
-          }
-
-          // visibility が無い/不明な親投稿は非公開扱いにして、返信経由の漏洩を止める。
-          return false;
-        };
-
         const visibleParentIds = parentMetadataRows
-          .filter(isParentVisibleToViewer)
+          .filter((post: any) => canShowParentPostInsideProfileReplies({ post, currentUserId }))
           .map((post: any) => post.id)
           .filter(Boolean);
         const visibleParentIdSet = new Set(visibleParentIds);
@@ -2043,7 +2196,10 @@ export default function Profile() {
             .in('id', visibleParentIds);
 
           if (postsError) throw postsError;
-          parentPosts = posts || [];
+          parentPosts = (posts || []).filter((post: any) => {
+            const metadata = parentMetadataMap.get(post?.id);
+            return Boolean(metadata && canShowParentPostInsideProfileReplies({ post: metadata, currentUserId }));
+          });
         }
 
         let commentLikeRows: any[] = [];
@@ -2103,17 +2259,25 @@ export default function Profile() {
           }
         });
 
-        const parentMap = new Map(
-          parentPosts.map((post: any) => {
-            const normalizedParent = normalizePost({
-              ...post,
-              liked_by_me: parentLikedSet.has(post.id),
-              likedByMe: parentLikedSet.has(post.id),
-            });
+        const parentEntries: Array<[string, any]> = [];
+        parentPosts.forEach((post: any) => {
+          const metadata = parentMetadataMap.get(post.id);
+          if (!metadata) return;
 
-            return [post.id, normalizedParent];
-          })
-        );
+          const normalizedParent = normalizePost({
+            ...post,
+            user_id: metadata.user_id ?? post.user_id,
+            visibility: metadata.visibility,
+            liked_by_me: parentLikedSet.has(post.id),
+            likedByMe: parentLikedSet.has(post.id),
+          });
+
+          if (normalizedParent) {
+            parentEntries.push([post.id, normalizedParent]);
+          }
+        });
+
+        const parentMap = new Map(parentEntries);
 
         const replyAuthor = normalizeInlineAuthor(user, user.id);
 
@@ -2616,23 +2780,32 @@ export default function Profile() {
 
         <div
           className={[
-            'relative sticky top-0 z-50 flex h-16 w-full items-center sm:transition-all sm:duration-300',
+            'relative sticky top-0 z-50 flex h-16 w-full items-center overflow-visible bg-transparent sm:transition-all sm:duration-300',
             isScrolled
-              ? 'bg-[#fbf9f2]/65 backdrop-blur-md dark:bg-[#000000]/65 sm:border-b sm:border-black/[0.03] sm:bg-[#fbf9f2]/70 sm:dark:border-white/[0.05] sm:dark:bg-[#000000]/70'
-              : 'bg-transparent',
+              ? 'sm:border-b sm:border-black/[0.03] sm:bg-[#fbf9f2]/70 sm:dark:border-white/[0.05] sm:dark:bg-[#000000]/70'
+              : 'sm:bg-transparent',
           ].join(' ')}
         >
           <div
             className={[
+              'pointer-events-none absolute inset-y-0 left-1/2 z-0 w-screen -translate-x-1/2 sm:hidden',
+              isScrolled
+                ? 'bg-[#fbf9f2]/65 backdrop-blur-md dark:bg-[#000000]/65'
+                : 'bg-background/95',
+            ].join(' ')}
+          />
+
+          <div
+            className={[
               'pointer-events-none absolute h-px sm:hidden',
-              'left-1/2 w-screen -translate-x-1/2',
+              'left-1/2 z-10 w-screen -translate-x-1/2',
               isScrolled
                 ? 'bottom-0 bg-black/[0.03] dark:bg-white/[0.05]'
                 : 'bottom-2 bg-border/50',
             ].join(' ')}
           />
 
-          <TabsList className="grid h-full w-full grid-cols-4 rounded-none bg-transparent p-0 shadow-none sm:hidden">
+          <TabsList className="relative z-20 grid h-full w-full grid-cols-4 rounded-none bg-transparent p-0 shadow-none sm:hidden">
             {profileTabs.map((tab) => (
               <TabsTrigger
                 key={tab.value}

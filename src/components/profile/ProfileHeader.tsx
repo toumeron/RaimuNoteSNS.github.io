@@ -4,15 +4,49 @@ import { Button } from '@/components/ui/button';
 import { FollowButton } from './FollowButton';
 import { useFollowStats } from '@/hooks/useProfile';
 import { useAuth } from '@/hooks/useAuth';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import type { User } from '@/types';
+
+function normalizeAppPath(pathname: string) {
+  const normalized = pathname.replace(/^\/RaimuNoteSNS\.github\.io(?=\/|$)/, '') || '/';
+  return normalized === '' ? '/' : normalized;
+}
+
+function hasGithubPagesBasePath(pathname: string) {
+  return /^\/RaimuNoteSNS\.github\.io(?=\/|$)/.test(pathname);
+}
+
+function isProfilePath(pathname: string) {
+  return /^\/u\/[^/]+\/?$/.test(normalizeAppPath(pathname));
+}
+
+function getBrowserPathname() {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+
+  return window.location.pathname;
+}
+
+function isGithubPagesProfilePath(pathname: string) {
+  const browserPathname = getBrowserPathname();
+  const hasBasePath = hasGithubPagesBasePath(pathname) || hasGithubPagesBasePath(browserPathname);
+
+  if (!hasBasePath) {
+    return false;
+  }
+
+  return isProfilePath(pathname) || isProfilePath(browserPathname);
+}
 
 export function ProfileHeader({ user }: { user: User }) {
   const { user: me } = useAuth();
   const { data: stats } = useFollowStats(user.id);
   const isMe = me?.id === user.id;
   const navigate = useNavigate();
+  const location = useLocation();
+  const liftCoverToMobileTop = isGithubPagesProfilePath(location.pathname);
 
   // 数値をフォーマットする関数
   const formatDisplayCount = (count: number) => {
@@ -112,7 +146,19 @@ export function ProfileHeader({ user }: { user: User }) {
   };
 
   return (
-    <section className="relative left-1/2 -mt-5 w-screen -translate-x-1/2 overflow-hidden bg-transparent text-foreground sm:left-auto sm:mt-0 sm:w-auto sm:translate-x-0 sm:rounded-3xl sm:border sm:border-border/60 sm:bg-card sm:shadow-soft">
+    <>
+      <style>{`
+        @media (max-width: 639px) {
+          .profile-header-mobile-cover-to-top {
+            margin-top: -1.5rem !important;
+          }
+        }
+      `}</style>
+
+      <section
+        data-lime-mobile-profile-cover-top={liftCoverToMobileTop ? 'true' : undefined}
+        className={`relative left-1/2 ${liftCoverToMobileTop ? 'profile-header-mobile-cover-to-top -mt-6' : '-mt-5'} w-screen -translate-x-1/2 overflow-hidden bg-transparent text-foreground sm:left-auto sm:mt-0 sm:w-auto sm:translate-x-0 sm:rounded-3xl sm:border sm:border-border/60 sm:bg-card sm:shadow-soft`}
+      >
       <div className="relative h-[150px] w-full overflow-hidden bg-gradient-cream sm:h-48">
         {user.coverUrl ? (
           <img
@@ -213,6 +259,7 @@ export function ProfileHeader({ user }: { user: User }) {
           </Link>
         </div>
       </div>
-    </section>
+      </section>
+    </>
   );
 }

@@ -30,7 +30,7 @@ const tokenizeQuery = (q: string): string[] => {
 };
 
 const buildUserHaystack = (u: User): string =>
-  normalize(`${u.displayName} ${u.username} ${u.bio || ''}`);
+  normalize(`${u.displayName} ${u.username} @${u.username} ${u.bio || ''}`);
 
 const HISTORY_KEY = 'search:recent';
 const HISTORY_MAX = 8;
@@ -73,6 +73,10 @@ type NewsItem = {
   category: string;
   created_at: string;
 };
+
+type SuggestionRow =
+  | { type: 'search'; value: string }
+  | { type: 'user'; value: string; user: User };
 
 export default function SearchPage() {
   const [searchParams] = useSearchParams();
@@ -366,16 +370,26 @@ export default function SearchPage() {
   }, [isPostsLoading, hasMore, page, searchQuery, fetchPosts]);
 
   const liveSuggestions = useMemo(() => {
-    const q = normalize(inputValue.trim());
-    if (!q) return [];
+    const raw = inputValue.trim();
+    const normalizedRaw = normalize(raw);
+    const queryCandidates = Array.from(
+      new Set([normalizedRaw, normalizedRaw.replace(/^@+/, '')].filter(Boolean))
+    );
+
+    if (queryCandidates.length === 0) return [];
+
     return allUsers
       .map((u) => {
         const dn = normalize(u.displayName);
         const un = normalize(u.username);
+        const handle = normalize(`@${u.username}`);
+        const fields = [dn, un, handle];
         let score = 0;
-        if (dn === q || un === q) score = 100;
-        else if (dn.startsWith(q) || un.startsWith(q)) score = 50;
-        else if (dn.includes(q) || un.includes(q)) score = 20;
+
+        if (queryCandidates.some((q) => fields.includes(q))) score = 100;
+        else if (queryCandidates.some((q) => fields.some((field) => field.startsWith(q)))) score = 50;
+        else if (queryCandidates.some((q) => fields.some((field) => field.includes(q)))) score = 20;
+
         return { user: u, score };
       })
       .filter((x) => x.score > 0)
@@ -393,12 +407,14 @@ export default function SearchPage() {
       const hay = buildUserHaystack(u);
       const dn = normalize(u.displayName);
       const un = normalize(u.username);
+      const handle = normalize(`@${u.username}`);
       let score = 0;
       let allMatch = true;
       for (const t of queryTokens) {
-        if (!hay.includes(t)) { allMatch = false; break; }
-        if (dn === t || un === t) score += 5;
-        else if (dn.startsWith(t) || un.startsWith(t)) score += 3;
+        const tokenCandidates = Array.from(new Set([t, t.replace(/^@+/, '')].filter(Boolean)));
+        if (!tokenCandidates.some((token) => hay.includes(token))) { allMatch = false; break; }
+        if (tokenCandidates.some((token) => dn === token || un === token || handle === token)) score += 5;
+        else if (tokenCandidates.some((token) => dn.startsWith(token) || un.startsWith(token) || handle.startsWith(token))) score += 3;
         else score += 1;
       }
       return allMatch ? { u, score } : null;
@@ -408,8 +424,8 @@ export default function SearchPage() {
     .map((x: any) => x.u) as User[];
   }, [searchQuery, queryTokens, allUsers]);
 
-  const suggestionRows = useMemo(() => {
-    const rows: { type: 'search' | 'user'; value: string; user?: User }[] = [];
+  const suggestionRows = useMemo<SuggestionRow[]>(() => {
+    const rows: SuggestionRow[] = [];
     if (inputValue.trim()) {
       rows.push({ type: 'search', value: inputValue.trim() });
       for (const u of liveSuggestions) rows.push({ type: 'user', value: u.username, user: u });
@@ -418,6 +434,18 @@ export default function SearchPage() {
     }
     return rows;
   }, [inputValue, liveSuggestions, history]);
+
+  const handleSuggestionSelect = useCallback((row: SuggestionRow) => {
+    if (row.type === 'user') {
+      setIsInputFocused(false);
+      setActiveSuggestIdx(-1);
+      inputRef.current?.blur();
+      navigate(`/u/${row.user.username}`);
+      return;
+    }
+
+    commitSearch(row.value);
+  }, [commitSearch, navigate]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (!isInputFocused) return;
@@ -429,7 +457,7 @@ export default function SearchPage() {
       setActiveSuggestIdx((i) => Math.max(-1, i - 1));
     } else if (e.key === 'Enter' && activeSuggestIdx >= 0) {
       e.preventDefault();
-      commitSearch(suggestionRows[activeSuggestIdx].value);
+      handleSuggestionSelect(suggestionRows[activeSuggestIdx]);
     }
   };
 
@@ -446,21 +474,115 @@ export default function SearchPage() {
     saveHistory([]);
   };
 
+  const renderSearchHomeSections = () => (
+    <div className="flex flex-col gap-6">
+      {/* 最新ニュースセクション */}
+      <div className="px-4">
+        <div className="bg-primary/10 dark:bg-primary/5 rounded-2xl border border-primary/20 dark:border-primary/10 overflow-hidden">
+          <div className="px-4 py-3 border-b border-primary/20 dark:border-primary/10 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Newspaper className="w-5 h-5 text-primary" />
+              <h2 className="font-extrabold text-xl">ニュース</h2>
+            </div>
+            {latestNews && (
+               <button 
+                 onClick={() => navigate('/news')}
+                 className="text-[11px] font-bold bg-primary text-white px-2 py-0.5 rounded-full uppercase hover:opacity-80 transition-opacity"
+               >
+                 NEW
+               </button>
+            )}
+          </div>
+          
+          {isNewsLoading ? (
+            <div className="p-8 flex justify-center">
+              <Loader2 className="w-6 h-6 animate-spin text-primary" />
+            </div>
+          ) : latestNews ? (
+            <div 
+              className="p-4 flex flex-col gap-2 cursor-pointer hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors"
+              onClick={() => navigate('/news')}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-[12px] font-bold text-primary px-2 py-0.5 bg-primary/10 rounded-md">
+                  {latestNews.category}
+                </span>
+                <span className="text-[12px] text-[rgb(83,100,113)] dark:text-gray-400">
+                  {new Date(latestNews.created_at).toLocaleDateString()}
+                </span>
+              </div>
+              <h3 className="font-bold text-[17px] leading-tight hover:underline">
+                {latestNews.title}
+              </h3>
+              <p className="text-[14px] text-[rgb(83,100,113)] dark:text-gray-300 leading-normal line-clamp-3">
+                {latestNews.content}
+              </p>
+            </div>
+          ) : (
+            <div className="px-4 py-8 text-center text-[rgb(83,100,113)] dark:text-gray-400 text-[14px]">
+              現在、表示できるニュースはありません
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* トレンドセクション */}
+      <div className="px-4">
+        <div className="bg-black/[0.02] dark:bg-white/[0.03] rounded-2xl border border-black/[0.03] dark:border-white/[0.05] overflow-hidden">
+          <div className="px-4 py-3 border-b border-black/[0.03] dark:border-white/[0.05] flex items-center gap-2">
+            <TrendingUp className="w-5 h-5 text-primary" />
+            <h2 className="font-extrabold text-xl">トレンド</h2>
+          </div>
+          
+          {isTrendsLoading ? (
+            <div className="p-8 flex justify-center">
+              <Loader2 className="w-6 h-6 animate-spin text-primary" />
+            </div>
+          ) : (
+            <div className="flex flex-col">
+              {trends.length > 0 ? (
+                trends.map((trend, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => commitSearch(trend.title)}
+                    className="px-4 py-3 text-left hover:bg-black/[0.03] dark:hover:bg-white/[0.05] transition-colors border-b last:border-none border-black/[0.03] dark:border-white/[0.05] flex flex-col gap-0.5"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-[13px] text-[rgb(83,100,113)] dark:text-gray-400">{idx + 1} · トレンド</span>
+                    </div>
+                    <div className="font-bold text-[15px]">{trend.title}</div>
+                  </button>
+                ))
+              ) : (
+                <div className="px-4 py-8 text-center text-[rgb(83,100,113)] dark:text-gray-400 text-[14px]">
+                  現在、トレンドを取得できません
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-transparent text-[rgb(15,20,25)] dark:text-white">
-      <div className={`sticky top-0 z-50 transition-all duration-300 w-full h-16 flex items-center ${
-        isScrolled 
-          ? 'max-sm:bg-[#fbf9f2]/70 dark:max-sm:bg-[#000000]/70 max-sm:backdrop-blur-md border-b border-black/[0.03] dark:border-white/[0.05]' 
-          : 'bg-transparent'
-      }`}>
+      <div
+        className={`sticky top-0 z-50 transition-all duration-300 w-full h-16 flex items-center ${
+          isScrolled 
+            ? 'max-sm:bg-[#fbf9f2]/70 dark:max-sm:bg-[#000000]/70 max-sm:backdrop-blur-md border-b border-black/[0.03] dark:border-white/[0.05]' 
+            : 'bg-transparent'
+        }`}
+        style={{ position: 'sticky', top: 0 }}
+      >
         <div className="max-w-3xl mx-auto w-full px-4">
           <form onSubmit={(e) => { e.preventDefault(); commitSearch(inputValue); }} className="relative">
             <div className={`relative flex items-center h-11 rounded-full transition-all ${
               isInputFocused 
-                ? 'bg-white dark:bg-black ring-2 ring-[#1d9bf0]' 
+                ? 'bg-white dark:bg-black ring-2 ring-primary' 
                 : 'bg-black/5 dark:bg-white/10'
             }`}>
-              <Search className={`absolute left-4 w-[18px] h-[18px] ${isInputFocused ? 'text-[#1d9bf0]' : 'text-[rgb(83,100,113)] dark:text-gray-400'}`} />
+              <Search className={`absolute left-4 w-[18px] h-[18px] ${isInputFocused ? 'text-primary' : 'text-[rgb(83,100,113)] dark:text-gray-400'}`} />
               <input
                 ref={inputRef}
                 type="text"
@@ -472,7 +594,7 @@ export default function SearchPage() {
                 className="w-full h-full bg-transparent border-none pl-11 pr-11 text-[15px] outline-none dark:placeholder-gray-500"
               />
               {inputValue && (
-                <button type="button" onClick={() => { setInputValue(''); inputRef.current?.focus(); }} className="absolute right-3 w-5 h-5 flex items-center justify-center bg-[#1d9bf0] rounded-full">
+                <button type="button" onClick={() => { setInputValue(''); inputRef.current?.focus(); }} className="absolute right-3 w-5 h-5 flex items-center justify-center bg-primary rounded-full">
                   <X className="w-3 h-3 text-white" strokeWidth={3} />
                 </button>
               )}
@@ -483,14 +605,14 @@ export default function SearchPage() {
                 {!inputValue.trim() && history.length > 0 && (
                   <div className="flex items-center justify-between px-4 py-2.5">
                     <span className="font-bold text-[15px]">最近の検索</span>
-                    <button type="button" onClick={clearHistory} className="text-[#1d9bf0] text-[13px] hover:underline">すべて消去</button>
+                    <button type="button" onClick={clearHistory} className="text-primary text-[13px] hover:underline">すべて消去</button>
                   </div>
                 )}
                 {suggestionRows.map((row, idx) => (
                   <button
                     key={idx}
                     type="button"
-                    onMouseDown={(e) => { e.preventDefault(); commitSearch(row.value); }}
+                    onMouseDown={(e) => { e.preventDefault(); handleSuggestionSelect(row); }}
                     className={`w-full flex items-center gap-3 px-4 py-3 transition-colors ${
                       idx === activeSuggestIdx 
                         ? 'bg-black/5 dark:bg-white/10' 
@@ -512,10 +634,28 @@ export default function SearchPage() {
                       </>
                     ) : (
                       <>
-                        {row.user?.avatarUrl ? <img src={row.user.avatarUrl} className="w-10 h-10 rounded-full object-cover" /> : <div className="w-10 h-10 rounded-full bg-black/5 dark:bg-white/10" />}
-                        <div className="flex flex-col text-left truncate ml-3">
-                          <span className="font-bold text-[15px]">{row.user?.displayName}</span>
-                          <span className="text-[13px] text-[rgb(83,100,113)] dark:text-gray-400">@{row.user?.username}</span>
+                        {row.user.avatarUrl ? (
+                          <img
+                            src={row.user.avatarUrl}
+                            alt={row.user.displayName}
+                            className="w-10 h-10 rounded-full object-cover"
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded-full bg-black/5 dark:bg-white/10" />
+                        )}
+                        <div className="min-w-0 flex flex-col text-left">
+                          <span className="flex min-w-0 items-center gap-1">
+                            <span className="truncate font-bold text-[15px]">{row.user.displayName}</span>
+                            {row.user.isOfficial && (
+                              <img
+                                src={`${import.meta.env.BASE_URL}verified.png`}
+                                alt="Official"
+                                className="h-4 w-4 shrink-0 translate-y-[0.5px]"
+                                loading="eager"
+                              />
+                            )}
+                          </span>
+                          <span className="truncate text-[13px] text-[rgb(83,100,113)] dark:text-gray-400">@{row.user.username}</span>
                         </div>
                       </>
                     )}
@@ -527,130 +667,36 @@ export default function SearchPage() {
         </div>
       </div>
 
-      <div className="max-w-3xl mx-auto flex flex-col gap-6">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 max-sm:relative max-sm:left-1/2 max-sm:w-screen max-sm:max-w-none max-sm:-translate-x-1/2">
         <Tabs defaultValue="posts" className="w-full">
           <TabsList className="w-full h-[53px] bg-transparent border-b border-black/[0.03] dark:border-white/[0.05] rounded-none p-0 grid grid-cols-2 relative z-20">
-            <TabsTrigger value="posts" className="relative h-full bg-transparent text-[15px] font-medium text-[rgb(83,100,113)] dark:text-gray-400 data-[state=active]:text-[rgb(15,20,25)] dark:data-[state=active]:text-white data-[state=active]:font-bold data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-black/[0.03] dark:hover:bg-white/5 transition-colors data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:w-16 data-[state=active]:after:h-1 data-[state=active]:after:rounded-full data-[state=active]:after:bg-[#1d9bf0]">
+            <TabsTrigger value="posts" className="relative h-full bg-transparent text-[15px] font-medium text-[rgb(83,100,113)] dark:text-gray-400 data-[state=active]:text-[rgb(15,20,25)] dark:data-[state=active]:text-white data-[state=active]:font-bold data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-black/[0.03] dark:hover:bg-white/5 transition-colors data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:w-16 data-[state=active]:after:h-1 data-[state=active]:after:rounded-full data-[state=active]:after:bg-primary">
               ポスト
             </TabsTrigger>
-            <TabsTrigger value="users" className="relative h-full bg-transparent text-[15px] font-medium text-[rgb(83,100,113)] dark:text-gray-400 data-[state=active]:text-[rgb(15,20,25)] dark:data-[state=active]:text-white data-[state=active]:font-bold data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-black/[0.03] dark:hover:bg-white/5 transition-colors data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:w-16 data-[state=active]:after:h-1 data-[state=active]:after:rounded-full data-[state=active]:after:bg-[#1d9bf0]">
+            <TabsTrigger value="users" className="relative h-full bg-transparent text-[15px] font-medium text-[rgb(83,100,113)] dark:text-gray-400 data-[state=active]:text-[rgb(15,20,25)] dark:data-[state=active]:text-white data-[state=active]:font-bold data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-black/[0.03] dark:hover:bg-white/5 transition-colors data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:w-16 data-[state=active]:after:h-1 data-[state=active]:after:rounded-full data-[state=active]:after:bg-primary">
               アカウント
             </TabsTrigger>
           </TabsList>
 
           <TabsContent value="posts" className="mt-4 bg-transparent border-none outline-none">
-            {!searchQuery ? (
-              <div className="flex flex-col gap-6">
-                <EmptyHint 
-                  title="LimeSearch (ベータ版) " 
-                  desc="キーワードを入力して、ポストやアカウントを見つけましょう。" 
-                />
-                
-                {/* 最新ニュースセクション */}
-                <div className="px-4">
-                  <div className="bg-[#1d9bf0]/10 dark:bg-[#1d9bf0]/5 rounded-2xl border border-[#1d9bf0]/20 dark:border-[#1d9bf0]/10 overflow-hidden">
-                    <div className="px-4 py-3 border-b border-[#1d9bf0]/20 dark:border-[#1d9bf0]/10 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Newspaper className="w-5 h-5 text-[#1d9bf0]" />
-                        <h2 className="font-extrabold text-xl">ニュース</h2>
-                      </div>
-                      {latestNews && (
-                         <button 
-                           onClick={() => navigate('/news')}
-                           className="text-[11px] font-bold bg-[#1d9bf0] text-white px-2 py-0.5 rounded-full uppercase hover:opacity-80 transition-opacity"
-                         >
-                           NEW
-                         </button>
-                      )}
-                    </div>
-                    
-                    {isNewsLoading ? (
-                      <div className="p-8 flex justify-center">
-                        <Loader2 className="w-6 h-6 animate-spin text-[#1d9bf0]" />
-                      </div>
-                    ) : latestNews ? (
-                      <div 
-                        className="p-4 flex flex-col gap-2 cursor-pointer hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors"
-                        onClick={() => navigate('/news')}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="text-[12px] font-bold text-[#1d9bf0] px-2 py-0.5 bg-[#1d9bf0]/10 rounded-md">
-                            {latestNews.category}
-                          </span>
-                          <span className="text-[12px] text-[rgb(83,100,113)] dark:text-gray-400">
-                            {new Date(latestNews.created_at).toLocaleDateString()}
-                          </span>
-                        </div>
-                        <h3 className="font-bold text-[17px] leading-tight hover:underline">
-                          {latestNews.title}
-                        </h3>
-                        <p className="text-[14px] text-[rgb(83,100,113)] dark:text-gray-300 leading-normal line-clamp-3">
-                          {latestNews.content}
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="px-4 py-8 text-center text-[rgb(83,100,113)] dark:text-gray-400 text-[14px]">
-                        現在、表示できるニュースはありません
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* トレンドセクション */}
-                <div className="px-4">
-                  <div className="bg-black/[0.02] dark:bg-white/[0.03] rounded-2xl border border-black/[0.03] dark:border-white/[0.05] overflow-hidden">
-                    <div className="px-4 py-3 border-b border-black/[0.03] dark:border-white/[0.05] flex items-center gap-2">
-                      <TrendingUp className="w-5 h-5 text-[#1d9bf0]" />
-                      <h2 className="font-extrabold text-xl">Google トレンド</h2>
-                    </div>
-                    
-                    {isTrendsLoading ? (
-                      <div className="p-8 flex justify-center">
-                        <Loader2 className="w-6 h-6 animate-spin text-[#1d9bf0]" />
-                      </div>
-                    ) : (
-                      <div className="flex flex-col">
-                        {trends.length > 0 ? (
-                          trends.map((trend, idx) => (
-                            <button
-                              key={idx}
-                              onClick={() => commitSearch(trend.title)}
-                              className="px-4 py-3 text-left hover:bg-black/[0.03] dark:hover:bg-white/[0.05] transition-colors border-b last:border-none border-black/[0.03] dark:border-white/[0.05] flex flex-col gap-0.5"
-                            >
-                              <div className="flex items-center justify-between">
-                                <span className="text-[13px] text-[rgb(83,100,113)] dark:text-gray-400">{idx + 1} · トレンド</span>
-                              </div>
-                              <div className="font-bold text-[15px]">{trend.title}</div>
-                            </button>
-                          ))
-                        ) : (
-                          <div className="px-4 py-8 text-center text-[rgb(83,100,113)] dark:text-gray-400 text-[14px]">
-                            現在、トレンドを取得できません
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ) :
+            {!searchQuery ? renderSearchHomeSections() :
              isPostsLoading && page === 0 ? <div>{Array.from({ length: 5 }).map((_, i) => <RowSkeleton key={i} />)}</div> :
              searchedPosts.length === 0 ? <EmptyHint title={`"${searchQuery}" に一致する結果はありません`} desc="キーワードを変えてみてください。" /> :
-             <div className="flex flex-col gap-4">
+             <div className="flex flex-col gap-4 bg-transparent max-sm:gap-0">
                {searchedPosts.map((post: PostWithAuthor) => (
-                 <div key={post.id} className="rounded-xl overflow-hidden hover:bg-black/[0.01] dark:hover:bg-white/[0.02] transition-colors">
+                 <div key={post.id} className="bg-transparent sm:rounded-xl sm:overflow-hidden sm:hover:bg-black/[0.01] sm:dark:hover:bg-white/[0.02] sm:transition-colors">
                    <PostCard post={post} />
                  </div>
                ))}
                
                <div ref={lastElementRef} className="h-20 flex items-center justify-center">
-                 {hasMore && searchQuery && <Loader2 className="w-6 h-6 text-[#1d9bf0] animate-spin" />}
+                 {hasMore && searchQuery && <Loader2 className="w-6 h-6 text-primary animate-spin" />}
                </div>
              </div>}
           </TabsContent>
 
           <TabsContent value="users" className="mt-4 bg-transparent border-none outline-none">
-            {!searchQuery ? <EmptyHint title="アカウントを探す" desc="名前または @ユーザー名 で検索できます。" /> :
+            {!searchQuery ? renderSearchHomeSections() :
              isUsersLoading ? <div>{Array.from({ length: 5 }).map((_, i) => <RowSkeleton key={i} />)}</div> :
              filteredUsers.length === 0 ? <EmptyHint title={`"${searchQuery}" に一致するアカウントはありません`} desc="別のキーワードでお試しください。" /> :
              <div className="flex flex-col gap-2 px-4">
