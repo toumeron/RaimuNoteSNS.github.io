@@ -1105,10 +1105,11 @@ const AppContent = () => {
 const lowerPath = pathname.toLowerCase();
 const isAuthPage = lowerPath.includes("/auth");
 const isTermsPage = lowerPath.includes("/terms");
+const isPostDetailPage = lowerPath.includes("/post/");
 const isMediaPage = lowerPath === "/media" || lowerPath.startsWith("/media/");
 
 // いずれかの非表示対象ページであるか、またはスクロールによって非表示にするか
-const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage || isMediaPage;
+const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage || isMediaPage || isPostDetailPage;
 
   return (
     <>

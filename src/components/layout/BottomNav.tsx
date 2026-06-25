@@ -27,15 +27,24 @@ function isTimelineVisualPath(pathname: string) {
   );
 }
 
+function getNormalizedCurrentPath(pathname: string) {
+  if (typeof window === 'undefined') {
+    return normalizeAppPath(pathname);
+  }
+
+  return normalizeAppPath(window.location.pathname || pathname);
+}
+
 function getPostDetailId(pathname: string) {
-  const normalizedPath = normalizeAppPath(pathname);
-  const match = normalizedPath.match(/^\/post\/([^/]+)$/);
+  const normalizedPath = getNormalizedCurrentPath(pathname);
+  const match = normalizedPath.match(/^\/post\/([^/?#]+)\/?$/);
   return match?.[1] ?? null;
 }
 
-function isPostBorderHiddenPath(pathname: string) {
-  const normalizedPath = normalizeAppPath(pathname);
-  return /^\/post\/[^/]+$/.test(normalizedPath);
+function isBottomNavTopBorderHiddenPath(pathname: string) {
+  const normalizedPath = getNormalizedCurrentPath(pathname);
+
+  return /^\/post\/[^/?#]+\/?$/.test(normalizedPath);
 }
 
 function readTimelineChromeState(): TimelineChromeState {
@@ -160,7 +169,7 @@ export function BottomNav() {
 
   const useTimelineChromeDesign = timelineChrome.enabled;
   const isTimelineDark = timelineChrome.theme === 'dark';
-  const hideTopBorder = isPostBorderHiddenPath(location.pathname);
+  const hideTopBorder = isBottomNavTopBorderHiddenPath(location.pathname);
 
   const items = [
     { to: '/', icon: Home, label: 'ホーム', end: true },
@@ -170,12 +179,33 @@ export function BottomNav() {
     { to: '/settings', icon: SettingsIcon, label: '設定' },
   ];
 
+  const postDetailBorderStyles = hideTopBorder ? (
+    <style>{`
+      @media (max-width: 767px) {
+        nav[data-lime-post-detail-bottom-nav="true"] {
+          border-top: 0 !important;
+          border-top-width: 0 !important;
+          border-top-color: transparent !important;
+        }
+
+        nav[data-lime-post-detail-bottom-nav="true"] > [data-lime-post-comment-shell="true"] {
+          border-top-width: 1px !important;
+          border-top-style: solid !important;
+          border-bottom: 0 !important;
+        }
+      }
+    `}</style>
+  ) : null;
+
   const nav = (
-    <nav
-      ref={navRef}
-      className={cn(
-        'fixed bottom-0 left-0 right-0 md:hidden',
-        hideTopBorder ? 'border-t-0' : 'border-t',
+    <>
+      {postDetailBorderStyles}
+      <nav
+        ref={navRef}
+        data-lime-post-detail-bottom-nav={hideTopBorder ? 'true' : undefined}
+        className={cn(
+          'fixed bottom-0 left-0 right-0 md:hidden',
+        hideTopBorder ? '!border-t-0' : 'border-t',
         useTimelineChromeDesign
           ? isTimelineDark
             ? 'border-white/[0.06] bg-[#05070a]/82 text-white supports-[backdrop-filter]:bg-[#05070a]/74 backdrop-blur-md backdrop-blur-2xl'
@@ -185,21 +215,26 @@ export function BottomNav() {
       style={{
         zIndex: 120,
         isolation: 'isolate',
+        borderTop: hideTopBorder ? '0 solid transparent' : undefined,
         borderTopWidth: hideTopBorder ? 0 : undefined,
+        borderTopColor: hideTopBorder ? 'transparent' : undefined,
         paddingBottom: 'max(0px, env(safe-area-inset-bottom))',
       }}
     >
-      {showPostCommentForm && postDetailId && (
-        <div
-          className={cn(
-            'border-b px-3 pb-2 pt-2',
-            useTimelineChromeDesign
-              ? isTimelineDark
-                ? 'border-white/[0.06]'
-                : 'border-black/[0.08]'
-              : 'border-border/60'
-          )}
-        >
+        {showPostCommentForm && postDetailId && (
+          <div
+            data-lime-post-comment-shell="true"
+            className={cn(
+              'px-3 pb-2 pt-2',
+              hideTopBorder && 'border-t',
+              !hideTopBorder && 'border-b',
+              useTimelineChromeDesign
+                ? isTimelineDark
+                  ? 'border-white/[0.06]'
+                  : 'border-black/[0.08]'
+                : 'border-border/60'
+            )}
+          >
           <div className="mx-auto max-w-md">
             <CommentForm postId={postDetailId} variant="bottomNav" />
           </div>
@@ -233,7 +268,8 @@ export function BottomNav() {
           </li>
         ))}
       </ul>
-    </nav>
+      </nav>
+    </>
   );
 
   // fixed要素でも、親要素側にtransform/filter/z-indexなどのstacking contextがあると
