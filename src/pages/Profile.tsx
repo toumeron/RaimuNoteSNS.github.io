@@ -37,7 +37,7 @@ const profileTabs: Array<{ value: ProfileTabValue; label: string }> = [
 
 const PROFILE_REPLY_ITEM = 'profile-reply';
 const PROFILE_POST_ITEM = 'profile-post';
-const PROFILE_REPLY_LIMIT = 3;
+const PROFILE_REPLY_LIMIT = 80;
 
 const normalizePostVisibility = (visibility: unknown) => (
   typeof visibility === 'string' ? visibility.trim().toLowerCase() : ''
@@ -2088,25 +2088,46 @@ export default function Profile() {
 
   useEffect(() => {
     let lastScrolled = false;
+    let frameId = 0;
 
-    const handleScroll = () => {
-      if (!tabsSentinelRef.current) return;
+    const getNextScrolled = () => {
+      if (!tabsSentinelRef.current) return lastScrolled;
 
-      const nextScrolled = tabsSentinelRef.current.getBoundingClientRect().top <= 0;
+      const sentinelTop = tabsSentinelRef.current.getBoundingClientRect().top;
+
+      // iOS Safari/PWA では sticky 到達直後に getBoundingClientRect().top が
+      // 0px 付近で数pxだけ戻ることがあり、背景だけ一瞬 transparent 側へ戻る。
+      // sticky 構造は変えず、既に追従中の時だけ 8px の戻り幅を許容してちらつきを止める。
+      return lastScrolled ? sentinelTop <= 8 : sentinelTop <= 0;
+    };
+
+    const updateScrolledState = () => {
+      frameId = 0;
+      const nextScrolled = getNextScrolled();
       if (nextScrolled === lastScrolled) return;
 
       lastScrolled = nextScrolled;
       setIsScrolled(nextScrolled);
     };
 
+    const handleScroll = () => {
+      if (frameId) return;
+      frameId = window.requestAnimationFrame(updateScrolledState);
+    };
+
     lastScrolled = tabsSentinelRef.current?.getBoundingClientRect().top <= 0;
     setIsScrolled(lastScrolled);
     window.addEventListener('scroll', handleScroll, { passive: true });
     window.addEventListener('resize', handleScroll);
+    window.visualViewport?.addEventListener('scroll', handleScroll, { passive: true });
+    window.visualViewport?.addEventListener('resize', handleScroll);
 
     return () => {
+      if (frameId) window.cancelAnimationFrame(frameId);
       window.removeEventListener('scroll', handleScroll);
       window.removeEventListener('resize', handleScroll);
+      window.visualViewport?.removeEventListener('scroll', handleScroll);
+      window.visualViewport?.removeEventListener('resize', handleScroll);
     };
   }, []);
 
@@ -2787,7 +2808,7 @@ export default function Profile() {
 
         <div
           className={[
-            'relative sticky top-0 z-50 flex h-16 w-full items-center overflow-visible bg-transparent sm:transition-all sm:duration-300',
+            'relative sticky top-0 z-50 flex h-16 w-full isolate items-center overflow-visible bg-transparent sm:transition-all sm:duration-300',
             isScrolled
               ? 'sm:border-b sm:border-black/[0.03] sm:bg-[#fbf9f2]/70 sm:dark:border-white/[0.05] sm:dark:bg-[#000000]/70'
               : 'sm:bg-transparent',
@@ -2795,7 +2816,7 @@ export default function Profile() {
         >
           <div
             className={[
-              'pointer-events-none absolute inset-y-0 left-1/2 z-0 w-screen -translate-x-1/2 sm:hidden',
+              'pointer-events-none absolute inset-y-0 left-1/2 z-0 w-screen -translate-x-1/2 transform-gpu sm:hidden',
               isScrolled
                 ? 'bg-[#fbf9f2]/65 backdrop-blur-md dark:bg-[#000000]/65'
                 : 'bg-transparent',

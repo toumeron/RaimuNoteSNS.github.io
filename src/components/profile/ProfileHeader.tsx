@@ -152,6 +152,18 @@ export function ProfileHeader({ user }: { user: User }) {
           .profile-header-mobile-cover-to-top {
             margin-top: -1.5rem !important;
           }
+
+          .profile-header-cover-avatar-gap {
+            -webkit-mask-image: radial-gradient(circle 44px at 60px 150px, transparent 43.5px, #000 44px);
+            mask-image: radial-gradient(circle 44px at 60px 150px, transparent 43.5px, #000 44px);
+          }
+        }
+
+        @media (min-width: 640px) {
+          .profile-header-cover-avatar-gap {
+            -webkit-mask-image: radial-gradient(circle 56px at 80px 192px, transparent 55.5px, #000 56px);
+            mask-image: radial-gradient(circle 56px at 80px 192px, transparent 55.5px, #000 56px);
+          }
         }
       `}</style>
 
@@ -159,7 +171,7 @@ export function ProfileHeader({ user }: { user: User }) {
         data-lime-mobile-profile-cover-top={liftCoverToMobileTop ? 'true' : undefined}
         className={`relative left-1/2 ${liftCoverToMobileTop ? 'profile-header-mobile-cover-to-top -mt-6' : '-mt-5'} w-screen -translate-x-1/2 overflow-hidden bg-transparent text-foreground sm:left-auto sm:mt-0 sm:w-auto sm:translate-x-0 sm:rounded-3xl sm:border sm:border-border/60 sm:bg-card sm:shadow-soft`}
       >
-      <div className="relative h-[150px] w-full overflow-hidden bg-gradient-cream sm:h-48">
+      <div className="profile-header-cover-avatar-gap relative h-[150px] w-full overflow-hidden bg-gradient-cream sm:h-48">
         {user.coverUrl ? (
           <img
             src={user.coverUrl}
@@ -175,16 +187,18 @@ export function ProfileHeader({ user }: { user: User }) {
 
       <div className="relative px-4 pb-4 sm:px-6 sm:pb-5">
         <div className="relative flex min-h-[52px] items-start justify-between gap-3">
-          <Avatar className="-mt-[44px] h-[88px] w-[88px] shrink-0 overflow-hidden rounded-full border-4 border-background bg-background sm:-mt-14 sm:h-28 sm:w-28 sm:border-card">
-            <AvatarImage
-              src={user.avatarUrl}
-              alt={user.displayName}
-              className="h-full w-full object-cover"
-            />
-            <AvatarFallback className="h-full w-full text-2xl font-black">
-              {user.displayName.slice(0, 1)}
-            </AvatarFallback>
-          </Avatar>
+          <div className="-mt-[44px] box-border h-[88px] w-[88px] shrink-0 rounded-full border-4 border-solid border-transparent bg-transparent sm:-mt-14 sm:h-28 sm:w-28">
+            <Avatar className="h-full w-full overflow-hidden rounded-full bg-background">
+              <AvatarImage
+                src={user.avatarUrl}
+                alt={user.displayName}
+                className="h-full w-full object-cover"
+              />
+              <AvatarFallback className="h-full w-full text-2xl font-black">
+                {user.displayName.slice(0, 1)}
+              </AvatarFallback>
+            </Avatar>
+          </div>
 
           <div className="mt-3 flex shrink-0 items-center">
             {isMe ? (
