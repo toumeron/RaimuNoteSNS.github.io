@@ -37,7 +37,7 @@ const profileTabs: Array<{ value: ProfileTabValue; label: string }> = [
 
 const PROFILE_REPLY_ITEM = 'profile-reply';
 const PROFILE_POST_ITEM = 'profile-post';
-const PROFILE_REPLY_LIMIT = 80;
+const PROFILE_REPLY_LIMIT = 3;
 
 const normalizePostVisibility = (visibility: unknown) => (
   typeof visibility === 'string' ? visibility.trim().toLowerCase() : ''
@@ -2047,7 +2047,7 @@ export default function Profile() {
   const tabsSentinelRef = useRef<HTMLDivElement>(null);
 
   const [profileReplies, setProfileReplies] = useState<ProfileReplyThread[]>([]);
-  const [profileRepliesLoading, setProfileRepliesLoading] = useState(false);
+  const [profileRepliesReady, setProfileRepliesReady] = useState(false);
   const [profileRepliesError, setProfileRepliesError] = useState(false);
   const [profileRepliesRefreshKey, setProfileRepliesRefreshKey] = useState(0);
 
@@ -2123,12 +2123,17 @@ export default function Profile() {
   }, []);
 
   useEffect(() => {
+    setProfileReplies([]);
+    setProfileRepliesError(false);
+    setProfileRepliesReady(false);
+  }, [user?.id]);
+
+  useEffect(() => {
     if (!user?.id || activeTab !== 'posts') return;
 
     let cancelled = false;
 
     const fetchProfileReplies = async () => {
-      setProfileRepliesLoading(true);
       setProfileRepliesError(false);
 
       try {
@@ -2352,7 +2357,7 @@ export default function Profile() {
         }
       } finally {
         if (!cancelled) {
-          setProfileRepliesLoading(false);
+          setProfileRepliesReady(true);
         }
       }
     };
@@ -2629,7 +2634,9 @@ export default function Profile() {
     setFailedThreadImageUrls((prev) => (prev.includes(url) ? prev : [...prev, url]));
   }, []);
 
-  const profilePostsLoading = contentLoading || (activeTab === 'posts' && profileRepliesLoading && flatPageItems.length === 0);
+  const profilePostsLoading = activeTab === 'posts'
+    ? contentLoading || !profileRepliesReady
+    : contentLoading;
   const profilePostsEmpty = !profilePostsLoading && !contentError && !isFetchingNextPage && items.length === 0;
 
   if (userLoading) {
@@ -2791,7 +2798,7 @@ export default function Profile() {
               'pointer-events-none absolute inset-y-0 left-1/2 z-0 w-screen -translate-x-1/2 sm:hidden',
               isScrolled
                 ? 'bg-[#fbf9f2]/65 backdrop-blur-md dark:bg-[#000000]/65'
-                : 'bg-background/95',
+                : 'bg-transparent',
             ].join(' ')}
           />
 
@@ -2866,7 +2873,7 @@ export default function Profile() {
             </div>
           )}
 
-          {activeTab === 'media' ? (
+          {!profilePostsLoading && (activeTab === 'media' ? (
             <div className="grid grid-cols-3 gap-1 px-0 md:gap-2">
               {items.map((p: any, idx: number) => (
                 <div
@@ -2926,10 +2933,10 @@ export default function Profile() {
                 </div>
               );
             })
-          )}
+          ))}
 
           <div ref={ref} className="flex justify-center py-8 sm:py-10">
-            {isFetchingNextPage ? (
+            {!profilePostsLoading && (isFetchingNextPage ? (
               <div className="flex items-center gap-2 text-muted-foreground">
                 <Loader2 className="h-5 w-5 animate-spin" />
                 <span className="text-sm">さらに読み込み中...</span>
@@ -2940,7 +2947,7 @@ export default function Profile() {
               <p className="text-center text-xs text-muted-foreground">
                 すべての表示が完了しました
               </p>
-            ) : null}
+            ) : null)}
           </div>
         </div>
       </Tabs>
