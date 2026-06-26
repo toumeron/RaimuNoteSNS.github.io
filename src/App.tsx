@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { useEffect, useState, useRef, type ChangeEvent } from "react";
+import { useEffect, useState, useRef, type ChangeEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from 'react-router-dom';
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -93,6 +93,202 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+
+type BackgroundMediaKind = 'youtube' | 'spotify';
+
+interface BackgroundMediaItem {
+  key: string;
+  kind: BackgroundMediaKind;
+  title: string;
+  element?: HTMLIFrameElement | null;
+}
+
+declare global {
+  interface Window {
+    __limeBackgroundMediaActiveKey?: string | null;
+  }
+}
+
+const LIME_BACKGROUND_MEDIA_PLAY_EVENT = 'lime-background-media-play';
+const LIME_BACKGROUND_MEDIA_STOP_EVENT = 'lime-background-media-stop';
+const LIME_BACKGROUND_MEDIA_ACTIVE_CHANGED_EVENT = 'lime-background-media-active-changed';
+
+type NavigatorWithAudioSession = Navigator & {
+  audioSession?: {
+    type?: string;
+  };
+};
+
+const configurePlaybackAudioSession = () => {
+  if (typeof navigator === 'undefined') return;
+
+  try {
+    const audioSession = (navigator as NavigatorWithAudioSession).audioSession;
+
+    if (audioSession && 'type' in audioSession) {
+      audioSession.type = 'playback';
+    }
+  } catch (error) {
+    console.warn('Audio Session API setup failed:', error);
+  }
+};
+
+const sendYouTubeCommand = (iframe: HTMLIFrameElement | null | undefined, command: 'playVideo' | 'pauseVideo' | 'stopVideo') => {
+  if (!iframe?.contentWindow) return;
+
+  try {
+    iframe.contentWindow.postMessage(
+      JSON.stringify({
+        event: 'command',
+        func: command,
+        args: [],
+      }),
+      'https://www.youtube.com'
+    );
+  } catch {
+    // noop
+  }
+};
+
+function BackgroundMediaRoot({ children }: { children: ReactNode }) {
+  const [activeMedia, setActiveMedia] = useState<BackgroundMediaItem | null>(null);
+  const activeMediaRef = useRef<BackgroundMediaItem | null>(null);
+
+  useEffect(() => {
+    activeMediaRef.current = activeMedia;
+
+    const activeKey = activeMedia?.key ?? null;
+    window.__limeBackgroundMediaActiveKey = activeKey;
+    window.dispatchEvent(new CustomEvent(LIME_BACKGROUND_MEDIA_ACTIVE_CHANGED_EVENT, {
+      detail: { key: activeKey },
+    }));
+  }, [activeMedia]);
+
+  useEffect(() => {
+    const handlePlay = (event: Event) => {
+      const detail = (event as CustomEvent<BackgroundMediaItem>).detail;
+      if (!detail?.key || !detail?.kind || !detail?.title) return;
+
+      configurePlaybackAudioSession();
+      setActiveMedia(detail);
+
+      if (detail.kind === 'youtube') {
+        window.setTimeout(() => sendYouTubeCommand(detail.element, 'playVideo'), 80);
+      }
+    };
+
+    const handleStop = (event: Event) => {
+      const detail = (event as CustomEvent<{ key?: string }>).detail;
+      const current = activeMediaRef.current;
+
+      if (!current) return;
+      if (detail?.key && detail.key !== current.key) return;
+
+      setActiveMedia(null);
+    };
+
+    window.addEventListener(LIME_BACKGROUND_MEDIA_PLAY_EVENT, handlePlay as EventListener);
+    window.addEventListener(LIME_BACKGROUND_MEDIA_STOP_EVENT, handleStop as EventListener);
+
+    return () => {
+      window.removeEventListener(LIME_BACKGROUND_MEDIA_PLAY_EVENT, handlePlay as EventListener);
+      window.removeEventListener(LIME_BACKGROUND_MEDIA_STOP_EVENT, handleStop as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!activeMedia) return;
+
+    const mediaSession = typeof navigator !== 'undefined'
+      ? (navigator as any).mediaSession
+      : undefined;
+    const MediaMetadataConstructor = typeof window !== 'undefined'
+      ? (window as any).MediaMetadata
+      : undefined;
+
+    if (!mediaSession || !MediaMetadataConstructor) return;
+
+    try {
+      mediaSession.metadata = new MediaMetadataConstructor({
+        title: activeMedia.title,
+        artist: activeMedia.kind === 'spotify' ? 'Spotify' : 'YouTube',
+        album: 'LimeNote SNS',
+      });
+      mediaSession.playbackState = 'playing';
+
+      mediaSession.setActionHandler?.('play', () => {
+        configurePlaybackAudioSession();
+        if (activeMedia.kind === 'youtube') {
+          sendYouTubeCommand(activeMedia.element, 'playVideo');
+        }
+        mediaSession.playbackState = 'playing';
+      });
+
+      mediaSession.setActionHandler?.('pause', () => {
+        if (activeMedia.kind === 'youtube') {
+          sendYouTubeCommand(activeMedia.element, 'pauseVideo');
+        }
+        mediaSession.playbackState = 'paused';
+      });
+
+      mediaSession.setActionHandler?.('stop', () => {
+        if (activeMedia.kind === 'youtube') {
+          sendYouTubeCommand(activeMedia.element, 'stopVideo');
+        }
+        setActiveMedia(null);
+      });
+    } catch (error) {
+      console.error('Media Session metadata failed:', error);
+    }
+
+    return () => {
+      try {
+        mediaSession.metadata = null;
+        mediaSession.playbackState = 'none';
+        mediaSession.setActionHandler?.('play', null);
+        mediaSession.setActionHandler?.('pause', null);
+        mediaSession.setActionHandler?.('stop', null);
+      } catch {
+        // noop
+      }
+    };
+  }, [activeMedia]);
+
+  useEffect(() => {
+    if (!activeMedia) return;
+
+    const keepPlaybackSessionAlive = () => {
+      const current = activeMediaRef.current;
+      if (!current) return;
+
+      configurePlaybackAudioSession();
+
+      if (current.kind === 'youtube') {
+        sendYouTubeCommand(current.element, 'playVideo');
+        window.setTimeout(() => sendYouTubeCommand(current.element, 'playVideo'), 160);
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        keepPlaybackSessionAlive();
+      }
+    };
+
+    window.addEventListener('pageshow', keepPlaybackSessionAlive);
+    window.addEventListener('focus', keepPlaybackSessionAlive);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('pageshow', keepPlaybackSessionAlive);
+      window.removeEventListener('focus', keepPlaybackSessionAlive);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [activeMedia?.key]);
+
+  return <>{children}</>;
+}
 
 const NotificationWatcher = () => {
   const { user } = useAuth();
@@ -1178,7 +1374,9 @@ const App = () => {
             basename="/RaimuNoteSNS.github.io"
             future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
           >
-            <AppContent />
+            <BackgroundMediaRoot>
+              <AppContent />
+            </BackgroundMediaRoot>
           </BrowserRouter>
         </TooltipProvider>
       </ThemeProvider>

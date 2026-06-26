@@ -1,14 +1,43 @@
 import { Heart, RefreshCw, Sparkles, Loader2 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { useQueryClient } from '@tanstack/react-query';
 import { PostComposer } from '@/components/feed/PostComposer';
-import { PostCard } from '@/components/feed/PostCard';
+import { PostCard, preloadPostCardData } from '@/components/feed/PostCard';
 import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
 import { useFeed } from '@/hooks/useFeed';
 import { useIsPWA } from '@/hooks/useIsPWA';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/lib/supabase';
+
+const scheduleIdleWork = (callback: () => void): number => {
+  if (typeof window === 'undefined') return 0;
+
+  const requestIdleCallback = (window as any).requestIdleCallback as
+    | ((cb: () => void, options?: { timeout?: number }) => number)
+    | undefined;
+
+  if (typeof requestIdleCallback === 'function') {
+    return requestIdleCallback(callback, { timeout: 900 });
+  }
+
+  return window.setTimeout(callback, 120);
+};
+
+const cancelIdleWork = (handle: number) => {
+  if (typeof window === 'undefined' || !handle) return;
+
+  const cancelIdleCallback = (window as any).cancelIdleCallback as
+    | ((id: number) => void)
+    | undefined;
+
+  if (typeof cancelIdleCallback === 'function') {
+    cancelIdleCallback(handle);
+    return;
+  }
+
+  window.clearTimeout(handle);
+};
 
 
 function getRelativeLuminance(r: number, g: number, b: number) {
@@ -108,6 +137,10 @@ export default function Feed() {
   const queryClient = useQueryClient();
   const isPWA = useIsPWA();
   const [isMobile, setIsMobile] = useState(false);
+  const isScrolledRef = useRef(false);
+  const isMobileRef = useRef(false);
+  const scrollRafRef = useRef<number | null>(null);
+  const resizeRafRef = useRef<number | null>(null);
   const [initialMobileBackgroundFrame] = useState(() => {
     if (typeof window === 'undefined') {
       return { width: 0, height: 0 };
@@ -137,7 +170,11 @@ export default function Feed() {
     isFetchingNextPage 
   } = useFeed(activeTab);
 
-  const { ref, inView } = useInView();
+  const { ref, inView } = useInView({
+    rootMargin: '900px 0px 1200px 0px',
+  });
+
+  const allPosts = useMemo(() => data?.pages.flatMap((page) => page) ?? [], [data]);
 
   useEffect(() => {
     const cachedDesign = readCachedTimelineDesignForReturnNavigation();
@@ -448,21 +485,57 @@ export default function Feed() {
   }, []);
 
   useEffect(() => {
+    const updateScrolledState = () => {
+      const nextIsScrolled = window.scrollY > 10;
+      if (isScrolledRef.current === nextIsScrolled) return;
+
+      isScrolledRef.current = nextIsScrolled;
+      setIsScrolled(nextIsScrolled);
+    };
+
     const handleScroll = () => {
-      setIsScrolled(window.scrollY > 10);
+      if (scrollRafRef.current !== null) return;
+
+      scrollRafRef.current = window.requestAnimationFrame(() => {
+        scrollRafRef.current = null;
+        updateScrolledState();
+      });
+    };
+
+    const updateMobileState = () => {
+      const nextIsMobile = window.innerWidth < 640;
+      if (isMobileRef.current === nextIsMobile) return;
+
+      isMobileRef.current = nextIsMobile;
+      setIsMobile(nextIsMobile);
     };
 
     const checkMobile = () => {
-      setIsMobile(window.innerWidth < 640);
+      if (resizeRafRef.current !== null) return;
+
+      resizeRafRef.current = window.requestAnimationFrame(() => {
+        resizeRafRef.current = null;
+        updateMobileState();
+      });
     };
 
-    handleScroll();
-    checkMobile();
+    updateScrolledState();
+    updateMobileState();
 
     window.addEventListener('scroll', handleScroll, { passive: true });
     window.addEventListener('resize', checkMobile);
 
     return () => {
+      if (scrollRafRef.current !== null) {
+        window.cancelAnimationFrame(scrollRafRef.current);
+        scrollRafRef.current = null;
+      }
+
+      if (resizeRafRef.current !== null) {
+        window.cancelAnimationFrame(resizeRafRef.current);
+        resizeRafRef.current = null;
+      }
+
       window.removeEventListener('scroll', handleScroll);
       window.removeEventListener('resize', checkMobile);
     };
@@ -585,7 +658,21 @@ export default function Feed() {
     }
   }, [inView, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  const restoreScrollPositionAfterControlInteraction = (scrollY: number) => {
+  useEffect(() => {
+    if (allPosts.length === 0) return;
+
+    const handle = scheduleIdleWork(() => {
+      // 画像やiframeの先読みはメモリを大きく使うため行わない。
+      // ここでは画面上部付近の軽いリアクション情報だけを温める。
+      preloadPostCardData(allPosts.slice(0, isMobile ? 3 : 4));
+    });
+
+    return () => {
+      cancelIdleWork(handle);
+    };
+  }, [allPosts, isMobile]);
+
+  const restoreScrollPositionAfterControlInteraction = useCallback((scrollY: number) => {
     const restore = () => {
       if (Math.abs(window.scrollY - scrollY) > 1) {
         document.documentElement.scrollTop = scrollY;
@@ -597,17 +684,24 @@ export default function Feed() {
     window.requestAnimationFrame(restore);
     window.setTimeout(restore, 0);
     window.setTimeout(restore, 80);
-  };
+  }, []);
 
-  const handleTabChange = (value: string) => {
+  const handleTabChange = useCallback((value: string) => {
     const previousScrollY = window.scrollY;
     setActiveTab(value as 'all' | 'following');
     restoreScrollPositionAfterControlInteraction(previousScrollY);
-  };
+  }, [restoreScrollPositionAfterControlInteraction]);
 
-  const allPosts = data?.pages.flatMap((page) => page) ?? [];
   const canReleaseToRefresh = pullDistance >= 58;
   const hasTimelineBackground = Boolean(timelineBackgroundUrl);
+  const renderedPosts = useMemo(
+    () => allPosts.map((post) => (
+      <div key={`${activeTab}-${post.id}`} className="animate-float-up">
+        <PostCard post={post} timelineGlass={hasTimelineBackground} />
+      </div>
+    )),
+    [activeTab, allPosts, hasTimelineBackground]
+  );
 
   return (
     <div
@@ -899,11 +993,7 @@ export default function Feed() {
           </div>
         )}
 
-        {allPosts.map((post) => (
-          <div key={`${activeTab}-${post.id}`} className="animate-float-up">
-            <PostCard post={post} timelineGlass={hasTimelineBackground} />
-          </div>
-        ))}
+        {renderedPosts}
 
         <div ref={ref} className="py-10 flex justify-center">
           {isFetchingNextPage ? (

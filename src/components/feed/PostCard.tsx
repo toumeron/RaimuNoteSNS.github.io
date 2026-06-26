@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'; 
+import { memo, useEffect, useMemo, useRef, useState } from 'react'; 
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { MessageCircle, MoreHorizontal, Trash2, CalendarDays, ChartBarBig, X, Globe, Lock, Sparkles, Plus, Link as LinkIcon, Upload, Send } from 'lucide-react'; 
@@ -22,7 +22,6 @@ import {
 } from "@/components/ui/hover-card";
 import { FollowButton } from '../profile/FollowButton'; 
 import { useFollowStats } from '@/hooks/useProfile';
-import { useIsPWA } from '@/hooks/useIsPWA';
 
 // --- カスタム絵文字用の型定義 ---
 interface CustomEmoji {
@@ -75,7 +74,251 @@ interface ReplicatedDot {
   delay: number;
 }
 
-export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor; timelineGlass?: boolean }) {
+const formatDisplayCount = (count: number) => {
+  if (count >= 10000) {
+    return (count / 10000).toFixed(1).replace(/\.0$/, '') + '万';
+  }
+  return count.toLocaleString();
+};
+
+const POST_REACTION_CACHE_LIMIT = 36;
+const IMAGE_NATURAL_SIZE_CACHE_LIMIT = 64;
+
+const postReactionCache = new Map<string, ReactionGroup[]>();
+const postReactionFetches = new Map<string, Promise<ReactionGroup[]>>();
+const imageNaturalSizeCache = new Map<string, { width: number; height: number }>();
+
+let customEmojiCache: CustomEmoji[] | null = null;
+let customEmojiFetch: Promise<CustomEmoji[]> | null = null;
+let currentUserIdCache: string | null | undefined;
+let currentUserIdFetch: Promise<string | null> | null = null;
+
+const spotifyUrlRegex = /https:\/\/open\.spotify\.com\/(?:[\w-]+\/)?(track|album|playlist)\/[a-zA-Z0-9._?=&/%-]+/gi;
+const imageUrlRegex = /https?:\/\/[^\s]+?\.(?:png|jpg|jpeg|gif|webp|svg)(?:\?[^\s]*)?|https?:\/\/pbs\.twimg\.com\/media\/[^\s?]+(?:\?[^\s]*)?/gi;
+const youtubeUrlRegex = /(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|embed\/|shorts\/)?([a-zA-Z0-9_-]{11})([^?\s\n]*)?(\S+)?/g;
+
+const safeUnique = <T,>(values: T[]) => Array.from(new Set(values.filter(Boolean)));
+
+const trimMapToLimit = <K, V>(map: Map<K, V>, limit: number) => {
+  while (map.size > limit) {
+    const firstKey = map.keys().next().value as K | undefined;
+    if (firstKey === undefined) break;
+    map.delete(firstKey);
+  }
+};
+
+const getCachedReactionGroups = (postId: string) => {
+  const cached = postReactionCache.get(postId);
+  if (!cached) return null;
+
+  postReactionCache.delete(postId);
+  postReactionCache.set(postId, cached);
+  return cached;
+};
+
+const setCachedReactionGroups = (postId: string, groups: ReactionGroup[]) => {
+  postReactionCache.delete(postId);
+  postReactionCache.set(postId, groups);
+  trimMapToLimit(postReactionCache, POST_REACTION_CACHE_LIMIT);
+};
+
+const getCachedNaturalSize = (url: string) => {
+  const cached = imageNaturalSizeCache.get(url);
+  if (!cached) return null;
+
+  imageNaturalSizeCache.delete(url);
+  imageNaturalSizeCache.set(url, cached);
+  return cached;
+};
+
+const setCachedNaturalSize = (url: string, size: { width: number; height: number }) => {
+  imageNaturalSizeCache.delete(url);
+  imageNaturalSizeCache.set(url, size);
+  trimMapToLimit(imageNaturalSizeCache, IMAGE_NATURAL_SIZE_CACHE_LIMIT);
+};
+
+export const preloadPostCardAssets = (
+  _post: PostWithAuthor,
+  _options?: { priority?: 'high' | 'low' }
+) => {
+  // 画像の事前デコードはメモリを食いやすいため、互換用のno-opにしている。
+};
+
+const ensureCurrentUserIdCached = async () => {
+  if (currentUserIdCache !== undefined) return currentUserIdCache;
+  if (currentUserIdFetch) return currentUserIdFetch;
+
+  currentUserIdFetch = getCurrentUserId()
+    .then((id) => {
+      currentUserIdCache = id;
+      return id;
+    })
+    .catch((error) => {
+      console.error('Get current user id failed:', error);
+      currentUserIdCache = null;
+      return null;
+    })
+    .finally(() => {
+      currentUserIdFetch = null;
+    });
+
+  return currentUserIdFetch;
+};
+
+const ensureCustomEmojisCached = async () => {
+  if (customEmojiCache) return customEmojiCache;
+  if (customEmojiFetch) return customEmojiFetch;
+
+  customEmojiFetch = (async (): Promise<CustomEmoji[]> => {
+    try {
+      const { data, error } = await supabase
+        .from('custom_emojis')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      customEmojiCache = (data || []) as CustomEmoji[];
+      return customEmojiCache;
+    } catch (error) {
+      console.error('Fetch Emojis Error:', error);
+      customEmojiCache = [];
+      return customEmojiCache;
+    } finally {
+      customEmojiFetch = null;
+    }
+  })();
+
+  return customEmojiFetch;
+};
+
+const buildReactionGroups = (reactionRows: any[], profileRows: any[] | null | undefined): ReactionGroup[] => {
+  if (!reactionRows || reactionRows.length === 0) return [];
+
+  const profileMap: { [key: string]: any } = {};
+  (profileRows || []).forEach((profile: any) => {
+    profileMap[profile.id] = profile;
+  });
+
+  const groups: { [key: string]: { userIds: string[]; users: ReactionUser[] } } = {};
+
+  reactionRows.forEach((row: any) => {
+    if (!groups[row.emoji]) {
+      groups[row.emoji] = { userIds: [], users: [] };
+    }
+
+    groups[row.emoji].userIds.push(row.user_id);
+
+    const profile = profileMap[row.user_id];
+    if (profile) {
+      groups[row.emoji].users.push({
+        id: profile.id,
+        username: profile.username || 'unknown',
+        displayName: profile.display_name || profile.username || 'ユーザー',
+        avatarUrl: profile.avatar_url || '',
+      });
+    }
+  });
+
+  return Object.keys(groups).map((emoji) => ({
+    emoji,
+    count: groups[emoji].userIds.length,
+    user_ids: groups[emoji].userIds,
+    users: groups[emoji].users,
+  }));
+};
+
+const fetchReactionsForPost = async (postId: string, force = false): Promise<ReactionGroup[]> => {
+  if (!force) {
+    const cached = getCachedReactionGroups(postId);
+    if (cached) return cached;
+
+    const pending = postReactionFetches.get(postId);
+    if (pending) return pending;
+  }
+
+  const request = (async () => {
+    const { data: reactionData, error: reactionError } = await supabase
+      .from('post_reactions')
+      .select('emoji, user_id')
+      .eq('post_id', postId);
+
+    if (reactionError) throw reactionError;
+
+    const reactions = reactionData || [];
+    if (reactions.length === 0) {
+      setCachedReactionGroups(postId, []);
+      return [];
+    }
+
+    const userIds = safeUnique(reactions.map((row: any) => row.user_id));
+    const { data: profileData, error: profileError } = await supabase
+      .from('profiles')
+      .select('id, username, display_name, avatar_url')
+      .in('id', userIds);
+
+    if (profileError) throw profileError;
+
+    const groups = buildReactionGroups(reactions, profileData);
+    setCachedReactionGroups(postId, groups);
+    return groups;
+  })()
+    .catch((error) => {
+      console.error('Fetch Reactions Error:', error);
+      return getCachedReactionGroups(postId) || [];
+    })
+    .finally(() => {
+      postReactionFetches.delete(postId);
+    });
+
+  postReactionFetches.set(postId, request);
+  return request;
+};
+
+export const preloadPostCardData = async (posts: PostWithAuthor[]) => {
+  const warmupPosts = posts.slice(0, 4);
+  if (!warmupPosts.length) return;
+
+  ensureCurrentUserIdCached();
+  ensureCustomEmojisCached();
+
+  const postIds = safeUnique(
+    warmupPosts
+      .map((post) => post.id)
+      .filter((postId) => !postReactionCache.has(postId) && !postReactionFetches.has(postId))
+  );
+
+  if (postIds.length === 0) return;
+
+  try {
+    const { data: reactionRows, error: reactionError } = await supabase
+      .from('post_reactions')
+      .select('post_id, emoji, user_id')
+      .in('post_id', postIds);
+
+    if (reactionError) throw reactionError;
+
+    const rows = reactionRows || [];
+    const userIds = safeUnique(rows.map((row: any) => row.user_id));
+    const { data: profileRows, error: profileError } = userIds.length > 0
+      ? await supabase
+          .from('profiles')
+          .select('id, username, display_name, avatar_url')
+          .in('id', userIds)
+      : { data: [], error: null };
+
+    if (profileError) throw profileError;
+
+    postIds.forEach((postId) => {
+      const groupedRows = rows.filter((row: any) => row.post_id === postId);
+      setCachedReactionGroups(postId, buildReactionGroups(groupedRows, profileRows));
+    });
+  } catch (error) {
+    console.error('Preload post card data failed:', error);
+  }
+};
+
+function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuthor; timelineGlass?: boolean }) {
   const [showMenu, setShowMenu] = useState(false);
   const [moreMenuPosition, setMoreMenuPosition] = useState<{ top: number; right: number } | null>(null);
   const [showShareMenu, setShowShareMenu] = useState(false);
@@ -102,7 +345,7 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
   
   // 現在アクティブなリアクションポップアップの管理
   const [activePopupEmoji, setActivePopupEmoji] = useState<string | null>(null);
-  let longPressTimer: NodeJS.Timeout;
+  const longPressTimerRef = useRef<number | null>(null);
 
   // --- 画像再現エフェクト用のステート ---
   const [activeRings, setActiveRings] = useState<ReplicatedRing[]>([]);
@@ -115,6 +358,11 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
     return localStorage.getItem('lime_timeline_visual_theme') === 'light' ? 'light' : 'dark';
   });
   const [singleImageNaturalSize, setSingleImageNaturalSize] = useState<{ width: number; height: number } | null>(null);
+  const [isCardActive, setIsCardActive] = useState(false);
+
+  const cardRootRef = useRef<HTMLElement>(null);
+  const isMobileRef = useRef(false);
+  const resizeRafRef = useRef<number | null>(null);
 
   const buttonRef = useRef<HTMLButtonElement>(null);
   const pickerPanelRef = useRef<HTMLDivElement>(null);
@@ -126,9 +374,12 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
   const ignoreNextCardClickRef = useRef(false);
   const ignoreCardClickUntilRef = useRef(0);
 
-  const isPWA = useIsPWA();
 
   const defaultEmojis = ['👍', '❤️', '😆', '🤔', '😮', '🎉', '💢', '😢', '😇', '🍮'];
+
+  const customEmojiByName = useMemo(() => (
+    new Map(customEmojis.map((emoji) => [emoji.name, emoji]))
+  ), [customEmojis]);
 
   const suppressCardClickAfterPopupClose = (duration = 500) => {
     ignoreNextCardClickRef.current = true;
@@ -152,33 +403,96 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
     e.stopPropagation();
   };
 
-  const formatDisplayCount = (count: number) => {
-    if (count >= 10000) {
-      return (count / 10000).toFixed(1).replace(/\.0$/, '') + '万';
-    }
-    return count.toLocaleString();
-  };
-
   useEffect(() => {
-    getCurrentUserId().then(id => {
+    let cancelled = false;
+
+    ensureCurrentUserIdCached().then((id) => {
+      if (cancelled) return;
+
       setCurrentUserId(id);
       if (id) {
         const saved = localStorage.getItem(`recent_emojis_${id}`);
         if (saved) {
-          try { setRecentEmojis(JSON.parse(saved)); } catch (e) { console.error(e); }
+          try {
+            setRecentEmojis(JSON.parse(saved));
+          } catch (e) {
+            console.error(e);
+          }
         }
       }
     });
 
-    fetchReactions();
-    fetchCustomEmojis();
-
-    // 初期画面幅の判定とリスナー設定
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 640);
+    return () => {
+      cancelled = true;
     };
-    checkMobile();
+  }, []);
+
+  useEffect(() => {
+    const updateMobileState = () => {
+      const nextIsMobile = window.innerWidth < 640;
+      if (isMobileRef.current === nextIsMobile) return;
+
+      isMobileRef.current = nextIsMobile;
+      setIsMobile(nextIsMobile);
+    };
+
+    const checkMobile = () => {
+      if (resizeRafRef.current !== null) return;
+
+      resizeRafRef.current = window.requestAnimationFrame(() => {
+        resizeRafRef.current = null;
+        updateMobileState();
+      });
+    };
+
+    updateMobileState();
     window.addEventListener('resize', checkMobile);
+
+    return () => {
+      if (resizeRafRef.current !== null) {
+        window.cancelAnimationFrame(resizeRafRef.current);
+        resizeRafRef.current = null;
+      }
+
+      window.removeEventListener('resize', checkMobile);
+    };
+  }, []);
+
+  useEffect(() => {
+    const cachedReactions = getCachedReactionGroups(post.id);
+    setReactions(cachedReactions || []);
+    setIsCardActive(false);
+  }, [post.id]);
+
+  useEffect(() => {
+    const node = cardRootRef.current;
+    if (!node || typeof IntersectionObserver === 'undefined') {
+      setIsCardActive(true);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        setIsCardActive(entries.some((entry) => entry.isIntersecting));
+      },
+      { rootMargin: '420px 0px 520px 0px' }
+    );
+
+    observer.observe(node);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [post.id]);
+
+  useEffect(() => {
+    const shouldKeepLiveWork = isCardActive || showMenu || showPicker || showShareMenu || showLimeDropPanel || Boolean(selectedImageUrl);
+    if (!shouldKeepLiveWork) return;
+
+    let cancelled = false;
+
+    fetchReactions().then(() => undefined);
+    fetchCustomEmojis().then(() => undefined);
 
     const channels = supabase
       .channel(`post-reactions-${post.id}`)
@@ -191,21 +505,38 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
           filter: `post_id=eq.${post.id}`
         },
         () => {
-          fetchReactions();
+          if (!cancelled) {
+            fetchReactions(true);
+          }
         }
       )
       .subscribe();
 
-    const timer = setInterval(() => {
+    const timer = window.setInterval(() => {
       setTick(tick => tick + 1);
     }, 60000);
 
     return () => {
-      clearInterval(timer);
-      window.removeEventListener('resize', checkMobile);
+      cancelled = true;
+      window.clearInterval(timer);
       supabase.removeChannel(channels);
     };
-  }, [post.id]);
+  }, [isCardActive, showMenu, showPicker, showShareMenu, showLimeDropPanel, selectedImageUrl, post.id]);
+
+
+  useEffect(() => {
+    const shouldKeepStateWarm = isCardActive || showMenu || showPicker || showShareMenu || showLimeDropPanel || Boolean(selectedImageUrl);
+    if (shouldKeepStateWarm) return;
+
+    const timer = window.setTimeout(() => {
+      setReactions([]);
+      setCustomEmojis([]);
+    }, 3000);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [isCardActive, showMenu, showPicker, showShareMenu, showLimeDropPanel, selectedImageUrl, post.id]);
 
   useEffect(() => {
     if (!timelineGlass) return;
@@ -394,79 +725,16 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
     };
   }, [showPicker]);
 
-  const fetchReactions = async () => {
-    try {
-      const { data: reactionData, error: reactionError } = await supabase
-        .from('post_reactions')
-        .select('emoji, user_id')
-        .eq('post_id', post.id);
-
-      if (reactionError) throw reactionError;
-
-      if (reactionData && reactionData.length > 0) {
-        const userIds = Array.from(new Set(reactionData.map((r: any) => r.user_id)));
-
-        const { data: profileData, error: profileError } = await supabase
-          .from('profiles')
-          .select('id, username, display_name, avatar_url')
-          .in('id', userIds);
-
-        if (profileError) throw profileError;
-
-        const profileMap: { [key: string]: any } = {};
-        if (profileData) {
-          profileData.forEach((p: any) => {
-            profileMap[p.id] = p;
-          });
-        }
-
-        const groups: { [key: string]: { userIds: string[], users: ReactionUser[] } } = {};
-        
-        reactionData.forEach((row: any) => {
-          if (!groups[row.emoji]) {
-            groups[row.emoji] = { userIds: [], users: [] };
-          }
-          groups[row.emoji].userIds.push(row.user_id);
-          
-          const profile = profileMap[row.user_id];
-          if (profile) {
-            groups[row.emoji].users.push({
-              id: profile.id,
-              username: profile.username || 'unknown',
-              displayName: profile.display_name || profile.username || 'ユーザー',
-              avatarUrl: profile.avatar_url || ''
-            });
-          }
-        });
-
-        const formattedGroups: ReactionGroup[] = Object.keys(groups).map(emoji => ({
-          emoji,
-          count: groups[emoji].userIds.length,
-          user_ids: groups[emoji].userIds,
-          users: groups[emoji].users
-        }));
-
-        setReactions(formattedGroups);
-      } else {
-        setReactions([]);
-      }
-    } catch (err) {
-      console.error('Fetch Reactions Error:', err);
-    }
+  const fetchReactions = async (force = false) => {
+    const nextReactions = await fetchReactionsForPost(post.id, force);
+    setReactions(nextReactions);
+    return nextReactions;
   };
 
   const fetchCustomEmojis = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('custom_emojis')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      if (data) setCustomEmojis(data);
-    } catch (err) {
-      console.error('Fetch Emojis Error:', err);
-    }
+    const nextCustomEmojis = await ensureCustomEmojisCached();
+    setCustomEmojis(nextCustomEmojis);
+    return nextCustomEmojis;
   };
 
   const triggerImageReplicatedEffect = (targetElement: HTMLElement) => {
@@ -557,7 +825,7 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
 
         if (error) throw error;
       }
-      fetchReactions();
+      fetchReactions(true);
       setShowPicker(false);
     } catch (err) {
       console.error('Toggle Reaction Error:', err);
@@ -567,7 +835,7 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
   const getCustomEmojiObj = (emojiStr: string) => {
     if (emojiStr.startsWith(':') && emojiStr.endsWith(':')) {
       const cleanName = emojiStr.slice(1, -1);
-      return customEmojis.find(e => e.name === cleanName);
+      return customEmojiByName.get(cleanName);
     }
     return null;
   };
@@ -586,39 +854,53 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
   };
 
   const handleTouchStart = (emoji: string) => {
-    longPressTimer = setTimeout(() => {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+    }
+
+    longPressTimerRef.current = window.setTimeout(() => {
       setActivePopupEmoji(emoji);
-    }, 500); 
+      longPressTimerRef.current = null;
+    }, 500);
   };
 
   const handleTouchEnd = () => {
-    clearTimeout(longPressTimer);
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
   };
 
-  const filteredCustomEmojis = customEmojis.filter(emoji => 
-    emoji.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredCustomEmojis = useMemo(() => (
+    customEmojis.filter((emoji) =>
+      emoji.name.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+  ), [customEmojis, searchQuery]);
 
   const isMyPost = currentUserId === post.userId;
-  const youtubeId = getYouTubeId(post.content);
+  const { youtubeId, spotifyUrls, allImageUrls, displayContent, singleImageUrl } = useMemo(() => {
+    const nextYoutubeId = getYouTubeId(post.content);
+    const nextSpotifyUrls = post.content.match(spotifyUrlRegex) || [];
+    const extractedImageUrls = post.content.match(imageUrlRegex) || [];
+    const nextAllImageUrls = [...(post.imageUrls || []), ...extractedImageUrls].slice(0, 4);
 
-  const spotifyRegex = /https:\/\/open\.spotify\.com\/(?:[\w-]+\/)?(track|album|playlist)\/[a-zA-Z0-9._?=&/%-]+/gi;
-  const spotifyUrls = post.content.match(spotifyRegex) || [];
-  const imageRegex = /https?:\/\/[^\s]+?\.(?:png|jpg|jpeg|gif|webp|svg)(?:\?[^\s]*)?|https?:\/\/pbs\.twimg\.com\/media\/[^\s?]+(?:\?[^\s]*)?/gi;
-  const extractedImageUrls = post.content.match(imageRegex) || [];
-  const allImageUrls = [...(post.imageUrls || []), ...extractedImageUrls].slice(0, 4);
+    const nextDisplayContent = post.content
+      .replace(youtubeUrlRegex, '')
+      .replace(imageUrlRegex, '')
+      .replace(spotifyUrlRegex, '')
+      .trim();
 
-  let displayContent = post.content;
-  displayContent = displayContent.replace(/(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|embed\/|shorts\/)?([a-zA-Z0-9_-]{11})([^?\s\n]*)?(\S+)?/g, '');
-  displayContent = displayContent.replace(imageRegex, '');
-  displayContent = displayContent.replace(spotifyRegex, '');
-  displayContent = displayContent.trim();
-
-
-  const singleImageUrl = allImageUrls.length === 1 ? allImageUrls[0] : null;
+    return {
+      youtubeId: nextYoutubeId,
+      spotifyUrls: nextSpotifyUrls,
+      allImageUrls: nextAllImageUrls,
+      displayContent: nextDisplayContent,
+      singleImageUrl: nextAllImageUrls.length === 1 ? nextAllImageUrls[0] : null,
+    };
+  }, [post.content, post.imageUrls]);
 
   useEffect(() => {
-    setSingleImageNaturalSize(null);
+    setSingleImageNaturalSize(singleImageUrl ? getCachedNaturalSize(singleImageUrl) ?? null : null);
   }, [singleImageUrl]);
 
   const getSingleImageFrameStyle = (): React.CSSProperties => {
@@ -1513,6 +1795,7 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
       )}
 
       <article 
+        ref={cardRootRef}
         onClickCapture={handleCardClickCapture}
         onClick={handleCardClick}
         className={
@@ -1524,6 +1807,10 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
               ? "relative mx-auto w-full max-w-[600px] px-0 py-3 cursor-pointer"
               : "rounded-3xl border border-border/60 bg-card p-5 shadow-soft transition hover:shadow-card-soft relative cursor-pointer"
         }
+        style={{
+          contentVisibility: showMenu || showPicker || showShareMenu || showLimeDropPanel || selectedImageUrl ? 'visible' : 'auto',
+          containIntrinsicSize: isMobile ? '0 340px' : '0 380px',
+        } as React.CSSProperties}
       >
         {isMobile && !timelineGlass && (
           <div className="pointer-events-none absolute bottom-0 left-1/2 w-screen -translate-x-1/2 border-b border-border/60" />
@@ -1740,13 +2027,17 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
                       className="block select-none"
                       style={getSingleImageDisplayStyle()}
                       draggable={false}
+                      loading="lazy"
+                      decoding="async"
                       onLoad={(e) => {
                         const img = e.currentTarget;
                         if (img.naturalWidth && img.naturalHeight) {
-                          setSingleImageNaturalSize({
+                          const nextNaturalSize = {
                             width: img.naturalWidth,
                             height: img.naturalHeight,
-                          });
+                          };
+                          setCachedNaturalSize(singleImageUrl, nextNaturalSize);
+                          setSingleImageNaturalSize(nextNaturalSize);
                         }
                       }}
                       onError={() => {
@@ -2283,3 +2574,6 @@ export function PostCard({ post, timelineGlass = false }: { post: PostWithAuthor
     </>
   );
 }
+
+export const PostCard = memo(PostCardComponent);
+PostCard.displayName = 'PostCard';

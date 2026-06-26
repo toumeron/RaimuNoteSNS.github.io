@@ -1691,7 +1691,7 @@ export default function PostDetail() {
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-bold text-muted-foreground">LimeDrop</p>
-                <h2 className="truncate text-lg font-black text-foreground">相互フォローにポストを送信</h2>
+                <h2 className="truncate text-lg font-black text-foreground">ポストを共有</h2>
               </div>
               <button
                 type="button"
@@ -1728,7 +1728,7 @@ export default function PostDetail() {
 
               {!limeDropLoading && limeDropTargets.length === 0 && (
                 <div className="rounded-2xl border border-dashed border-border px-4 py-8 text-center">
-                  <p className="text-sm font-bold text-foreground">送信できる相互フォローがいません</p>
+                  <p className="text-sm font-bold text-foreground">送信できるユーザーがいません</p>
                   <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                     LimeDropは相互フォロー中のユーザーにだけ送信できます。
                   </p>

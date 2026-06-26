@@ -69,6 +69,7 @@ if (!self.define) {
 }
 define(['./workbox-5a5d9309'], (function (workbox) { 'use strict';
 
+  importScripts("push-sw.js");
   self.skipWaiting();
   workbox.clientsClaim();
 
@@ -79,7 +80,7 @@ define(['./workbox-5a5d9309'], (function (workbox) { 'use strict';
    */
   workbox.precacheAndRoute([{
     "url": "/RaimuNoteSNS.github.io/index.html",
-    "revision": "0.unu0o5s9504"
+    "revision": "0.dm09o1glub4"
   }], {});
   workbox.cleanupOutdatedCaches();
   workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("/RaimuNoteSNS.github.io/index.html"), {
