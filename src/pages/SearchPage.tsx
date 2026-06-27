@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Search, X, Clock, Loader2, TrendingUp, Newspaper } from 'lucide-react';
+import { Search, X, Clock, Loader2, TrendingUp, Newspaper, Radio, Play, Square } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PostCard } from '@/components/feed/PostCard';
 import UserCard from '@/components/search/UserCard';
@@ -34,6 +34,85 @@ const buildUserHaystack = (u: User): string =>
 
 const HISTORY_KEY = 'search:recent';
 const HISTORY_MAX = 8;
+
+const RADIO_FALLBACK_SCRIPT = `
+バグが発生しています
+`;
+
+const createSilentAudioUrl = () => {
+  const sampleRate = 8000;
+  const seconds = 1;
+  const samples = sampleRate * seconds;
+  const dataSize = samples * 2;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  const writeString = (offset: number, value: string) => {
+    for (let i = 0; i < value.length; i += 1) {
+      view.setUint8(offset + i, value.charCodeAt(i));
+    }
+  };
+
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  return URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
+};
+
+const getHumanLikeJapaneseVoice = () => {
+  if (!('speechSynthesis' in window)) return null;
+
+  const voices = window.speechSynthesis.getVoices();
+  const japaneseVoices = voices.filter((voice) => voice.lang.toLowerCase().startsWith('ja'));
+  const candidates = japaneseVoices.length > 0 ? japaneseVoices : voices;
+
+  return candidates
+    .map((voice) => {
+      const name = voice.name.toLowerCase();
+      const uri = voice.voiceURI.toLowerCase();
+      const label = `${name} ${uri}`;
+      let score = 0;
+
+      if (voice.lang.toLowerCase().startsWith('ja')) score += 130;
+      if (/siri|voice 1|voice 2|voice 3|voice 4/.test(label)) score += 110;
+      if (/kyoko|otoya/.test(label) && /enhanced|premium/.test(label)) score += 105;
+      if (/kyoko|otoya|aoi|mayu|shiori|haruka|ichiro|sayaka/.test(label)) score += 62;
+      if (/natural|neural/.test(label)) score += 55;
+      if (/enhanced|premium|online/.test(label)) score += 50;
+      if (/apple|com.apple/.test(label)) score += 36;
+      if (/microsoft|google|nanami|keita/.test(label)) score -= 70;
+      if (/compact/.test(label)) score -= 90;
+      if (/default/.test(label)) score -= 22;
+      if (/novelty|whisper|organ|bad news|bells|boing|bubbles/.test(label)) score -= 120;
+      if (voice.localService) score += 18;
+      if (!voice.default) score += 10;
+
+      return { voice, score };
+    })
+    .sort((a, b) => b.score - a.score)[0]?.voice || null;
+};
+
+const getRadioTimeIntro = () => {
+  const now = new Date();
+  const hours = now.getHours();
+  const minutes = now.getMinutes();
+  const period = hours < 12 ? '午前' : '午後';
+  const displayHours = hours % 12 || 12;
+  const minuteText = minutes === 0 ? 'ちょうど' : `${minutes}分`;
+
+  return `現在、${period}${displayHours}時${minuteText}です。`;
+};
 
 const loadHistory = (): string[] => {
   try {
@@ -78,6 +157,14 @@ type SuggestionRow =
   | { type: 'search'; value: string }
   | { type: 'user'; value: string; user: User };
 
+declare global {
+  interface Window {
+    __limeSearchRadioIsPlaying?: boolean;
+    __limeSearchRadioOwnerId?: string;
+    __limeSearchRadioStop?: () => void;
+  }
+}
+
 export default function SearchPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -91,6 +178,7 @@ export default function SearchPage() {
   const [history, setHistory] = useState<string[]>(() => loadHistory());
   const [activeSuggestIdx, setActiveSuggestIdx] = useState<number>(-1);
   const [isScrolled, setIsScrolled] = useState(false);
+  const [isRadioPlaying, setIsRadioPlaying] = useState(() => !!window.__limeSearchRadioIsPlaying);
   
   const [hasMore, setHasMore] = useState(true);
   const [page, setPage] = useState(0);
@@ -102,12 +190,556 @@ export default function SearchPage() {
 
   // ニュース用ステート
   const [latestNews, setLatestNews] = useState<NewsItem | null>(null);
+  const [radioNews, setRadioNews] = useState<NewsItem[]>([]);
   const [isNewsLoading, setIsNewsLoading] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestBoxRef = useRef<HTMLDivElement>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const lastElementRef = useRef<HTMLDivElement>(null);
+  const radioPlayingRef = useRef(false);
+  const backgroundAudioRef = useRef<HTMLAudioElement | null>(null);
+  const backgroundAudioUrlRef = useRef<string | null>(null);
+  const radioAudioContextRef = useRef<AudioContext | null>(null);
+  const radioBeatTimerRef = useRef<number | null>(null);
+  const radioBeatGainRef = useRef<GainNode | null>(null);
+  const isMountedRef = useRef(true);
+  const radioInstanceIdRef = useRef(`search-radio-${Date.now()}-${Math.random()}`);
+
+  const radioScript = useMemo(() => {
+    const newsLines = radioNews
+      .slice(0, 4)
+      .map((news, idx) => {
+        const content = news.content ? `。${news.content.slice(0, 140)}` : '';
+        return `${idx + 1}本目、${news.category}から。${news.title}${content}`;
+      });
+
+    if (newsLines.length === 0) {
+      return RADIO_FALLBACK_SCRIPT;
+    }
+
+    return [
+      'こんにちは。こちらはLimeNote開発部です。',
+      '検索ページで見つけたニュースを、読み上げます。',
+      'まずはニュースです。',
+      ...newsLines,
+      '以上、LimeNoteでした。読み上げが終わると、また最初から繰り返します。'
+    ].filter(Boolean).join('\n');
+  }, [radioNews]);
+
+  const playRadioJingle = useCallback(() => {
+    const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextCtor) return;
+
+    const audioContext = radioAudioContextRef.current || new AudioContextCtor();
+    radioAudioContextRef.current = audioContext;
+
+    if (audioContext.state === 'suspended') {
+      audioContext.resume().catch(() => {
+        // ブラウザ側でAudioContextの再開が拒否された場合は読み上げだけ続ける
+      });
+    }
+
+    const now = audioContext.currentTime;
+    const master = audioContext.createGain();
+    const compressor = audioContext.createDynamicsCompressor();
+    compressor.threshold.setValueAtTime(-20, now);
+    compressor.knee.setValueAtTime(16, now);
+    compressor.ratio.setValueAtTime(3, now);
+    compressor.attack.setValueAtTime(0.006, now);
+    compressor.release.setValueAtTime(0.16, now);
+    master.gain.setValueAtTime(0.0001, now);
+    master.gain.exponentialRampToValueAtTime(0.32, now + 0.08);
+    master.gain.setValueAtTime(0.28, now + 1.75);
+    master.gain.exponentialRampToValueAtTime(0.0001, now + 2.35);
+    master.connect(compressor);
+    compressor.connect(audioContext.destination);
+
+    const playTone = (
+      frequency: number,
+      start: number,
+      duration: number,
+      peak: number,
+      type: OscillatorType = 'sine'
+    ) => {
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      const end = start + duration;
+
+      oscillator.type = type;
+      oscillator.frequency.setValueAtTime(frequency, start);
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(peak, start + 0.035);
+      gain.gain.exponentialRampToValueAtTime(0.0001, end);
+
+      oscillator.connect(gain);
+      gain.connect(master);
+      oscillator.start(start);
+      oscillator.stop(end + 0.02);
+    };
+
+    const playChordHit = (start: number, frequencies: number[], duration: number) => {
+      const chordGain = audioContext.createGain();
+      const filter = audioContext.createBiquadFilter();
+
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(2200, start);
+      chordGain.gain.setValueAtTime(0.0001, start);
+      chordGain.gain.exponentialRampToValueAtTime(0.2, start + 0.06);
+      chordGain.gain.setValueAtTime(0.17, start + duration - 0.16);
+      chordGain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+
+      frequencies.forEach((frequency, index) => {
+        const oscillator = audioContext.createOscillator();
+        oscillator.type = index % 2 === 0 ? 'triangle' : 'sine';
+        oscillator.frequency.setValueAtTime(frequency, start);
+        oscillator.detune.setValueAtTime(index % 2 === 0 ? -5 : 5, start);
+        oscillator.connect(filter);
+        oscillator.start(start);
+        oscillator.stop(start + duration + 0.03);
+      });
+
+      filter.connect(chordGain);
+      chordGain.connect(master);
+    };
+
+    const createNoiseBuffer = (duration: number) => {
+      const bufferSize = Math.floor(audioContext.sampleRate * duration);
+      const buffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
+      const output = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i += 1) output[i] = Math.random() * 2 - 1;
+      return buffer;
+    };
+
+    const playNoise = (start: number, duration: number, peak: number, frequency: number) => {
+      const noise = audioContext.createBufferSource();
+      const filter = audioContext.createBiquadFilter();
+      const gain = audioContext.createGain();
+
+      noise.buffer = createNoiseBuffer(duration);
+      filter.type = 'highpass';
+      filter.frequency.setValueAtTime(frequency, start);
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(peak, start + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(master);
+      noise.start(start);
+      noise.stop(start + duration + 0.02);
+    };
+
+    playChordHit(now, [293.66, 349.23, 440.00, 523.25, 659.25], 0.62);
+    playTone(73.42, now, 0.38, 0.14, 'sawtooth');
+    playNoise(now + 0.02, 0.08, 0.08, 6200);
+
+    playChordHit(now + 0.55, [196.00, 246.94, 349.23, 440.00, 587.33], 0.72);
+    playTone(98.00, now + 0.56, 0.46, 0.15, 'sawtooth');
+    playNoise(now + 0.58, 0.12, 0.1, 2200);
+
+    playChordHit(now + 1.18, [261.63, 329.63, 392.00, 493.88, 587.33], 1.05);
+    playTone(65.41, now + 1.18, 0.72, 0.16, 'sawtooth');
+
+    [659.25, 783.99, 987.77, 1174.66, 987.77, 1318.51, 1174.66].forEach((frequency, index) => {
+      playTone(frequency, now + 0.18 + index * 0.18, 0.24, 0.13, index % 2 === 0 ? 'triangle' : 'sine');
+    });
+
+    playTone(880.00, now + 1.55, 0.26, 0.11, 'triangle');
+    playTone(987.77, now + 1.72, 0.28, 0.12, 'triangle');
+    playTone(1318.51, now + 1.96, 0.48, 0.15, 'sine');
+    playNoise(now + 2.05, 0.22, 0.13, 5600);
+  }, []);
+
+  const startRadioBeat = useCallback(() => {
+    if (radioBeatTimerRef.current !== null) return;
+
+    const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextCtor) return;
+
+    const audioContext = radioAudioContextRef.current || new AudioContextCtor();
+    radioAudioContextRef.current = audioContext;
+
+    if (audioContext.state === 'suspended') {
+      audioContext.resume().catch(() => {
+        // ブラウザ側でAudioContextの再開が拒否された場合は読み上げだけ続ける
+      });
+    }
+
+    const beatGain = audioContext.createGain();
+    const compressor = audioContext.createDynamicsCompressor();
+    compressor.threshold.setValueAtTime(-18, audioContext.currentTime);
+    compressor.knee.setValueAtTime(18, audioContext.currentTime);
+    compressor.ratio.setValueAtTime(4, audioContext.currentTime);
+    compressor.attack.setValueAtTime(0.006, audioContext.currentTime);
+    compressor.release.setValueAtTime(0.18, audioContext.currentTime);
+    beatGain.gain.setValueAtTime(1.25, audioContext.currentTime);
+    beatGain.connect(compressor);
+    compressor.connect(audioContext.destination);
+    radioBeatGainRef.current = beatGain;
+
+    const createNoiseBuffer = (duration = 0.18) => {
+      const bufferSize = Math.floor(audioContext.sampleRate * duration);
+      const buffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
+      const output = buffer.getChannelData(0);
+
+      for (let i = 0; i < bufferSize; i += 1) {
+        output[i] = Math.random() * 2 - 1;
+      }
+
+      return buffer;
+    };
+
+    const playKick = (time: number) => {
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(116, time);
+      oscillator.frequency.exponentialRampToValueAtTime(48, time + 0.14);
+      gain.gain.setValueAtTime(0.0001, time);
+      gain.gain.exponentialRampToValueAtTime(0.18, time + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.24);
+
+      oscillator.connect(gain);
+      gain.connect(beatGain);
+      oscillator.start(time);
+      oscillator.stop(time + 0.24);
+    };
+
+    const playSnare = (time: number) => {
+      const noise = audioContext.createBufferSource();
+      const filter = audioContext.createBiquadFilter();
+      const gain = audioContext.createGain();
+
+      noise.buffer = createNoiseBuffer();
+      filter.type = 'highpass';
+      filter.frequency.setValueAtTime(950, time);
+      gain.gain.setValueAtTime(0.0001, time);
+      gain.gain.exponentialRampToValueAtTime(0.095, time + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.16);
+
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(beatGain);
+      noise.start(time);
+      noise.stop(time + 0.15);
+    };
+
+    const playHat = (time: number) => {
+      const noise = audioContext.createBufferSource();
+      const filter = audioContext.createBiquadFilter();
+      const gain = audioContext.createGain();
+
+      noise.buffer = createNoiseBuffer();
+      filter.type = 'highpass';
+      filter.frequency.setValueAtTime(6200, time);
+      gain.gain.setValueAtTime(0.0001, time);
+      gain.gain.exponentialRampToValueAtTime(0.045, time + 0.006);
+      gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.06);
+
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(beatGain);
+      noise.start(time);
+      noise.stop(time + 0.07);
+    };
+
+    const playBass = (time: number, frequency: number) => {
+      const oscillator = audioContext.createOscillator();
+      const filter = audioContext.createBiquadFilter();
+      const gain = audioContext.createGain();
+
+      oscillator.type = 'sawtooth';
+      oscillator.frequency.setValueAtTime(frequency, time);
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(420, time);
+      filter.Q.setValueAtTime(1.2, time);
+      gain.gain.setValueAtTime(0.0001, time);
+      gain.gain.exponentialRampToValueAtTime(0.16, time + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.34);
+
+      oscillator.connect(filter);
+      filter.connect(gain);
+      gain.connect(beatGain);
+      oscillator.start(time);
+      oscillator.stop(time + 0.36);
+    };
+
+    const playChord = (time: number, frequencies: number[], duration: number) => {
+      const chordGain = audioContext.createGain();
+      const filter = audioContext.createBiquadFilter();
+
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(1550, time);
+      filter.Q.setValueAtTime(0.6, time);
+      chordGain.gain.setValueAtTime(0.0001, time);
+      chordGain.gain.exponentialRampToValueAtTime(0.085, time + 0.08);
+      chordGain.gain.setValueAtTime(0.075, time + duration - 0.16);
+      chordGain.gain.exponentialRampToValueAtTime(0.0001, time + duration);
+
+      frequencies.forEach((frequency, index) => {
+        const oscillator = audioContext.createOscillator();
+        oscillator.type = index % 2 === 0 ? 'triangle' : 'sine';
+        oscillator.frequency.setValueAtTime(frequency, time);
+        oscillator.detune.setValueAtTime(index % 2 === 0 ? -4 : 4, time);
+        oscillator.connect(filter);
+        oscillator.start(time);
+        oscillator.stop(time + duration + 0.03);
+      });
+
+      filter.connect(chordGain);
+      chordGain.connect(beatGain);
+    };
+
+    const playArp = (time: number, frequency: number) => {
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      const filter = audioContext.createBiquadFilter();
+
+      oscillator.type = 'triangle';
+      oscillator.frequency.setValueAtTime(frequency, time);
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(2400, time);
+      gain.gain.setValueAtTime(0.0001, time);
+      gain.gain.exponentialRampToValueAtTime(0.055, time + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.18);
+
+      oscillator.connect(filter);
+      filter.connect(gain);
+      gain.connect(beatGain);
+      oscillator.start(time);
+      oscillator.stop(time + 0.2);
+    };
+
+    const bpm = 92;
+    const step = 60 / bpm / 4;
+    const patternSteps = 64;
+    const patternLength = step * patternSteps;
+    const chordProgression = [
+      { chord: [261.63, 329.63, 392.00, 493.88], bass: 65.41, arp: [392.00, 493.88, 659.25, 493.88] },
+      { chord: [220.00, 261.63, 329.63, 392.00], bass: 55.00, arp: [329.63, 392.00, 523.25, 392.00] },
+      { chord: [174.61, 220.00, 261.63, 329.63], bass: 43.65, arp: [329.63, 440.00, 523.25, 440.00] },
+      { chord: [196.00, 246.94, 293.66, 392.00], bass: 49.00, arp: [293.66, 392.00, 587.33, 392.00] }
+    ];
+
+    const schedulePattern = () => {
+      if (!radioPlayingRef.current) return;
+
+      const start = audioContext.currentTime + 0.04;
+      for (let i = 0; i < patternSteps; i += 1) {
+        const time = start + i * step;
+        const barIndex = Math.floor(i / 16);
+        const stepInBar = i % 16;
+        const section = chordProgression[barIndex % chordProgression.length];
+
+        if (stepInBar === 0) {
+          playChord(time, section.chord, step * 16);
+        }
+        if (stepInBar === 0 || stepInBar === 6 || stepInBar === 10) playKick(time);
+        if (stepInBar === 4 || stepInBar === 12) playSnare(time);
+        if (stepInBar % 2 === 0) playHat(time);
+        if ([0, 3, 6, 10, 13].includes(stepInBar)) playBass(time, section.bass);
+        if ([2, 5, 8, 11, 14].includes(stepInBar)) {
+          playArp(time, section.arp[(stepInBar + barIndex) % section.arp.length]);
+        }
+      }
+    };
+
+    schedulePattern();
+    radioBeatTimerRef.current = window.setInterval(schedulePattern, patternLength * 1000);
+  }, []);
+
+  const setRadioBeatVolume = useCallback((volume: number, fadeSeconds = 0.18) => {
+    const beatGain = radioBeatGainRef.current;
+    if (!beatGain) return;
+
+    const now = beatGain.context.currentTime;
+    beatGain.gain.cancelScheduledValues(now);
+    beatGain.gain.setTargetAtTime(volume, now, fadeSeconds);
+  }, []);
+
+  const setRadioPlayingState = useCallback((value: boolean) => {
+    if (isMountedRef.current) {
+      setIsRadioPlaying(value);
+    }
+  }, []);
+
+  const stopRadioBeat = useCallback(() => {
+    if (radioBeatTimerRef.current !== null) {
+      window.clearInterval(radioBeatTimerRef.current);
+      radioBeatTimerRef.current = null;
+    }
+    if (radioBeatGainRef.current) {
+      radioBeatGainRef.current.gain.setValueAtTime(0.0001, radioBeatGainRef.current.context.currentTime);
+      radioBeatGainRef.current.disconnect();
+      radioBeatGainRef.current = null;
+    }
+  }, []);
+
+  const stopRadio = useCallback(() => {
+    if (
+      window.__limeSearchRadioOwnerId &&
+      window.__limeSearchRadioOwnerId !== radioInstanceIdRef.current &&
+      window.__limeSearchRadioStop
+    ) {
+      window.__limeSearchRadioStop();
+      window.__limeSearchRadioIsPlaying = false;
+      setRadioPlayingState(false);
+      return;
+    }
+
+    radioPlayingRef.current = false;
+    window.__limeSearchRadioIsPlaying = false;
+    if (window.__limeSearchRadioOwnerId === radioInstanceIdRef.current) {
+      window.__limeSearchRadioOwnerId = undefined;
+      window.__limeSearchRadioStop = undefined;
+    }
+    setRadioPlayingState(false);
+    stopRadioBeat();
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    if (backgroundAudioRef.current) {
+      backgroundAudioRef.current.pause();
+      backgroundAudioRef.current.currentTime = 0;
+    }
+  }, [setRadioPlayingState, stopRadioBeat]);
+
+  const playRadio = useCallback(() => {
+    if (!('speechSynthesis' in window)) return;
+
+    if (
+      window.__limeSearchRadioOwnerId &&
+      window.__limeSearchRadioOwnerId !== radioInstanceIdRef.current &&
+      window.__limeSearchRadioStop
+    ) {
+      window.__limeSearchRadioStop();
+    }
+
+    window.__limeSearchRadioOwnerId = radioInstanceIdRef.current;
+    window.__limeSearchRadioStop = stopRadio;
+    window.__limeSearchRadioIsPlaying = true;
+    radioPlayingRef.current = true;
+    setRadioPlayingState(true);
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.getVoices();
+    stopRadioBeat();
+
+    if (!backgroundAudioUrlRef.current) {
+      backgroundAudioUrlRef.current = createSilentAudioUrl();
+    }
+
+    if (!backgroundAudioRef.current) {
+      backgroundAudioRef.current = new Audio(backgroundAudioUrlRef.current);
+      backgroundAudioRef.current.loop = true;
+      backgroundAudioRef.current.preload = 'auto';
+    }
+
+    backgroundAudioRef.current.play().catch(() => {
+      // ブラウザ側でバックグラウンド保持用audioが拒否されても、読み上げ自体は続ける
+    });
+
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: 'ベータラジオ',
+        artist: '検索ページ',
+        album: 'ニュース'
+      });
+      navigator.mediaSession.setActionHandler('play', () => {
+        if (!radioPlayingRef.current) {
+          radioPlayingRef.current = true;
+          setRadioPlayingState(true);
+        }
+        backgroundAudioRef.current?.play().catch(() => {
+          // ブラウザ側で再開が拒否された場合は、次のユーザー操作で復帰する
+        });
+        startRadioBeat();
+        setRadioBeatVolume(0.24, 0.18);
+        if (window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+        }
+      });
+      navigator.mediaSession.setActionHandler('pause', stopRadio);
+      navigator.mediaSession.setActionHandler('stop', stopRadio);
+    }
+
+    const speak = () => {
+      if (!radioPlayingRef.current) return;
+
+      const utterance = new SpeechSynthesisUtterance(`${getRadioTimeIntro()}\n${radioScript}`);
+      const voice = getHumanLikeJapaneseVoice();
+      if (voice) utterance.voice = voice;
+      utterance.lang = 'ja-JP';
+      utterance.rate = 0.98;
+      utterance.pitch = 1;
+      utterance.volume = 1;
+      utterance.onend = () => {
+        setRadioBeatVolume(0.62, 0.2);
+        if (radioPlayingRef.current) {
+          window.setTimeout(speak, 900);
+        }
+      };
+      utterance.onerror = () => {
+        stopRadio();
+      };
+
+      playRadioJingle();
+      stopRadioBeat();
+      window.setTimeout(() => {
+        if (radioPlayingRef.current) {
+          startRadioBeat();
+          setRadioBeatVolume(0.24, 0.18);
+          window.speechSynthesis.speak(utterance);
+        }
+      }, 2450);
+    };
+
+    speak();
+  }, [playRadioJingle, radioScript, setRadioBeatVolume, setRadioPlayingState, startRadioBeat, stopRadio, stopRadioBeat]);
+
+  useEffect(() => {
+    const keepRadioAlive = () => {
+      if (!radioPlayingRef.current) return;
+
+      backgroundAudioRef.current?.play().catch(() => {
+        // ブラウザ側で再開が拒否された場合は、次のユーザー操作で復帰する
+      });
+      startRadioBeat();
+      setRadioBeatVolume(0.24, 0.18);
+
+      if ('speechSynthesis' in window && window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
+      }
+    };
+
+    document.addEventListener('visibilitychange', keepRadioAlive);
+    window.addEventListener('focus', keepRadioAlive);
+    return () => {
+      document.removeEventListener('visibilitychange', keepRadioAlive);
+      window.removeEventListener('focus', keepRadioAlive);
+    };
+  }, [setRadioBeatVolume, startRadioBeat]);
+
+  useEffect(() => {
+    if (!('speechSynthesis' in window)) return;
+
+    const loadVoices = () => {
+      window.speechSynthesis.getVoices();
+    };
+
+    loadVoices();
+    window.speechSynthesis.addEventListener('voiceschanged', loadVoices);
+    return () => {
+      window.speechSynthesis.removeEventListener('voiceschanged', loadVoices);
+    };
+  }, []);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // ニュース取得用Effect
   useEffect(() => {
@@ -118,11 +750,12 @@ export default function SearchPage() {
           .from('news_summaries')
           .select('*')
           .order('created_at', { ascending: false })
-          .limit(1)
-          .single();
+          .limit(5);
 
-        if (error && error.code !== 'PGRST116') throw error; // PGRST116はデータなしエラー
-        if (data) setLatestNews(data);
+        if (error) throw error;
+        const newsItems = Array.isArray(data) ? data : [];
+        setRadioNews(newsItems);
+        setLatestNews(newsItems[0] || null);
       } catch (err) {
         console.error('Failed to fetch news:', err);
       } finally {
@@ -560,6 +1193,42 @@ export default function SearchPage() {
               )}
             </div>
           )}
+        </div>
+      </div>
+
+      {/* ベータラジオセクション */}
+      <div className="px-4 pb-6">
+        <div className="bg-black/[0.02] dark:bg-white/[0.03] rounded-2xl border border-black/[0.03] dark:border-white/[0.05] overflow-hidden">
+          <div className="px-4 py-3 border-b border-black/[0.03] dark:border-white/[0.05] flex items-center gap-2">
+            <Radio className="w-5 h-5 text-primary" />
+            <h2 className="font-extrabold text-xl">ラジオ</h2>
+          </div>
+
+          <div className="p-4 flex items-center justify-between gap-4">
+            <div className="min-w-0 flex flex-col gap-1">
+              <p className="text-[14px] text-[rgb(83,100,113)] dark:text-gray-400 leading-normal">
+                by LimeNote
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={isRadioPlaying ? stopRadio : playRadio}
+              className="shrink-0 inline-flex h-10 items-center gap-2 rounded-full bg-primary px-4 text-[14px] font-bold text-white hover:opacity-90 transition-opacity"
+            >
+              {isRadioPlaying ? (
+                <>
+                  <Square className="w-4 h-4" fill="currentColor" />
+                  停止
+                </>
+              ) : (
+                <>
+                  <Play className="w-4 h-4" fill="currentColor" />
+                  再生
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
     </div>
