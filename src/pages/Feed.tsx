@@ -3,41 +3,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { useQueryClient } from '@tanstack/react-query';
 import { PostComposer } from '@/components/feed/PostComposer';
-import { PostCard, preloadPostCardData } from '@/components/feed/PostCard';
+import { PostCard } from '@/components/feed/PostCard';
 import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
 import { useFeed } from '@/hooks/useFeed';
 import { useIsPWA } from '@/hooks/useIsPWA';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/lib/supabase';
-
-const scheduleIdleWork = (callback: () => void): number => {
-  if (typeof window === 'undefined') return 0;
-
-  const requestIdleCallback = (window as any).requestIdleCallback as
-    | ((cb: () => void, options?: { timeout?: number }) => number)
-    | undefined;
-
-  if (typeof requestIdleCallback === 'function') {
-    return requestIdleCallback(callback, { timeout: 900 });
-  }
-
-  return window.setTimeout(callback, 120);
-};
-
-const cancelIdleWork = (handle: number) => {
-  if (typeof window === 'undefined' || !handle) return;
-
-  const cancelIdleCallback = (window as any).cancelIdleCallback as
-    | ((id: number) => void)
-    | undefined;
-
-  if (typeof cancelIdleCallback === 'function') {
-    cancelIdleCallback(handle);
-    return;
-  }
-
-  window.clearTimeout(handle);
-};
+import { getPostById } from '@/api/posts';
+import type { PostWithAuthor } from '@/types';
 
 
 function getRelativeLuminance(r: number, g: number, b: number) {
@@ -84,6 +57,54 @@ type TimelineVisualDesignCache = {
   backgroundUrl: string | null;
   theme: 'light' | 'dark';
   themeSourceUrl: string | null;
+};
+
+type FeedTab = 'all' | 'following';
+type FeedPostInsertPayload = {
+  id?: string;
+  parent_id?: string | null;
+  is_quote?: boolean | null;
+};
+
+const ESTIMATED_POST_HEIGHT = 360;
+const VIRTUAL_OVERSCAN = 8;
+const MIN_VIRTUALIZED_POSTS = 30;
+
+const insertPostAtLocalFeedHead = (current: PostWithAuthor[], post: PostWithAuthor) => {
+  if (current.some((item) => item.id === post.id)) return current;
+  return [post, ...current].slice(0, 12);
+};
+
+const isTimelineRootPost = (post: FeedPostInsertPayload | null | undefined) => (
+  Boolean(post?.id) && !(Boolean(post?.parent_id) && post?.is_quote !== true)
+);
+
+const mergeRealtimePostsWithFetchedPosts = (
+  realtimePosts: PostWithAuthor[],
+  fetchedPosts: PostWithAuthor[]
+) => {
+  const fetchedPostIds = new Set(fetchedPosts.map((post) => post.id));
+  return [
+    ...realtimePosts.filter((post) => !fetchedPostIds.has(post.id)),
+    ...fetchedPosts,
+  ];
+};
+
+const fetchRealtimePostById = async (postId: string) => {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const post = await getPostById(postId).catch((error) => {
+      if (attempt === 2) {
+        console.error('Fetch realtime post failed:', error);
+      }
+      return null;
+    });
+
+    if (post) return post;
+
+    await new Promise((resolve) => window.setTimeout(resolve, 180 * (attempt + 1)));
+  }
+
+  return null;
 };
 
 // SPA内でホームから別ページへ移動して戻ってきた時だけ使う、Feed専用のメモリキャッシュ。
@@ -154,12 +175,25 @@ export default function Feed() {
   const isPWAMobile = isPWA && isMobile;
 
   const feedRootRef = useRef<HTMLDivElement>(null);
+  const postListRef = useRef<HTMLDivElement>(null);
   const touchStartYRef = useRef(0);
   const isPullingRef = useRef(false);
   const pullDistanceRef = useRef(0);
+  const realtimeHandledPostIdsRef = useRef<Set<string>>(new Set());
+  const currentUserIdRef = useRef<string | null>(null);
+  const followedUserIdsRef = useRef<Set<string>>(new Set());
   const [pullDistance, setPullDistance] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showRefreshDone, setShowRefreshDone] = useState(false);
+  const [virtualViewport, setVirtualViewport] = useState(() => ({
+    scrollY: typeof window === 'undefined' ? 0 : window.scrollY,
+    height: typeof window === 'undefined' ? 800 : window.innerHeight,
+    listTop: 0,
+  }));
+  const [realtimePostsByTab, setRealtimePostsByTab] = useState<Record<FeedTab, PostWithAuthor[]>>({
+    all: [],
+    following: [],
+  });
 
   const { 
     data, 
@@ -171,10 +205,93 @@ export default function Feed() {
   } = useFeed(activeTab);
 
   const { ref, inView } = useInView({
-    rootMargin: '900px 0px 1200px 0px',
+    rootMargin: '300px 0px 500px 0px',
   });
 
-  const allPosts = useMemo(() => data?.pages.flatMap((page) => page) ?? [], [data]);
+  const fetchedPosts = useMemo(() => data?.pages.flatMap((page) => page) ?? [], [data]);
+  const allPosts = useMemo(
+    () => mergeRealtimePostsWithFetchedPosts(realtimePostsByTab[activeTab], fetchedPosts),
+    [activeTab, fetchedPosts, realtimePostsByTab]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadFollowingState = async () => {
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError) {
+        console.error('Fetch current user for realtime feed failed:', authError);
+        return;
+      }
+
+      const currentUserId = authData.user?.id ?? null;
+      currentUserIdRef.current = currentUserId;
+      followedUserIdsRef.current = new Set();
+
+      if (!currentUserId) return;
+
+      const { data: follows, error } = await supabase
+        .from('follows')
+        .select('following_id')
+        .eq('follower_id', currentUserId);
+
+      if (cancelled) return;
+
+      if (error) {
+        console.error('Fetch following users for realtime feed failed:', error);
+        followedUserIdsRef.current = new Set();
+        return;
+      }
+
+      followedUserIdsRef.current = new Set(
+        (follows ?? [])
+          .map((follow) => follow.following_id)
+          .filter((id): id is string => Boolean(id))
+      );
+    };
+
+    loadFollowingState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const addPostToTab = useCallback((targetTab: FeedTab, post: PostWithAuthor) => {
+    setRealtimePostsByTab((current) => ({
+      ...current,
+      [targetTab]: insertPostAtLocalFeedHead(current[targetTab], post),
+    }));
+  }, []);
+
+  const showIncomingPostInAllVisibleFeeds = useCallback(async (postId: string) => {
+    const handledPostKey = `incoming:${postId}`;
+    if (realtimeHandledPostIdsRef.current.has(handledPostKey)) return;
+    realtimeHandledPostIdsRef.current.add(handledPostKey);
+
+    if (realtimeHandledPostIdsRef.current.size > 60) {
+      const oldestPostKey = realtimeHandledPostIdsRef.current.values().next().value as string | undefined;
+      if (oldestPostKey) realtimeHandledPostIdsRef.current.delete(oldestPostKey);
+    }
+
+    const post = await fetchRealtimePostById(postId);
+
+    if (!post) {
+      realtimeHandledPostIdsRef.current.delete(handledPostKey);
+      return;
+    }
+
+    addPostToTab('all', post);
+
+    const currentUserId = currentUserIdRef.current;
+    const shouldShowInFollowing =
+      Boolean(currentUserId && post.author.id === currentUserId) ||
+      followedUserIdsRef.current.has(post.author.id);
+
+    if (shouldShowInFollowing) {
+      addPostToTab('following', post);
+    }
+  }, [addPostToTab]);
 
   useEffect(() => {
     const cachedDesign = readCachedTimelineDesignForReturnNavigation();
@@ -653,24 +770,82 @@ export default function Feed() {
   }, [isPWAMobile, isRefreshing, queryClient]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const channel = supabase
+      .channel('feed-new-posts')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'posts' },
+        async (payload) => {
+          const insertedPost = payload.new as FeedPostInsertPayload | null;
+          const postId = insertedPost?.id;
+
+          if (!postId || !isTimelineRootPost(insertedPost)) return;
+          if (cancelled) return;
+          await showIncomingPostInAllVisibleFeeds(postId);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
+  }, [showIncomingPostInAllVisibleFeeds]);
+
+  useEffect(() => {
     if (inView && hasNextPage && !isFetchingNextPage) {
       fetchNextPage();
     }
   }, [inView, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   useEffect(() => {
-    if (allPosts.length === 0) return;
+    let frame: number | null = null;
 
-    const handle = scheduleIdleWork(() => {
-      // 画像やiframeの先読みはメモリを大きく使うため行わない。
-      // ここでは画面上部付近の軽いリアクション情報だけを温める。
-      preloadPostCardData(allPosts.slice(0, isMobile ? 3 : 4));
-    });
+    const updateVirtualViewport = () => {
+      frame = null;
+      const listTop = postListRef.current
+        ? postListRef.current.getBoundingClientRect().top + window.scrollY
+        : 0;
+
+      setVirtualViewport((current) => {
+        const next = {
+          scrollY: window.scrollY,
+          height: window.innerHeight,
+          listTop,
+        };
+
+        if (
+          Math.abs(current.scrollY - next.scrollY) < 24 &&
+          current.height === next.height &&
+          Math.abs(current.listTop - next.listTop) < 8
+        ) {
+          return current;
+        }
+
+        return next;
+      });
+    };
+
+    const scheduleUpdate = () => {
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(updateVirtualViewport);
+    };
+
+    scheduleUpdate();
+    window.addEventListener('scroll', scheduleUpdate, { passive: true });
+    window.addEventListener('resize', scheduleUpdate);
 
     return () => {
-      cancelIdleWork(handle);
+      if (frame !== null) {
+        window.cancelAnimationFrame(frame);
+      }
+
+      window.removeEventListener('scroll', scheduleUpdate);
+      window.removeEventListener('resize', scheduleUpdate);
     };
-  }, [allPosts, isMobile]);
+  }, []);
 
   const restoreScrollPositionAfterControlInteraction = useCallback((scrollY: number) => {
     const restore = () => {
@@ -694,13 +869,40 @@ export default function Feed() {
 
   const canReleaseToRefresh = pullDistance >= 58;
   const hasTimelineBackground = Boolean(timelineBackgroundUrl);
+  const shouldVirtualizePosts = allPosts.length > MIN_VIRTUALIZED_POSTS;
+  const virtualRange = useMemo(() => {
+    if (!shouldVirtualizePosts) {
+      return {
+        start: 0,
+        end: allPosts.length,
+        topSpacer: 0,
+        bottomSpacer: 0,
+      };
+    }
+
+    const viewportTop = Math.max(0, virtualViewport.scrollY - virtualViewport.listTop);
+    const viewportBottom = viewportTop + virtualViewport.height;
+    const start = Math.max(0, Math.floor(viewportTop / ESTIMATED_POST_HEIGHT) - VIRTUAL_OVERSCAN);
+    const end = Math.min(
+      allPosts.length,
+      Math.ceil(viewportBottom / ESTIMATED_POST_HEIGHT) + VIRTUAL_OVERSCAN
+    );
+
+    return {
+      start,
+      end,
+      topSpacer: start * ESTIMATED_POST_HEIGHT,
+      bottomSpacer: Math.max(0, (allPosts.length - end) * ESTIMATED_POST_HEIGHT),
+    };
+  }, [allPosts.length, shouldVirtualizePosts, virtualViewport.height, virtualViewport.listTop, virtualViewport.scrollY]);
+
   const renderedPosts = useMemo(
-    () => allPosts.map((post) => (
+    () => allPosts.slice(virtualRange.start, virtualRange.end).map((post) => (
       <div key={`${activeTab}-${post.id}`} className="animate-float-up">
         <PostCard post={post} timelineGlass={hasTimelineBackground} />
       </div>
     )),
-    [activeTab, allPosts, hasTimelineBackground]
+    [activeTab, allPosts, hasTimelineBackground, virtualRange.end, virtualRange.start]
   );
 
   return (
@@ -973,7 +1175,10 @@ export default function Feed() {
         </div>
       </div>
 
-      <div className={hasTimelineBackground ? "relative z-[1] space-y-0 pt-2 sm:space-y-4" : "relative z-[1] space-y-4 pt-2"}>
+      <div
+        ref={postListRef}
+        className={hasTimelineBackground ? "relative z-[1] space-y-0 pt-2 sm:space-y-4" : "relative z-[1] space-y-4 pt-2"}
+      >
         {isLoading && (
           <div className="space-y-4">
             <PostCardSkeleton />
@@ -993,7 +1198,15 @@ export default function Feed() {
           </div>
         )}
 
+        {virtualRange.topSpacer > 0 && (
+          <div style={{ height: `${virtualRange.topSpacer}px` }} aria-hidden="true" />
+        )}
+
         {renderedPosts}
+
+        {virtualRange.bottomSpacer > 0 && (
+          <div style={{ height: `${virtualRange.bottomSpacer}px` }} aria-hidden="true" />
+        )}
 
         <div ref={ref} className="py-10 flex justify-center">
           {isFetchingNextPage ? (

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { Heart } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
@@ -13,8 +13,22 @@ const formatDisplayCount = (count: number = 0) => {
 };
 
 const TABLE_CONFIG = {
-  post: { table: 'likes', idCol: 'post_id', queryKey: 'posts' },
-  comment: { table: 'comment_likes', idCol: 'comment_id', queryKey: 'comments' },
+  post: {
+    table: 'likes',
+    idCol: 'post_id',
+    queryKey: 'posts',
+    targetTable: 'posts',
+    targetIdCol: 'id',
+    countCol: 'likes_count',
+  },
+  comment: {
+    table: 'comment_likes',
+    idCol: 'comment_id',
+    queryKey: 'comments',
+    targetTable: 'comments',
+    targetIdCol: 'id',
+    countCol: 'likes_count',
+  },
 } as const;
 
 const TWITTER_LIKE_STYLE_ID = 'twitter-like-button-styles';
@@ -132,7 +146,7 @@ const TWITTER_LIKE_STYLES = `
 }
 
 .twitter-like-heart.is-animating {
-  animation: twitterLikeHeart 0.25s 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+  animation: twitterLikeHeart 0.38s 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
   transform-origin: center;
 }
 
@@ -187,9 +201,15 @@ const TWITTER_LIKE_STYLES = `
 
 @keyframes twitterLikeHeart {
   from {
-    transform: scale(0.2);
+    opacity: 0;
+    transform: scale(0);
+  }
+  45% {
+    opacity: 1;
+    transform: scale(1.18);
   }
   to {
+    opacity: 1;
     transform: scale(1);
   }
 }
@@ -231,6 +251,16 @@ const TWITTER_LIKE_STYLES = `
 }
 `;
 
+const ensureTwitterLikeStyles = () => {
+  if (typeof document === 'undefined') return;
+  if (document.getElementById(TWITTER_LIKE_STYLE_ID)) return;
+
+  const style = document.createElement('style');
+  style.id = TWITTER_LIKE_STYLE_ID;
+  style.textContent = TWITTER_LIKE_STYLES;
+  document.head.appendChild(style);
+};
+
 export function LikeButton({
   postId,
   liked,
@@ -261,19 +291,16 @@ export function LikeButton({
   const animationTimerRef = useRef<number | null>(null);
   const countTimerRef = useRef<number | null>(null);
   const lastTargetRef = useRef({ postId, type });
+  const channelIdRef = useRef(Math.random().toString(36).slice(2));
+  const broadcastChannelRef = useRef<any>(null);
   const hasLocalStateRef = useRef(false);
+  const lastLocalActionAtRef = useRef(0);
 
   // 最新の状態を常に保持するためのRef
   const stateRef = useRef({ liked, count: Number(count) || 0 });
 
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-    if (document.getElementById(TWITTER_LIKE_STYLE_ID)) return;
-
-    const style = document.createElement('style');
-    style.id = TWITTER_LIKE_STYLE_ID;
-    style.textContent = TWITTER_LIKE_STYLES;
-    document.head.appendChild(style);
+  useLayoutEffect(() => {
+    ensureTwitterLikeStyles();
   }, []);
 
   useEffect(() => {
@@ -295,27 +322,6 @@ export function LikeButton({
       if (countTimerRef.current !== null) window.clearTimeout(countTimerRef.current);
     };
   }, []);
-
-  // クリックまたは初期DB確認の前だけPropsと同期する。
-  useEffect(() => {
-    const targetChanged =
-      lastTargetRef.current.postId !== postId || lastTargetRef.current.type !== type;
-
-    if (targetChanged) {
-      lastTargetRef.current = { postId, type };
-      hasLocalStateRef.current = false;
-    }
-
-    if (targetChanged || !hasLocalStateRef.current) {
-      const safeCount = Number(count) || 0;
-      setDisplayLiked(liked);
-      setDisplayCount(safeCount);
-      setPreviousDisplayCount(safeCount);
-      setIsCountAnimating(false);
-      stateRef.current.liked = liked;
-      stateRef.current.count = safeCount;
-    }
-  }, [postId, type, liked, count]);
 
   // props の liked が false のまま来るケースに備えて、表示初期化時だけDB上の実状態を反映する。
   useEffect(() => {
@@ -369,9 +375,137 @@ export function LikeButton({
     }, 320);
   }, []);
 
+  // 初期表示と、親から届いた最新件数を表示へ反映する。
+  useEffect(() => {
+    const targetChanged =
+      lastTargetRef.current.postId !== postId || lastTargetRef.current.type !== type;
+    const safeCount = Number(count) || 0;
+
+    if (targetChanged) {
+      lastTargetRef.current = { postId, type };
+      hasLocalStateRef.current = false;
+      lastLocalActionAtRef.current = 0;
+    }
+
+    if (targetChanged || !hasLocalStateRef.current) {
+      setDisplayLiked(liked);
+      setDisplayCount(safeCount);
+      setPreviousDisplayCount(safeCount);
+      setIsCountAnimating(false);
+      stateRef.current.liked = liked;
+      stateRef.current.count = safeCount;
+      return;
+    }
+
+    const recentlyClicked = Date.now() - lastLocalActionAtRef.current < 1200;
+    if (!recentlyClicked && safeCount !== stateRef.current.count) {
+      const currentCount = stateRef.current.count;
+      stateRef.current.count = safeCount;
+      animateCount(currentCount, safeCount);
+    }
+  }, [animateCount, postId, type, liked, count]);
+
+  const applyLatestCount = useCallback((latestCount: number) => {
+    if (!Number.isFinite(latestCount)) return;
+
+    const safeLatestCount = Math.max(0, Math.trunc(latestCount));
+    const currentCount = stateRef.current.count;
+    if (safeLatestCount === currentCount) return;
+
+    stateRef.current.count = safeLatestCount;
+    hasLocalStateRef.current = true;
+    animateCount(currentCount, safeLatestCount);
+  }, [animateCount]);
+
+  const syncLatestCount = useCallback(async () => {
+    const config = TABLE_CONFIG[type];
+    const { count: latestCount, error } = await supabase
+      .from(config.table)
+      .select(config.idCol, { count: 'exact', head: true })
+      .eq(config.idCol, postId);
+
+    if (error) {
+      console.error('Sync like count failed:', error);
+      return null;
+    }
+
+    if (typeof latestCount !== 'number') return null;
+    applyLatestCount(latestCount);
+    return latestCount;
+  }, [applyLatestCount, postId, type]);
+
+  useEffect(() => {
+    const config = TABLE_CONFIG[type];
+    const channelSuffix = `${type}-${postId}-${channelIdRef.current}`;
+    const broadcastChannel = supabase
+      .channel(`like-count-broadcast-${type}-${postId}`)
+      .on(
+        'broadcast',
+        { event: 'count-changed' },
+        ({ payload }: any) => {
+          if (payload?.origin === channelIdRef.current) return;
+
+          const latestCount = Number(payload?.count);
+          if (Number.isFinite(latestCount)) {
+            applyLatestCount(latestCount);
+          }
+        }
+      )
+      .subscribe();
+
+    broadcastChannelRef.current = broadcastChannel;
+
+    const likeRowsChannel = supabase
+      .channel(`like-count-rows-${channelSuffix}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: config.table,
+          filter: `${config.idCol}=eq.${postId}`,
+        },
+        () => {
+          void syncLatestCount();
+        }
+      )
+      .subscribe();
+
+    const countColumnChannel = supabase
+      .channel(`like-count-target-${channelSuffix}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: config.targetTable,
+          filter: `${config.targetIdCol}=eq.${postId}`,
+        },
+        (payload: any) => {
+          const latestCount = Number(payload.new?.[config.countCol]);
+
+          if (Number.isFinite(latestCount)) {
+            applyLatestCount(latestCount);
+            return;
+          }
+
+          void syncLatestCount();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      broadcastChannelRef.current = null;
+      void supabase.removeChannel(broadcastChannel);
+      void supabase.removeChannel(likeRowsChannel);
+      void supabase.removeChannel(countColumnChannel);
+    };
+  }, [applyLatestCount, postId, syncLatestCount, type]);
+
   const handleClick = useCallback(async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.preventDefault();
     e.stopPropagation();
+    ensureTwitterLikeStyles();
 
     const wasLiked = stateRef.current.liked;
     const wasCount = stateRef.current.count;
@@ -381,6 +515,7 @@ export function LikeButton({
     stateRef.current.liked = willBeLiked;
     stateRef.current.count = nextCount;
     hasLocalStateRef.current = true;
+    lastLocalActionAtRef.current = Date.now();
 
     setDisplayLiked(willBeLiked);
     animateCount(wasCount, nextCount);
@@ -430,6 +565,19 @@ export function LikeButton({
       }
 
       // DB反映を待つ
+      const latestCount = await syncLatestCount();
+
+      if (typeof latestCount === 'number') {
+        await broadcastChannelRef.current?.send({
+          type: 'broadcast',
+          event: 'count-changed',
+          payload: {
+            count: latestCount,
+            origin: channelIdRef.current,
+          },
+        });
+      }
+
       await queryClient.invalidateQueries({ queryKey: [config.queryKey] });
     } catch (err: any) {
       console.error('Like action failed:', err);
@@ -440,7 +588,7 @@ export function LikeButton({
       animateCount(nextCount, wasCount);
       setIsAnimating(false);
     }
-  }, [animateCount, postId, queryClient, type]);
+  }, [animateCount, postId, queryClient, syncLatestCount, type]);
 
   return (
     <button

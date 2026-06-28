@@ -74,6 +74,8 @@ interface ReplicatedDot {
   delay: number;
 }
 
+type ProfileHoverTarget = 'avatar' | 'name' | null;
+
 const formatDisplayCount = (count: number) => {
   if (count >= 10000) {
     return (count / 10000).toFixed(1).replace(/\.0$/, '') + '万';
@@ -363,6 +365,9 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
   const cardRootRef = useRef<HTMLElement>(null);
   const isMobileRef = useRef(false);
   const resizeRafRef = useRef<number | null>(null);
+  const [profileHoverTarget, setProfileHoverTarget] = useState<ProfileHoverTarget>(null);
+  const profileHoverOpenTimerRef = useRef<number | null>(null);
+  const profileHoverCloseTimerRef = useRef<number | null>(null);
 
   const buttonRef = useRef<HTMLButtonElement>(null);
   const pickerPanelRef = useRef<HTMLDivElement>(null);
@@ -396,12 +401,59 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
     ignoreNextCardClickRef.current || Date.now() < ignoreCardClickUntilRef.current
   );
 
+  const clearProfileHoverOpenTimer = () => {
+    if (profileHoverOpenTimerRef.current === null) return;
+
+    window.clearTimeout(profileHoverOpenTimerRef.current);
+    profileHoverOpenTimerRef.current = null;
+  };
+
+  const clearProfileHoverCloseTimer = () => {
+    if (profileHoverCloseTimerRef.current === null) return;
+
+    window.clearTimeout(profileHoverCloseTimerRef.current);
+    profileHoverCloseTimerRef.current = null;
+  };
+
+  const openProfileHover = (target: Exclude<ProfileHoverTarget, null>) => {
+    if (isMobileRef.current) return;
+
+    clearProfileHoverCloseTimer();
+    clearProfileHoverOpenTimer();
+
+    profileHoverOpenTimerRef.current = window.setTimeout(() => {
+      setProfileHoverTarget(target);
+      profileHoverOpenTimerRef.current = null;
+    }, 300);
+  };
+
+  const keepProfileHoverOpen = () => {
+    clearProfileHoverCloseTimer();
+  };
+
+  const closeProfileHover = () => {
+    clearProfileHoverOpenTimer();
+    clearProfileHoverCloseTimer();
+
+    profileHoverCloseTimerRef.current = window.setTimeout(() => {
+      setProfileHoverTarget(null);
+      profileHoverCloseTimerRef.current = null;
+    }, 120);
+  };
+
   const handleCardClickCapture = (e: React.MouseEvent<HTMLElement>) => {
     if (!shouldSuppressCardNavigation()) return;
 
     e.preventDefault();
     e.stopPropagation();
   };
+
+  useEffect(() => (
+    () => {
+      clearProfileHoverOpenTimer();
+      clearProfileHoverCloseTimer();
+    }
+  ), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1415,6 +1467,9 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
       side="bottom" 
       align="start" 
       className="w-[280px] rounded-[20px] border border-border/60 bg-card p-4 shadow-xl animate-in fade-in zoom-in duration-200 overflow-hidden"
+      onClick={(event) => event.stopPropagation()}
+      onMouseEnter={keepProfileHoverOpen}
+      onMouseLeave={closeProfileHover}
     >
       <div className="flex justify-between items-start mb-3">
         <Avatar className="h-14 w-14 border border-primary/5">
@@ -1807,21 +1862,21 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
               ? "relative mx-auto w-full max-w-[600px] px-0 py-3 cursor-pointer"
               : "rounded-3xl border border-border/60 bg-card p-5 shadow-soft transition hover:shadow-card-soft relative cursor-pointer"
         }
-        style={{
-          contentVisibility: showMenu || showPicker || showShareMenu || showLimeDropPanel || selectedImageUrl ? 'visible' : 'auto',
-          containIntrinsicSize: isMobile ? '0 340px' : '0 380px',
-        } as React.CSSProperties}
       >
         {isMobile && !timelineGlass && (
           <div className="pointer-events-none absolute bottom-0 left-1/2 w-screen -translate-x-1/2 border-b border-border/60" />
         )}
 
         <div className="flex items-start gap-3">
-          <HoverCard openDelay={300}>
+          <HoverCard open={profileHoverTarget === 'avatar'} openDelay={300}>
             <HoverCardTrigger asChild>
               <Link 
                 to={`/u/${post.author.username}`} 
-                className="shrink-0"
+                className="inline-flex h-11 w-11 shrink-0 items-center justify-center"
+                onMouseEnter={() => openProfileHover('avatar')}
+                onMouseLeave={closeProfileHover}
+                onFocus={() => openProfileHover('avatar')}
+                onBlur={closeProfileHover}
                 onClick={(e) => e.stopPropagation()}
               >
                 <Avatar className={isMobile ? "h-11 w-11 border-2 border-primary/30" : "h-11 w-11 border-2 border-primary/30"}>
@@ -1835,15 +1890,19 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
 
           <div className="min-w-0 flex-1">
             <div className="flex items-center justify-between mb-1">
-              <div className="flex items-center overflow-hidden w-full min-w-0">
-                <HoverCard openDelay={300}>
+              <div className="flex items-center w-full min-w-0">
+                <HoverCard open={profileHoverTarget === 'name'} openDelay={300}>
                   <HoverCardTrigger asChild>
                     <Link 
                       to={`/u/${post.author.username}`} 
-                      className="flex items-center min-w-0 shrink font-display font-bold text-foreground hover:underline"
+                      className="inline-flex w-fit max-w-full shrink-0 items-center font-display font-bold text-foreground hover:underline"
+                      onMouseEnter={() => openProfileHover('name')}
+                      onMouseLeave={closeProfileHover}
+                      onFocus={() => openProfileHover('name')}
+                      onBlur={closeProfileHover}
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <div className="flex items-center gap-0.5 min-w-0">
+                      <div className="inline-flex w-fit max-w-full items-center gap-0.5">
                         <span className={isMobile ? "truncate text-[16px]" : "truncate text-base"}>
                           {post.author.displayName}
                         </span>
