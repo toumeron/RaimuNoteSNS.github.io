@@ -39,9 +39,10 @@ const PROFILE_REPLY_ITEM = 'profile-reply';
 const PROFILE_POST_ITEM = 'profile-post';
 const PROFILE_REPLY_LIMIT = 80;
 
-const normalizePostVisibility = (visibility: unknown) => (
-  typeof visibility === 'string' ? visibility.trim().toLowerCase() : ''
-);
+const normalizePostVisibility = (visibility: unknown) => {
+  const normalized = typeof visibility === 'string' ? visibility.trim().toLowerCase() : '';
+  return normalized || 'public';
+};
 
 const getPostOwnerId = (post: any) => (
   post?.user_id ?? post?.userId ?? post?.author?.id ?? post?.profiles?.id ?? post?.user?.id ?? ''
@@ -50,9 +51,11 @@ const getPostOwnerId = (post: any) => (
 const canShowParentPostInsideProfileReplies = ({
   post,
   currentUserId,
+  visibleLimitedParentAuthorIds = new Set<string>(),
 }: {
   post: any;
   currentUserId: string | null;
+  visibleLimitedParentAuthorIds?: Set<string>;
 }) => {
   if (!post?.id) return false;
 
@@ -61,9 +64,8 @@ const canShowParentPostInsideProfileReplies = ({
 
   if (visibility === 'public') return true;
 
-  // プロフィールの返信欄は公開プロフィール面なので、親投稿が非公開/限定公開なら通常は出さない。
-  // 例外は、その親投稿の作者本人が見ている場合だけ。
-  if (currentUserId && authorId && authorId === currentUserId) return true;
+  // プロフィールの返信欄では、非公開/限定公開の親投稿は投稿者が閲覧者をフォローしている場合だけ出す。
+  if (currentUserId && authorId && visibleLimitedParentAuthorIds.has(authorId)) return true;
 
   return false;
 };
@@ -2189,8 +2191,35 @@ export default function Profile() {
             .map((post: any) => [post.id, post])
         );
 
+        let visibleLimitedParentAuthorIds = new Set<string>();
+        const limitedParentAuthorIds = uniqueStrings(
+          parentMetadataRows
+            .filter((post: any) => normalizePostVisibility(post?.visibility) !== 'public')
+            .map((post: any) => getPostOwnerId(post))
+            .filter((authorId: string) => Boolean(authorId))
+        );
+
+        if (currentUserId && limitedParentAuthorIds.length > 0) {
+          const { data: followRows, error: followError } = await supabase
+            .from('follows')
+            .select('follower_id')
+            .eq('followee_id', currentUserId)
+            .in('follower_id', limitedParentAuthorIds);
+
+          if (followError) throw followError;
+          visibleLimitedParentAuthorIds = new Set(
+            (followRows || [])
+              .map((row: any) => row.follower_id)
+              .filter(Boolean)
+          );
+        }
+
         const visibleParentIds = parentMetadataRows
-          .filter((post: any) => canShowParentPostInsideProfileReplies({ post, currentUserId }))
+          .filter((post: any) => canShowParentPostInsideProfileReplies({
+            post,
+            currentUserId,
+            visibleLimitedParentAuthorIds,
+          }))
           .map((post: any) => post.id)
           .filter(Boolean);
         const visibleParentIdSet = new Set(visibleParentIds);
@@ -2224,7 +2253,11 @@ export default function Profile() {
           if (postsError) throw postsError;
           parentPosts = (posts || []).filter((post: any) => {
             const metadata = parentMetadataMap.get(post?.id);
-            return Boolean(metadata && canShowParentPostInsideProfileReplies({ post: metadata, currentUserId }));
+            return Boolean(metadata && canShowParentPostInsideProfileReplies({
+              post: metadata,
+              currentUserId,
+              visibleLimitedParentAuthorIds,
+            }));
           });
         }
 
@@ -2766,7 +2799,8 @@ export default function Profile() {
             height: 100%;
           }
 
-          .profile-thread-actions svg {
+          .profile-thread-actions button > svg,
+          .profile-thread-actions button > span > svg:not(.twitter-like-effects) {
             width: 1.25rem;
             height: 1.25rem;
           }
@@ -2778,7 +2812,7 @@ export default function Profile() {
             font-size: 13px;
           }
 
-          .profile-thread-actions .profile-thread-comment-like-slot button span {
+          .profile-thread-actions .profile-thread-comment-like-slot button > span:last-child {
             font-size: 15px;
             line-height: 1;
           }
@@ -2789,7 +2823,7 @@ export default function Profile() {
               font-size: 0.875rem;
             }
 
-            .profile-thread-actions .profile-thread-comment-like-slot button span {
+            .profile-thread-actions .profile-thread-comment-like-slot button > span:last-child {
               font-size: 0.875rem;
             }
           }
