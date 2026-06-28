@@ -64,7 +64,8 @@ const canShowParentPostInsideProfileReplies = ({
 
   if (visibility === 'public') return true;
 
-  // プロフィールの返信欄では、非公開/限定公開の親投稿は投稿者が閲覧者をフォローしている場合だけ出す。
+  // プロフィールの返信欄では、非公開/限定公開の親投稿は投稿者本人か、投稿者が閲覧者をフォローしている場合だけ出す。
+  if (currentUserId && authorId && authorId === currentUserId) return true;
   if (currentUserId && authorId && visibleLimitedParentAuthorIds.has(authorId)) return true;
 
   return false;
