@@ -145,6 +145,7 @@ export const Header = () => {
   const timelineChrome = useTimelineChrome(location.pathname);
 
   const isSearchPage = normalizeAppPath(location.pathname) === '/u/LimeBiz';
+  const isChatPage = normalizeAppPath(location.pathname) === '/chat';
   const hideHeaderOnMobileProfile = isGithubPagesProfilePath(location.pathname);
   const useTimelineChromeDesign = timelineChrome.enabled;
   const isTimelineDark = timelineChrome.theme === 'dark';
@@ -199,8 +200,11 @@ export const Header = () => {
     <header
       data-lime-app-header="true"
       data-lime-mobile-profile-header-hidden={hideHeaderOnMobileProfile ? 'true' : undefined}
+      data-lime-chat-header-hidden-mobile={isChatPage ? 'true' : undefined}
       className={cn(
-        'sticky top-0 z-[500] border-b backdrop-blur-md',
+        isChatPage
+          ? 'fixed left-0 right-0 top-0 z-[500] border-b backdrop-blur-md'
+          : 'sticky top-0 z-[500] border-b backdrop-blur-md',
         useTimelineChromeDesign
           ? isTimelineDark
             ? 'border-white/[0.06] bg-[#090b10]/78 text-white supports-[backdrop-filter]:bg-[#090b10]/70 backdrop-blur-2xl'
@@ -221,6 +225,16 @@ export const Header = () => {
 
           .notice-scroll:hover {
             animation-play-state: paused;
+          }
+
+          @media (max-width: 767px) {
+            header[data-lime-app-header="true"][data-lime-chat-header-hidden-mobile="true"] {
+              display: none !important;
+              height: 0 !important;
+              min-height: 0 !important;
+              border: 0 !important;
+              overflow: hidden !important;
+            }
           }
 
           @media (max-width: 639px) {

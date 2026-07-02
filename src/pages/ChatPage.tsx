@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
+import { formatRelative } from '@/lib/format'
 import { useAuth } from "@/hooks/useAuth"
 import { 
   Plus, 
@@ -17,15 +18,442 @@ import {
   VolumeX,
   Share,
   ChevronDown,
-  Check
+  Check,
+  Link as LinkIcon,
+  X
 } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { toast } from 'sonner'
+
+type ReferencedPost = {
+  id: string
+  authorUsername: string
+  authorDisplayName: string
+  authorIsOfficial: boolean
+  createdAt: string
+  contentSnippet: string
+  likesCount: number
+  repostsCount: number
+  commentsCount: number
+  imageCount: number
+  isQuote: boolean
+  isReply: boolean
+  isBot: boolean
+  clientName: string | null
+  sourceTwitter: boolean
+  prefecture: string | null
+  city: string | null
+}
+
+type CodingArtifact = {
+  title: string
+  language: 'html'
+  html: string
+}
+
+type PostLinkPreview = {
+  id: string
+  sourceUrl: string
+  authorUsername: string
+  authorDisplayName: string
+  authorAvatarUrl: string | null
+  authorIsOfficial: boolean
+  createdAt: string
+  content: string
+  imageUrls: string[]
+  likesCount: number
+  repostsCount: number
+  commentsCount: number
+  visibility: 'public' | 'following' | string
+}
 
 type Message = {
   id: string
   role: 'user' | 'assistant'
   content: string
+  references?: ReferencedPost[]
+  codingArtifact?: CodingArtifact
+  postPreview?: PostLinkPreview
+}
+
+const getRecordString = (item: Record<string, unknown>, camelKey: string, snakeKey: string) => {
+  const camelValue = item[camelKey]
+  const snakeValue = item[snakeKey]
+
+  if (typeof camelValue === 'string') return camelValue
+  if (typeof snakeValue === 'string') return snakeValue
+
+  return ''
+}
+
+const getRecordBoolean = (item: Record<string, unknown>, camelKey: string, snakeKey: string) => {
+  const camelValue = item[camelKey]
+  const snakeValue = item[snakeKey]
+
+  if (typeof camelValue === 'boolean') return camelValue
+  if (typeof snakeValue === 'boolean') return snakeValue
+
+  return false
+}
+
+const getRecordNumber = (item: Record<string, unknown>, camelKey: string, snakeKey: string) => {
+  const camelValue = item[camelKey]
+  const snakeValue = item[snakeKey]
+  const value = camelValue ?? snakeValue
+
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Number(value)
+
+    if (Number.isFinite(parsed)) return parsed
+  }
+
+  return 0
+}
+
+const getRecordNullableString = (item: Record<string, unknown>, camelKey: string, snakeKey: string) => {
+  const camelValue = item[camelKey]
+  const snakeValue = item[snakeKey]
+
+  if (typeof camelValue === 'string') return camelValue
+  if (typeof snakeValue === 'string') return snakeValue
+
+  return null
+}
+
+const normalizeReferencedPost = (value: unknown): ReferencedPost | null => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+
+  const item = value as Record<string, unknown>
+
+  const id = getRecordString(item, 'id', 'id')
+  const authorUsername = getRecordString(item, 'authorUsername', 'author_username')
+  const authorDisplayName = getRecordString(item, 'authorDisplayName', 'author_display_name')
+  const createdAt = getRecordString(item, 'createdAt', 'created_at')
+  const contentSnippet = getRecordString(item, 'contentSnippet', 'content_snippet')
+
+  if (!id || !createdAt || !contentSnippet) return null
+
+  return {
+    id,
+    authorUsername: authorUsername || 'unknown',
+    authorDisplayName: authorDisplayName || '無名',
+    authorIsOfficial: getRecordBoolean(item, 'authorIsOfficial', 'author_is_official'),
+    createdAt,
+    contentSnippet,
+    likesCount: getRecordNumber(item, 'likesCount', 'likes_count'),
+    repostsCount: getRecordNumber(item, 'repostsCount', 'reposts_count'),
+    commentsCount: getRecordNumber(item, 'commentsCount', 'comments_count'),
+    imageCount: getRecordNumber(item, 'imageCount', 'image_count'),
+    isQuote: getRecordBoolean(item, 'isQuote', 'is_quote'),
+    isReply: getRecordBoolean(item, 'isReply', 'is_reply'),
+    isBot: getRecordBoolean(item, 'isBot', 'is_bot'),
+    clientName: getRecordNullableString(item, 'clientName', 'client_name'),
+    sourceTwitter: getRecordBoolean(item, 'sourceTwitter', 'source_twitter'),
+    prefecture: getRecordNullableString(item, 'prefecture', 'prefecture'),
+    city: getRecordNullableString(item, 'city', 'city'),
+  }
+}
+
+const normalizeReferencedPosts = (value: unknown) => {
+  if (!Array.isArray(value)) return []
+
+  return value
+    .map(normalizeReferencedPost)
+    .filter((post): post is ReferencedPost => post !== null)
+}
+
+const formatReferencedPostDate = (value: string) => {
+  const date = new Date(value)
+
+  if (Number.isNaN(date.getTime())) return value
+
+  return date.toLocaleString('ja-JP', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+
+const normalizeCodingArtifact = (value: unknown): CodingArtifact | null => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+
+  const item = value as Record<string, unknown>
+  const title = typeof item.title === 'string' && item.title.trim() ? item.title.trim() : 'HTMLプレビュー'
+  const language = item.language === 'html' ? 'html' : 'html'
+  const html = typeof item.html === 'string' ? item.html : ''
+
+  if (!html.trim()) return null
+
+  return {
+    title,
+    language,
+    html,
+  }
+}
+
+const POST_LINK_URL_REGEX = /https?:\/\/[^\s]+/gi
+const POST_ID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+const normalizeStringArray = (value: unknown) => {
+  if (!Array.isArray(value)) return []
+
+  return value.filter((item): item is string => typeof item === 'string' && item.trim() !== '')
+}
+
+const extractSupportedPostLink = (text: string) => {
+  const urls = text.match(POST_LINK_URL_REGEX) ?? []
+
+  for (const rawUrl of urls) {
+    const cleanedUrl = rawUrl.replace(/[)\]}>。、，．！？!?]+$/g, '')
+
+    try {
+      const url = new URL(cleanedUrl)
+      const isSupportedHost =
+        url.hostname === 'localhost' ||
+        url.hostname === '127.0.0.1' ||
+        url.hostname === 'toumeron.github.io'
+
+      if (!isSupportedHost) continue
+
+      const path = url.pathname.replace(/\/+/g, '/').replace(/\/$/, '')
+      const match = path.match(/(?:^|\/)RaimuNoteSNS\.github\.io\/post\/([0-9a-fA-F-]{36})$|(?:^|\/)post\/([0-9a-fA-F-]{36})$/)
+      const postId = match?.[1] || match?.[2] || ''
+
+      if (!POST_ID_REGEX.test(postId)) continue
+
+      return {
+        id: postId,
+        url: url.toString(),
+      }
+    } catch (_error) {
+      // URLではない文字列は無視する
+    }
+  }
+
+  return null
+}
+
+const normalizePostLinkPreview = (value: unknown): PostLinkPreview | null => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+
+  const item = value as Record<string, unknown>
+  const id = getRecordString(item, 'id', 'id')
+  const sourceUrl = getRecordString(item, 'sourceUrl', 'source_url')
+  const authorUsername = getRecordString(item, 'authorUsername', 'author_username')
+  const authorDisplayName = getRecordString(item, 'authorDisplayName', 'author_display_name')
+  const createdAt = getRecordString(item, 'createdAt', 'created_at')
+  const content = getRecordString(item, 'content', 'content')
+  const visibility = getRecordString(item, 'visibility', 'visibility') || 'public'
+
+  if (!id || !sourceUrl || !createdAt || !content) return null
+
+  const imageUrlsValue = item.imageUrls ?? item.image_urls
+
+  return {
+    id,
+    sourceUrl,
+    authorUsername: authorUsername || 'unknown',
+    authorDisplayName: authorDisplayName || '無名',
+    authorAvatarUrl: getRecordNullableString(item, 'authorAvatarUrl', 'author_avatar_url'),
+    authorIsOfficial: getRecordBoolean(item, 'authorIsOfficial', 'author_is_official'),
+    createdAt,
+    content,
+    imageUrls: normalizeStringArray(imageUrlsValue),
+    likesCount: getRecordNumber(item, 'likesCount', 'likes_count'),
+    repostsCount: getRecordNumber(item, 'repostsCount', 'reposts_count'),
+    commentsCount: getRecordNumber(item, 'commentsCount', 'comments_count'),
+    visibility,
+  }
+}
+
+const fetchPostLinkPreview = async (postId: string, sourceUrl: string): Promise<PostLinkPreview | null> => {
+  const { data, error } = await supabase
+    .from('posts')
+    .select(`
+      id,
+      content,
+      image_urls,
+      created_at,
+      likes_count,
+      reposts_count,
+      comments_count,
+      visibility,
+      profiles!posts_user_id_fkey (
+        username,
+        display_name,
+        avatar_url,
+        is_official
+      )
+    `)
+    .eq('id', postId)
+    .maybeSingle()
+
+  if (error) {
+    console.error('Fetch post link preview failed:', error)
+    return null
+  }
+
+  if (!data || typeof data !== 'object') return null
+
+  const post = data as Record<string, unknown>
+  const profileValue = post.profiles
+  const profile = Array.isArray(profileValue) ? profileValue[0] : profileValue
+  const profileRecord = typeof profile === 'object' && profile !== null && !Array.isArray(profile)
+    ? profile as Record<string, unknown>
+    : {}
+
+  const content = typeof post.content === 'string' ? post.content : ''
+  const createdAt = typeof post.created_at === 'string' ? post.created_at : ''
+  const visibility = typeof post.visibility === 'string' ? post.visibility : 'public'
+
+  if (!content || !createdAt) return null
+
+  return {
+    id: postId,
+    sourceUrl,
+    authorUsername: typeof profileRecord.username === 'string' ? profileRecord.username : 'unknown',
+    authorDisplayName: typeof profileRecord.display_name === 'string' && profileRecord.display_name.trim() ? profileRecord.display_name : '無名',
+    authorAvatarUrl: typeof profileRecord.avatar_url === 'string' ? profileRecord.avatar_url : null,
+    authorIsOfficial: profileRecord.is_official === true,
+    createdAt,
+    content,
+    imageUrls: normalizeStringArray(post.image_urls),
+    likesCount: getRecordNumber(post, 'likes_count', 'likes_count'),
+    repostsCount: getRecordNumber(post, 'reposts_count', 'reposts_count'),
+    commentsCount: getRecordNumber(post, 'comments_count', 'comments_count'),
+    visibility,
+  }
+}
+
+const clipPostPreviewText = (text: string, maxLength = 120) => {
+  const cleaned = text.replace(/\s+/g, ' ').trim()
+
+  if (cleaned.length <= maxLength) return cleaned
+
+  return `${cleaned.slice(0, maxLength)}...`
+}
+
+const formatPostPreviewForAi = (post: PostLinkPreview) => [
+  `添付ポスト: ${post.authorDisplayName} (@${post.authorUsername})`,
+  `日時: ${post.createdAt}`,
+  `本文: ${clipPostPreviewText(post.content, 180)}`,
+].join('\n')
+
+const formatUserMessageForAi = (message: Message) => {
+  if (!message.postPreview) return message.content
+
+  return `${message.content}\n\n【リンクカード】\n${formatPostPreviewForAi(message.postPreview)}`
+}
+
+const removeSupportedPostLinksFromText = (text: string) => {
+  const urls = text.match(POST_LINK_URL_REGEX) ?? []
+  let nextText = text
+
+  urls.forEach((rawUrl) => {
+    const cleanedUrl = rawUrl.replace(/[)\]}>。、，．！？!?]+$/g, '')
+    if (extractSupportedPostLink(cleanedUrl)) {
+      nextText = nextText.replace(rawUrl, '')
+    }
+  })
+
+  return nextText
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+
+const MiniPostPreviewCard = ({
+  post,
+  onDismiss,
+  compact = false,
+}: {
+  post: PostLinkPreview
+  onDismiss?: () => void
+  compact?: boolean
+}) => {
+  const previewImage = post.imageUrls[0] || ''
+  const contentLimit = compact ? 150 : 220
+
+  return (
+    <article
+      className={`${compact ? 'mt-2.5' : ''} relative w-fit max-w-full sm:max-w-[480px] whitespace-normal overflow-hidden rounded-[20px] border border-[#cfd9de] bg-transparent text-[#0f1419] shadow-none dark:border-[#2f3336] dark:bg-transparent dark:text-[#e7e9ea]`}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <a
+        href={post.sourceUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="block p-3.5 no-underline sm:p-4"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start gap-3">
+          <Avatar className="h-10 w-10 shrink-0 border border-[#cfd9de] bg-transparent dark:border-[#2f3336] dark:bg-transparent">
+            <AvatarImage src={post.authorAvatarUrl || undefined} alt={post.authorDisplayName} />
+            <AvatarFallback className="bg-transparent text-[14px] font-bold text-[#0f1419] dark:bg-transparent dark:text-[#e7e9ea]">
+              {post.authorDisplayName.slice(0, 1)}
+            </AvatarFallback>
+          </Avatar>
+
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0 text-[15px] leading-5">
+              <span className="max-w-[140px] truncate font-bold text-[#0f1419] dark:text-[#e7e9ea] sm:max-w-[180px]">
+                {post.authorDisplayName}
+              </span>
+              {post.authorIsOfficial && (
+                <img
+                  src={`${import.meta.env.BASE_URL}verified.png`}
+                  alt="Official"
+                  className="h-4 w-4 shrink-0 translate-y-[2px]"
+                  loading="eager"
+                />
+              )}
+              <span className="max-w-[120px] truncate text-[#536471] dark:text-[#71767b] sm:max-w-[160px]">
+                @{post.authorUsername}
+              </span>
+              <span className="text-[#536471] dark:text-[#71767b]">·</span>
+              <span className="shrink-0 text-[#536471] dark:text-[#71767b]">
+                {formatRelative(post.createdAt)}
+              </span>
+            </div>
+
+            <div className="mt-1.5 whitespace-pre-wrap break-words text-[16px] font-normal leading-6 text-[#0f1419] dark:text-[#e7e9ea]">
+              {clipPostPreviewText(post.content, contentLimit)}
+            </div>
+
+            {previewImage && (
+              <div className="mt-3 overflow-hidden rounded-[16px] border border-[#cfd9de] bg-transparent dark:border-[#2f3336] dark:bg-transparent">
+                <img
+                  src={previewImage}
+                  alt=""
+                  className="block max-h-[220px] w-full object-cover"
+                  loading="lazy"
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      </a>
+
+      {onDismiss && (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            onDismiss()
+          }}
+          className="absolute right-2 top-2 rounded-full bg-transparent p-1 text-[#536471] transition hover:bg-black/[0.06] hover:text-[#0f1419] dark:text-[#71767b] dark:hover:bg-white/[0.08] dark:hover:text-[#e7e9ea]"
+          title="閉じる"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      )}
+    </article>
+  )
 }
 
 type ChatSession = {
@@ -35,6 +463,8 @@ type ChatSession = {
   updatedAt: number
 }
 
+type AssistantStreamStatus = 'idle' | 'checking' | 'searching' | 'coding' | 'summarizing' | 'thinking'
+
 export default function ChatPage() {
   const { user } = useAuth()
   
@@ -43,6 +473,12 @@ export default function ChatPage() {
   
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [assistantStreamStatus, setAssistantStreamStatus] = useState<AssistantStreamStatus>('idle')
+  const [expandedReferenceMessageId, setExpandedReferenceMessageId] = useState<string | null>(null)
+  const [expandedCodeMessageId, setExpandedCodeMessageId] = useState<string | null>(null)
+  const [postLinkPreview, setPostLinkPreview] = useState<PostLinkPreview | null>(null)
+  const [postLinkPreviewLoading, setPostLinkPreviewLoading] = useState(false)
+  const [dismissedPostPreviewId, setDismissedPostPreviewId] = useState<string | null>(null)
   
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [selectedModel, setSelectedModel] = useState<'fast' | 'advanced'>('fast')
@@ -50,6 +486,21 @@ export default function ChatPage() {
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+
+    const originalBodyOverflow = document.body.style.overflow
+    const originalHtmlOverflow = document.documentElement.style.overflow
+
+    document.body.style.overflow = 'hidden'
+    document.documentElement.style.overflow = 'hidden'
+
+    return () => {
+      document.body.style.overflow = originalBodyOverflow
+      document.documentElement.style.overflow = originalHtmlOverflow
+    }
+  }, [])
 
   useEffect(() => {
     if (typeof window !== 'undefined' && window.innerWidth >= 768) {
@@ -127,6 +578,54 @@ export default function ChatPage() {
   }, [messages, isLoading])
 
   useEffect(() => {
+    const detected = extractSupportedPostLink(input)
+
+    if (!detected) {
+      setPostLinkPreview(null)
+      setPostLinkPreviewLoading(false)
+      setDismissedPostPreviewId(null)
+      return
+    }
+
+    if (dismissedPostPreviewId === detected.id) {
+      setPostLinkPreview(null)
+      setPostLinkPreviewLoading(false)
+      return
+    }
+
+    if (postLinkPreview?.id === detected.id) {
+      return
+    }
+
+    let cancelled = false
+    const timer = window.setTimeout(async () => {
+      setPostLinkPreviewLoading(true)
+
+      try {
+        const preview = await fetchPostLinkPreview(detected.id, detected.url)
+
+        if (cancelled) return
+
+        setPostLinkPreview(preview)
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Post link preview failed:', error)
+          setPostLinkPreview(null)
+        }
+      } finally {
+        if (!cancelled) {
+          setPostLinkPreviewLoading(false)
+        }
+      }
+    }, 250)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [input, dismissedPostPreviewId, postLinkPreview?.id])
+
+  useEffect(() => {
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel()
     }
@@ -154,6 +653,9 @@ export default function ChatPage() {
     setSessions(prev => [newSession, ...prev])
     setCurrentSessionId(newId)
     setInput('')
+    setPostLinkPreview(null)
+    setPostLinkPreviewLoading(false)
+    setDismissedPostPreviewId(null)
     if (window.innerWidth < 768) {
       setIsSidebarOpen(false)
     }
@@ -295,6 +797,9 @@ export default function ChatPage() {
 
     setIsLoading(true)
 
+    const lastUserMessageForRegenerate = [...updatedMessages].reverse().find(msg => msg.role === 'user')
+    setAssistantStreamStatus('thinking')
+
     const assistantMessageId = crypto.randomUUID()
     
     setSessions(prev => prev.map(s => {
@@ -325,14 +830,14 @@ export default function ChatPage() {
 
     const contentsPayload = validHistory.map(msg => ({
       role: msg.role === 'user' ? 'user' : 'model',
-      parts: [{ text: msg.role === 'user' ? msg.content : cleanContext(msg.content) }]
+      parts: [{ text: msg.role === 'user' ? formatUserMessageForAi(msg) : cleanContext(msg.content) }]
     })).filter(item => item.parts[0].text !== '')
 
     const systemInstructionItem = {
       role: 'user',
       parts: [{ 
         text: `【システム命令: あなたはこの独自のチャット機能を提供するSNSの専用AIアシスタントです。
-以下に示すSNSの基本情報を前提条件として認識し、ユーザーとの対話に役立ててください。
+以下に示すSNSの基本情報を認識し、ユーザーとの対話に役立ててください。
 
 ■ このSNSの情報
 ・サービス名: LimeNote(SNS)
@@ -386,6 +891,8 @@ export default function ChatPage() {
       const decoder = new TextDecoder()
       let accumulatedText = ''
       let buffer = ''
+      let referencedPosts: ReferencedPost[] = []
+      let codingArtifact: CodingArtifact | undefined = undefined
 
       while (true) {
         const { value, done } = await reader.read()
@@ -405,6 +912,85 @@ export default function ChatPage() {
             
             try {
               const parsed = JSON.parse(dataStr)
+
+              if (parsed.type === 'conversation_summary_start') {
+                setAssistantStreamStatus('summarizing')
+                continue
+              }
+
+              if (parsed.type === 'conversation_summary_end') {
+                setAssistantStreamStatus('thinking')
+                continue
+              }
+
+              if (parsed.type === 'coding_artifact_start') {
+                setAssistantStreamStatus('coding')
+                continue
+              }
+
+              if (parsed.type === 'coding_artifact') {
+                const normalizedArtifact = normalizeCodingArtifact(parsed.artifact)
+
+                if (normalizedArtifact) {
+                  codingArtifact = normalizedArtifact
+
+                  setSessions(prev => prev.map(s => {
+                    if (s.id === currentSessionId) {
+                      return {
+                        ...s,
+                        messages: s.messages.map(m =>
+                          m.id === assistantMessageId ? { ...m, codingArtifact } : m
+                        )
+                      }
+                    }
+                    return s
+                  }))
+                }
+
+                setAssistantStreamStatus('thinking')
+                continue
+              }
+
+              if (parsed.type === 'sns_search_check_start') {
+                setAssistantStreamStatus('checking')
+                continue
+              }
+
+              if (parsed.type === 'sns_search_start') {
+                setAssistantStreamStatus('searching')
+                continue
+              }
+
+              if (parsed.type === 'sns_search_end' || parsed.type === 'sns_search_skip' || parsed.type === 'sns_reference_posts') {
+                if (parsed.type === 'sns_search_end' || parsed.type === 'sns_search_skip') {
+                  setAssistantStreamStatus('thinking')
+                }
+
+                const normalizedPosts = normalizeReferencedPosts(parsed.posts)
+
+                if (normalizedPosts.length > 0) {
+                  referencedPosts = normalizedPosts
+
+                  setSessions(prev => prev.map(s => {
+                    if (s.id === currentSessionId) {
+                      return {
+                        ...s,
+                        messages: s.messages.map(m =>
+                          m.id === assistantMessageId ? { ...m, references: referencedPosts } : m
+                        )
+                      }
+                    }
+                    return s
+                  }))
+                }
+
+                continue
+              }
+
+              if (parsed.type === 'edge_error') {
+                throw new Error(parsed.details || parsed.message || 'Edge Function Error')
+              }
+
               const text = parsed.choices?.[0]?.delta?.content || ''
               
               if (text) {
@@ -423,7 +1009,11 @@ export default function ChatPage() {
                 }))
               }
             } catch (e) {
-              // 構文エラーは無視
+              if (e instanceof SyntaxError) {
+                // 構文エラーは無視
+              } else {
+                throw e
+              }
             }
           }
         }
@@ -431,7 +1021,14 @@ export default function ChatPage() {
 
       // ストリーミングが正常に完了したタイミングでSupabaseへ最終結果を保存
       if (user) {
-        const finalMessages = [...updatedMessages, { id: assistantMessageId, role: 'assistant' as const, content: accumulatedText }]
+        const finalAssistantMessage: Message = {
+          id: assistantMessageId,
+          role: 'assistant',
+          content: accumulatedText,
+          references: referencedPosts.length > 0 ? referencedPosts : undefined,
+          codingArtifact,
+        }
+        const finalMessages = [...updatedMessages, finalAssistantMessage]
         await supabase.from('chat_sessions').upsert({
           id: currentSessionId,
           user_id: user.id,
@@ -467,6 +1064,7 @@ export default function ChatPage() {
         })
       }
     } finally {
+      setAssistantStreamStatus('idle')
       setIsLoading(false)
     }
   }
@@ -475,17 +1073,27 @@ export default function ChatPage() {
     e.preventDefault()
     if (!input.trim() || isLoading || !currentSessionId) return
 
+    const trimmedInput = input.trim()
+    const detectedPostLink = extractSupportedPostLink(trimmedInput)
+    let sendingPostPreview: PostLinkPreview | undefined = undefined
+
+    if (detectedPostLink && dismissedPostPreviewId !== detectedPostLink.id) {
+      const currentPreview = postLinkPreview?.id === detectedPostLink.id ? postLinkPreview : null
+      sendingPostPreview = currentPreview ?? await fetchPostLinkPreview(detectedPostLink.id, detectedPostLink.url) ?? undefined
+    }
+
     const userMessage: Message = {
       id: crypto.randomUUID(),
       role: 'user',
-      content: input.trim(),
+      content: trimmedInput,
+      postPreview: sendingPostPreview,
     }
 
     const updatedMessages = [...messages, userMessage]
     
     let currentTitle = currentSession?.title || '新しいチャット'
     if (messages.length === 0) {
-      currentTitle = input.trim().substring(0, 16) + (input.trim().length > 16 ? '...' : '')
+      currentTitle = trimmedInput.substring(0, 16) + (trimmedInput.length > 16 ? '...' : '')
     }
 
     const now = Date.now()
@@ -503,7 +1111,11 @@ export default function ChatPage() {
     }))
 
     setInput('')
+    setPostLinkPreview(null)
+    setPostLinkPreviewLoading(false)
+    setDismissedPostPreviewId(null)
     setIsLoading(true)
+    setAssistantStreamStatus('thinking')
 
     // ユーザーからのメッセージが送信された段階で一旦Supabaseを更新
     if (user) {
@@ -550,21 +1162,21 @@ export default function ChatPage() {
 
     const contentsPayload = validHistory.map(msg => ({
       role: msg.role === 'user' ? 'user' : 'model',
-      parts: [{ text: msg.role === 'user' ? msg.content : cleanContext(msg.content) }]
+      parts: [{ text: msg.role === 'user' ? formatUserMessageForAi(msg) : cleanContext(msg.content) }]
     })).filter(item => item.parts[0].text !== '')
 
     const systemInstructionItem = {
       role: 'user',
       parts: [{ 
         text: `【システム命令: あなたはこの独自のチャット機能を提供するSNSの専用AIアシスタントです。
-以下に示すSNSの基本情報を前提条件として認識し、ユーザーとの対話に役立ててください。
+以下に示すSNSの基本情報を認識し、ユーザーとの対話に役立ててください。
 
 ■ このSNSの情報
 ・サービス名: LimeNote(SNS)
 ・現在のユーザー情報: ${user ? `${user.displayName} (@${user.username})` : '未ログインユーザー'}
 ・管理者およびCEO：ねこ氏(@cat)でLimeNoteというSNSを一人で立ち上げた。
 ・本社：神奈川県横浜市戸塚区
-・あなたのモデル名：LimeAI 4.0 Fast
+・あなたのモデル名：LimeAI 5.0 Fast
 ・あなたの名前：LimeAI
 ■ 応答の絶対ルール
 1. 無駄なプレフィックスや前置きは省き、ユーザーへの純粋な返答・メッセージ本文のみを日本語で直接出力してください
@@ -614,6 +1226,8 @@ export default function ChatPage() {
       const decoder = new TextDecoder()
       let accumulatedText = ''
       let buffer = ''
+      let referencedPosts: ReferencedPost[] = []
+      let codingArtifact: CodingArtifact | undefined = undefined
 
       while (true) {
         const { value, done } = await reader.read()
@@ -633,6 +1247,85 @@ export default function ChatPage() {
             
             try {
               const parsed = JSON.parse(dataStr)
+
+              if (parsed.type === 'conversation_summary_start') {
+                setAssistantStreamStatus('summarizing')
+                continue
+              }
+
+              if (parsed.type === 'conversation_summary_end') {
+                setAssistantStreamStatus('thinking')
+                continue
+              }
+
+              if (parsed.type === 'coding_artifact_start') {
+                setAssistantStreamStatus('coding')
+                continue
+              }
+
+              if (parsed.type === 'coding_artifact') {
+                const normalizedArtifact = normalizeCodingArtifact(parsed.artifact)
+
+                if (normalizedArtifact) {
+                  codingArtifact = normalizedArtifact
+
+                  setSessions(prev => prev.map(s => {
+                    if (s.id === currentSessionId) {
+                      return {
+                        ...s,
+                        messages: s.messages.map(m =>
+                          m.id === assistantMessageId ? { ...m, codingArtifact } : m
+                        )
+                      }
+                    }
+                    return s
+                  }))
+                }
+
+                setAssistantStreamStatus('thinking')
+                continue
+              }
+
+              if (parsed.type === 'sns_search_check_start') {
+                setAssistantStreamStatus('checking')
+                continue
+              }
+
+              if (parsed.type === 'sns_search_start') {
+                setAssistantStreamStatus('searching')
+                continue
+              }
+
+              if (parsed.type === 'sns_search_end' || parsed.type === 'sns_search_skip' || parsed.type === 'sns_reference_posts') {
+                if (parsed.type === 'sns_search_end' || parsed.type === 'sns_search_skip') {
+                  setAssistantStreamStatus('thinking')
+                }
+
+                const normalizedPosts = normalizeReferencedPosts(parsed.posts)
+
+                if (normalizedPosts.length > 0) {
+                  referencedPosts = normalizedPosts
+
+                  setSessions(prev => prev.map(s => {
+                    if (s.id === currentSessionId) {
+                      return {
+                        ...s,
+                        messages: s.messages.map(m =>
+                          m.id === assistantMessageId ? { ...m, references: referencedPosts } : m
+                        )
+                      }
+                    }
+                    return s
+                  }))
+                }
+
+                continue
+              }
+
+              if (parsed.type === 'edge_error') {
+                throw new Error(parsed.details || parsed.message || 'Edge Function Error')
+              }
+
               const text = parsed.choices?.[0]?.delta?.content || ''
               
               if (text) {
@@ -651,7 +1344,11 @@ export default function ChatPage() {
                 }))
               }
             } catch (e) {
-              // 構文エラーは無視
+              if (e instanceof SyntaxError) {
+                // 構文エラーは無視
+              } else {
+                throw e
+              }
             }
           }
         }
@@ -659,7 +1356,14 @@ export default function ChatPage() {
 
       // AIの返答文のストリーミングがすべて正常に完了したタイミングでSupabaseを更新
       if (user) {
-        const finalMessages = [...updatedMessages, { id: assistantMessageId, role: 'assistant' as const, content: accumulatedText }]
+        const finalAssistantMessage: Message = {
+          id: assistantMessageId,
+          role: 'assistant',
+          content: accumulatedText,
+          references: referencedPosts.length > 0 ? referencedPosts : undefined,
+          codingArtifact,
+        }
+        const finalMessages = [...updatedMessages, finalAssistantMessage]
         await supabase.from('chat_sessions').upsert({
           id: currentSessionId,
           user_id: user.id,
@@ -695,46 +1399,47 @@ export default function ChatPage() {
         })
       }
     } finally {
+      setAssistantStreamStatus('idle')
       setIsLoading(false)
     }
   }
 
   return (
-    <div className="fixed inset-0 top-14 bottom-[60px] md:bottom-0 left-0 right-0 w-full bg-transparent text-[#0d0d0d] dark:text-[#ececec] overflow-hidden font-sans flex z-40">
+    <div className="fixed inset-0 top-0 md:top-16 bottom-[60px] md:bottom-0 left-0 right-0 w-full bg-[#fff8f0] dark:bg-[#0f0f10] text-[#2b2b3a] dark:text-[#ececec] overflow-hidden font-sans flex z-40">
       {/* サイドバー */}
       <div className={`${
         isSidebarOpen 
           ? 'w-64 opacity-100 visible duration-250 ease-[cubic-bezier(0.25,1,0.5,1)]' 
           : 'w-0 opacity-0 invisible duration-300 ease-[cubic-bezier(0.3,0,0,1)]'
-      } shrink-0 bg-white dark:bg-[#121212] flex flex-col h-full border-r border-[#e5e5e5] dark:border-[#2f2f2f] transition-all overflow-hidden absolute md:relative z-50 md:z-auto`}>
+      } shrink-0 bg-white/95 dark:bg-[#121212] flex flex-col h-full border-r border-[#eadde3] dark:border-[#2f2f2f] transition-all overflow-hidden absolute md:relative z-50 md:z-auto`}>
         <div className="w-64 flex flex-col h-full shrink-0">
           <div className="p-3.5 flex items-center justify-between gap-2">
             <button
               onClick={createNewSession}
-              className="flex-1 flex items-center justify-between px-3 py-2.5 rounded-lg bg-transparent hover:bg-[#ececec] dark:hover:bg-[#212121] transition duration-200 text-sm font-medium text-[#0d0d0d] dark:text-[#ececec] border border-[#e5e5e5] dark:border-[#2f2f2f]"
+              className="flex-1 flex items-center justify-between px-3 py-2.5 rounded-xl bg-[#fff8f0] hover:bg-[#ffd9e5]/55 dark:bg-transparent dark:hover:bg-[#212121] transition duration-200 text-sm font-semibold text-[#2b2b3a] dark:text-[#ececec] border border-[#f0c9d6] dark:border-[#2f2f2f]"
             >
               <span className="flex items-center gap-2">
-                <Plus className="w-4 h-4 text-[#0d0d0d] dark:text-[#ececec]" /> 新しいチャット
+                <Plus className="w-4 h-4 text-[#ea4c89] dark:text-[#ececec]" /> 新しいチャット
               </span>
             </button>
 
             <button
               onClick={() => setIsSidebarOpen(false)}
-              className="md:hidden p-2.5 rounded-lg hover:bg-[#ececec] dark:hover:bg-[#212121] text-[#666666] dark:text-[#999999] hover:text-[#0d0d0d] dark:hover:text-[#ececec] transition shrink-0"
+              className="md:hidden p-2.5 rounded-xl hover:bg-[#ffd9e5]/55 dark:hover:bg-[#212121] text-[#666666] dark:text-[#999999] hover:text-[#2b2b3a] dark:hover:text-[#ececec] transition shrink-0"
             >
               <PanelLeftClose className="w-5 h-5" />
             </button>
 
             <button
               onClick={() => setIsSidebarOpen(false)}
-              className="hidden md:block p-2.5 rounded-lg hover:bg-[#ececec] dark:hover:bg-[#212121] text-[#666666] dark:text-[#999999] hover:text-[#0d0d0d] dark:hover:text-[#ececec] transition shrink-0"
+              className="hidden md:block p-2.5 rounded-xl hover:bg-[#ffd9e5]/55 dark:hover:bg-[#212121] text-[#666666] dark:text-[#999999] hover:text-[#2b2b3a] dark:hover:text-[#ececec] transition shrink-0"
             >
               <PanelLeftClose className="w-5 h-5" />
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-3 space-y-0.5 custom-scrollbar">
-            <div className="py-2 text-xs font-semibold text-[#666666] dark:text-[#999999] sticky top-0 bg-white dark:bg-[#121212] z-10">
+          <div className="flex-1 overflow-y-auto px-3 space-y-1 custom-scrollbar">
+            <div className="py-2 text-xs font-semibold text-[#8a6f7a] dark:text-[#999999] sticky top-0 bg-white/95 dark:bg-[#121212] z-10">
               チャット履歴
             </div>
             {sessions.map((s) => (
@@ -746,19 +1451,19 @@ export default function ChatPage() {
                     setIsSidebarOpen(false)
                   }
                 }}
-                className={`group flex items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer text-sm transition duration-150 ${
+                className={`group flex items-center justify-between px-3 py-2.5 rounded-xl cursor-pointer text-sm transition duration-150 ${
                   s.id === currentSessionId 
-                    ? 'bg-[#ececec] dark:bg-[#212121] text-[#0d0d0d] dark:text-[#ececec] font-medium' 
-                    : 'text-[#0d0d0d] dark:text-[#ececec] hover:bg-[#ececec]/80 dark:hover:bg-[#212121]'
+                    ? 'bg-[#d5f0ef]/75 dark:bg-[#212121] text-[#2b2b3a] dark:text-[#ececec] font-semibold' 
+                    : 'text-[#2b2b3a]/90 dark:text-[#ececec] hover:bg-[#ffd9e5]/45 dark:hover:bg-[#212121]'
                 }`}
               >
                 <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                  <MessageSquare className="w-4 h-4 shrink-0 opacity-60" />
+                  <MessageSquare className="w-4 h-4 shrink-0 opacity-60 text-[#ea4c89] dark:text-[#ececec]" />
                   <span className="truncate">{s.title}</span>
                 </div>
                 <button
                   onClick={(e) => deleteSession(s.id, e)}
-                  className="opacity-100 md:opacity-0 group-hover:opacity-100 p-1 hover:bg-[#d9d9d9] dark:hover:bg-[#2a2a2a] rounded text-[#0d0d0d] dark:text-[#ececec] hover:text-red-350 transition"
+                  className="opacity-100 md:opacity-0 group-hover:opacity-100 p-1 hover:bg-white/70 dark:hover:bg-[#2a2a2a] rounded text-[#2b2b3a] dark:text-[#ececec] hover:text-red-500 transition"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
@@ -767,13 +1472,13 @@ export default function ChatPage() {
           </div>
 
           {user && (
-            <div className="p-3 border-t border-[#e5e5e5] dark:border-[#2f2f2f] bg-white dark:bg-[#121212] flex items-center gap-3">
+            <div className="p-3 border-t border-[#eadde3] dark:border-[#2f2f2f] bg-white/95 dark:bg-[#121212] flex items-center gap-3">
               <Avatar className="h-8 w-8">
                 <AvatarImage src={user.avatarUrl} />
-                <AvatarFallback className="bg-[#ececec] dark:bg-[#2a2a2a] text-[#0d0d0d] dark:text-[#ececec]">{user.displayName?.slice(0, 1)}</AvatarFallback>
+                <AvatarFallback className="bg-[#ffd9e5] dark:bg-[#2a2a2a] text-[#ea4c89] dark:text-[#ececec] font-semibold">{user.displayName?.slice(0, 1)}</AvatarFallback>
               </Avatar>
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium text-[#0d0d0d] dark:text-[#ececec] truncate leading-tight">{user.displayName}</div>
+                <div className="text-sm font-semibold text-[#2b2b3a] dark:text-[#ececec] truncate leading-tight">{user.displayName}</div>
                 <div className="text-xs text-[#666666] dark:text-[#999999] truncate leading-none mt-0.5">@{user.username}</div>
               </div>
             </div>
@@ -797,17 +1502,20 @@ export default function ChatPage() {
           {!isSidebarOpen && (
             <button
               onClick={() => setIsSidebarOpen(true)}
-              className="p-2 md:p-2.5 mr-1 md:mr-2 rounded-lg hover:bg-[#ececec] dark:hover:bg-[#212121] text-[#666666] dark:text-[#999999] hover:text-[#0d0d0d] dark:hover:text-[#ececec] transition"
+              className="p-2 md:p-2.5 mr-1 md:mr-2 rounded-xl hover:bg-[#ffd9e5]/55 dark:hover:bg-[#212121] text-[#666666] dark:text-[#999999] hover:text-[#2b2b3a] dark:hover:text-[#ececec] transition"
             >
               <PanelLeft className="w-4 h-4 md:w-5 md:h-5" />
             </button>
           )}
 
-          <div className="relative">
+          <div className={`${messages.length > 0 ? 'hidden md:block' : 'block'} relative`}>
             <button
               onClick={() => setIsModelSelectorOpen(!isModelSelectorOpen)}
-              className="flex items-center gap-1 md:gap-2 text-base md:text-xl font-semibold text-[#0d0d0d] dark:text-[#ececec] hover:bg-[#ececec] dark:hover:bg-[#212121] px-2 md:px-3 py-1 md:py-1.5 rounded-xl transition"
+              className="flex items-center gap-2 text-base md:text-xl font-semibold text-[#2b2b3a] dark:text-[#ececec] hover:bg-[#ffd9e5]/45 dark:hover:bg-[#212121] px-2 md:px-3 py-1.5 md:py-2 rounded-2xl transition"
             >
+              <span className="grid h-6 w-6 place-items-center rounded-full bg-[#ffd9e5] dark:bg-[#2a2a2a]">
+                <Sparkles className="w-3.5 h-3.5 text-[#ea4c89] dark:text-[#ececec]" />
+              </span>
               LimeAI
               <ChevronDown className="w-4 h-4 md:w-5 md:h-5 text-[#666666] dark:text-[#999999]" />
             </button>
@@ -819,7 +1527,7 @@ export default function ChatPage() {
                   onClick={() => setIsModelSelectorOpen(false)}
                 />
 
-                <div className="absolute top-full left-0 mt-2 w-64 md:w-[320px] bg-white dark:bg-[#212121] rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.1)] dark:shadow-[0_4px_20px_rgba(0,0,0,0.5)] border border-[#e5e5e5] dark:border-[#2f2f2f] p-2 md:p-3 flex flex-col z-50 animate-in fade-in zoom-in-95 duration-100">
+                <div className="absolute top-full left-0 mt-2 w-64 md:w-[320px] bg-white dark:bg-[#212121] rounded-2xl border border-[#eadde3] dark:border-[#2f2f2f] p-2 md:p-3 flex flex-col z-50 animate-in fade-in zoom-in-95 duration-100">
 
                   <div className="text-[11px] md:text-xs font-semibold text-[#666666] dark:text-[#999999] mb-2 px-2">
                     AIモードを選択
@@ -832,13 +1540,13 @@ export default function ChatPage() {
                     }}
                     className={`flex items-center justify-between p-2.5 md:p-3 rounded-xl transition text-left ${
                       selectedModel === 'fast'
-                        ? 'bg-[#ececec]/60 dark:bg-[#2a2a2a]/60'
+                        ? 'bg-[#d5f0ef]/70 dark:bg-[#2a2a2a]/60'
                         : 'hover:bg-[#ececec]/50 dark:hover:bg-[#2a2a2a]/50'
                     }`}
                   >
                     <div className="flex flex-col">
                       <span className="text-sm md:text-[15px] font-medium text-[#0d0d0d] dark:text-[#ececec]">
-                        LimeAI 4.0 Fast
+                        LimeAI 5.0 Fast
                       </span>
                       <span className="text-[10px] md:text-xs text-[#666666] dark:text-[#999999] mt-0.5">
                         普段の会話向け
@@ -857,13 +1565,13 @@ export default function ChatPage() {
                     }}
                     className={`flex items-center justify-between p-2.5 md:p-3 rounded-xl transition text-left mt-1 ${
                       selectedModel === 'advanced'
-                        ? 'bg-[#ececec]/60 dark:bg-[#2a2a2a]/60'
+                        ? 'bg-[#d5f0ef]/70 dark:bg-[#2a2a2a]/60'
                         : 'hover:bg-[#ececec]/50 dark:hover:bg-[#2a2a2a]/50'
                     }`}
                   >
                     <div className="flex flex-col">
                       <span className="text-sm md:text-[15px] font-medium text-[#0d0d0d] dark:text-[#ececec]">
-                        Claude Mythos Preview
+                        LimeAI 5.1 Thinking
                       </span>
                       <span className="text-[10px] md:text-xs text-[#666666] dark:text-[#999999] mt-0.5">
                         詳しい回答向け
@@ -884,10 +1592,10 @@ export default function ChatPage() {
         <div className="flex-1 overflow-y-auto custom-scrollbar bg-transparent">
           {messages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center max-w-md mx-auto space-y-5 px-4 pb-20">
-              <div className="w-12 h-12 flex items-center justify-center rounded-full border border-[#e5e5e5] dark:border-[#383838] shadow-sm animate-fade-in bg-white dark:bg-[#212121]">
-                <Sparkles className="w-6 h-6 text-[#0d0d0d] dark:text-[#ececec]" />
+              <div className="w-12 h-12 flex items-center justify-center rounded-full border border-[#f0c9d6] dark:border-[#383838] animate-fade-in bg-[#fff8f0] dark:bg-[#212121]">
+                <Sparkles className="w-6 h-6 text-[#ea4c89] dark:text-[#ececec]" />
               </div>
-              <h2 className="text-2xl font-semibold text-[#0d0d0d] dark:text-[#ececec] tracking-tight">LimeAI Beta</h2>
+              <h2 className="text-2xl font-semibold text-[#2b2b3a] dark:text-[#ececec] tracking-tight">LimeAI</h2>
               <p className="text-[15px] text-[#666666] dark:text-[#999999] leading-relaxed">
                 LimeNoteのAI革命に乗ろう
               </p>
@@ -896,44 +1604,143 @@ export default function ChatPage() {
             <div className="w-full pb-4">
               {messages.map((msg) => {
                 const isUser = msg.role === 'user'
+                const visibleMessageContent = msg.postPreview ? removeSupportedPostLinksFromText(msg.content) : msg.content
                 return (
                   <div 
                     key={msg.id} 
-                    className="w-full py-4 md:py-5 flex justify-center bg-transparent border-b border-gray-100 dark:border-[#2f2f2f]/30 transition-colors duration-150"
+                    className="w-full py-4 md:py-5 flex justify-center bg-transparent transition-colors duration-150"
                   >
                     <div className="max-w-3xl w-full flex gap-4 px-4 sm:px-6">
                       <div className="shrink-0 mt-0.5">
                         {isUser ? (
                           <Avatar className="h-6 w-6">
                             <AvatarImage src={user?.avatarUrl} />
-                            <AvatarFallback className="bg-[#ececec] dark:bg-[#2f2f2f]"><User className="w-3.5 h-3.5 text-[#0d0d0d] dark:text-[#ececec]" /></AvatarFallback>
+                            <AvatarFallback className="bg-[#d5f0ef] dark:bg-[#2f2f2f]"><User className="w-3.5 h-3.5 text-[#2b2b3a] dark:text-[#ececec]" /></AvatarFallback>
                           </Avatar>
                         ) : (
-                          <div className="w-6 h-6 rounded-full bg-black dark:bg-white flex items-center justify-center">
-                            <Sparkles className="w-3.5 h-3.5 text-white dark:text-black" />
+                          <div className="w-6 h-6 rounded-full bg-[#ffd9e5] dark:bg-white flex items-center justify-center border border-[#f0c9d6] dark:border-white">
+                            <Sparkles className="w-3.5 h-3.5 text-[#ea4c89] dark:text-black" />
                           </div>
                         )}
                       </div>
 
                       <div className="flex-1 space-y-1.5 md:max-w-2xl lg:max-w-3xl min-w-0">
-                        <div className="text-[15px] font-semibold text-[#0d0d0d] dark:text-[#ececec]">
+                        <div className="text-[15px] font-semibold text-[#2b2b3a] dark:text-[#ececec]">
                           {isUser ? 'あなた' : 'LimeAI'}
                         </div>
-                        <div className="text-[16px] leading-7 text-[#0d0d0d] dark:text-[#ececec] whitespace-pre-wrap break-words">
+                        <div className="text-[16px] leading-7 text-[#2b2b3a] dark:text-[#ececec] whitespace-pre-wrap break-words">
                           {msg.content === '' && isLoading ? (
                             <span className="flex items-center gap-2 text-[#666666] dark:text-[#999999] text-[15px] animate-pulse">
-                              <Loader2 className="w-4 h-4 animate-spin text-[#0d0d0d] dark:text-[#ececec]" />
-                              思考中...
+                              <Loader2 className="w-4 h-4 animate-spin text-[#ea4c89] dark:text-[#ececec]" />
+                              {assistantStreamStatus === 'checking' ? '公開SNS投稿を確認中...' : assistantStreamStatus === 'searching' ? '公開SNS投稿を検索中...' : assistantStreamStatus === 'coding' ? 'コードを作成中...' : assistantStreamStatus === 'summarizing' ? '会話を短く圧縮中...' : '思考中...'}
                             </span>
                           ) : (
                             <>
-                              {msg.content}
+                              {visibleMessageContent && (
+                                <span>{visibleMessageContent}</span>
+                              )}
+                              {msg.postPreview && (
+                                <MiniPostPreviewCard post={msg.postPreview} compact />
+                              )}
+                              {!isUser && msg.references && msg.references.length > 0 && (
+                                <div className="mt-3 whitespace-normal">
+                                  <button
+                                    type="button"
+                                    onClick={() => setExpandedReferenceMessageId(expandedReferenceMessageId === msg.id ? null : msg.id)}
+                                    className="inline-flex items-center gap-3 rounded-full border border-[#2b2b3a]/15 dark:border-[#3a3a3a] bg-white/75 dark:bg-[#121212] px-3 py-2 text-[#2b2b3a] dark:text-[#ececec] hover:bg-[#ffd9e5]/35 dark:hover:bg-[#212121] transition"
+                                    title="参照した公開ポストを表示"
+                                  >
+                                    <span className="grid h-8 w-8 place-items-center rounded-lg bg-[#ffd9e5] dark:bg-[#2a2a2a] border border-[#f0c9d6] dark:border-[#3a3a3a]">
+                                      <Sparkles className="w-4 h-4 text-[#ea4c89] dark:text-[#ececec]" />
+                                    </span>
+                                    <span className="text-sm md:text-[15px] font-semibold">
+                                      {msg.references.length}件のポスト
+                                    </span>
+                                  </button>
+
+                                  {expandedReferenceMessageId === msg.id && (
+                                    <div className="mt-2 space-y-2 max-w-xl">
+                                      {msg.references.map((post) => (
+                                        <div
+                                          key={post.id}
+                                          className="rounded-2xl border border-[#eadde3] dark:border-[#2f2f2f] bg-white/85 dark:bg-[#151515] p-3 text-sm leading-6 text-[#2b2b3a] dark:text-[#ececec]"
+                                        >
+                                          <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <div className="font-semibold truncate">
+                                              {post.authorDisplayName} (@{post.authorUsername}){post.authorIsOfficial ? ' / 公式' : ''}
+                                            </div>
+                                            <div className="text-xs text-[#8a6f7a] dark:text-[#999999] shrink-0">
+                                              {formatRelative(post.createdAt)}
+                                            </div>
+                                          </div>
+                                          <div className="mt-1 text-[#2b2b3a]/90 dark:text-[#ececec]/90 break-words">
+                                            {post.contentSnippet}
+                                          </div>
+                                          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[#666666] dark:text-[#999999]">
+                                            <span>いいね {post.likesCount}</span>
+                                            <span>リポスト {post.repostsCount}</span>
+                                            <span>コメント {post.commentsCount}</span>
+                                            {post.imageCount > 0 && <span>画像 {post.imageCount}枚</span>}
+                                            {post.isReply && <span>返信</span>}
+                                            {post.isQuote && <span>引用</span>}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              {!isUser && msg.codingArtifact && (
+                                <div className="mt-4 whitespace-normal rounded-3xl border border-[#f0c9d6] dark:border-[#2f2f2f] bg-white/85 dark:bg-[#151515] overflow-hidden">
+                                  <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-[#eadde3] dark:border-[#2f2f2f]">
+                                    <div className="min-w-0">
+                                      <div className="text-sm font-semibold text-[#2b2b3a] dark:text-[#ececec] truncate">
+                                        {msg.codingArtifact.title}
+                                      </div>
+                                      <div className="text-xs text-[#8a6f7a] dark:text-[#999999] mt-0.5">
+                                        HTMLプレビューとコード
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleCopy(msg.codingArtifact?.html || '')}
+                                        className="px-3 py-1.5 rounded-full text-xs font-semibold border border-[#f0c9d6] dark:border-[#3a3a3a] hover:bg-[#ffd9e5]/45 dark:hover:bg-[#212121] transition"
+                                      >
+                                        コードをコピー
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setExpandedCodeMessageId(expandedCodeMessageId === msg.id ? null : msg.id)}
+                                        className="px-3 py-1.5 rounded-full text-xs font-semibold border border-[#f0c9d6] dark:border-[#3a3a3a] hover:bg-[#ffd9e5]/45 dark:hover:bg-[#212121] transition"
+                                      >
+                                        {expandedCodeMessageId === msg.id ? 'コードを閉じる' : 'コードを表示'}
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <div className="bg-transparent p-0">
+                                    <iframe
+                                      title={msg.codingArtifact.title}
+                                      srcDoc={msg.codingArtifact.html}
+                                      sandbox="allow-scripts"
+                                      className="block w-full h-[360px] bg-white"
+                                    />
+                                  </div>
+
+                                  {expandedCodeMessageId === msg.id && (
+                                    <pre className="max-h-[420px] overflow-auto bg-[#1f1f24] text-[#f4f4f5] text-xs leading-5 p-4 whitespace-pre-wrap break-words">
+                                      <code>{msg.codingArtifact.html}</code>
+                                    </pre>
+                                  )}
+                                </div>
+                              )}
                               {!isUser && msg.content && (
                                 <div className="flex items-center gap-1.5 mt-3 text-[#666666] dark:text-[#999999]">
-                                  <button onClick={() => handleCopy(msg.content)} className="p-1.5 hover:bg-[#ececec] dark:hover:bg-[#212121] rounded-md transition text-[#666666] dark:text-[#999999] hover:text-[#0d0d0d] dark:hover:text-[#ececec]" title="コピー">
+                                  <button onClick={() => handleCopy(msg.content)} className="p-1.5 hover:bg-[#ffd9e5]/45 dark:hover:bg-[#212121] rounded-md transition text-[#666666] dark:text-[#999999] hover:text-[#2b2b3a] dark:hover:text-[#ececec]" title="コピー">
                                     <Copy className="w-4 h-4" />
                                   </button>
-                                  <button onClick={() => handleRegenerate(messages.findIndex(m => m.id === msg.id))} className="p-1.5 hover:bg-[#ececec] dark:hover:bg-[#212121] rounded-md transition text-[#666666] dark:text-[#999999] hover:text-[#0d0d0d] dark:hover:text-[#ececec]" title="再度考えてもらう" disabled={isLoading}>
+                                  <button onClick={() => handleRegenerate(messages.findIndex(m => m.id === msg.id))} className="p-1.5 hover:bg-[#ffd9e5]/45 dark:hover:bg-[#212121] rounded-md transition text-[#666666] dark:text-[#999999] hover:text-[#2b2b3a] dark:hover:text-[#ececec]" title="再度考えてもらう" disabled={isLoading}>
                                     <RotateCcw className={`w-4 h-4 ${isLoading ? 'opacity-50' : ''}`} />
                                   </button>
                                   
@@ -949,7 +1756,7 @@ export default function ChatPage() {
                                     {speakingMessageId === msg.id ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
                                   </button>
                                   
-                                  <button onClick={() => handleShare(msg.content)} className="p-1.5 hover:bg-[#ececec] dark:hover:bg-[#212121] rounded-md transition text-[#666666] dark:text-[#999999] hover:text-[#0d0d0d] dark:hover:text-[#ececec]" title="共有">
+                                  <button onClick={() => handleShare(msg.content)} className="p-1.5 hover:bg-[#ffd9e5]/45 dark:hover:bg-[#212121] rounded-md transition text-[#666666] dark:text-[#999999] hover:text-[#2b2b3a] dark:hover:text-[#ececec]" title="共有">
                                     <Share className="w-4 h-4" />
                                   </button>
                                 </div>
@@ -969,7 +1776,26 @@ export default function ChatPage() {
 
         {/* 入力フォームエリア */}
         <div className="p-4 w-full max-w-3xl mx-auto shrink-0">
-          <form onSubmit={handleSend} className="relative flex items-center w-full border border-[#e5e5e5] dark:border-[#2f2f2f] rounded-[1.5rem] bg-white dark:bg-[#1e1e1e] shadow-[0_2px_10px_rgba(0,0,0,0.05)] pl-3 pr-2 py-1">
+          {(postLinkPreviewLoading || postLinkPreview) && (
+            <div className="mb-3">
+              {postLinkPreviewLoading && !postLinkPreview ? (
+                <div className="flex items-center gap-2 rounded-2xl border border-[#f0c9d6] dark:border-[#2f2f2f] bg-white/85 dark:bg-[#151515] px-4 py-3 text-sm text-[#666666] dark:text-[#999999]">
+                  <Loader2 className="h-4 w-4 animate-spin text-[#ea4c89] dark:text-[#ececec]" />
+                  ポストを読み込み中...
+                </div>
+              ) : postLinkPreview ? (
+                <MiniPostPreviewCard
+                  post={postLinkPreview}
+                  onDismiss={() => {
+                    setDismissedPostPreviewId(postLinkPreview.id)
+                    setPostLinkPreview(null)
+                    setPostLinkPreviewLoading(false)
+                  }}
+                />
+              ) : null}
+            </div>
+          )}
+          <form onSubmit={handleSend} className="relative flex items-center w-full border border-[#f0c9d6] dark:border-[#2f2f2f] rounded-[1.5rem] bg-white/95 dark:bg-[#1e1e1e] pl-3 pr-2 py-1">
             <input
               type="text"
               value={input}
@@ -981,13 +1807,13 @@ export default function ChatPage() {
             <button
               type="submit"
               disabled={!input.trim() || isLoading}
-              className={`p-2.5 rounded-full transition flex items-center justify-center ${!input.trim() || isLoading ? 'bg-[#ececec] dark:bg-[#333333] text-[#999999]' : 'bg-black text-white dark:bg-white dark:text-black'}`}
+              className={`p-2.5 rounded-full transition flex items-center justify-center ${!input.trim() || isLoading ? 'bg-[#ececec] dark:bg-[#333333] text-[#999999]' : 'bg-[#ea4c89] text-white dark:bg-white dark:text-black'}`}
             >
               <Send className="w-4 h-4 ml-[2px]" />
             </button>
           </form>
           <div className="text-center text-xs text-[#999999] mt-3">
-            LimeAI の回答は必ずしも正しいとは限りません。重要な情報は確認するようにしてください。
+            LimeAI は AI のため、誤りを含む可能性があります。引用元は必ずご確認ください。
           </div>
         </div>
       </div>
