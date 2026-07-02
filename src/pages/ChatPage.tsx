@@ -29,6 +29,7 @@ type ReferencedPost = {
   id: string
   authorUsername: string
   authorDisplayName: string
+  authorAvatarUrl: string | null
   authorIsOfficial: boolean
   createdAt: string
   contentSnippet: string
@@ -138,6 +139,7 @@ const normalizeReferencedPost = (value: unknown): ReferencedPost | null => {
     id,
     authorUsername: authorUsername || 'unknown',
     authorDisplayName: authorDisplayName || '無名',
+    authorAvatarUrl: getRecordNullableString(item, 'authorAvatarUrl', 'author_avatar_url'),
     authorIsOfficial: getRecordBoolean(item, 'authorIsOfficial', 'author_is_official'),
     createdAt,
     contentSnippet,
@@ -455,6 +457,46 @@ const MiniPostPreviewCard = ({
     </article>
   )
 }
+
+const getReferenceAvatarPosts = (posts: ReferencedPost[]) => {
+  const seen = new Set<string>()
+  const avatars: ReferencedPost[] = []
+
+  posts
+    .slice()
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .forEach((post) => {
+      const key = post.authorUsername || post.authorDisplayName || post.id
+      if (seen.has(key)) return
+
+      seen.add(key)
+      avatars.push(post)
+    })
+
+  return avatars.slice(0, 3)
+}
+
+const ReferencePostsButtonAvatars = ({ posts }: { posts: ReferencedPost[] }) => {
+  const avatarPosts = getReferenceAvatarPosts(posts)
+
+  return (
+    <span className="flex h-7 items-center pl-1 pr-0.5">
+      {avatarPosts.map((post, index) => (
+        <Avatar
+          key={`${post.authorUsername}-${post.id}`}
+          className={`${index > 0 ? '-ml-2' : ''} h-6 w-6 border-2 border-white bg-[#fff8f0] dark:border-[#121212] dark:bg-[#1a1a1a]`}
+          title={`${post.authorDisplayName} (@${post.authorUsername})`}
+        >
+          <AvatarImage src={post.authorAvatarUrl || undefined} alt={post.authorDisplayName} />
+          <AvatarFallback className="bg-[#ffd9e5] text-[10px] font-bold text-[#ea4c89] dark:bg-[#2a2a2a] dark:text-[#ececec]">
+            {post.authorDisplayName.slice(0, 1)}
+          </AvatarFallback>
+        </Avatar>
+      ))}
+    </span>
+  )
+}
+
 
 type ChatSession = {
   id: string
@@ -883,7 +925,8 @@ export default function ChatPage() {
 
       if (!response.ok) {
         const errorText = await response.text()
-        throw new Error(`Edge Function Error (${response.status}): ${errorText}`)
+        console.error('Edge Function HTTP Error:', response.status, errorText)
+        throw new Error(`Edge Function Error (${response.status})`)
       }
       if (!response.body) throw new Error('No response body')
 
@@ -988,7 +1031,30 @@ export default function ChatPage() {
               }
 
               if (parsed.type === 'edge_error') {
-                throw new Error(parsed.details || parsed.message || 'Edge Function Error')
+                console.error('Edge Function error event:', parsed)
+
+                if (!accumulatedText.trim()) {
+                  const fallbackText = typeof parsed.publicMessage === 'string' && parsed.publicMessage.trim()
+                    ? parsed.publicMessage.trim()
+                    : '検索処理中に一時的なエラーが発生しました。もう一度お試しください。'
+
+                  accumulatedText = fallbackText
+
+                  setSessions(prev => prev.map(s => {
+                    if (s.id === currentSessionId) {
+                      return {
+                        ...s,
+                        messages: s.messages.map(m =>
+                          m.id === assistantMessageId ? { ...m, content: accumulatedText } : m
+                        )
+                      }
+                    }
+                    return s
+                  }))
+                }
+
+                setAssistantStreamStatus('thinking')
+                continue
               }
 
               const text = parsed.choices?.[0]?.delta?.content || ''
@@ -1218,7 +1284,8 @@ export default function ChatPage() {
 
       if (!response.ok) {
         const errorText = await response.text()
-        throw new Error(`Edge Function Error (${response.status}): ${errorText}`)
+        console.error('Edge Function HTTP Error:', response.status, errorText)
+        throw new Error(`Edge Function Error (${response.status})`)
       }
       if (!response.body) throw new Error('No response body')
 
@@ -1323,7 +1390,30 @@ export default function ChatPage() {
               }
 
               if (parsed.type === 'edge_error') {
-                throw new Error(parsed.details || parsed.message || 'Edge Function Error')
+                console.error('Edge Function error event:', parsed)
+
+                if (!accumulatedText.trim()) {
+                  const fallbackText = typeof parsed.publicMessage === 'string' && parsed.publicMessage.trim()
+                    ? parsed.publicMessage.trim()
+                    : '検索処理中に一時的なエラーが発生しました。もう一度お試しください。'
+
+                  accumulatedText = fallbackText
+
+                  setSessions(prev => prev.map(s => {
+                    if (s.id === currentSessionId) {
+                      return {
+                        ...s,
+                        messages: s.messages.map(m =>
+                          m.id === assistantMessageId ? { ...m, content: accumulatedText } : m
+                        )
+                      }
+                    }
+                    return s
+                  }))
+                }
+
+                setAssistantStreamStatus('thinking')
+                continue
               }
 
               const text = parsed.choices?.[0]?.delta?.content || ''
@@ -1632,7 +1722,7 @@ export default function ChatPage() {
                           {msg.content === '' && isLoading ? (
                             <span className="flex items-center gap-2 text-[#666666] dark:text-[#999999] text-[15px] animate-pulse">
                               <Loader2 className="w-4 h-4 animate-spin text-[#ea4c89] dark:text-[#ececec]" />
-                              {assistantStreamStatus === 'checking' ? '公開SNS投稿を確認中...' : assistantStreamStatus === 'searching' ? '公開SNS投稿を検索中...' : assistantStreamStatus === 'coding' ? 'コードを作成中...' : assistantStreamStatus === 'summarizing' ? '会話を短く圧縮中...' : '思考中...'}
+                              {assistantStreamStatus === 'checking' ? '検索ツールを開いています...' : assistantStreamStatus === 'searching' ? '検索中...' : assistantStreamStatus === 'coding' ? 'コードを作成中...' : assistantStreamStatus === 'summarizing' ? '会話を短く圧縮中...' : '思考中...'}
                             </span>
                           ) : (
                             <>
@@ -1647,13 +1737,11 @@ export default function ChatPage() {
                                   <button
                                     type="button"
                                     onClick={() => setExpandedReferenceMessageId(expandedReferenceMessageId === msg.id ? null : msg.id)}
-                                    className="inline-flex items-center gap-3 rounded-full border border-[#2b2b3a]/15 dark:border-[#3a3a3a] bg-white/75 dark:bg-[#121212] px-3 py-2 text-[#2b2b3a] dark:text-[#ececec] hover:bg-[#ffd9e5]/35 dark:hover:bg-[#212121] transition"
+                                    className="inline-flex items-center gap-2 rounded-full border border-[#2b2b3a]/15 dark:border-[#3a3a3a] bg-white/75 dark:bg-[#121212] px-2.5 py-1.5 text-[#2b2b3a] dark:text-[#ececec] hover:bg-[#ffd9e5]/35 dark:hover:bg-[#212121] transition"
                                     title="参照した公開ポストを表示"
                                   >
-                                    <span className="grid h-8 w-8 place-items-center rounded-lg bg-[#ffd9e5] dark:bg-[#2a2a2a] border border-[#f0c9d6] dark:border-[#3a3a3a]">
-                                      <Sparkles className="w-4 h-4 text-[#ea4c89] dark:text-[#ececec]" />
-                                    </span>
-                                    <span className="text-sm md:text-[15px] font-semibold">
+                                    <ReferencePostsButtonAvatars posts={msg.references} />
+                                    <span className="text-[13px] md:text-sm font-semibold">
                                       {msg.references.length}件のポスト
                                     </span>
                                   </button>
