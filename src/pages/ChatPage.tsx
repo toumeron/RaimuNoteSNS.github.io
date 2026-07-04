@@ -355,7 +355,7 @@ const removeSupportedPostLinksFromText = (text: string) => {
   let nextText = text
 
   urls.forEach((rawUrl) => {
-    const cleanedUrl = rawUrl.replace(/[)\]}>。、，．！？!?]+$/g, '')
+    const cleanedUrl = (rawUrl as string).replace(/[)\]}>。、，．！？!?]+$/g, '');
     if (extractSupportedPostLink(cleanedUrl)) {
       nextText = nextText.replace(rawUrl, '')
     }
@@ -497,7 +497,6 @@ const ReferencePostsButtonAvatars = ({ posts }: { posts: ReferencedPost[] }) => 
   )
 }
 
-
 type ChatSession = {
   id: string
   title: string
@@ -506,6 +505,14 @@ type ChatSession = {
 }
 
 type AssistantStreamStatus = 'idle' | 'checking' | 'searching' | 'coding' | 'summarizing' | 'thinking'
+
+const readCachedLimeProStatus = () => {
+  if (typeof window === 'undefined') return null;
+  const cached = localStorage.getItem('limepro_status');
+  if (cached === 'true') return true;
+  if (cached === 'false') return false;
+  return null;
+};
 
 export default function ChatPage() {
   const { user } = useAuth()
@@ -528,6 +535,123 @@ export default function ChatPage() {
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  // LimePro Status Management
+  const mountedRef = useRef(true);
+  const statusRef = useRef<boolean | null>(null);
+  const localChangeVersionRef = useRef(0);
+
+  const [hasLimePro, setHasLimePro] = useState<boolean | null>(() => {
+    const cached = readCachedLimeProStatus();
+    statusRef.current = cached;
+    return cached;
+  });
+
+  useEffect(() => {
+    mountedRef.current = true;
+    let broadcastChannel: BroadcastChannel | null = null;
+
+    const applyLimeProStatus = (nextStatus: boolean, fromLocalChange = false) => {
+      if (fromLocalChange) {
+        localChangeVersionRef.current += 1;
+      }
+      statusRef.current = nextStatus;
+      localStorage.setItem('limepro_status', String(nextStatus));
+      if (mountedRef.current) {
+        setHasLimePro(nextStatus);
+      }
+    };
+
+    const syncFromLocalStorage = () => {
+      const cached = readCachedLimeProStatus();
+      if (typeof cached === 'boolean' && cached !== statusRef.current) {
+        applyLimeProStatus(cached, true);
+      }
+    };
+
+    const fetchLimeProStatus = async () => {
+      const versionAtStart = localChangeVersionRef.current;
+      const { data: { user } } = await supabase.auth.getUser();
+
+      if (!user) {
+        if (versionAtStart === localChangeVersionRef.current) {
+          applyLimeProStatus(false);
+        }
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('user_entitlements')
+        .select('feature')
+        .eq('user_id', user.id)
+        .eq('feature', 'limepro')
+        .maybeSingle();
+
+      if (error) {
+        console.error('Fetch ChatPage LimePro Status Error:', error);
+        return;
+      }
+
+      if (versionAtStart !== localChangeVersionRef.current) {
+        return;
+      }
+
+      applyLimeProStatus(!!data);
+    };
+
+    const handleLocalLimeProChange = (event: Event) => {
+      const customEvent = event as CustomEvent<{ hasLimePro: boolean }>;
+      const nextStatus = customEvent.detail?.hasLimePro;
+      if (typeof nextStatus === 'boolean') {
+        applyLimeProStatus(nextStatus, true);
+      }
+    };
+
+    const handleStorageChange = (event: StorageEvent) => {
+      if (event.key !== 'limepro_status') return;
+      syncFromLocalStorage();
+    };
+
+    const handleFocusOrVisible = () => {
+      syncFromLocalStorage();
+      fetchLimeProStatus();
+    };
+
+    window.addEventListener('limepro-status-changed', handleLocalLimeProChange);
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('focus', handleFocusOrVisible);
+    document.addEventListener('visibilitychange', handleFocusOrVisible);
+
+    if ('BroadcastChannel' in window) {
+      broadcastChannel = new BroadcastChannel('limepro-status');
+      broadcastChannel.onmessage = (event) => {
+        const nextStatus = event.data?.hasLimePro;
+        if (typeof nextStatus === 'boolean') {
+          applyLimeProStatus(nextStatus, true);
+        }
+      };
+    }
+
+    const syncTimer = window.setInterval(syncFromLocalStorage, 100);
+    fetchLimeProStatus();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
+      fetchLimeProStatus();
+    });
+
+    return () => {
+      mountedRef.current = false;
+      window.removeEventListener('limepro-status-changed', handleLocalLimeProChange);
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('focus', handleFocusOrVisible);
+      document.removeEventListener('visibilitychange', handleFocusOrVisible);
+      window.clearInterval(syncTimer);
+      subscription.unsubscribe();
+      if (broadcastChannel) {
+        broadcastChannel.close();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof document === 'undefined') return
@@ -1650,8 +1774,12 @@ export default function ChatPage() {
 
                   <button
                     onClick={() => {
-                      setSelectedModel('advanced');
-                      setIsModelSelectorOpen(false);
+                      if (hasLimePro) {
+                        setSelectedModel('advanced');
+                        setIsModelSelectorOpen(false);
+                      } else {
+                        window.location.href = '/RaimuNoteSNS.github.io/LimePro';
+                      }
                     }}
                     className={`flex items-center justify-between p-2.5 md:p-3 rounded-xl transition text-left mt-1 ${
                       selectedModel === 'advanced'
@@ -1668,9 +1796,16 @@ export default function ChatPage() {
                       </span>
                     </div>
 
-                    {selectedModel === 'advanced' && (
-                      <Check className="w-4 h-4 md:w-5 md:h-5 text-[#0d0d0d] dark:text-[#ececec]" />
-                    )}
+                    <div className="flex items-center gap-2">
+                      {!hasLimePro && (
+                        <span className="px-4 py-1.5 text-[12px] font-medium text-[#1e40af] dark:text-[#93c5fd] border border-[#d1d5db] dark:border-[#3a3a3a] rounded-full">
+                          アップグレード
+                        </span>
+                      )}
+                      {selectedModel === 'advanced' && (
+                        <Check className="w-4 h-4 md:w-5 md:h-5 text-[#0d0d0d] dark:text-[#ececec]" />
+                      )}
+                    </div>
                   </button>
                 </div>
               </>

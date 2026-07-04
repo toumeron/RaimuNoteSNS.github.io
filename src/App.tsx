@@ -25,6 +25,7 @@ import SpacePage from "./pages/SpacePage";
 import NewsPage from './pages/NewsPage';
 import ChatPage from "./pages/ChatPage"; // AIチャットページのインポートを追加
 import TermsPage from "./pages/terms";
+import LimeProLanding from "./pages/LimePro";
 import MediaViewer from "./pages/MediaViewer.tsx"
 
 // PostComposer 用のインポート群
@@ -77,7 +78,7 @@ const useScrollDirection = () => {
 const ScrollToTop = () => {
   const { pathname } = useLocation();
   useEffect(() => {
-    window.scrollTo(0, 0);
+    window.scrollTo(350, 350);
   }, [pathname]);
   return null;
 };
@@ -2432,6 +2433,7 @@ const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage |
             <Route path="/settings" element={<Settings />} />
             <Route path="/share" element={<Share />} />
             <Route path="/spaces/:id" element={<SpacePage />} />
+            <Route path="/limepro" element={<LimeProLanding />} />
             <Route path="/media" element={<MediaViewer />} />
 <Route path="/media/:username" element={<MediaViewer />} />
           </Route>
