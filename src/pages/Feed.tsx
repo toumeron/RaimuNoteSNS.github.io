@@ -1,4 +1,4 @@
-import { Heart, RefreshCw, Sparkles, Loader2 } from 'lucide-react';
+import { RefreshCw, Sparkles, Loader2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { useQueryClient } from '@tanstack/react-query';
@@ -67,8 +67,8 @@ type FeedPostInsertPayload = {
 };
 
 const ESTIMATED_POST_HEIGHT = 360;
-const VIRTUAL_OVERSCAN = 8;
-const MIN_VIRTUALIZED_POSTS = 30;
+const VIRTUAL_OVERSCAN = 4;
+const MIN_VIRTUALIZED_POSTS = 12;
 
 const insertPostAtLocalFeedHead = (current: PostWithAuthor[], post: PostWithAuthor) => {
   if (current.some((item) => item.id === post.id)) return current;
@@ -931,6 +931,7 @@ export default function Feed() {
             className="absolute left-0 top-0 h-full w-full object-cover"
             style={{ objectPosition: 'center center' }}
             draggable={false}
+            decoding="async"
           />
           <div
             className={`absolute inset-0 ${timelineTheme === 'dark' ? 'bg-black/8' : 'bg-white/0'}`}
@@ -1105,7 +1106,7 @@ export default function Feed() {
             {/* スマホ専用の LimeNoteBeta ボックス */}
             <span className="ribbon-tag sm:hidden">
               <Sparkles className="h-3 w-3" />
-              LimeNote 2.0
+              LimeNote 2.1.1
             </span>
           </div>
 
@@ -1114,7 +1115,7 @@ export default function Feed() {
         {/* PC専用の LimeNoteBeta ボックス */}
         <span className="ribbon-tag hidden sm:inline-flex">
           <Sparkles className="h-3 w-3" />
-          LimeNote 2.0
+          LimeNote 2.1.1
         </span>
       </div>
 

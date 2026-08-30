@@ -1,6 +1,6 @@
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { Loader2, Image as ImageIcon, X, MessageCircle, Plus, Upload, Link as LinkIcon, Send } from 'lucide-react';
 import { ProfileHeader } from '@/components/profile/ProfileHeader';
@@ -2049,6 +2049,15 @@ export default function Profile() {
   const [isScrolled, setIsScrolled] = useState(false);
   const tabsSentinelRef = useRef<HTMLDivElement>(null);
 
+  // 初回ペイント前にPC版のDOMが一瞬表示されるのを防ぐ。
+  // useLayoutEffect はブラウザでのペイント前に実行されるため、
+  // スマホではモバイル用CSSが適用された状態だけを最初に見せる。
+  const [isViewportReady, setIsViewportReady] = useState(false);
+
+  useLayoutEffect(() => {
+    setIsViewportReady(true);
+  }, []);
+
   const [profileReplies, setProfileReplies] = useState<ProfileReplyThread[]>([]);
   const [profileRepliesReady, setProfileRepliesReady] = useState(false);
   const [profileRepliesError, setProfileRepliesError] = useState(false);
@@ -2056,11 +2065,13 @@ export default function Profile() {
 
   const { data: user, isLoading: userLoading, isError: userError } = useProfile(username);
 
-  // 各無限スクロールクエリの定義
-  const postsQuery = useUserPostsInfinite(user?.id);
-  const likesQuery = useUserLikesInfinite(user?.id);
-  const mediaQuery = useUserMediaInfinite(user?.id);
-  const reactionsQuery = useUserReactionsInfinite(user?.id);
+  // 非表示タブの無限スクロール取得を開始しない。
+  // フック自体は常に同じ順序で呼び出し、アクティブなタブだけ userId を渡す。
+  // これにより初回表示で4タブ分のデータを同時に保持する必要をなくす。
+  const postsQuery = useUserPostsInfinite(activeTab === 'posts' ? user?.id : undefined);
+  const likesQuery = useUserLikesInfinite(activeTab === 'likes' ? user?.id : undefined);
+  const mediaQuery = useUserMediaInfinite(activeTab === 'media' ? user?.id : undefined);
+  const reactionsQuery = useUserReactionsInfinite(activeTab === 'reactions' ? user?.id : undefined);
 
   // タブに応じて使用するクエリを切り替え（Supabaseレベルでフィルタリングされた結果を取得）
   const currentQuery =
@@ -2135,6 +2146,8 @@ export default function Profile() {
   }, []);
 
   useEffect(() => {
+    if (activeTab !== 'posts') return;
+
     const handleReactionChanged = () => {
       setProfileRepliesRefreshKey((value) => value + 1);
     };
@@ -2144,7 +2157,7 @@ export default function Profile() {
     return () => {
       window.removeEventListener('profile-thread-reaction-changed', handleReactionChanged);
     };
-  }, []);
+  }, [activeTab]);
 
   useEffect(() => {
     setProfileReplies([]);
@@ -2652,16 +2665,13 @@ export default function Profile() {
 
         if (allUrls.length === 0) return [];
 
-        // 投稿オブジェクトそのものを返しつつ、表示用のURLだけを個別に持たせる
+        // 画像1枚ごとに投稿本体を複製すると、画像の多い投稿ほどメモリを消費する。
+        // 投稿本体は1つだけ保持し、表示用の小さな情報だけを画像アイテム側に持たせる。
         return allUrls.map((url, idx) => ({
-          ...p,
+          post: p,
           displayImageUrl: url,
           displayImageKey: `${p.id}-${idx}-${url}`,
           isMulti: allUrls.length > 1,
-          // 確実に数値を維持
-          likesCount: p.likesCount ?? p.likes_count ?? 0,
-          commentsCount: p.commentsCount ?? p.comments_count ?? 0,
-          likedByMe: !!(p.likedByMe ?? p.liked_by_me),
         }));
       });
     }
@@ -2696,7 +2706,10 @@ export default function Profile() {
 
   if (userLoading) {
     return (
-      <div className="-mt-[56px] space-y-0 sm:mt-0 sm:space-y-5">
+      <div
+        className="-mt-[56px] space-y-0 sm:mt-0 sm:space-y-5"
+        style={{ visibility: isViewportReady ? 'visible' : 'hidden' }}
+      >
         <Skeleton className="h-72 w-full rounded-none sm:rounded-3xl" />
 
         <div className="h-16 w-full sm:hidden">
@@ -2725,14 +2738,20 @@ export default function Profile() {
 
   if (userError || user === null) {
     return (
-      <div className="rounded-3xl border border-border/60 bg-card p-10 text-center text-muted-foreground">
+      <div
+        className="rounded-3xl border border-border/60 bg-card p-10 text-center text-muted-foreground"
+        style={{ visibility: isViewportReady ? 'visible' : 'hidden' }}
+      >
         ユーザーが見つかりませんでした。
       </div>
     );
   }
 
   return (
-    <div className="-mt-[56px] space-y-0 sm:mt-0 sm:space-y-5">
+    <div
+      className="-mt-[56px] space-y-0 sm:mt-0 sm:space-y-5"
+      style={{ visibility: isViewportReady ? 'visible' : 'hidden' }}
+    >
       <style>
         {`
           .profile-tabs-trigger[data-state='active'] {
@@ -2933,9 +2952,9 @@ export default function Profile() {
             <div className="grid grid-cols-3 gap-1 px-0 md:gap-2">
               {items.map((p: any, idx: number) => (
                 <div
-                  key={`media-${p.displayImageKey ?? `${p.id}-${idx}`}`}
+                  key={`media-${p.displayImageKey ?? `${p.post?.id ?? p.id}-${idx}`}`}
                   className="relative aspect-square cursor-pointer overflow-hidden rounded-md bg-muted animate-float-up md:rounded-xl"
-                  onClick={() => setSelectedMedia({ url: p.displayImageUrl, post: p })}
+                  onClick={() => setSelectedMedia({ url: p.displayImageUrl, post: p.post })}
                 >
                   <img
                     src={p.displayImageUrl}
