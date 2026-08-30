@@ -85,10 +85,27 @@ const formatDisplayCount = (count: number) => {
 
 const POST_REACTION_CACHE_LIMIT = 36;
 const IMAGE_NATURAL_SIZE_CACHE_LIMIT = 64;
+// 画像本体を表示する前に、サイズだけを先行取得する件数を増やす。
+// スクロール調整は行わず、先にサイズを揃えてレイアウトシフト自体を減らす方針。
+const IMAGE_SIZE_PRELOAD_CONCURRENCY = 6;
+const IMAGE_SIZE_PRELOAD_QUEUE_LIMIT = 24;
+const IMAGE_SIZE_PRELOAD_POLL_MS = 16;
+const IMAGE_SIZE_PRELOAD_TIMEOUT_MS = 5000;
 
 const postReactionCache = new Map<string, ReactionGroup[]>();
 const postReactionFetches = new Map<string, Promise<ReactionGroup[]>>();
 const imageNaturalSizeCache = new Map<string, { width: number; height: number }>();
+
+interface ImageSizePreloadTask {
+  url: string;
+  priority: 'high' | 'low';
+  resolve: (size: { width: number; height: number } | null) => void;
+}
+
+const imageSizePreloadQueue: ImageSizePreloadTask[] = [];
+const imageSizePreloadPending = new Map<string, Promise<{ width: number; height: number } | null>>();
+const imageSizePreloadQueued = new Map<string, ImageSizePreloadTask>();
+let activeImageSizePreloads = 0;
 
 let customEmojiCache: CustomEmoji[] | null = null;
 let customEmojiFetch: Promise<CustomEmoji[]> | null = null;
@@ -139,11 +156,140 @@ const setCachedNaturalSize = (url: string, size: { width: number; height: number
   trimMapToLimit(imageNaturalSizeCache, IMAGE_NATURAL_SIZE_CACHE_LIMIT);
 };
 
+const getPostImageUrlsForPreload = (post: PostWithAuthor) => {
+  const contentImageUrls = post.content?.match(imageUrlRegex) || [];
+  return [...(post.imageUrls || []), ...contentImageUrls].filter(Boolean).slice(0, 1);
+};
+
+const resolveImageNaturalSizeFromProbe = (image: HTMLImageElement) => {
+  const width = image.naturalWidth;
+  const height = image.naturalHeight;
+  if (width <= 0 || height <= 0) return null;
+  return { width, height };
+};
+
+const pumpImageSizePreloadQueue = () => {
+  while (activeImageSizePreloads < IMAGE_SIZE_PRELOAD_CONCURRENCY && imageSizePreloadQueue.length > 0) {
+    imageSizePreloadQueue.sort((a, b) => (a.priority === b.priority ? 0 : a.priority === 'high' ? -1 : 1));
+    const task = imageSizePreloadQueue.shift();
+    if (!task) break;
+
+    imageSizePreloadQueued.delete(task.url);
+    activeImageSizePreloads += 1;
+
+    const image = new Image();
+    let settled = false;
+    let pollTimer: number | null = null;
+    let timeoutTimer: number | null = null;
+
+    const cleanup = () => {
+      if (pollTimer !== null) {
+        window.clearTimeout(pollTimer);
+        pollTimer = null;
+      }
+      if (timeoutTimer !== null) {
+        window.clearTimeout(timeoutTimer);
+        timeoutTimer = null;
+      }
+      image.onload = null;
+      image.onerror = null;
+      image.src = '';
+    };
+
+    const finish = (size: { width: number; height: number } | null) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      activeImageSizePreloads = Math.max(0, activeImageSizePreloads - 1);
+
+      if (size) {
+        setCachedNaturalSize(task.url, size);
+      }
+
+      task.resolve(size);
+
+      window.setTimeout(() => {
+        pumpImageSizePreloadQueue();
+      }, 0);
+    };
+
+    const pollForDimensions = () => {
+      if (settled) return;
+
+      const size = resolveImageNaturalSizeFromProbe(image);
+      if (size) {
+        // naturalWidth/naturalHeight が得られた時点で目的は達成。
+        // 完全な画像のデコード・保持を待たずに直ちに破棄する。
+        finish(size);
+        return;
+      }
+
+      pollTimer = window.setTimeout(pollForDimensions, IMAGE_SIZE_PRELOAD_POLL_MS);
+    };
+
+    image.onload = () => {
+      finish(resolveImageNaturalSizeFromProbe(image));
+    };
+
+    image.onerror = () => {
+      finish(null);
+    };
+
+    timeoutTimer = window.setTimeout(() => {
+      finish(resolveImageNaturalSizeFromProbe(image));
+    }, IMAGE_SIZE_PRELOAD_TIMEOUT_MS);
+
+    image.decoding = 'async';
+    if ('fetchPriority' in image) {
+      image.fetchPriority = task.priority;
+    }
+
+    // サイズ取得用のプローブ。表示用 <img> とは別物にし、
+    // naturalWidth/naturalHeight が判明した瞬間に src を外す。
+    image.src = task.url;
+    pollForDimensions();
+  }
+};
+
+const preloadImageNaturalSize = (url: string, priority: 'high' | 'low' = 'low') => {
+  const cached = getCachedNaturalSize(url);
+  if (cached) return Promise.resolve(cached);
+
+  const pending = imageSizePreloadPending.get(url);
+  if (pending) {
+    const queued = imageSizePreloadQueued.get(url);
+    if (queued && priority === 'high') queued.priority = 'high';
+    return pending;
+  }
+
+  if (imageSizePreloadQueue.length >= IMAGE_SIZE_PRELOAD_QUEUE_LIMIT && priority === 'low') {
+    return Promise.resolve(null);
+  }
+
+  const promise = new Promise<{ width: number; height: number } | null>((resolve) => {
+    const task: ImageSizePreloadTask = { url, priority, resolve };
+    imageSizePreloadQueued.set(url, task);
+    imageSizePreloadQueue.push(task);
+  }).finally(() => {
+    imageSizePreloadPending.delete(url);
+  });
+
+  imageSizePreloadPending.set(url, promise);
+  pumpImageSizePreloadQueue();
+  return promise;
+};
+
 export const preloadPostCardAssets = (
-  _post: PostWithAuthor,
-  _options?: { priority?: 'high' | 'low' }
+  post: PostWithAuthor,
+  options?: { priority?: 'high' | 'low' }
 ) => {
-  // 画像の事前デコードはメモリを食いやすいため、互換用のno-opにしている。
+  const imageUrls = getPostImageUrlsForPreload(post);
+  if (imageUrls.length !== 1) return;
+
+  const url = imageUrls[0];
+  if (getCachedNaturalSize(url)) return;
+
+  void preloadImageNaturalSize(url, options?.priority || 'low');
 };
 
 const ensureCurrentUserIdCached = async () => {
@@ -278,8 +424,14 @@ const fetchReactionsForPost = async (postId: string, force = false): Promise<Rea
 };
 
 export const preloadPostCardData = async (posts: PostWithAuthor[]) => {
-  const warmupPosts = posts.slice(0, 4);
+  // 1回の取得対象を増やして、速いスクロールでも次のカードの画像サイズが
+  // 先に揃っている確率を上げる。ここでは画像本体の描画ではなくサイズ取得だけを行う。
+  const warmupPosts = posts.slice(0, 12);
   if (!warmupPosts.length) return;
+
+  warmupPosts.forEach((post, index) => {
+    preloadPostCardAssets(post, { priority: index < 2 ? 'high' : 'low' });
+  });
 
   ensureCurrentUserIdCached();
   ensureCustomEmojisCached();
@@ -952,7 +1104,24 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
   }, [post.content, post.imageUrls]);
 
   useEffect(() => {
-    setSingleImageNaturalSize(singleImageUrl ? getCachedNaturalSize(singleImageUrl) ?? null : null);
+    const cached = singleImageUrl ? getCachedNaturalSize(singleImageUrl) : null;
+    setSingleImageNaturalSize(cached);
+
+    if (!singleImageUrl || cached) return;
+
+    let cancelled = false;
+    void preloadImageNaturalSize(singleImageUrl, 'high').then((size) => {
+      if (cancelled || !size) return;
+
+      setSingleImageNaturalSize((current) => {
+        if (current && current.width === size.width && current.height === size.height) return current;
+        return size;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [singleImageUrl]);
 
   const getSingleImageFrameStyle = (): React.CSSProperties => {

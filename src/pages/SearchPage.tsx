@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Search, X, Clock, Loader2, TrendingUp, Newspaper, Radio, Play, Square } from 'lucide-react';
+import { Search, X, Clock, Loader2, TrendingUp, Newspaper, Radio, Play, Square, UsersRound } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PostCard } from '@/components/feed/PostCard';
 import UserCard from '@/components/search/UserCard';
+import { FollowButton } from '@/components/profile/FollowButton';
 import { supabase } from '@/lib/supabase';
 import type { User, PostWithAuthor } from '@/types';
 // @ts-ignore - tiny-segmenter has no bundled types
@@ -1033,6 +1034,20 @@ export default function SearchPage() {
 
   const queryTokens = useMemo(() => tokenizeQuery(searchQuery), [searchQuery]);
 
+  // おすすめユーザー用
+  // 公式かどうか・登録日時などでは並び替えず、毎回ランダムに3人選ぶ。
+  const recommendedUsers = useMemo(() => {
+    const candidates = allUsers.filter((u) => !!u.id && !!u.username);
+    const shuffled = [...candidates];
+
+    for (let i = shuffled.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+
+    return shuffled.slice(0, 3);
+  }, [allUsers]);
+
   const filteredUsers = useMemo(() => {
     if (!searchQuery || queryTokens.length === 0) return [];
 
@@ -1191,6 +1206,77 @@ export default function SearchPage() {
                   現在、トレンドを取得できません
                 </div>
               )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* おすすめユーザーセクション */}
+      <div className="px-4">
+        <div className="bg-black/[0.02] dark:bg-white/[0.03] rounded-2xl border border-black/[0.03] dark:border-white/[0.05] overflow-hidden">
+          <div className="px-4 py-3 border-b border-black/[0.03] dark:border-white/[0.05] flex items-center gap-2">
+            <UsersRound className="w-5 h-5 text-primary" />
+            <h2 className="font-extrabold text-xl">おすすめユーザー</h2>
+          </div>
+
+          {isUsersLoading ? (
+            <div className="p-4">
+              {Array.from({ length: 3 }).map((_, idx) => (
+                <div key={idx} className="flex items-center gap-3 px-1 py-3 border-b last:border-none border-black/[0.03] dark:border-white/[0.05] animate-pulse">
+                  <div className="w-12 h-12 rounded-full bg-black/5 dark:bg-white/10 shrink-0" />
+                  <div className="flex-1 min-w-0 space-y-2">
+                    <div className="h-4 w-32 bg-black/5 dark:bg-white/10 rounded" />
+                    <div className="h-3 w-24 bg-black/5 dark:bg-white/10 rounded" />
+                  </div>
+                  <div className="w-24 h-9 rounded-full bg-black/5 dark:bg-white/10 shrink-0" />
+                </div>
+              ))}
+            </div>
+          ) : recommendedUsers.length > 0 ? (
+            <div className="flex flex-col">
+              {recommendedUsers.map((user) => (
+                <div
+                  key={user.id}
+                  className="flex items-center gap-3 px-4 py-3 border-b last:border-none border-black/[0.03] dark:border-white/[0.05] hover:bg-black/[0.02] dark:hover:bg-white/[0.04] transition-colors cursor-pointer"
+                  onClick={() => navigate(`/u/${user.username}`)}
+                >
+                  {user.avatarUrl ? (
+                    <img
+                      src={user.avatarUrl}
+                      alt={user.displayName}
+                      className="w-12 h-12 rounded-full object-cover shrink-0"
+                    />
+                  ) : (
+                    <div className="w-12 h-12 rounded-full bg-black/5 dark:bg-white/10 shrink-0" />
+                  )}
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-center gap-1">
+                      <span className="truncate font-bold text-[16px]">{user.displayName}</span>
+                      {user.isOfficial && (
+                        <img
+                          src={`${import.meta.env.BASE_URL}verified.png`}
+                          alt="Official"
+                          className="h-4 w-4 shrink-0 translate-y-[0.5px]"
+                          loading="eager"
+                        />
+                      )}
+                    </div>
+                    <div className="truncate text-[14px] text-[rgb(83,100,113)] dark:text-gray-400">@{user.username}</div>
+                  </div>
+
+                  <div
+                    className="shrink-0"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <FollowButton userId={user.id} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="px-4 py-8 text-center text-[rgb(83,100,113)] dark:text-gray-400 text-[14px]">
+              現在、おすすめユーザーを表示できません
             </div>
           )}
         </div>
