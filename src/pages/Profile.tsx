@@ -39,6 +39,11 @@ const PROFILE_REPLY_ITEM = 'profile-reply';
 const PROFILE_POST_ITEM = 'profile-post';
 const PROFILE_REPLY_LIMIT = 80;
 
+// data.pages が未取得の間 `?? []` を書くと毎レンダー新しい配列参照が
+// 生成され、それに依存する useMemo が無駄に再計算されてしまう。
+// 同じ空配列を使い回すことでその再計算を防ぐ。
+const EMPTY_ARRAY: any[] = [];
+
 const normalizePostVisibility = (visibility: unknown) => {
   const normalized = typeof visibility === 'string' ? visibility.trim().toLowerCase() : '';
   return normalized || 'public';
@@ -400,7 +405,10 @@ const renderProfileThreadTextWithMentions = (text: string, navigate: (to: string
   });
 };
 
-const normalizeInlineAuthor = (author: any, fallbackUserId = ''): any => {
+// 投稿者情報の補完処理。以前は Profile() コンポーネント内で毎レンダー
+// 再生成されていたが、props/state に依存しない純粋関数なのでモジュール
+// スコープに固定し、レンダーごとの関数再生成コストをなくす。
+const normalizeAuthor = (author: any, fallbackUserId = ''): any => {
   const safeUsername = author?.username ?? '';
   const safeDisplayName = author?.display_name ?? author?.displayName ?? safeUsername;
 
@@ -430,6 +438,153 @@ const normalizeInlineAuthor = (author: any, fallbackUserId = ''): any => {
     prefecture: author?.prefecture ?? '',
     city: author?.city ?? '',
   };
+};
+
+// PostCardに渡す前に、undefinedになりやすい投稿情報を補完する
+// （こちらも純粋関数のためモジュールスコープに固定）
+const normalizePost = (post: any, reaction?: any): any | null => {
+  if (!post) return null;
+
+  const baseAuthor = post.author ?? post.profiles ?? post.user ?? null;
+  const safeAuthor = normalizeAuthor(baseAuthor, post.user_id ?? post.userId ?? '');
+
+  const imageUrls = Array.isArray(post.imageUrls)
+    ? post.imageUrls
+    : Array.isArray(post.image_urls)
+      ? post.image_urls
+      : [];
+
+  return {
+    ...post,
+
+    id: post.id ?? '',
+
+    user_id: post.user_id ?? post.userId ?? safeAuthor.id,
+    userId: post.userId ?? post.user_id ?? safeAuthor.id,
+
+    content: post.content ?? '',
+
+    image_urls: imageUrls,
+    imageUrls,
+
+    created_at: post.created_at ?? post.createdAt ?? new Date().toISOString(),
+    createdAt: post.createdAt ?? post.created_at ?? new Date().toISOString(),
+
+    likes_count: Number(post.likes_count ?? post.likesCount ?? 0),
+    likesCount: Number(post.likesCount ?? post.likes_count ?? 0),
+
+    comments_count: Number(post.comments_count ?? post.commentsCount ?? 0),
+    commentsCount: Number(post.commentsCount ?? post.comments_count ?? 0),
+
+    reposts_count: Number(post.reposts_count ?? post.repostsCount ?? 0),
+    repostsCount: Number(post.repostsCount ?? post.reposts_count ?? 0),
+
+    liked_by_me: !!(post.liked_by_me ?? post.likedByMe),
+    likedByMe: !!(post.likedByMe ?? post.liked_by_me),
+
+    reposted_by_me: !!(post.reposted_by_me ?? post.repostedByMe),
+    repostedByMe: !!(post.repostedByMe ?? post.reposted_by_me),
+
+    client_name: post.client_name ?? post.clientName ?? '',
+    clientName: post.clientName ?? post.client_name ?? '',
+
+    parent_id: post.parent_id ?? post.parentId ?? null,
+    parentId: post.parentId ?? post.parent_id ?? null,
+
+    is_quote: !!(post.is_quote ?? post.isQuote),
+    isQuote: !!(post.isQuote ?? post.is_quote),
+
+    visibility: post.visibility ?? 'public',
+
+    is_bot: !!(post.is_bot ?? post.isBot),
+    isBot: !!(post.isBot ?? post.is_bot),
+
+    source_twitter: !!(post.source_twitter ?? post.sourceTwitter),
+    sourceTwitter: !!(post.sourceTwitter ?? post.source_twitter),
+
+    origin_url: post.origin_url ?? post.originUrl ?? '',
+    originUrl: post.originUrl ?? post.origin_url ?? '',
+
+    prefecture: post.prefecture ?? '',
+    city: post.city ?? '',
+
+    author: safeAuthor,
+    profiles: safeAuthor,
+    user: safeAuthor,
+
+    reactionId: reaction?.id ?? post.reactionId ?? null,
+    reactionEmoji: reaction?.emoji ?? post.reactionEmoji ?? '',
+    reactionCreatedAt: reaction?.created_at ?? post.reactionCreatedAt ?? null,
+
+    reactionEmojis: Array.isArray(post.reactionEmojis)
+      ? post.reactionEmojis
+      : reaction?.emoji
+        ? [reaction.emoji]
+        : [],
+  };
+};
+
+// 通常投稿・いいね投稿でも同じ投稿が重複した場合に key 警告を防ぐ
+const uniquePostsById = (posts: any[]) => {
+  const map = new Map<string, any>();
+
+  posts.forEach((post: any) => {
+    const normalized = normalizePost(post);
+    if (!normalized?.id) return;
+
+    if (!map.has(normalized.id)) {
+      map.set(normalized.id, normalized);
+    }
+  });
+
+  return Array.from(map.values());
+};
+
+// リアクション欄用：全ページをまとめてから同じ投稿を1枚にまとめる
+const groupReactionPosts = (reactions: any[]) => {
+  const grouped = new Map<string, any>();
+
+  reactions.forEach((reaction: any) => {
+    const rawPost = reaction.posts ?? reaction.post;
+    const post = normalizePost(rawPost, reaction);
+
+    if (!post?.id) return;
+
+    const existing = grouped.get(post.id);
+    const nextEmoji = reaction.emoji ?? post.reactionEmoji ?? '';
+
+    if (!existing) {
+      grouped.set(post.id, {
+        ...post,
+        reactionId: reaction.id ?? post.reactionId ?? post.id,
+        reactionEmoji: nextEmoji,
+        reactionCreatedAt: reaction.created_at ?? post.reactionCreatedAt ?? null,
+        reactionEmojis: nextEmoji ? [nextEmoji] : [],
+      });
+      return;
+    }
+
+    const currentEmojis = Array.isArray(existing.reactionEmojis)
+      ? existing.reactionEmojis
+      : existing.reactionEmoji
+        ? [existing.reactionEmoji]
+        : [];
+
+    const mergedEmojis =
+      nextEmoji && !currentEmojis.includes(nextEmoji)
+        ? [...currentEmojis, nextEmoji]
+        : currentEmojis;
+
+    grouped.set(post.id, {
+      ...existing,
+      reactionId: existing.reactionId ?? reaction.id ?? post.id,
+      reactionCreatedAt: existing.reactionCreatedAt ?? reaction.created_at ?? null,
+      reactionEmojis: mergedEmojis,
+      reactionEmoji: mergedEmojis.join(' '),
+    });
+  });
+
+  return Array.from(grouped.values());
 };
 
 const ProfileThreadEmbeds = memo(function ProfileThreadEmbeds({
@@ -778,6 +933,79 @@ const groupProfileReactionRows = (
   return result;
 };
 
+const normalizeEmojiName = (value: string) => {
+  return String(value || '')
+    .trim()
+    .replace(/^:+/, '')
+    .replace(/:+$/, '');
+};
+
+// リアクションボタン／リアクションバッジの両方で全く同じリング＋ドットの
+// バーストアニメーション実装が重複していたため共通フックに集約。
+// DOM出力・アニメーション内容は元の実装と完全に同一。
+const useProfileReactionBurstEffect = () => {
+  const [activeRings, setActiveRings] = useState<ReplicatedRing[]>([]);
+  const [activeDots, setActiveDots] = useState<ReplicatedDot[]>([]);
+
+  const triggerBurst = useCallback((targetElement: HTMLElement) => {
+    const { batchId, ring, dots } = createProfileReactionBurst(targetElement);
+
+    setActiveRings((prev) => [...prev, ring]);
+    setActiveDots((prev) => [...prev, ...dots]);
+
+    window.setTimeout(() => {
+      setActiveRings((prev) => prev.filter((item) => item.id !== `ring-${batchId}`));
+      setActiveDots((prev) => prev.filter((item) => !item.id.startsWith(`dot-${batchId}-`)));
+    }, 550);
+  }, []);
+
+  const burstPortal = (activeRings.length > 0 || activeDots.length > 0) && typeof document !== 'undefined'
+    ? createPortal(
+        <div className="fixed inset-0 pointer-events-none z-[9999] overflow-hidden">
+          {activeRings.map((ring) => (
+            <div
+              key={ring.id}
+              style={{
+                position: 'fixed',
+                left: ring.x,
+                top: ring.y,
+                width: `${ring.width}px`,
+                height: `${ring.height}px`,
+                borderRadius: '9999px',
+                border: '4px solid #d4f022',
+                backgroundColor: 'transparent',
+                transformOrigin: 'center center',
+                animation: 'misskeyRingExpand 460ms cubic-bezier(0.1, 0.8, 0.3, 1) forwards',
+              }}
+            />
+          ))}
+          {activeDots.map((dot) => (
+            <div
+              key={dot.id}
+              style={{
+                position: 'fixed',
+                left: dot.x,
+                top: dot.y,
+                width: `${dot.size}px`,
+                height: `${dot.size}px`,
+                backgroundColor: dot.color,
+                borderRadius: '50%',
+                transformOrigin: 'center center',
+                ['--mk-angle' as any]: `${dot.angle}deg`,
+                ['--mk-dist' as any]: `${dot.distance}px`,
+                animation: 'misskeyDotBurst 480ms cubic-bezier(0.12, 0.85, 0.3, 1) forwards',
+                animationDelay: `${dot.delay}ms`,
+              }}
+            />
+          ))}
+        </div>,
+        document.body
+      )
+    : null;
+
+  return { triggerBurst, burstPortal };
+};
+
 const ProfileReactionButton = memo(function ProfileReactionButton({
   targetType,
   targetId,
@@ -795,8 +1023,7 @@ const ProfileReactionButton = memo(function ProfileReactionButton({
   const [isEmojisOpen, setIsEmojisOpen] = useState(true);
   const [isPending, setIsPending] = useState(false);
   const isMobile = useProfileViewportIsMobile();
-  const [activeRings, setActiveRings] = useState<ReplicatedRing[]>([]);
-  const [activeDots, setActiveDots] = useState<ReplicatedDot[]>([]);
+  const { triggerBurst, burstPortal } = useProfileReactionBurstEffect();
 
   const buttonRef = useRef<HTMLButtonElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
@@ -855,13 +1082,6 @@ const ProfileReactionButton = memo(function ProfileReactionButton({
     };
   }, [showPicker]);
 
-  const normalizeEmojiName = (value: string) => {
-    return String(value || '')
-      .trim()
-      .replace(/^:+/, '')
-      .replace(/:+$/, '');
-  };
-
   const getCustomEmojiObj = (emojiStr: string) => {
     const cleanName = normalizeEmojiName(emojiStr);
     if (!cleanName) return null;
@@ -878,22 +1098,10 @@ const ProfileReactionButton = memo(function ProfileReactionButton({
         : `custom_emojis/${customEmoji.public_id}`;
 
       const imageUrl = `https://res.cloudinary.com/dveiikhhw/image/upload/${cleanPublicId}.${customEmoji.format}`;
-      return <img src={imageUrl} alt={customEmoji.name} className={className} />;
+      return <img src={imageUrl} alt={customEmoji.name} className={className} loading="lazy" decoding="async" />;
     }
 
     return <span className="select-none text-lg leading-none">{emojiStr}</span>;
-  };
-
-  const triggerImageReplicatedEffect = (targetElement: HTMLElement) => {
-    const { batchId, ring, dots } = createProfileReactionBurst(targetElement);
-
-    setActiveRings((prev) => [...prev, ring]);
-    setActiveDots((prev) => [...prev, ...dots]);
-
-    window.setTimeout(() => {
-      setActiveRings((prev) => prev.filter((item) => item.id !== `ring-${batchId}`));
-      setActiveDots((prev) => prev.filter((item) => !item.id.startsWith(`dot-${batchId}-`)));
-    }, 550);
   };
 
   const handleAddReaction = async (emoji: string, event?: ReactMouseEvent<HTMLButtonElement>) => {
@@ -912,7 +1120,7 @@ const ProfileReactionButton = memo(function ProfileReactionButton({
     setIsPending(true);
 
     if (event?.currentTarget) {
-      triggerImageReplicatedEffect(event.currentTarget as HTMLElement);
+      triggerBurst(event.currentTarget as HTMLElement);
     }
 
     const updatedRecents = [emoji, ...recentEmojis.filter((item) => item !== emoji)].slice(0, 10);
@@ -1041,47 +1249,7 @@ const ProfileReactionButton = memo(function ProfileReactionButton({
 
   return (
     <div className="relative inline-flex h-full items-center" onClick={(event) => event.stopPropagation()}>
-      {(activeRings.length > 0 || activeDots.length > 0) && typeof document !== 'undefined' && createPortal(
-        <div className="fixed inset-0 pointer-events-none z-[9999] overflow-hidden">
-          {activeRings.map((ring) => (
-            <div
-              key={ring.id}
-              style={{
-                position: 'fixed',
-                left: ring.x,
-                top: ring.y,
-                width: `${ring.width}px`,
-                height: `${ring.height}px`,
-                borderRadius: '9999px',
-                border: '4px solid #d4f022',
-                backgroundColor: 'transparent',
-                transformOrigin: 'center center',
-                animation: 'misskeyRingExpand 460ms cubic-bezier(0.1, 0.8, 0.3, 1) forwards',
-              }}
-            />
-          ))}
-          {activeDots.map((dot) => (
-            <div
-              key={dot.id}
-              style={{
-                position: 'fixed',
-                left: dot.x,
-                top: dot.y,
-                width: `${dot.size}px`,
-                height: `${dot.size}px`,
-                backgroundColor: dot.color,
-                borderRadius: '50%',
-                transformOrigin: 'center center',
-                ['--mk-angle' as any]: `${dot.angle}deg`,
-                ['--mk-dist' as any]: `${dot.distance}px`,
-                animation: 'misskeyDotBurst 480ms cubic-bezier(0.12, 0.85, 0.3, 1) forwards',
-                animationDelay: `${dot.delay}ms`,
-              }}
-            />
-          ))}
-        </div>,
-        document.body
-      )}
+      {burstPortal}
 
       <button
         ref={buttonRef}
@@ -1147,8 +1315,7 @@ const ProfileThreadReactionBadges = memo(function ProfileThreadReactionBadges({
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [customEmojis, setCustomEmojis] = useState<CustomEmoji[]>([]);
   const [pendingEmoji, setPendingEmoji] = useState<string | null>(null);
-  const [activeRings, setActiveRings] = useState<ReplicatedRing[]>([]);
-  const [activeDots, setActiveDots] = useState<ReplicatedDot[]>([]);
+  const { triggerBurst, burstPortal } = useProfileReactionBurstEffect();
 
   useEffect(() => {
     getCachedCurrentUserId().then(setCurrentUserId);
@@ -1174,13 +1341,6 @@ const ProfileThreadReactionBadges = memo(function ProfileThreadReactionBadges({
 
   if (groups.length === 0) return null;
 
-  const normalizeEmojiName = (value: string) => {
-    return String(value || '')
-      .trim()
-      .replace(/^:+/, '')
-      .replace(/:+$/, '');
-  };
-
   const renderEmojiElement = (emojiStr: string) => {
     if (emojiStr.startsWith(':') && emojiStr.endsWith(':')) {
       const cleanName = normalizeEmojiName(emojiStr);
@@ -1196,24 +1356,14 @@ const ProfileThreadReactionBadges = memo(function ProfileThreadReactionBadges({
             src={`https://res.cloudinary.com/dveiikhhw/image/upload/${cleanPublicId}.${customEmoji.format}`}
             alt={customEmoji.name}
             className="h-5 w-5 object-contain"
+            loading="lazy"
+            decoding="async"
           />
         );
       }
     }
 
     return <span className="text-base leading-none">{emojiStr}</span>;
-  };
-
-  const triggerBadgeReactionEffect = (targetElement: HTMLElement) => {
-    const { batchId, ring, dots } = createProfileReactionBurst(targetElement);
-
-    setActiveRings((prev) => [...prev, ring]);
-    setActiveDots((prev) => [...prev, ...dots]);
-
-    window.setTimeout(() => {
-      setActiveRings((prev) => prev.filter((item) => item.id !== `ring-${batchId}`));
-      setActiveDots((prev) => prev.filter((item) => !item.id.startsWith(`dot-${batchId}-`)));
-    }, 550);
   };
 
   const handleBadgeClick = async (emoji: string, event: ReactMouseEvent<HTMLButtonElement>) => {
@@ -1223,7 +1373,7 @@ const ProfileThreadReactionBadges = memo(function ProfileThreadReactionBadges({
     if (pendingEmoji) return;
 
     if (event.currentTarget) {
-      triggerBadgeReactionEffect(event.currentTarget as HTMLElement);
+      triggerBurst(event.currentTarget as HTMLElement);
     }
 
     const userId = currentUserId ?? await getCachedCurrentUserId();
@@ -1247,47 +1397,7 @@ const ProfileThreadReactionBadges = memo(function ProfileThreadReactionBadges({
 
   return (
     <>
-      {(activeRings.length > 0 || activeDots.length > 0) && typeof document !== 'undefined' && createPortal(
-        <div className="fixed inset-0 pointer-events-none z-[9999] overflow-hidden">
-          {activeRings.map((ring) => (
-            <div
-              key={ring.id}
-              style={{
-                position: 'fixed',
-                left: ring.x,
-                top: ring.y,
-                width: `${ring.width}px`,
-                height: `${ring.height}px`,
-                borderRadius: '9999px',
-                border: '4px solid #d4f022',
-                backgroundColor: 'transparent',
-                transformOrigin: 'center center',
-                animation: 'misskeyRingExpand 460ms cubic-bezier(0.1, 0.8, 0.3, 1) forwards',
-              }}
-            />
-          ))}
-          {activeDots.map((dot) => (
-            <div
-              key={dot.id}
-              style={{
-                position: 'fixed',
-                left: dot.x,
-                top: dot.y,
-                width: `${dot.size}px`,
-                height: `${dot.size}px`,
-                backgroundColor: dot.color,
-                borderRadius: '50%',
-                transformOrigin: 'center center',
-                ['--mk-angle' as any]: `${dot.angle}deg`,
-                ['--mk-dist' as any]: `${dot.distance}px`,
-                animation: 'misskeyDotBurst 480ms cubic-bezier(0.12, 0.85, 0.3, 1) forwards',
-                animationDelay: `${dot.delay}ms`,
-              }}
-            />
-          ))}
-        </div>,
-        document.body
-      )}
+      {burstPortal}
 
       <div className="mt-3 flex flex-wrap gap-1.5 relative" onClick={(event) => event.stopPropagation()}>
         {groups.map((group) => {
@@ -2037,6 +2147,221 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
   );
 });
 
+// このページ用のグローバルCSS。以前は Profile() のJSX内でテンプレート
+// リテラルとして毎レンダー生成していたが、内容は不変なのでモジュール
+// スコープの定数に固定し、スクロールやタブ切替のたびに文字列を
+// 再生成するコストをなくす（見た目・内容は完全に同一）。
+// ==== 無限スクロールのメモリ対策（仮想化） ====
+// 今までは items.map() で描画したカードが一度マウントされると
+// スクロールでどれだけ離れても DOM・画像・埋め込みが残り続け、
+// 下にスクロールするほどメモリを消費し続ける原因になっていた。
+// ここでは既存依存の react-intersection-observer だけを使い、
+// 画面から十分離れたカードの重い中身（画像・埋め込み・リアクション
+// UIなど）だけをアンマウントし、直前に測定した高さのプレースホルダー
+// に差し替える。見た目・レイアウト・スクロール位置は一切変わらず、
+// 再度画面に近づけば自動的に元の内容がそのまま復元される。
+const PROFILE_VIRTUALIZATION_ROOT_MARGIN = '1600px 0px 1600px 0px';
+
+const useProfileRowVisibility = (
+  rowKey: string,
+  heightCache: React.MutableRefObject<Map<string, number>>
+) => {
+  // initialInView: true にすることで、新しく読み込まれた（＝今まさに
+  // 画面付近にある）カードは今まで通り即座にフル描画される。実際に
+  // 遠くへスクロールされたと Observer が判定して初めて非表示化される
+  // ため、初回表示時のちらつき・見た目の変化は発生しない。
+  const { ref: inViewRef, inView } = useInView({
+    initialInView: true,
+    rootMargin: PROFILE_VIRTUALIZATION_ROOT_MARGIN,
+  });
+
+  const measureRef = useRef<HTMLDivElement>(null);
+  const [placeholderHeight, setPlaceholderHeight] = useState<number | undefined>(
+    () => heightCache.current.get(rowKey)
+  );
+
+  useEffect(() => {
+    if (!inView) return;
+
+    const node = measureRef.current;
+    if (!node) return;
+
+    const measure = () => {
+      const height = node.offsetHeight;
+      if (height > 0) {
+        heightCache.current.set(rowKey, height);
+        setPlaceholderHeight(height);
+      }
+    };
+
+    measure();
+
+    if (typeof ResizeObserver === 'undefined') {
+      return;
+    }
+
+    // 画像読み込み完了などでカードの高さが後から変わるケースに備え、
+    // 表示中は継続的に高さを追従してキャッシュを更新する。
+    const resizeObserver = new ResizeObserver(measure);
+    resizeObserver.observe(node);
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [inView, rowKey, heightCache]);
+
+  return { inViewRef, measureRef, inView, placeholderHeight };
+};
+
+const ProfileVirtualizedListItem = memo(function ProfileVirtualizedListItem({
+  rowKey,
+  heightCache,
+  children,
+}: {
+  rowKey: string;
+  heightCache: React.MutableRefObject<Map<string, number>>;
+  children: React.ReactNode;
+}) {
+  const { inViewRef, measureRef, inView, placeholderHeight } = useProfileRowVisibility(rowKey, heightCache);
+
+  return (
+    <div ref={inViewRef}>
+      {inView ? (
+        <div ref={measureRef}>{children}</div>
+      ) : (
+        <div style={{ height: placeholderHeight ? `${placeholderHeight}px` : undefined }} aria-hidden="true" />
+      )}
+    </div>
+  );
+});
+
+// メディアタブは3列のCSS Gridなので、アイテム側に余計なラッパーを
+// 挟むとグリッドの列構成が崩れてしまう（＝見た目が変わってしまう）。
+// そのためグリッドセルの div 自体は常にマウントしたまま維持し、
+// 中の <img> だけを画面から遠いときに外して bg-muted の背景だけを
+// 見せる（読み込み待ち時と同じ見た目のまま）ことでレイアウトに
+// 一切影響を与えずに画像のデコード済みメモリだけを解放する。
+const ProfileVirtualizedMediaImage = memo(function ProfileVirtualizedMediaImage({
+  src,
+}: {
+  src: string;
+}) {
+  const { ref, inView } = useInView({
+    initialInView: true,
+    rootMargin: PROFILE_VIRTUALIZATION_ROOT_MARGIN,
+  });
+
+  return (
+    <div ref={ref} className="h-full w-full">
+      {inView ? (
+        <img
+          src={src}
+          alt=""
+          className="h-full w-full object-cover"
+          loading="lazy"
+          decoding="async"
+        />
+      ) : null}
+    </div>
+  );
+});
+
+const PROFILE_PAGE_STYLES = `
+          .profile-tabs-trigger[data-state='active'] {
+            color: hsl(var(--foreground));
+            font-weight: 1000;
+          }
+
+          .profile-tabs-trigger[data-state='inactive'] {
+            color: hsl(var(--muted-foreground));
+            font-weight: 500;
+          }
+
+          .profile-tabs-trigger[data-state='active'] .profile-tabs-underline {
+            display: block;
+          }
+
+          .profile-tabs-trigger[data-state='inactive'] .profile-tabs-underline {
+            display: none;
+          }
+
+          @keyframes misskeyRingExpand {
+            0% { transform: translate(-50%, -50%) scale(0.6); opacity: 1; border-width: 5px; }
+            40% { opacity: 1; border-width: 4px; }
+            100% { transform: translate(-50%, -50%) scale(1.15); opacity: 0; border-width: 1px; }
+          }
+
+          @keyframes misskeyDotBurst {
+            0% { transform: translate(-50%, -50%) rotate(var(--mk-angle)) translateY(0px) scale(0.2); opacity: 0; }
+            15% { opacity: 1; transform: translate(-50%, -50%) rotate(var(--mk-angle)) translateY(calc(var(--mk-dist) * 0.4)) scale(1.1); }
+            60% { opacity: 1; }
+            100% { transform: translate(-50%, -50%) rotate(var(--mk-angle)) translateY(var(--mk-dist)) scale(0); opacity: 0; }
+          }
+
+          @keyframes misskeyButtonElastic {
+            0% { transform: scale(1); }
+            20% { transform: scale(0.84); }
+            50% { transform: scale(1.16); }
+            75% { transform: scale(0.94); }
+            100% { transform: scale(1); }
+          }
+
+          .misskey-elastic-active {
+            animation: misskeyButtonElastic 420ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards !important;
+          }
+
+          @keyframes slideUpMobile {
+            0% { transform: translate(-50%, 24px); opacity: 0; }
+            100% { transform: translate(-50%, 0); opacity: 1; }
+          }
+
+          .animate-slide-up-mobile {
+            animation: slideUpMobile 240ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          }
+
+          @keyframes zoomInPc {
+            0% { transform: scale(0.9) translateY(8px); opacity: 0; }
+            100% { transform: scale(1) translateY(0); opacity: 1; }
+          }
+
+          .animate-zoom-in-pc {
+            animation: zoomInPc 160ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+          }
+
+          .profile-thread-actions > * {
+            height: 100%;
+          }
+
+          .profile-thread-actions button > svg,
+          .profile-thread-actions button > span > svg:not(.twitter-like-effects) {
+            width: 1.25rem;
+            height: 1.25rem;
+          }
+
+          .profile-thread-actions .profile-thread-comment-like-slot button {
+            height: 100%;
+            gap: 0.375rem;
+            padding: 0.25rem 0.5rem;
+            font-size: 13px;
+          }
+
+          .profile-thread-actions .profile-thread-comment-like-slot button > span:last-child {
+            font-size: 15px;
+            line-height: 1;
+          }
+
+          @media (min-width: 640px) {
+            .profile-thread-actions .profile-thread-comment-like-slot button {
+              padding: 0.25rem 0.625rem;
+              font-size: 0.875rem;
+            }
+
+            .profile-thread-actions .profile-thread-comment-like-slot button > span:last-child {
+              font-size: 0.875rem;
+            }
+          }
+        `;
+
 export default function Profile() {
   const { username = '' } = useParams();
   const navigate = useNavigate();
@@ -2048,6 +2373,10 @@ export default function Profile() {
   const [failedThreadImageUrls, setFailedThreadImageUrls] = useState<string[]>([]);
   const [isScrolled, setIsScrolled] = useState(false);
   const tabsSentinelRef = useRef<HTMLDivElement>(null);
+  // 仮想化用：カードごとに直近測定した高さを記憶しておくキャッシュ。
+  // 画面外に出て中身をアンマウントする際、このキャッシュの高さで
+  // プレースホルダーを描画するため、スクロール位置がズレない。
+  const rowHeightCacheRef = useRef<Map<string, number>>(new Map());
 
   // 初回ペイント前にPC版のDOMが一瞬表示されるのを防ぐ。
   // useLayoutEffect はブラウザでのペイント前に実行されるため、
@@ -2163,6 +2492,7 @@ export default function Profile() {
     setProfileReplies([]);
     setProfileRepliesError(false);
     setProfileRepliesReady(false);
+    rowHeightCacheRef.current = new Map();
   }, [user?.id]);
 
   useEffect(() => {
@@ -2352,7 +2682,7 @@ export default function Profile() {
 
         const parentMap = new Map(parentEntries);
 
-        const replyAuthor = normalizeInlineAuthor(user, user.id);
+        const replyAuthor = normalizeAuthor(user, user.id);
 
         const replyThreadsByPostId = new Map<string, ProfileReplyThread>();
 
@@ -2450,186 +2780,11 @@ export default function Profile() {
     };
   }, [selectedMedia, selectedThreadImage]);
 
-  // PostCardに渡す前に、undefinedになりやすい投稿者情報を補完する
-  const normalizeAuthor = (author: any, fallbackUserId = ''): any => {
-    const safeUsername = author?.username ?? '';
-    const safeDisplayName = author?.display_name ?? author?.displayName ?? safeUsername;
+  // normalizeAuthor / normalizePost / uniquePostsById / groupReactionPosts は
+  // props や state に依存しない純粋関数のため、ファイル先頭のモジュール
+  // スコープへ移動済み（レンダーの度に関数を再生成しないための軽量化）。
 
-    return {
-      ...author,
-      id: author?.id ?? fallbackUserId ?? '',
-      username: safeUsername,
-      display_name: safeDisplayName,
-      displayName: safeDisplayName,
-      bio: author?.bio ?? '',
-      avatar_url: author?.avatar_url ?? author?.avatarUrl ?? null,
-      avatarUrl: author?.avatarUrl ?? author?.avatar_url ?? null,
-      cover_url: author?.cover_url ?? author?.coverUrl ?? null,
-      coverUrl: author?.coverUrl ?? author?.cover_url ?? null,
-      created_at: author?.created_at ?? author?.createdAt ?? new Date().toISOString(),
-      createdAt: author?.createdAt ?? author?.created_at ?? new Date().toISOString(),
-      is_official: !!(author?.is_official ?? author?.isOfficial),
-      isOfficial: !!(author?.isOfficial ?? author?.is_official),
-      emoji_effect: author?.emoji_effect ?? author?.emojiEffect ?? '',
-      emojiEffect: author?.emojiEffect ?? author?.emoji_effect ?? '',
-      bot_enabled: !!(author?.bot_enabled ?? author?.botEnabled),
-      botEnabled: !!(author?.botEnabled ?? author?.bot_enabled),
-      bot_prompt: author?.bot_prompt ?? author?.botPrompt ?? '',
-      botPrompt: author?.botPrompt ?? author?.bot_prompt ?? '',
-      bot_interval_hours: author?.bot_interval_hours ?? author?.botIntervalHours ?? 5,
-      botIntervalHours: author?.botIntervalHours ?? author?.bot_interval_hours ?? 5,
-      prefecture: author?.prefecture ?? '',
-      city: author?.city ?? '',
-    };
-  };
-
-  // PostCardに渡す前に、undefinedになりやすい投稿情報を補完する
-  const normalizePost = (post: any, reaction?: any): any | null => {
-    if (!post) return null;
-
-    const baseAuthor = post.author ?? post.profiles ?? post.user ?? null;
-    const safeAuthor = normalizeAuthor(baseAuthor, post.user_id ?? post.userId ?? '');
-
-    const imageUrls = Array.isArray(post.imageUrls)
-      ? post.imageUrls
-      : Array.isArray(post.image_urls)
-        ? post.image_urls
-        : [];
-
-    return {
-      ...post,
-
-      id: post.id ?? '',
-
-      user_id: post.user_id ?? post.userId ?? safeAuthor.id,
-      userId: post.userId ?? post.user_id ?? safeAuthor.id,
-
-      content: post.content ?? '',
-
-      image_urls: imageUrls,
-      imageUrls,
-
-      created_at: post.created_at ?? post.createdAt ?? new Date().toISOString(),
-      createdAt: post.createdAt ?? post.created_at ?? new Date().toISOString(),
-
-      likes_count: Number(post.likes_count ?? post.likesCount ?? 0),
-      likesCount: Number(post.likesCount ?? post.likes_count ?? 0),
-
-      comments_count: Number(post.comments_count ?? post.commentsCount ?? 0),
-      commentsCount: Number(post.commentsCount ?? post.comments_count ?? 0),
-
-      reposts_count: Number(post.reposts_count ?? post.repostsCount ?? 0),
-      repostsCount: Number(post.repostsCount ?? post.reposts_count ?? 0),
-
-      liked_by_me: !!(post.liked_by_me ?? post.likedByMe),
-      likedByMe: !!(post.likedByMe ?? post.liked_by_me),
-
-      reposted_by_me: !!(post.reposted_by_me ?? post.repostedByMe),
-      repostedByMe: !!(post.repostedByMe ?? post.reposted_by_me),
-
-      client_name: post.client_name ?? post.clientName ?? '',
-      clientName: post.clientName ?? post.client_name ?? '',
-
-      parent_id: post.parent_id ?? post.parentId ?? null,
-      parentId: post.parentId ?? post.parent_id ?? null,
-
-      is_quote: !!(post.is_quote ?? post.isQuote),
-      isQuote: !!(post.isQuote ?? post.is_quote),
-
-      visibility: post.visibility ?? 'public',
-
-      is_bot: !!(post.is_bot ?? post.isBot),
-      isBot: !!(post.isBot ?? post.is_bot),
-
-      source_twitter: !!(post.source_twitter ?? post.sourceTwitter),
-      sourceTwitter: !!(post.sourceTwitter ?? post.source_twitter),
-
-      origin_url: post.origin_url ?? post.originUrl ?? '',
-      originUrl: post.originUrl ?? post.origin_url ?? '',
-
-      prefecture: post.prefecture ?? '',
-      city: post.city ?? '',
-
-      author: safeAuthor,
-      profiles: safeAuthor,
-      user: safeAuthor,
-
-      reactionId: reaction?.id ?? post.reactionId ?? null,
-      reactionEmoji: reaction?.emoji ?? post.reactionEmoji ?? '',
-      reactionCreatedAt: reaction?.created_at ?? post.reactionCreatedAt ?? null,
-
-      reactionEmojis: Array.isArray(post.reactionEmojis)
-        ? post.reactionEmojis
-        : reaction?.emoji
-          ? [reaction.emoji]
-          : [],
-    };
-  };
-
-  // 通常投稿・いいね投稿でも同じ投稿が重複した場合に key 警告を防ぐ
-  const uniquePostsById = (posts: any[]) => {
-    const map = new Map<string, any>();
-
-    posts.forEach((post: any) => {
-      const normalized = normalizePost(post);
-      if (!normalized?.id) return;
-
-      if (!map.has(normalized.id)) {
-        map.set(normalized.id, normalized);
-      }
-    });
-
-    return Array.from(map.values());
-  };
-
-  // リアクション欄用：全ページをまとめてから同じ投稿を1枚にまとめる
-  const groupReactionPosts = (reactions: any[]) => {
-    const grouped = new Map<string, any>();
-
-    reactions.forEach((reaction: any) => {
-      const rawPost = reaction.posts ?? reaction.post;
-      const post = normalizePost(rawPost, reaction);
-
-      if (!post?.id) return;
-
-      const existing = grouped.get(post.id);
-      const nextEmoji = reaction.emoji ?? post.reactionEmoji ?? '';
-
-      if (!existing) {
-        grouped.set(post.id, {
-          ...post,
-          reactionId: reaction.id ?? post.reactionId ?? post.id,
-          reactionEmoji: nextEmoji,
-          reactionCreatedAt: reaction.created_at ?? post.reactionCreatedAt ?? null,
-          reactionEmojis: nextEmoji ? [nextEmoji] : [],
-        });
-        return;
-      }
-
-      const currentEmojis = Array.isArray(existing.reactionEmojis)
-        ? existing.reactionEmojis
-        : existing.reactionEmoji
-          ? [existing.reactionEmoji]
-          : [];
-
-      const mergedEmojis =
-        nextEmoji && !currentEmojis.includes(nextEmoji)
-          ? [...currentEmojis, nextEmoji]
-          : currentEmojis;
-
-      grouped.set(post.id, {
-        ...existing,
-        reactionId: existing.reactionId ?? reaction.id ?? post.id,
-        reactionCreatedAt: existing.reactionCreatedAt ?? reaction.created_at ?? null,
-        reactionEmojis: mergedEmojis,
-        reactionEmoji: mergedEmojis.join(' '),
-      });
-    });
-
-    return Array.from(grouped.values());
-  };
-
-  const pages = data?.pages ?? [];
+  const pages = data?.pages ?? EMPTY_ARRAY;
   const flatPageItems = useMemo(
     () => pages.flatMap((page: any) => (Array.isArray(page) ? page : [])),
     [pages]
@@ -2752,103 +2907,7 @@ export default function Profile() {
       className="-mt-[56px] space-y-0 sm:mt-0 sm:space-y-5"
       style={{ visibility: isViewportReady ? 'visible' : 'hidden' }}
     >
-      <style>
-        {`
-          .profile-tabs-trigger[data-state='active'] {
-            color: hsl(var(--foreground));
-            font-weight: 1000;
-          }
-
-          .profile-tabs-trigger[data-state='inactive'] {
-            color: hsl(var(--muted-foreground));
-            font-weight: 500;
-          }
-
-          .profile-tabs-trigger[data-state='active'] .profile-tabs-underline {
-            display: block;
-          }
-
-          .profile-tabs-trigger[data-state='inactive'] .profile-tabs-underline {
-            display: none;
-          }
-
-          @keyframes misskeyRingExpand {
-            0% { transform: translate(-50%, -50%) scale(0.6); opacity: 1; border-width: 5px; }
-            40% { opacity: 1; border-width: 4px; }
-            100% { transform: translate(-50%, -50%) scale(1.15); opacity: 0; border-width: 1px; }
-          }
-
-          @keyframes misskeyDotBurst {
-            0% { transform: translate(-50%, -50%) rotate(var(--mk-angle)) translateY(0px) scale(0.2); opacity: 0; }
-            15% { opacity: 1; transform: translate(-50%, -50%) rotate(var(--mk-angle)) translateY(calc(var(--mk-dist) * 0.4)) scale(1.1); }
-            60% { opacity: 1; }
-            100% { transform: translate(-50%, -50%) rotate(var(--mk-angle)) translateY(var(--mk-dist)) scale(0); opacity: 0; }
-          }
-
-          @keyframes misskeyButtonElastic {
-            0% { transform: scale(1); }
-            20% { transform: scale(0.84); }
-            50% { transform: scale(1.16); }
-            75% { transform: scale(0.94); }
-            100% { transform: scale(1); }
-          }
-
-          .misskey-elastic-active {
-            animation: misskeyButtonElastic 420ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards !important;
-          }
-
-          @keyframes slideUpMobile {
-            0% { transform: translate(-50%, 24px); opacity: 0; }
-            100% { transform: translate(-50%, 0); opacity: 1; }
-          }
-
-          .animate-slide-up-mobile {
-            animation: slideUpMobile 240ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
-          }
-
-          @keyframes zoomInPc {
-            0% { transform: scale(0.9) translateY(8px); opacity: 0; }
-            100% { transform: scale(1) translateY(0); opacity: 1; }
-          }
-
-          .animate-zoom-in-pc {
-            animation: zoomInPc 160ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
-          }
-
-          .profile-thread-actions > * {
-            height: 100%;
-          }
-
-          .profile-thread-actions button > svg,
-          .profile-thread-actions button > span > svg:not(.twitter-like-effects) {
-            width: 1.25rem;
-            height: 1.25rem;
-          }
-
-          .profile-thread-actions .profile-thread-comment-like-slot button {
-            height: 100%;
-            gap: 0.375rem;
-            padding: 0.25rem 0.5rem;
-            font-size: 13px;
-          }
-
-          .profile-thread-actions .profile-thread-comment-like-slot button > span:last-child {
-            font-size: 15px;
-            line-height: 1;
-          }
-
-          @media (min-width: 640px) {
-            .profile-thread-actions .profile-thread-comment-like-slot button {
-              padding: 0.25rem 0.625rem;
-              font-size: 0.875rem;
-            }
-
-            .profile-thread-actions .profile-thread-comment-like-slot button > span:last-child {
-              font-size: 0.875rem;
-            }
-          }
-        `}
-      </style>
+      <style>{PROFILE_PAGE_STYLES}</style>
 
       {user && <ProfileHeader user={user} />}
 
@@ -2956,13 +3015,7 @@ export default function Profile() {
                   className="relative aspect-square cursor-pointer overflow-hidden rounded-md bg-muted animate-float-up md:rounded-xl"
                   onClick={() => setSelectedMedia({ url: p.displayImageUrl, post: p.post })}
                 >
-                  <img
-                    src={p.displayImageUrl}
-                    alt=""
-                    className="h-full w-full object-cover"
-                    loading="lazy"
-                    decoding="async"
-                  />
+                  <ProfileVirtualizedMediaImage src={p.displayImageUrl} />
 
                   {p.isMulti && (
                     <div className="absolute right-1.5 top-1.5 rounded-md bg-black/40 p-1 backdrop-blur-sm">
@@ -2975,36 +3028,43 @@ export default function Profile() {
           ) : (
             items.map((item: any, idx: number) => {
               if (activeTab === 'posts' && isProfileReplyItem(item)) {
+                const rowKey = `profile-reply-${item.reply.id}`;
+
                 return (
-                  <div key={`profile-reply-${item.reply.id}`} className="animate-float-up">
-                    <ProfileReplyThreadCard
-                      thread={item.reply}
-                      onImageClick={setSelectedThreadImage}
-                      onImageError={handleThreadImageError}
-                    />
+                  <div key={rowKey} className="animate-float-up">
+                    <ProfileVirtualizedListItem rowKey={rowKey} heightCache={rowHeightCacheRef}>
+                      <ProfileReplyThreadCard
+                        thread={item.reply}
+                        onImageClick={setSelectedThreadImage}
+                        onImageError={handleThreadImageError}
+                      />
+                    </ProfileVirtualizedListItem>
                   </div>
                 );
               }
 
               const p = activeTab === 'posts' && item?.__profileItemType === PROFILE_POST_ITEM ? item.post : item;
+              const rowKey = activeTab === 'reactions' ? `reactions-${p.id}-${idx}` : `${activeTab}-${p.id}-${idx}`;
 
               return (
                 <div
-                  key={activeTab === 'reactions' ? `reactions-${p.id}-${idx}` : `${activeTab}-${p.id}-${idx}`}
+                  key={rowKey}
                   className="animate-float-up"
                 >
-                  {activeTab === 'reactions' && (
-                    <div className="px-1 pb-1 text-sm text-muted-foreground">
-                      <span className="mr-1 text-base">
-                        {Array.isArray(p.reactionEmojis) && p.reactionEmojis.length > 0
-                          ? p.reactionEmojis.join(' ')
-                          : p.reactionEmoji}
-                      </span>
-                      でリアクションしました
-                    </div>
-                  )}
+                  <ProfileVirtualizedListItem rowKey={rowKey} heightCache={rowHeightCacheRef}>
+                    {activeTab === 'reactions' && (
+                      <div className="px-1 pb-1 text-sm text-muted-foreground">
+                        <span className="mr-1 text-base">
+                          {Array.isArray(p.reactionEmojis) && p.reactionEmojis.length > 0
+                            ? p.reactionEmojis.join(' ')
+                            : p.reactionEmoji}
+                        </span>
+                        でリアクションしました
+                      </div>
+                    )}
 
-                  <PostCard post={p} />
+                    <PostCard post={p} />
+                  </ProfileVirtualizedListItem>
                 </div>
               );
             })
