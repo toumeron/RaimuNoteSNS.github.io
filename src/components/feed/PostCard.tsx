@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'; 
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'; 
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { MessageCircle, MoreHorizontal, Trash2, CalendarDays, ChartBarBig, X, Globe, Lock, Sparkles, Plus, Link as LinkIcon, Upload, Send } from 'lucide-react'; 
@@ -472,6 +472,392 @@ export const preloadPostCardData = async (posts: PostWithAuthor[]) => {
   }
 };
 
+// ============================================================================
+// --- パフォーマンス最適化用の共有リソース ---
+// カードごとに同じ内容・同じインスタンスを作り直さず、アプリ全体で使い回す。
+// タイムライン上に多数の PostCard が並ぶ状況（特に低スペック端末）で、
+// DOM肥大化・CPU/メモリ消費を抑えることが目的。見た目や挙動は一切変えない。
+// ============================================================================
+
+// カードごとの絵文字ピッカーで使うデフォルト絵文字一覧。
+// 内容が固定なので、レンダリングのたびに新しい配列を作らずモジュール直下に固定する。
+const DEFAULT_EMOJIS = ['👍', '❤️', '😆', '🤔', '😮', '🎉', '💢', '😢', '😇', '🍮'];
+
+// 1枚画像の <img> に渡す style は常に同じ内容なので、
+// レンダリングごとに新しいオブジェクトを作らず固定の参照を使い回す。
+const SINGLE_IMAGE_DISPLAY_STYLE: React.CSSProperties = {
+  width: '100%',
+  height: 'auto',
+  objectFit: 'contain',
+};
+
+// 元々は各カードの JSX 内に <style> タグとして丸ごと埋め込まれており、
+// カードが増えるたびに同じ内容の CSS が DOM 上に複製され、
+// ブラウザが同じスタイルを何度もパースし直す状態になっていた。
+// 見た目・アニメーション内容を一切変えずに、この CSS 文字列をアプリ全体で
+// 1 回だけ document.head に注入するよう変更し、重複パース／DOM肥大化をなくす。
+const POST_CARD_GLOBAL_STYLES_ID = 'postcard-global-styles';
+
+const POST_CARD_GLOBAL_STYLES = `
+        @keyframes misskeyRingExpand {
+          0% {
+            transform: translate(-50%, -50%) scale(0.6);
+            opacity: 1;
+            border-width: 5px;
+          }
+          40% {
+            opacity: 1;
+            border-width: 4px;
+          }
+          100% {
+            transform: translate(-50%, -50%) scale(1.15);
+            opacity: 0;
+            border-width: 1px;
+          }
+        }
+        @keyframes misskeyDotBurst {
+          0% {
+            transform: translate(-50%, -50%) rotate(var(--mk-angle)) translateY(0px) scale(0.2);
+            opacity: 0;
+          }
+          15% {
+            opacity: 1;
+            transform: translate(-50%, -50%) rotate(var(--mk-angle)) translateY(calc(var(--mk-dist) * 0.4)) scale(1.1);
+          }
+          60% {
+            opacity: 1;
+          }
+          100% {
+            transform: translate(-50%, -50%) rotate(var(--mk-angle)) translateY(var(--mk-dist)) scale(0);
+            opacity: 0;
+          }
+        }
+        @keyframes misskeyButtonElastic {
+          0% { transform: scale(1); }
+          20% { transform: scale(0.84); }
+          50% { transform: scale(1.16); }
+          75% { transform: scale(0.94); }
+          100% { transform: scale(1); }
+        }
+        .misskey-elastic-active {
+          animation: misskeyButtonElastic 420ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards !important;
+        }
+
+        /* --- スマホ専用：画面下部から滑らかにスライド湧き出しするアニメーション --- */
+        @keyframes slideUpMobile {
+          0% {
+            transform: translate(-50%, 24px);
+            opacity: 0;
+          }
+          100% {
+            transform: translate(-50%, 0);
+            opacity: 1;
+          }
+        }
+        .animate-slide-up-mobile {
+          animation: slideUpMobile 240ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        /* --- PC専用：プラスボタンの直上(absolute)から上に弾むようにズームインするアニメーション --- */
+        @keyframes zoomInPc {
+          0% {
+            transform: scale(0.9) translateY(8px);
+            opacity: 0;
+          }
+          100% {
+            transform: scale(1) translateY(0);
+            opacity: 1;
+          }
+        }
+        .animate-zoom-in-pc {
+          animation: zoomInPc 160ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+        }
+
+        .timeline-glass-card {
+          background: hsl(var(--card) / 0.58);
+          border: 1px solid hsl(var(--border) / 0.055);
+          box-shadow: none;
+          color: hsl(var(--foreground));
+          -webkit-backdrop-filter: blur(24px) saturate(165%);
+          backdrop-filter: blur(24px) saturate(165%);
+        }
+
+        .timeline-theme-dark .timeline-glass-card {
+          background: linear-gradient(
+            135deg,
+            rgba(12, 16, 28, 0.72),
+            rgba(34, 24, 32, 0.66)
+          ) !important;
+          border-color: rgba(255, 255, 255, 0.035) !important;
+          color: rgba(255, 255, 255, 0.96) !important;
+        }
+
+        .timeline-theme-light .timeline-glass-card {
+          background: linear-gradient(
+            135deg,
+            rgba(255, 255, 255, 0.60),
+            rgba(255, 255, 255, 0.52)
+          ) !important;
+          border-color: rgba(40, 30, 25, 0.032) !important;
+          color: rgba(24, 22, 20, 0.96) !important;
+        }
+
+        /*
+          背景画像付きタイムライン専用の可読性補正。
+          ここではカードごとに light/dark を判定しない。
+          Feed 側の timeline-theme-dark / timeline-theme-light が決めたCSS変数に従う。
+        */
+        .timeline-glass-card,
+        .timeline-mobile-readable {
+          -webkit-font-smoothing: antialiased;
+          text-rendering: optimizeLegibility;
+          color: hsl(var(--foreground));
+        }
+
+        .timeline-glass-card .text-foreground,
+        .timeline-mobile-readable .text-foreground,
+        .timeline-glass-card p,
+        .timeline-mobile-readable p {
+          color: hsl(var(--foreground) / 0.96) !important;
+          text-shadow: none !important;
+        }
+
+        .timeline-glass-card .text-muted-foreground,
+        .timeline-mobile-readable .text-muted-foreground,
+        .timeline-glass-card .text-muted-foreground\/70,
+        .timeline-mobile-readable .text-muted-foreground\/70,
+        .timeline-glass-card .text-muted-foreground\/80,
+        .timeline-mobile-readable .text-muted-foreground\/80 {
+          color: hsl(var(--muted-foreground) / 0.92) !important;
+          text-shadow: none !important;
+        }
+
+        .timeline-glass-card .text-pink-500,
+        .timeline-mobile-readable .text-pink-500 {
+          color: hsl(var(--timeline-link, 330 96% 60%)) !important;
+          text-shadow: none !important;
+        }
+
+        .timeline-theme-dark .timeline-glass-card,
+        .timeline-theme-dark .timeline-mobile-readable,
+        .timeline-theme-dark .timeline-glass-card .text-foreground,
+        .timeline-theme-dark .timeline-mobile-readable .text-foreground,
+        .timeline-theme-dark .timeline-glass-card p,
+        .timeline-theme-dark .timeline-mobile-readable p {
+          color: rgba(255, 255, 255, 0.96) !important;
+        }
+
+        .timeline-theme-dark .timeline-glass-card .text-muted-foreground,
+        .timeline-theme-dark .timeline-mobile-readable .text-muted-foreground,
+        .timeline-theme-dark .timeline-glass-card .text-muted-foreground\/70,
+        .timeline-theme-dark .timeline-mobile-readable .text-muted-foreground\/70,
+        .timeline-theme-dark .timeline-glass-card .text-muted-foreground\/80,
+        .timeline-theme-dark .timeline-mobile-readable .text-muted-foreground\/80 {
+          color: rgba(226, 232, 240, 0.76) !important;
+        }
+
+        .timeline-theme-dark .timeline-glass-card .text-pink-500,
+        .timeline-theme-dark .timeline-mobile-readable .text-pink-500 {
+          color: rgb(255, 87, 166) !important;
+        }
+
+        .timeline-theme-light .timeline-glass-card,
+        .timeline-theme-light .timeline-mobile-readable,
+        .timeline-theme-light .timeline-glass-card .text-foreground,
+        .timeline-theme-light .timeline-mobile-readable .text-foreground,
+        .timeline-theme-light .timeline-glass-card p,
+        .timeline-theme-light .timeline-mobile-readable p {
+          color: rgba(24, 22, 20, 0.96) !important;
+        }
+
+        .timeline-theme-light .timeline-glass-card .text-muted-foreground,
+        .timeline-theme-light .timeline-mobile-readable .text-muted-foreground,
+        .timeline-theme-light .timeline-glass-card .text-muted-foreground\/70,
+        .timeline-theme-light .timeline-mobile-readable .text-muted-foreground\/70,
+        .timeline-theme-light .timeline-glass-card .text-muted-foreground\/80,
+        .timeline-theme-light .timeline-mobile-readable .text-muted-foreground\/80 {
+          color: rgba(86, 74, 66, 0.74) !important;
+        }
+
+        .timeline-theme-light .timeline-glass-card .text-pink-500,
+        .timeline-theme-light .timeline-mobile-readable .text-pink-500 {
+          color: rgb(224, 32, 122) !important;
+        }
+
+        .timeline-glass-card svg,
+        .timeline-mobile-readable svg {
+          filter: none !important;
+        }
+
+        .timeline-portal-picker {
+          -webkit-font-smoothing: antialiased;
+          text-rendering: optimizeLegibility;
+          -webkit-backdrop-filter: blur(26px) saturate(170%);
+          backdrop-filter: blur(26px) saturate(170%);
+        }
+
+        .timeline-portal-picker-light {
+          background: rgba(255, 255, 255, 0.96) !important;
+          color: rgba(24, 22, 20, 0.96) !important;
+          border-color: rgba(24, 22, 20, 0.10) !important;
+        }
+
+        .timeline-portal-picker-dark {
+          background: rgba(18, 21, 30, 0.96) !important;
+          color: rgba(255, 255, 255, 0.96) !important;
+          border-color: rgba(255, 255, 255, 0.10) !important;
+        }
+
+        .timeline-portal-picker-light [class*="text-muted-foreground"] {
+          color: rgba(86, 74, 66, 0.72) !important;
+        }
+
+        .timeline-portal-picker-dark [class*="text-muted-foreground"] {
+          color: rgba(226, 232, 240, 0.72) !important;
+        }
+
+        .timeline-portal-picker-light button:hover {
+          background: rgba(24, 22, 20, 0.06) !important;
+        }
+
+        .timeline-portal-picker-dark button:hover {
+          background: rgba(255, 255, 255, 0.10) !important;
+        }
+
+        .timeline-portal-picker-light .timeline-portal-divider {
+          border-color: rgba(24, 22, 20, 0.10) !important;
+        }
+
+        .timeline-portal-picker-dark .timeline-portal-divider {
+          border-color: rgba(255, 255, 255, 0.10) !important;
+        }
+
+        .timeline-portal-picker-light .timeline-portal-search {
+          background: rgba(24, 22, 20, 0.035) !important;
+          border-color: rgba(24, 22, 20, 0.12) !important;
+          color: rgba(24, 22, 20, 0.96) !important;
+        }
+
+        .timeline-portal-picker-dark .timeline-portal-search {
+          background: rgba(0, 0, 0, 0.26) !important;
+          border-color: rgba(255, 255, 255, 0.12) !important;
+          color: rgba(255, 255, 255, 0.96) !important;
+        }
+
+        @media (max-width: 639px) {
+          .timeline-mobile-readable {
+            position: relative;
+            width: calc(100vw - 32px);
+            max-width: 600px;
+            margin: 10px auto 14px;
+            box-sizing: border-box;
+            overflow: hidden;
+            border-radius: 28px;
+            border: 1px solid hsl(var(--border) / 0.075);
+            background: hsl(var(--card) / 0.58);
+            color: hsl(var(--foreground));
+            box-shadow: none;
+            -webkit-backdrop-filter: blur(24px) saturate(170%);
+            backdrop-filter: blur(24px) saturate(170%);
+          }
+
+          .timeline-theme-dark .timeline-mobile-readable {
+            background: linear-gradient(
+              135deg,
+              rgba(12, 16, 28, 0.72),
+              rgba(34, 24, 32, 0.64)
+            ) !important;
+            border-color: rgba(255, 255, 255, 0.04) !important;
+          }
+
+          .timeline-theme-light .timeline-mobile-readable {
+            background: linear-gradient(
+              135deg,
+              rgba(255, 255, 255, 0.62),
+              rgba(255, 255, 255, 0.54)
+            ) !important;
+            border-color: rgba(40, 30, 25, 0.045) !important;
+          }
+        }
+`;
+
+function ensurePostCardStylesInjected() {
+  if (typeof document === 'undefined') return;
+  if (document.getElementById(POST_CARD_GLOBAL_STYLES_ID)) return;
+
+  const styleElement = document.createElement('style');
+  styleElement.id = POST_CARD_GLOBAL_STYLES_ID;
+  styleElement.textContent = POST_CARD_GLOBAL_STYLES;
+  document.head.appendChild(styleElement);
+}
+
+// カードごとに IntersectionObserver を新規生成せず、1 つの Observer を
+// 複数の要素で共有する。タイムラインに大量のカードが並んでも、
+// ネイティブ Observer インスタンスは常に 1 つだけになり、
+// スクロール時の監視コストを大きく減らせる（rootMargin・判定条件は元と同一）。
+type CardIntersectionCallback = (isIntersecting: boolean) => void;
+
+const cardIntersectionCallbacks = new Map<Element, CardIntersectionCallback>();
+let sharedCardIntersectionObserver: IntersectionObserver | null = null;
+
+function getSharedCardIntersectionObserver() {
+  if (sharedCardIntersectionObserver) return sharedCardIntersectionObserver;
+  if (typeof IntersectionObserver === 'undefined') return null;
+
+  sharedCardIntersectionObserver = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        const callback = cardIntersectionCallbacks.get(entry.target);
+        callback?.(entry.isIntersecting);
+      });
+    },
+    { rootMargin: '420px 0px 520px 0px' }
+  );
+
+  return sharedCardIntersectionObserver;
+}
+
+function observeCardIntersection(element: Element, callback: CardIntersectionCallback) {
+  const observer = getSharedCardIntersectionObserver();
+  if (!observer) return () => {};
+
+  cardIntersectionCallbacks.set(element, callback);
+  observer.observe(element);
+
+  return () => {
+    cardIntersectionCallbacks.delete(element);
+    observer.unobserve(element);
+  };
+}
+
+// 相対時刻表示（「〜分前」など）を定期更新するためのタイマーも、
+// アクティブなカードの数だけ setInterval を作るのではなく、
+// アプリ全体で 1 本だけ動かして購読者（各カード）に通知する形にする。
+// これにより、同時に表示中のカードが何枚あっても実際に動くタイマーは常に 1 つになる。
+type SharedTickListener = () => void;
+
+const sharedTickListeners = new Set<SharedTickListener>();
+let sharedTickIntervalId: number | null = null;
+
+function subscribeToSharedTick(listener: SharedTickListener) {
+  sharedTickListeners.add(listener);
+
+  if (sharedTickIntervalId === null && typeof window !== 'undefined') {
+    sharedTickIntervalId = window.setInterval(() => {
+      sharedTickListeners.forEach((registeredListener) => registeredListener());
+    }, 60000);
+  }
+
+  return () => {
+    sharedTickListeners.delete(listener);
+
+    if (sharedTickListeners.size === 0 && sharedTickIntervalId !== null) {
+      window.clearInterval(sharedTickIntervalId);
+      sharedTickIntervalId = null;
+    }
+  };
+}
+
 function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuthor; timelineGlass?: boolean }) {
   const [showMenu, setShowMenu] = useState(false);
   const [moreMenuPosition, setMoreMenuPosition] = useState<{ top: number; right: number } | null>(null);
@@ -530,9 +916,6 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
   const limeDropPanelRef = useRef<HTMLDivElement>(null);
   const ignoreNextCardClickRef = useRef(false);
   const ignoreCardClickUntilRef = useRef(0);
-
-
-  const defaultEmojis = ['👍', '❤️', '😆', '🤔', '😮', '🎉', '💢', '😢', '😇', '🍮'];
 
   const customEmojiByName = useMemo(() => (
     new Map(customEmojis.map((emoji) => [emoji.name, emoji]))
@@ -599,6 +982,13 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
     e.preventDefault();
     e.stopPropagation();
   };
+
+  // グローバル CSS はカードごとに埋め込まず、アプリ全体で共有する 1 つの
+  // <style> にまとめて注入する（内容・見た目は元の <style> ブロックと同一）。
+  // ペイント前に確実に反映させ、スタイル未適用のちらつきが出ないよう useLayoutEffect を使う。
+  useLayoutEffect(() => {
+    ensurePostCardStylesInjected();
+  }, []);
 
   useEffect(() => (
     () => {
@@ -675,18 +1065,14 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
       return;
     }
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        setIsCardActive(entries.some((entry) => entry.isIntersecting));
-      },
-      { rootMargin: '420px 0px 520px 0px' }
-    );
+    // 個別に IntersectionObserver を作らず、アプリ全体で 1 つの Observer を共有する。
+    // カードが大量に並ぶタイムラインで Observer インスタンスが乱立するのを防ぎ、
+    // 特に低スペック端末でのメモリ・CPU負荷を抑える（監視条件・判定結果は元と同一）。
+    const unobserve = observeCardIntersection(node, (isIntersecting) => {
+      setIsCardActive(isIntersecting);
+    });
 
-    observer.observe(node);
-
-    return () => {
-      observer.disconnect();
-    };
+    return unobserve;
   }, [post.id]);
 
   useEffect(() => {
@@ -716,16 +1102,25 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
       )
       .subscribe();
 
-    const timer = window.setInterval(() => {
-      setTick(tick => tick + 1);
-    }, 60000);
-
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
       supabase.removeChannel(channels);
     };
   }, [isCardActive, showMenu, showPicker, showShareMenu, showLimeDropPanel, selectedImageUrl, post.id]);
+
+  // 相対時刻表示（「〜分前」など）の定期更新は、カードごとに setInterval を
+  // 持たせず、アプリ全体で共有する 1 本のタイマーに購読する形にする。
+  // 表示中のカードが何枚あっても、実際に動くタイマーは常に 1 つだけになる。
+  useEffect(() => {
+    const shouldKeepLiveWork = isCardActive || showMenu || showPicker || showShareMenu || showLimeDropPanel || Boolean(selectedImageUrl);
+    if (!shouldKeepLiveWork) return;
+
+    const unsubscribe = subscribeToSharedTick(() => {
+      setTick(tick => tick + 1);
+    });
+
+    return unsubscribe;
+  }, [isCardActive, showMenu, showPicker, showShareMenu, showLimeDropPanel, selectedImageUrl]);
 
 
   useEffect(() => {
@@ -1124,7 +1519,9 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
     };
   }, [singleImageUrl]);
 
-  const getSingleImageFrameStyle = (): React.CSSProperties => {
+  // singleImageNaturalSize / isMobile が変わらない限り再計算しないよう useMemo 化。
+  // 値も見た目のロジックも元の getSingleImageFrameStyle() と完全に同一。
+  const singleImageFrameStyle = useMemo<React.CSSProperties>(() => {
     if (!singleImageNaturalSize) {
       return {
         width: '100%',
@@ -1181,13 +1578,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
       width: '100%',
       maxWidth: '100%',
     };
-  };
-
-  const getSingleImageDisplayStyle = (): React.CSSProperties => ({
-    width: '100%',
-    height: 'auto',
-    objectFit: 'contain',
-  });
+  }, [singleImageNaturalSize, isMobile]);
 
   const renderContentWithLinks = (text: string) => {
     if (!text) return null;
@@ -1692,289 +2083,6 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
 
   return (
     <>
-      <style>{`
-        @keyframes misskeyRingExpand {
-          0% {
-            transform: translate(-50%, -50%) scale(0.6);
-            opacity: 1;
-            border-width: 5px;
-          }
-          40% {
-            opacity: 1;
-            border-width: 4px;
-          }
-          100% {
-            transform: translate(-50%, -50%) scale(1.15);
-            opacity: 0;
-            border-width: 1px;
-          }
-        }
-        @keyframes misskeyDotBurst {
-          0% {
-            transform: translate(-50%, -50%) rotate(var(--mk-angle)) translateY(0px) scale(0.2);
-            opacity: 0;
-          }
-          15% {
-            opacity: 1;
-            transform: translate(-50%, -50%) rotate(var(--mk-angle)) translateY(calc(var(--mk-dist) * 0.4)) scale(1.1);
-          }
-          60% {
-            opacity: 1;
-          }
-          100% {
-            transform: translate(-50%, -50%) rotate(var(--mk-angle)) translateY(var(--mk-dist)) scale(0);
-            opacity: 0;
-          }
-        }
-        @keyframes misskeyButtonElastic {
-          0% { transform: scale(1); }
-          20% { transform: scale(0.84); }
-          50% { transform: scale(1.16); }
-          75% { transform: scale(0.94); }
-          100% { transform: scale(1); }
-        }
-        .misskey-elastic-active {
-          animation: misskeyButtonElastic 420ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards !important;
-        }
-
-        /* --- スマホ専用：画面下部から滑らかにスライド湧き出しするアニメーション --- */
-        @keyframes slideUpMobile {
-          0% {
-            transform: translate(-50%, 24px);
-            opacity: 0;
-          }
-          100% {
-            transform: translate(-50%, 0);
-            opacity: 1;
-          }
-        }
-        .animate-slide-up-mobile {
-          animation: slideUpMobile 240ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
-
-        /* --- PC専用：プラスボタンの直上(absolute)から上に弾むようにズームインするアニメーション --- */
-        @keyframes zoomInPc {
-          0% {
-            transform: scale(0.9) translateY(8px);
-            opacity: 0;
-          }
-          100% {
-            transform: scale(1) translateY(0);
-            opacity: 1;
-          }
-        }
-        .animate-zoom-in-pc {
-          animation: zoomInPc 160ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
-        }
-
-        .timeline-glass-card {
-          background: hsl(var(--card) / 0.58);
-          border: 1px solid hsl(var(--border) / 0.055);
-          box-shadow: none;
-          color: hsl(var(--foreground));
-          -webkit-backdrop-filter: blur(24px) saturate(165%);
-          backdrop-filter: blur(24px) saturate(165%);
-        }
-
-        .timeline-theme-dark .timeline-glass-card {
-          background: linear-gradient(
-            135deg,
-            rgba(12, 16, 28, 0.72),
-            rgba(34, 24, 32, 0.66)
-          ) !important;
-          border-color: rgba(255, 255, 255, 0.035) !important;
-          color: rgba(255, 255, 255, 0.96) !important;
-        }
-
-        .timeline-theme-light .timeline-glass-card {
-          background: linear-gradient(
-            135deg,
-            rgba(255, 255, 255, 0.60),
-            rgba(255, 255, 255, 0.52)
-          ) !important;
-          border-color: rgba(40, 30, 25, 0.032) !important;
-          color: rgba(24, 22, 20, 0.96) !important;
-        }
-
-        /*
-          背景画像付きタイムライン専用の可読性補正。
-          ここではカードごとに light/dark を判定しない。
-          Feed 側の timeline-theme-dark / timeline-theme-light が決めたCSS変数に従う。
-        */
-        .timeline-glass-card,
-        .timeline-mobile-readable {
-          -webkit-font-smoothing: antialiased;
-          text-rendering: optimizeLegibility;
-          color: hsl(var(--foreground));
-        }
-
-        .timeline-glass-card .text-foreground,
-        .timeline-mobile-readable .text-foreground,
-        .timeline-glass-card p,
-        .timeline-mobile-readable p {
-          color: hsl(var(--foreground) / 0.96) !important;
-          text-shadow: none !important;
-        }
-
-        .timeline-glass-card .text-muted-foreground,
-        .timeline-mobile-readable .text-muted-foreground,
-        .timeline-glass-card .text-muted-foreground\/70,
-        .timeline-mobile-readable .text-muted-foreground\/70,
-        .timeline-glass-card .text-muted-foreground\/80,
-        .timeline-mobile-readable .text-muted-foreground\/80 {
-          color: hsl(var(--muted-foreground) / 0.92) !important;
-          text-shadow: none !important;
-        }
-
-        .timeline-glass-card .text-pink-500,
-        .timeline-mobile-readable .text-pink-500 {
-          color: hsl(var(--timeline-link, 330 96% 60%)) !important;
-          text-shadow: none !important;
-        }
-
-        .timeline-theme-dark .timeline-glass-card,
-        .timeline-theme-dark .timeline-mobile-readable,
-        .timeline-theme-dark .timeline-glass-card .text-foreground,
-        .timeline-theme-dark .timeline-mobile-readable .text-foreground,
-        .timeline-theme-dark .timeline-glass-card p,
-        .timeline-theme-dark .timeline-mobile-readable p {
-          color: rgba(255, 255, 255, 0.96) !important;
-        }
-
-        .timeline-theme-dark .timeline-glass-card .text-muted-foreground,
-        .timeline-theme-dark .timeline-mobile-readable .text-muted-foreground,
-        .timeline-theme-dark .timeline-glass-card .text-muted-foreground\/70,
-        .timeline-theme-dark .timeline-mobile-readable .text-muted-foreground\/70,
-        .timeline-theme-dark .timeline-glass-card .text-muted-foreground\/80,
-        .timeline-theme-dark .timeline-mobile-readable .text-muted-foreground\/80 {
-          color: rgba(226, 232, 240, 0.76) !important;
-        }
-
-        .timeline-theme-dark .timeline-glass-card .text-pink-500,
-        .timeline-theme-dark .timeline-mobile-readable .text-pink-500 {
-          color: rgb(255, 87, 166) !important;
-        }
-
-        .timeline-theme-light .timeline-glass-card,
-        .timeline-theme-light .timeline-mobile-readable,
-        .timeline-theme-light .timeline-glass-card .text-foreground,
-        .timeline-theme-light .timeline-mobile-readable .text-foreground,
-        .timeline-theme-light .timeline-glass-card p,
-        .timeline-theme-light .timeline-mobile-readable p {
-          color: rgba(24, 22, 20, 0.96) !important;
-        }
-
-        .timeline-theme-light .timeline-glass-card .text-muted-foreground,
-        .timeline-theme-light .timeline-mobile-readable .text-muted-foreground,
-        .timeline-theme-light .timeline-glass-card .text-muted-foreground\/70,
-        .timeline-theme-light .timeline-mobile-readable .text-muted-foreground\/70,
-        .timeline-theme-light .timeline-glass-card .text-muted-foreground\/80,
-        .timeline-theme-light .timeline-mobile-readable .text-muted-foreground\/80 {
-          color: rgba(86, 74, 66, 0.74) !important;
-        }
-
-        .timeline-theme-light .timeline-glass-card .text-pink-500,
-        .timeline-theme-light .timeline-mobile-readable .text-pink-500 {
-          color: rgb(224, 32, 122) !important;
-        }
-
-        .timeline-glass-card svg,
-        .timeline-mobile-readable svg {
-          filter: none !important;
-        }
-
-        .timeline-portal-picker {
-          -webkit-font-smoothing: antialiased;
-          text-rendering: optimizeLegibility;
-          -webkit-backdrop-filter: blur(26px) saturate(170%);
-          backdrop-filter: blur(26px) saturate(170%);
-        }
-
-        .timeline-portal-picker-light {
-          background: rgba(255, 255, 255, 0.96) !important;
-          color: rgba(24, 22, 20, 0.96) !important;
-          border-color: rgba(24, 22, 20, 0.10) !important;
-        }
-
-        .timeline-portal-picker-dark {
-          background: rgba(18, 21, 30, 0.96) !important;
-          color: rgba(255, 255, 255, 0.96) !important;
-          border-color: rgba(255, 255, 255, 0.10) !important;
-        }
-
-        .timeline-portal-picker-light [class*="text-muted-foreground"] {
-          color: rgba(86, 74, 66, 0.72) !important;
-        }
-
-        .timeline-portal-picker-dark [class*="text-muted-foreground"] {
-          color: rgba(226, 232, 240, 0.72) !important;
-        }
-
-        .timeline-portal-picker-light button:hover {
-          background: rgba(24, 22, 20, 0.06) !important;
-        }
-
-        .timeline-portal-picker-dark button:hover {
-          background: rgba(255, 255, 255, 0.10) !important;
-        }
-
-        .timeline-portal-picker-light .timeline-portal-divider {
-          border-color: rgba(24, 22, 20, 0.10) !important;
-        }
-
-        .timeline-portal-picker-dark .timeline-portal-divider {
-          border-color: rgba(255, 255, 255, 0.10) !important;
-        }
-
-        .timeline-portal-picker-light .timeline-portal-search {
-          background: rgba(24, 22, 20, 0.035) !important;
-          border-color: rgba(24, 22, 20, 0.12) !important;
-          color: rgba(24, 22, 20, 0.96) !important;
-        }
-
-        .timeline-portal-picker-dark .timeline-portal-search {
-          background: rgba(0, 0, 0, 0.26) !important;
-          border-color: rgba(255, 255, 255, 0.12) !important;
-          color: rgba(255, 255, 255, 0.96) !important;
-        }
-
-        @media (max-width: 639px) {
-          .timeline-mobile-readable {
-            position: relative;
-            width: calc(100vw - 32px);
-            max-width: 600px;
-            margin: 10px auto 14px;
-            box-sizing: border-box;
-            overflow: hidden;
-            border-radius: 28px;
-            border: 1px solid hsl(var(--border) / 0.075);
-            background: hsl(var(--card) / 0.58);
-            color: hsl(var(--foreground));
-            box-shadow: none;
-            -webkit-backdrop-filter: blur(24px) saturate(170%);
-            backdrop-filter: blur(24px) saturate(170%);
-          }
-
-          .timeline-theme-dark .timeline-mobile-readable {
-            background: linear-gradient(
-              135deg,
-              rgba(12, 16, 28, 0.72),
-              rgba(34, 24, 32, 0.64)
-            ) !important;
-            border-color: rgba(255, 255, 255, 0.04) !important;
-          }
-
-          .timeline-theme-light .timeline-mobile-readable {
-            background: linear-gradient(
-              135deg,
-              rgba(255, 255, 255, 0.62),
-              rgba(255, 255, 255, 0.54)
-            ) !important;
-            border-color: rgba(40, 30, 25, 0.045) !important;
-          }
-        }
-      `}</style>
-
       {/* --- 高度グラフィックアニメーションレイヤー --- */}
       {(activeRings.length > 0 || activeDots.length > 0) && (
         <div className="fixed inset-0 pointer-events-none z-[9999] overflow-hidden">
@@ -2245,7 +2353,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                   <button
                     type="button"
                     className="block max-w-full cursor-zoom-in overflow-hidden rounded-2xl border border-border/50 bg-black/[0.025] text-left shadow-none dark:bg-white/[0.035]"
-                    style={getSingleImageFrameStyle()}
+                    style={singleImageFrameStyle}
                     onClick={(e) => handleImageClick(e, singleImageUrl)}
                     aria-label="画像を拡大表示"
                   >
@@ -2253,7 +2361,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                       src={singleImageUrl}
                       alt="投稿画像"
                       className="block select-none"
-                      style={getSingleImageDisplayStyle()}
+                      style={SINGLE_IMAGE_DISPLAY_STYLE}
                       draggable={false}
                       loading="lazy"
                       decoding="async"
@@ -2419,7 +2527,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                     >
                       {/* デフォルト絵文字 */}
                       <div className="grid grid-cols-5 gap-2.5 mb-3.5 shrink-0">
-                        {defaultEmojis.map((emoji) => (
+                        {DEFAULT_EMOJIS.map((emoji) => (
                           <button
                             key={emoji}
                             onClick={(e) => handleAddReaction(emoji, e)}
@@ -2495,7 +2603,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                     >
                       {/* デフォルト絵文字 */}
                       <div className="grid grid-cols-7 gap-1 mb-2 shrink-0">
-                        {defaultEmojis.map((emoji) => (
+                        {DEFAULT_EMOJIS.map((emoji) => (
                           <button
                             key={emoji}
                             onClick={(e) => handleAddReaction(emoji, e)}

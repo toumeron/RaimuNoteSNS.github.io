@@ -622,7 +622,7 @@ const handleDummyLimeProPurchase = async () => {
 
   return (
     <div className="space-y-6">
-      <h1 className="font-display text-2xl font-black">プロフィール編集</h1>
+      <h1 className="font-display text-2xl font-black">設定</h1>
 
       <div className="overflow-hidden rounded-3xl border border-border/60 bg-card shadow-soft">
         <div className="relative h-40 bg-gradient-cream sm:h-48">
@@ -992,7 +992,7 @@ const handleDummyLimeProPurchase = async () => {
             </div>
 
             <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-              ベータ版
+              開発者向けの機能です。ONにすると挙動が不安定になる場合がございますのでご注意ください。
             </p>
 
             <div className="mt-3 flex flex-wrap gap-2">
@@ -1035,7 +1035,7 @@ const handleDummyLimeProPurchase = async () => {
           </div>
 
           <div className="min-w-0 flex-1">
-            <h2 className="font-display text-base font-bold">タイムライン背景(Beta)</h2>
+            <h2 className="font-display text-base font-bold">背景</h2>
             <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
               タイムラインに表示する背景画像を設定できます。
             </p>
