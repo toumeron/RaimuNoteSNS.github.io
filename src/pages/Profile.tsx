@@ -2862,7 +2862,7 @@ export default function Profile() {
   if (userLoading) {
     return (
       <div
-        className="-mt-[56px] space-y-0 sm:mt-0 sm:space-y-5"
+        className="-mt-[0px] space-y-0 sm:mt-0 sm:space-y-5"
         style={{ visibility: isViewportReady ? 'visible' : 'hidden' }}
       >
         <Skeleton className="h-72 w-full rounded-none sm:rounded-3xl" />
@@ -2904,7 +2904,7 @@ export default function Profile() {
 
   return (
     <div
-      className="-mt-[56px] space-y-0 sm:mt-0 sm:space-y-5"
+      className="-mt-[0px] space-y-0 sm:mt-0 sm:space-y-5"
       style={{ visibility: isViewportReady ? 'visible' : 'hidden' }}
     >
       <style>{PROFILE_PAGE_STYLES}</style>

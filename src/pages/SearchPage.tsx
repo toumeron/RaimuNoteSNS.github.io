@@ -881,10 +881,22 @@ export default function SearchPage() {
         }
       }
 
+      // ハンドルネーム（@ユーザー名）で検索された場合、本文一致（返信・メンション）だけでなく
+      // そのユーザー自身が投稿した本人の投稿も検索結果に含める
+      const handleMatch = q.trim().match(/^@(\S+)$/);
+      const matchedUser = handleMatch
+        ? allUsers.find((u) => u.username.toLowerCase() === handleMatch[1].toLowerCase())
+        : undefined;
+
+      const contentConditions = [`content.ilike.%${q}%`];
+      if (matchedUser) {
+        contentConditions.push(`user_id.eq.${matchedUser.id}`);
+      }
+
       const { data, error } = await supabase
         .from('posts')
         .select(`id, content, image_urls, created_at, user_id, likes_count, reposts_count, visibility`)
-        .ilike('content', `%${q}%`)
+        .or(contentConditions.join(','))
         .or(conditions.join(','))
         .order('created_at', { ascending: false })
         .range(from, to);

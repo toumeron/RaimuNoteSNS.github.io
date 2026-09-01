@@ -1,6 +1,12 @@
-import { CalendarDays } from 'lucide-react';
+import { ArrowLeft, CalendarDays, Link2, MoreHorizontal, Search, Share2 } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { FollowButton } from './FollowButton';
 import { useFollowStats } from '@/hooks/useProfile';
 import { useAuth } from '@/hooks/useAuth';
@@ -47,6 +53,40 @@ export function ProfileHeader({ user }: { user: User }) {
   const navigate = useNavigate();
   const location = useLocation();
   const liftCoverToMobileTop = isGithubPagesProfilePath(location.pathname);
+
+  // --- 「もっと見る」メニュー: リンクをコピーする関数 ---
+  const handleCopyLink = async () => {
+    if (typeof window === 'undefined') return;
+
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+    } catch (error) {
+      console.error('リンクのコピーに失敗しました', error);
+    }
+  };
+
+  // --- 「もっと見る」メニュー: リンクを共有する関数 ---
+  const handleShareLink = async () => {
+    if (typeof window === 'undefined') return;
+
+    const shareUrl = window.location.href;
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: user.displayName,
+          url: shareUrl,
+        });
+      } catch (error) {
+        // ユーザーが共有をキャンセルした場合は何もしない
+        if ((error as Error)?.name !== 'AbortError') {
+          console.error('リンクの共有に失敗しました', error);
+        }
+      }
+    } else {
+      await handleCopyLink();
+    }
+  };
 
   // 数値をフォーマットする関数
   const formatDisplayCount = (count: number) => {
@@ -169,7 +209,7 @@ export function ProfileHeader({ user }: { user: User }) {
 
       <section
         data-lime-mobile-profile-cover-top={liftCoverToMobileTop ? 'true' : undefined}
-        className={`relative left-1/2 ${liftCoverToMobileTop ? 'profile-header-mobile-cover-to-top -mt-6' : '-mt-5'} w-screen -translate-x-1/2 overflow-hidden bg-transparent text-foreground sm:left-auto sm:mt-0 sm:w-auto sm:translate-x-0 sm:rounded-3xl sm:border sm:border-border/60 sm:bg-card sm:shadow-soft`}
+        className={`relative left-1/2 ${liftCoverToMobileTop ? 'profile-header-mobile-cover-to-top -mt-0' : '-mt-0'} w-screen -translate-x-1/2 overflow-hidden bg-transparent text-foreground sm:left-auto sm:mt-0 sm:w-auto sm:translate-x-0 sm:rounded-3xl sm:border sm:border-border/60 sm:bg-card sm:shadow-soft`}
       >
       <div className="profile-header-cover-avatar-gap relative h-[150px] w-full overflow-hidden bg-gradient-cream sm:h-48">
         {user.coverUrl ? (
@@ -183,6 +223,49 @@ export function ProfileHeader({ user }: { user: User }) {
         )}
 
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-background/20 to-transparent sm:from-card/40" />
+
+        <div className="pointer-events-none absolute inset-0 flex items-start justify-between px-3 pt-8 sm:hidden">
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            aria-label="戻る"
+            className="pointer-events-auto flex h-9 w-9 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-sm"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+
+          <div className="pointer-events-auto flex items-center gap-2">
+            <Link
+              to={`/search?q=${encodeURIComponent(`@${user.username}`)}`}
+              aria-label="検索"
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-sm"
+            >
+              <Search className="h-5 w-5" />
+            </Link>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="もっと見る"
+                  className="flex h-9 w-9 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-sm"
+                >
+                  <MoreHorizontal className="h-5 w-5" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={handleCopyLink}>
+                  <Link2 className="mr-2 h-4 w-4" />
+                  リンクをコピー
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleShareLink}>
+                  <Share2 className="mr-2 h-4 w-4" />
+                  プロフィールを共有
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
       </div>
 
       <div className="relative px-4 pb-4 sm:px-6 sm:pb-5">
