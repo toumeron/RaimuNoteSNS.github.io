@@ -11,6 +11,11 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/lib/supabase';
 import { getPostById } from '@/api/posts';
 import type { PostWithAuthor } from '@/types';
+import {
+  fetchBlueskyAuthorFeed,
+  getConfiguredBlueskyHandles,
+  mergePostsByCreatedAt,
+} from '@/lib/bluesky';
 
 
 function getRelativeLuminance(r: number, g: number, b: number) {
@@ -194,6 +199,13 @@ export default function Feed() {
     all: [],
     following: [],
   });
+  const [blueskyPosts, setBlueskyPosts] = useState<PostWithAuthor[]>([]);
+  const [blueskyLoading, setBlueskyLoading] = useState(false);
+  const [blueskyHasMore, setBlueskyHasMore] = useState(false);
+  const blueskyLoadingRef = useRef(false);
+  const blueskyRequestIdRef = useRef(0);
+  const blueskyCursorByHandleRef = useRef<Record<string, string | null>>({});
+  const blueskyHasMoreByHandleRef = useRef<Record<string, boolean>>({});
 
   const { 
     data, 
@@ -209,10 +221,160 @@ export default function Feed() {
   });
 
   const fetchedPosts = useMemo(() => data?.pages.flatMap((page) => page) ?? [], [data]);
-  const allPosts = useMemo(
+  const limePosts = useMemo(
     () => mergeRealtimePostsWithFetchedPosts(realtimePostsByTab[activeTab], fetchedPosts),
     [activeTab, fetchedPosts, realtimePostsByTab]
   );
+  const allPosts = useMemo(
+    () => mergePostsByCreatedAt(limePosts, blueskyPosts),
+    [limePosts, blueskyPosts]
+  );
+
+  const normalizeBlueskyPostForFeed = useCallback(
+    (post: Awaited<ReturnType<typeof fetchBlueskyAuthorFeed>>['posts'][number]): PostWithAuthor => ({
+      id: post.id,
+      userId: post.userId,
+      content: post.content,
+      imageUrls: post.imageUrls,
+      createdAt: post.createdAt,
+      visibility: post.visibility,
+      likedByMe: post.likedByMe,
+      likesCount: post.likesCount,
+      commentsCount: post.commentsCount,
+      isBot: post.isBot,
+      ...(post.is_bot !== undefined ? { is_bot: post.is_bot } : {}),
+      repostsCount: 0,
+      repostedByMe: false,
+      author: {
+        id: post.author.id,
+        username: post.author.username,
+        displayName: post.author.displayName,
+        avatarUrl: post.author.avatarUrl,
+        coverUrl: '',
+        isOfficial: false,
+        bio: post.author.bio,
+        createdAt: post.author.createdAt,
+      },
+    }),
+    []
+  );
+
+  const loadBlueskyPosts = useCallback(async (reset = false) => {
+    const handles = Array.from(
+      new Set(
+        getConfiguredBlueskyHandles()
+          .map((handle) => handle.trim().replace(/^@+/, '').toLowerCase())
+          .filter(Boolean)
+      )
+    );
+
+    if (handles.length === 0) {
+      blueskyRequestIdRef.current += 1;
+      blueskyCursorByHandleRef.current = {};
+      blueskyHasMoreByHandleRef.current = {};
+      setBlueskyPosts([]);
+      setBlueskyHasMore(false);
+      return;
+    }
+
+    if (blueskyLoadingRef.current) return;
+
+    if (reset) {
+      blueskyRequestIdRef.current += 1;
+      blueskyCursorByHandleRef.current = {};
+      blueskyHasMoreByHandleRef.current = Object.fromEntries(
+        handles.map((handle) => [handle, true])
+      );
+      setBlueskyPosts([]);
+      setBlueskyHasMore(true);
+    }
+
+    const targets = reset
+      ? handles
+      : handles.filter((handle) => blueskyHasMoreByHandleRef.current[handle] !== false);
+
+    if (targets.length === 0) {
+      setBlueskyHasMore(false);
+      return;
+    }
+
+    const requestId = ++blueskyRequestIdRef.current;
+    blueskyLoadingRef.current = true;
+    setBlueskyLoading(true);
+
+    try {
+      const results = await Promise.all(
+        targets.map(async (handle) => {
+          try {
+            const page = await fetchBlueskyAuthorFeed({
+              actor: handle,
+              cursor: reset ? null : (blueskyCursorByHandleRef.current[handle] ?? null),
+              limit: 30,
+            });
+            return { handle, page };
+          } catch (error) {
+            console.error(`Fetch Bluesky author feed failed for @${handle}:`, error);
+            return { handle, page: null };
+          }
+        })
+      );
+
+      if (requestId !== blueskyRequestIdRef.current) return;
+
+      const loadedPosts: PostWithAuthor[] = [];
+
+      for (const result of results) {
+        if (!result.page) {
+          blueskyHasMoreByHandleRef.current[result.handle] = false;
+          continue;
+        }
+
+        const normalizedPosts = result.page.posts.map(normalizeBlueskyPostForFeed);
+        blueskyCursorByHandleRef.current[result.handle] = result.page.cursor;
+        blueskyHasMoreByHandleRef.current[result.handle] =
+          Boolean(result.page.cursor) && normalizedPosts.length > 0;
+        loadedPosts.push(...normalizedPosts);
+      }
+
+      setBlueskyHasMore(
+        handles.some((handle) => blueskyHasMoreByHandleRef.current[handle] !== false)
+      );
+
+      setBlueskyPosts((current) =>
+        mergePostsByCreatedAt(reset ? [] : current, loadedPosts)
+      );
+    } finally {
+      if (requestId === blueskyRequestIdRef.current) {
+        blueskyLoadingRef.current = false;
+        setBlueskyLoading(false);
+      }
+    }
+  }, [normalizeBlueskyPostForFeed]);
+
+  useEffect(() => {
+    const reloadConfiguredBlueskyHandles = () => {
+      const nextHandles = getConfiguredBlueskyHandles();
+      void loadBlueskyPosts(true);
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === 'lime_bluesky_author_handles') {
+        reloadConfiguredBlueskyHandles();
+      }
+    };
+
+    window.addEventListener('lime-bluesky-handles-changed', reloadConfiguredBlueskyHandles);
+    window.addEventListener('storage', handleStorage);
+
+    return () => {
+      window.removeEventListener('lime-bluesky-handles-changed', reloadConfiguredBlueskyHandles);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, [loadBlueskyPosts]);
+
+  useEffect(() => {
+    void loadBlueskyPosts(true);
+  }, [loadBlueskyPosts]);
 
   useEffect(() => {
     let cancelled = false;
@@ -292,7 +454,6 @@ export default function Feed() {
       addPostToTab('following', post);
     }
   }, [addPostToTab]);
-
   useEffect(() => {
     const cachedDesign = readCachedTimelineDesignForReturnNavigation();
     if (cachedDesign) {
@@ -728,7 +889,10 @@ export default function Feed() {
       setPullDistance(58);
 
       try {
-        await queryClient.invalidateQueries({ queryKey: ['posts'] });
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['posts'] }),
+          loadBlueskyPosts(true),
+        ]);
       } finally {
         setIsRefreshing(false);
         setShowRefreshDone(true);
@@ -767,7 +931,7 @@ export default function Feed() {
       window.removeEventListener('touchend', handleTouchEnd);
       window.removeEventListener('touchcancel', handleTouchCancel);
     };
-  }, [isPWAMobile, isRefreshing, queryClient]);
+  }, [isPWAMobile, isRefreshing, queryClient, loadBlueskyPosts]);
 
   useEffect(() => {
     let cancelled = false;
@@ -798,7 +962,10 @@ export default function Feed() {
     if (inView && hasNextPage && !isFetchingNextPage) {
       fetchNextPage();
     }
-  }, [inView, hasNextPage, isFetchingNextPage, fetchNextPage]);
+    if (inView && blueskyHasMore && !blueskyLoading) {
+      void loadBlueskyPosts(false);
+    }
+  }, [inView, hasNextPage, isFetchingNextPage, fetchNextPage, blueskyHasMore, blueskyLoading, loadBlueskyPosts]);
 
   useEffect(() => {
     let frame: number | null = null;
@@ -867,6 +1034,98 @@ export default function Feed() {
     restoreScrollPositionAfterControlInteraction(previousScrollY);
   }, [restoreScrollPositionAfterControlInteraction]);
 
+  // ============================================================================
+  // --- 仮想化（virtualization）用の実測高さキャッシュ ---
+  // 以前は ESTIMATED_POST_HEIGHT（360px固定）だけを使って、どの投稿を
+  // 描画範囲に含めるかを計算していた。しかし YouTube 埋め込みを含む投稿は
+  // 実際には360pxよりかなり高くなるため、この固定値との差が積み重なると
+  // 「画面内にまだ表示されている投稿が範囲外と誤判定されてアンマウントされ、
+  // 直後にまた範囲内と判定されて再マウントされる」ことが起きる。
+  // 再マウントのたびに YouTube の iframe は最初から読み込み直しになるため、
+  // これが「埋め込みの挙動がおかしい／震えて見える」バグの原因になっていた。
+  // ここでは ResizeObserver で各投稿の実際の高さを計測してキャッシュし、
+  // 範囲計算にその実測値を使うことで、想定と実際の高さのズレを解消する。
+  // 見た目・レイアウト・スタイルは一切変更していない。
+  // ============================================================================
+  const postHeightsRef = useRef<Map<string, number>>(new Map());
+  const [heightVersion, setHeightVersion] = useState(0);
+  const postSizeObserverRef = useRef<ResizeObserver | null>(null);
+  const postElementsByIdRef = useRef<Map<string, Element>>(new Map());
+  const postIdsByElementRef = useRef<Map<Element, string>>(new Map());
+
+  const getPostSizeObserver = useCallback(() => {
+    if (postSizeObserverRef.current) return postSizeObserverRef.current;
+    if (typeof ResizeObserver === 'undefined') return null;
+
+    postSizeObserverRef.current = new ResizeObserver((entries) => {
+      let didChange = false;
+
+      entries.forEach((entry) => {
+        const postId = postIdsByElementRef.current.get(entry.target);
+        if (!postId) return;
+
+        const borderBoxSize = Array.isArray(entry.borderBoxSize)
+          ? entry.borderBoxSize[0]
+          : (entry.borderBoxSize as unknown as ResizeObserverSize | undefined);
+        const measuredHeight = borderBoxSize?.blockSize ?? entry.contentRect.height;
+
+        if (!measuredHeight || measuredHeight <= 0) return;
+
+        const roundedHeight = Math.round(measuredHeight);
+        const previousHeight = postHeightsRef.current.get(postId);
+
+        if (previousHeight !== roundedHeight) {
+          postHeightsRef.current.set(postId, roundedHeight);
+          didChange = true;
+        }
+      });
+
+      if (didChange) {
+        setHeightVersion((version) => version + 1);
+      }
+    });
+
+    return postSizeObserverRef.current;
+  }, []);
+
+  const registerPostElement = useCallback((postId: string, element: HTMLDivElement | null) => {
+    const observer = getPostSizeObserver();
+    const previousElement = postElementsByIdRef.current.get(postId);
+
+    if (previousElement && previousElement !== element) {
+      postIdsByElementRef.current.delete(previousElement);
+      observer?.unobserve(previousElement);
+      postElementsByIdRef.current.delete(postId);
+    }
+
+    if (!element) return;
+
+    postElementsByIdRef.current.set(postId, element);
+
+    if (!observer) {
+      // ResizeObserver未対応環境では、初回描画時点の高さだけを採用する。
+      const measuredHeight = element.getBoundingClientRect().height;
+      if (measuredHeight > 0) {
+        const roundedHeight = Math.round(measuredHeight);
+        if (postHeightsRef.current.get(postId) !== roundedHeight) {
+          postHeightsRef.current.set(postId, roundedHeight);
+          setHeightVersion((version) => version + 1);
+        }
+      }
+      return;
+    }
+
+    postIdsByElementRef.current.set(element, postId);
+    observer.observe(element);
+  }, [getPostSizeObserver]);
+
+  useEffect(() => () => {
+    postSizeObserverRef.current?.disconnect();
+    postSizeObserverRef.current = null;
+    postElementsByIdRef.current.clear();
+    postIdsByElementRef.current.clear();
+  }, []);
+
   const canReleaseToRefresh = pullDistance >= 58;
   const hasTimelineBackground = Boolean(timelineBackgroundUrl);
   const shouldVirtualizePosts = allPosts.length > MIN_VIRTUALIZED_POSTS;
@@ -882,27 +1141,68 @@ export default function Feed() {
 
     const viewportTop = Math.max(0, virtualViewport.scrollY - virtualViewport.listTop);
     const viewportBottom = viewportTop + virtualViewport.height;
-    const start = Math.max(0, Math.floor(viewportTop / ESTIMATED_POST_HEIGHT) - VIRTUAL_OVERSCAN);
-    const end = Math.min(
-      allPosts.length,
-      Math.ceil(viewportBottom / ESTIMATED_POST_HEIGHT) + VIRTUAL_OVERSCAN
-    );
+
+    // 各投稿の実測済み高さ（未計測なら ESTIMATED_POST_HEIGHT で代用）を使って
+    // 累積オフセットを求める。固定値だけで範囲を決めていた以前の実装と違い、
+    // 動画埋め込みなど高さのばらつきが大きい投稿があっても、範囲判定と
+    // 実際の表示位置がズレにくくなる。
+    const postHeights = postHeightsRef.current;
+    const heights = allPosts.map((post) => postHeights.get(post.id) ?? ESTIMATED_POST_HEIGHT);
+
+    let rawStart = 0;
+    let offsetBeforeRawStart = 0;
+    while (rawStart < heights.length && offsetBeforeRawStart + heights[rawStart] < viewportTop) {
+      offsetBeforeRawStart += heights[rawStart];
+      rawStart += 1;
+    }
+
+    const start = Math.max(0, rawStart - VIRTUAL_OVERSCAN);
+
+    let topSpacer = 0;
+    for (let i = 0; i < start; i += 1) {
+      topSpacer += heights[i];
+    }
+
+    let rawEnd = start;
+    let offsetBeforeRawEnd = topSpacer;
+    while (rawEnd < heights.length && offsetBeforeRawEnd < viewportBottom) {
+      offsetBeforeRawEnd += heights[rawEnd];
+      rawEnd += 1;
+    }
+
+    const end = Math.min(allPosts.length, rawEnd + VIRTUAL_OVERSCAN);
+
+    let bottomSpacer = 0;
+    for (let i = end; i < heights.length; i += 1) {
+      bottomSpacer += heights[i];
+    }
 
     return {
       start,
       end,
-      topSpacer: start * ESTIMATED_POST_HEIGHT,
-      bottomSpacer: Math.max(0, (allPosts.length - end) * ESTIMATED_POST_HEIGHT),
+      topSpacer,
+      bottomSpacer,
     };
-  }, [allPosts.length, shouldVirtualizePosts, virtualViewport.height, virtualViewport.listTop, virtualViewport.scrollY]);
+  }, [
+    allPosts,
+    shouldVirtualizePosts,
+    virtualViewport.height,
+    virtualViewport.listTop,
+    virtualViewport.scrollY,
+    heightVersion,
+  ]);
 
   const renderedPosts = useMemo(
     () => allPosts.slice(virtualRange.start, virtualRange.end).map((post) => (
-      <div key={`${activeTab}-${post.id}`} className="animate-float-up">
+      <div
+        key={`${activeTab}-${post.id}`}
+        className="animate-float-up"
+        ref={(element) => registerPostElement(post.id, element)}
+      >
         <PostCard post={post} timelineGlass={hasTimelineBackground} />
       </div>
     )),
-    [activeTab, allPosts, hasTimelineBackground, virtualRange.end, virtualRange.start]
+    [activeTab, allPosts, hasTimelineBackground, virtualRange.end, virtualRange.start, registerPostElement]
   );
 
   return (
@@ -1106,7 +1406,7 @@ export default function Feed() {
             {/* スマホ専用の LimeNoteBeta ボックス */}
             <span className="ribbon-tag sm:hidden">
               <Sparkles className="h-3 w-3" />
-              LimeNote 2.2.5
+              LimeNote 2.3
             </span>
           </div>
 
@@ -1115,7 +1415,7 @@ export default function Feed() {
         {/* PC専用の LimeNoteBeta ボックス */}
         <span className="ribbon-tag hidden sm:inline-flex">
           <Sparkles className="h-3 w-3" />
-          LimeNote 2.2.5
+          LimeNote 2.3
         </span>
       </div>
 
@@ -1180,20 +1480,20 @@ export default function Feed() {
         ref={postListRef}
         className={hasTimelineBackground ? "relative z-[1] space-y-0 pt-2 sm:space-y-4" : "relative z-[1] space-y-4 pt-2"}
       >
-        {isLoading && (
+        {isLoading && allPosts.length === 0 && (
           <div className="space-y-4">
             <PostCardSkeleton />
             <PostCardSkeleton />
           </div>
         )}
 
-        {isError && (
+        {isError && allPosts.length === 0 && (
           <div className="rounded-3xl border border-destructive/20 bg-destructive/5 p-6 text-center">
             <p className="text-sm text-destructive font-bold">読み込みに失敗しました。</p>
           </div>
         )}
 
-        {!isLoading && allPosts.length === 0 && (
+        {!isLoading && !blueskyLoading && allPosts.length === 0 && (
           <div className="rounded-3xl border border-dashed border-border/50 bg-card/40 p-10 text-center text-muted-foreground">
             {activeTab === 'all' ? 'まだ投稿がありません' : 'フォロー中の投稿はありません'}
           </div>
@@ -1210,12 +1510,12 @@ export default function Feed() {
         )}
 
         <div ref={ref} className="py-10 flex justify-center">
-          {isFetchingNextPage ? (
+          {isFetchingNextPage || blueskyLoading ? (
             <div className="flex items-center gap-2 text-muted-foreground animate-pulse">
               <Loader2 className="h-5 w-5 animate-spin" />
               <span className="text-sm font-medium">読み込み中...</span>
             </div>
-          ) : hasNextPage ? (
+          ) : hasNextPage || blueskyHasMore ? (
             <div className="h-10" />
           ) : allPosts.length > 0 ? (
             <p className="text-xs text-muted-foreground/60">すべての投稿を読み込みました</p>

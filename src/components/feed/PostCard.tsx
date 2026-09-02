@@ -1,7 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'; 
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
-import { MessageCircle, MoreHorizontal, Trash2, CalendarDays, ChartBarBig, X, Globe, Lock, Sparkles, Plus, Link as LinkIcon, Upload, Send } from 'lucide-react'; 
+import { MessageCircle, MoreHorizontal, Trash2, CalendarDays, ChartBarBig, X, Globe, Lock, Sparkles, Plus, Link as LinkIcon, Upload, Send, Heart } from 'lucide-react'; 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { LikeButton } from '@/components/post/LikeButton';
 import { PostImages } from './PostImages';
@@ -81,6 +81,33 @@ const formatDisplayCount = (count: number) => {
     return (count / 10000).toFixed(1).replace(/\.0$/, '') + '万';
   }
   return count.toLocaleString();
+};
+
+type BlueskyPostFields = {
+  source?: 'lime' | 'bluesky';
+  blueskyUrl?: string;
+  blueskyUri?: string;
+};
+
+const isBlueskyPostLike = (post: { id?: string; source?: string }) => (
+  post.source === 'bluesky' || String(post.id || '').startsWith('bsky:')
+);
+
+const getBlueskyPostUrl = (post: Pick<BlueskyPostFields, 'blueskyUrl'> & { author?: { username?: string }; id?: string }) => {
+  if (post.blueskyUrl) return post.blueskyUrl;
+
+  const id = String(post.id || '');
+  if (!id.startsWith('bsky:')) return null;
+
+  const uri = id.slice('bsky:'.length);
+  const rkey = uri.split('/').pop();
+  const handle = post.author?.username;
+  if (!rkey || !handle) return null;
+  return `https://bsky.app/profile/${handle}/post/${rkey}`;
+};
+
+const openExternalUrl = (url: string) => {
+  window.open(url, '_blank', 'noopener,noreferrer');
 };
 
 const POST_REACTION_CACHE_LIMIT = 36;
@@ -874,6 +901,11 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
   const [failedUrls, setFailedUrls] = useState<string[]>([]); 
   const navigate = useNavigate();
   const [, setTick] = useState(0);
+  const isBlueskyPost = isBlueskyPostLike(post);
+  const blueskyPostUrl = getBlueskyPostUrl(post as { blueskyUrl?: string; author?: { username?: string }; id?: string });
+  const blueskyProfileUrl = isBlueskyPost
+    ? `https://bsky.app/profile/${post.author.username}`
+    : null;
 
   // --- カスタム絵文字・リアクション用ステート群 ---
   const [showPicker, setShowPicker] = useState(false);
@@ -1053,10 +1085,16 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
   }, []);
 
   useEffect(() => {
+    if (isBlueskyPost) {
+      setReactions([]);
+      setIsCardActive(false);
+      return;
+    }
+
     const cachedReactions = getCachedReactionGroups(post.id);
     setReactions(cachedReactions || []);
     setIsCardActive(false);
-  }, [post.id]);
+  }, [isBlueskyPost, post.id]);
 
   useEffect(() => {
     const node = cardRootRef.current;
@@ -1078,6 +1116,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
   useEffect(() => {
     const shouldKeepLiveWork = isCardActive || showMenu || showPicker || showShareMenu || showLimeDropPanel || Boolean(selectedImageUrl);
     if (!shouldKeepLiveWork) return;
+    if (isBlueskyPost) return;
 
     let cancelled = false;
 
@@ -1106,7 +1145,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
       cancelled = true;
       supabase.removeChannel(channels);
     };
-  }, [isCardActive, showMenu, showPicker, showShareMenu, showLimeDropPanel, selectedImageUrl, post.id]);
+  }, [isBlueskyPost, isCardActive, showMenu, showPicker, showShareMenu, showLimeDropPanel, selectedImageUrl, post.id]);
 
   // 相対時刻表示（「〜分前」など）の定期更新は、カードごとに setInterval を
   // 持たせず、アプリ全体で共有する 1 本のタイマーに購読する形にする。
@@ -1385,6 +1424,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
   };
 
   const handleAddReaction = async (emoji: string, event?: React.MouseEvent) => {
+    if (isBlueskyPost) return;
     if (!currentUserId) return;
 
     if (event && event.currentTarget) {
@@ -1665,8 +1705,20 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
   const handleActivityClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (isBlueskyPost) {
+      if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
+      setShowMenu(false);
+      return;
+    }
     navigate(`/post/${post.id}/activity`);
     setShowMenu(false);
+  };
+
+  const handleAuthorNavigate = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!isBlueskyPost) return;
+    e.preventDefault();
+    if (blueskyProfileUrl) openExternalUrl(blueskyProfileUrl);
   };
 
   const handleToggleVisibility = async (e: React.MouseEvent) => {
@@ -1713,10 +1765,19 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
       return;
     }
 
+    if (isBlueskyPost) {
+      if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
+      return;
+    }
+
     navigate(`/post/${post.id}`);
   };
 
   const getPostShareUrl = () => {
+    if (isBlueskyPost && blueskyPostUrl) {
+      return blueskyPostUrl;
+    }
+
     if (typeof window === 'undefined') {
       return `/post/${post.id}`;
     }
@@ -2037,7 +2098,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
           <AvatarFallback>{post.author.displayName.slice(0, 1)}</AvatarFallback>
         </Avatar>
         
-        {currentUserId !== post.author.id && (
+        {currentUserId !== post.author.id && !isBlueskyPost && (
           <div className="shrink-0 w-[85px] h-[36px]" onClick={(e) => e.stopPropagation()}>
             <div className="w-full h-full [&>*]:!w-full [&>*]:!h-full [&>*]:!min-w-0 [&>*]:!p-0 [&>*]:!flex [&>*]:!items-center [&>*]:!justify-center [&>*]:!bg-foreground [&>*]:!text-background [&>*]:!rounded-full [&>*]:!text-[14px] [&>*]:!font-bold [&>*]:!border-none [&_svg]:!hidden">
               <FollowButton userId={post.author.id} />
@@ -2073,7 +2134,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
         <span>{dayjs(post.author.createdAt).format('YYYY年M月')} から参加</span>
       </div>
 
-      <HoverStats userId={post.author.id} />
+      {!isBlueskyPost && <HoverStats userId={post.author.id} />}
     </HoverCardContent>
   );
 
@@ -2154,7 +2215,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                 onMouseLeave={closeProfileHover}
                 onFocus={() => openProfileHover('avatar')}
                 onBlur={closeProfileHover}
-                onClick={(e) => e.stopPropagation()}
+                onClick={handleAuthorNavigate}
               >
                 <Avatar className={isMobile ? "h-11 w-11 border-2 border-primary/30" : "h-11 w-11 border-2 border-primary/30"}>
                   <AvatarImage src={post.author.avatarUrl} alt={post.author.displayName} />
@@ -2177,7 +2238,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                       onMouseLeave={closeProfileHover}
                       onFocus={() => openProfileHover('name')}
                       onBlur={closeProfileHover}
-                      onClick={(e) => e.stopPropagation()}
+                      onClick={handleAuthorNavigate}
                     >
                       <div className="inline-flex w-fit max-w-full items-center gap-0.5">
                         <span className={isMobile ? "truncate text-[16px]" : "truncate text-base"}>
@@ -2272,7 +2333,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                           className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
                         >
                           <ChartBarBig className="h-4 w-4" />
-                          ポストアクティビティー
+                          {isBlueskyPost ? 'Blueskyで見る' : 'ポストアクティビティー'}
                         </button>
 
                         {isMyPost && (
@@ -2312,7 +2373,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
             </div>
 
             <div>
-              <div onClick={(e) => { e.stopPropagation(); if (!shouldSuppressCardNavigation()) navigate(`/post/${post.id}`); }}>
+              <div onClick={(e) => { e.stopPropagation(); if (!shouldSuppressCardNavigation()) { if (isBlueskyPost) { if (blueskyPostUrl) openExternalUrl(blueskyPostUrl); } else { navigate(`/post/${post.id}`); } } }}>
                 {displayContent && (
                   <p className={isMobile ? "whitespace-pre-wrap break-words text-[16px] leading-normal text-foreground mt-1" : "whitespace-pre-wrap break-words text-base leading-relaxed text-foreground mt-1"}>
                     {renderContentWithMentions(displayContent)}
@@ -2333,6 +2394,13 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                 <div className="flex items-center gap-1 mt-1.5 text-muted-foreground/70">
                   <Sparkles className="h-3.5 w-3.5" />
                   <span className={isMobile ? "text-[13px] font-medium" : "text-[15px] font-medium"}>AIで生成</span>
+                </div>
+              )}
+
+              {isBlueskyPost && (
+                <div className="flex items-center gap-1 mt-1.5 text-muted-foreground/70">
+                  <Globe className="h-3.5 w-3.5" />
+                  <span className={isMobile ? "text-[13px] font-medium" : "text-[15px] font-medium"}>Bluesky</span>
                 </div>
               )}
 
@@ -2474,20 +2542,48 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
             {/* --- アクションボタンエリア（上部要素とのマージンを mt-3 に均一化） --- */}
             <div className={isMobile ? "mt-2 flex items-center gap-1 text-muted-foreground relative h-8" : "mt-3 flex items-center gap-1 text-muted-foreground relative h-9"}>
               <div onClick={(e) => e.stopPropagation()} className="flex items-center h-full">
-                <LikeButton 
-                  postId={post.id} 
-                  liked={post.likedByMe} 
-                  count={post.likesCount} 
-                />
+                {isBlueskyPost ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
+                    }}
+                    className={isMobile ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
+                  >
+                    <Heart className="h-5 w-5" />
+                    <span className={isMobile ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{formatDisplayCount(post.likesCount)}</span>
+                  </button>
+                ) : (
+                  <LikeButton 
+                    postId={post.id} 
+                    liked={post.likedByMe} 
+                    count={post.likesCount} 
+                  />
+                )}
               </div>
-              <Link
-                to={`/post/${post.id}`}
-                onClick={(e) => e.stopPropagation()}
-                className={isMobile ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
-              >
-                <MessageCircle className="h-5 w-5" />
-                <span className={isMobile ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{formatDisplayCount(post.commentsCount)}</span>
-              </Link>
+              {isBlueskyPost ? (
+                <a
+                  href={blueskyPostUrl || '#'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className={isMobile ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
+                >
+                  <MessageCircle className="h-5 w-5" />
+                  <span className={isMobile ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{formatDisplayCount(post.commentsCount)}</span>
+                </a>
+              ) : (
+                <Link
+                  to={`/post/${post.id}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className={isMobile ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
+                >
+                  <MessageCircle className="h-5 w-5" />
+                  <span className={isMobile ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{formatDisplayCount(post.commentsCount)}</span>
+                </Link>
+              )}
 
               <div className="relative inline-flex items-center h-full" onClick={(e) => e.stopPropagation()}>
                 <button
@@ -2499,6 +2595,10 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                     setShareMenuPosition(null);
                     setShowMenu(false);
                     setMoreMenuPosition(null);
+                    if (isBlueskyPost) {
+                      if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
+                      return;
+                    }
                     setShowPicker(!showPicker);
                   }}
                   className={
@@ -2886,15 +2986,34 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
           >
             <div className="flex items-center gap-8 rounded-full bg-black/40 px-6 py-3 backdrop-blur-md border border-white/10">
               <div className="scale-125">
-                <LikeButton
-                  postId={post.id}
-                  liked={post.likedByMe}
-                  count={post.likesCount}
-                />
+                {isBlueskyPost ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
+                    }}
+                    className="inline-flex items-center gap-2 text-white/90 hover:text-white transition-colors"
+                  >
+                    <Heart className="h-6 w-6" />
+                    <span className="font-bold tabular-nums text-lg">{formatDisplayCount(post.likesCount)}</span>
+                  </button>
+                ) : (
+                  <LikeButton
+                    postId={post.id}
+                    liked={post.likedByMe}
+                    count={post.likesCount}
+                  />
+                )}
               </div>
               <button
                 onClick={() => {
                   setSelectedImageUrl(null);
+                  if (isBlueskyPost) {
+                    if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
+                    return;
+                  }
                   navigate(`/post/${post.id}`);
                 }}
                 className="inline-flex items-center gap-2 text-white/90 hover:text-white transition-colors"

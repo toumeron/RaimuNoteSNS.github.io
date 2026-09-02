@@ -14,7 +14,9 @@ import {
   Trash2,
   Upload,
   Crown,
-  CreditCard
+  CreditCard,
+  X,
+  Plus,
 } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -31,6 +33,11 @@ import { useTheme } from 'next-themes';
 import { Switch } from '@/components/ui/switch';
 import { User } from '@/types';
 import { supabase } from '@/lib/supabase';
+import {
+  getConfiguredBlueskyHandles,
+  normalizeBlueskyHandle,
+  saveConfiguredBlueskyHandles,
+} from '@/lib/bluesky';
 
 const schema = z.object({
   displayName: z.string().trim().min(1, '表示名を入力してください').max(30, '30文字以内で入力してください'),
@@ -49,7 +56,6 @@ interface CustomEmoji {
 export default function Settings() {
   const { user: authUser, logout } = useAuth();
   const user = (authUser as unknown) as User | null;
-
   const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
   const { mutateAsync, isPending } = useUpdateProfile(user?.id ?? '');
@@ -75,24 +81,23 @@ export default function Settings() {
   const [isTimelineBackgroundUploading, setIsTimelineBackgroundUploading] = useState(false);
   const [isTimelineBackgroundLoading, setIsTimelineBackgroundLoading] = useState(false);
   const [emojiEffect, setEmojiEffect] = useState(getInitialEmoji());
-
   const [botEnabled, setBotEnabled] = useState(user?.bot_enabled ?? false);
   const [botPrompt, setBotPrompt] = useState(user?.bot_prompt ?? '');
-
   const [errors, setErrors] = useState<Record<string, string>>({});
   const avatarRef = useRef<HTMLInputElement>(null);
   const coverRef = useRef<HTMLInputElement>(null);
   const timelineBackgroundRef = useRef<HTMLInputElement>(null);
-
   const [customEmojis, setCustomEmojis] = useState<CustomEmoji[]>([]);
   const [emojiName, setEmojiName] = useState('');
   const [emojiFile, setEmojiFile] = useState<File | null>(null);
   const [emojiPreview, setEmojiPreview] = useState('');
   const [isEmojiUploading, setIsEmojiUploading] = useState(false);
   const emojiInputRef = useRef<HTMLInputElement>(null);
-
   const [hasLimePro, setHasLimePro] = useState(false);
   const [isLimeProPurchasing, setIsLimeProPurchasing] = useState(false);
+
+  const [blueskyHandles, setBlueskyHandles] = useState<string[]>(getConfiguredBlueskyHandles);
+  const [blueskyHandleInput, setBlueskyHandleInput] = useState('');
 
   const fetchCustomEmojis = async () => {
     try {
@@ -110,7 +115,6 @@ export default function Settings() {
 
   const fetchLimeProStatus = async () => {
     if (!user?.id) return;
-
     try {
       const { data, error } = await supabase
         .from('user_entitlements')
@@ -120,7 +124,6 @@ export default function Settings() {
         .maybeSingle();
 
       if (error) throw error;
-
       setHasLimePro(!!data);
     } catch (err) {
       console.error('Fetch LimePro Status Error:', err);
@@ -142,7 +145,6 @@ export default function Settings() {
     if (!user?.id) return;
 
     setIsTimelineBackgroundLoading(true);
-
     try {
       const { data, error } = await supabase
         .from('profiles')
@@ -154,7 +156,6 @@ export default function Settings() {
 
       const url = data?.timeline_background_url ?? '';
       const publicId = data?.timeline_background_public_id ?? '';
-
       applyTimelineBackgroundState(url, publicId);
     } catch (err) {
       console.error('Fetch Timeline Background Error:', err);
@@ -176,40 +177,62 @@ export default function Settings() {
   };
 
   useEffect(() => {
-    if (user) {
-      setDisplayName(user.displayName ?? '');
-      setBio(user.bio ?? '');
-      setAvatarUrl(user.avatarUrl ?? '');
-      setCoverUrl(user.coverUrl ?? '');
+    if (!user) return;
 
-      const localTimelineBackgroundUrl = localStorage.getItem('lime_timeline_background_url') ?? '';
-      const userTimelineBackgroundUrl =
-        (user as any)?.timelineBackgroundUrl ?? (user as any)?.timeline_background_url ?? '';
-      const userTimelineBackgroundPublicId =
-        (user as any)?.timelineBackgroundPublicId ?? (user as any)?.timeline_background_public_id ?? '';
+    setDisplayName(user.displayName ?? '');
+    setBio(user.bio ?? '');
+    setAvatarUrl(user.avatarUrl ?? '');
+    setCoverUrl(user.coverUrl ?? '');
 
-      applyTimelineBackgroundState(
-        userTimelineBackgroundUrl || localTimelineBackgroundUrl,
-        userTimelineBackgroundPublicId
-      );
+    const localTimelineBackgroundUrl = localStorage.getItem('lime_timeline_background_url') ?? '';
+    const userTimelineBackgroundUrl =
+      (user as any)?.timelineBackgroundUrl ?? (user as any)?.timeline_background_url ?? '';
+    const userTimelineBackgroundPublicId =
+      (user as any)?.timelineBackgroundPublicId ?? (user as any)?.timeline_background_public_id ?? '';
 
-      setBotEnabled(user.bot_enabled ?? false);
-      setBotPrompt(user.bot_prompt ?? '');
+    applyTimelineBackgroundState(
+      userTimelineBackgroundUrl || localTimelineBackgroundUrl,
+      userTimelineBackgroundPublicId
+    );
 
-      const currentEmoji = user.emojiEffect ?? localStorage.getItem('lime_emoji_pref') ?? '';
-      setEmojiEffect(currentEmoji);
+    setBotEnabled(user.bot_enabled ?? false);
+    setBotPrompt(user.bot_prompt ?? '');
 
-      fetchCustomEmojis();
-      fetchLimeProStatus();
-      fetchTimelineBackgroundSetting();
-    }
+    const currentEmoji = user.emojiEffect ?? localStorage.getItem('lime_emoji_pref') ?? '';
+    setEmojiEffect(currentEmoji);
+
+    setBlueskyHandles(getConfiguredBlueskyHandles());
+    fetchCustomEmojis();
+    fetchLimeProStatus();
+    fetchTimelineBackgroundSetting();
   }, [user?.id]);
+
+  useEffect(() => {
+    const handleBlueskyHandlesChanged = () => {
+      setBlueskyHandles(getConfiguredBlueskyHandles());
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === 'lime_bluesky_author_handles') {
+        setBlueskyHandles(getConfiguredBlueskyHandles());
+      }
+    };
+
+    window.addEventListener('lime-bluesky-handles-changed', handleBlueskyHandlesChanged);
+    window.addEventListener('storage', handleStorage);
+
+    return () => {
+      window.removeEventListener('lime-bluesky-handles-changed', handleBlueskyHandlesChanged);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
 
   if (!user) return null;
 
   const onPickImage = (e: ChangeEvent<HTMLInputElement>, setUrl: (s: string) => void) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
     const url = URL.createObjectURL(file);
     setUrl(url);
     e.target.value = '';
@@ -238,7 +261,6 @@ export default function Settings() {
   const handleTimelineBackgroundUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
-
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
@@ -247,7 +269,6 @@ export default function Settings() {
     }
 
     const maxSize = 8 * 1024 * 1024;
-
     if (file.size > maxSize) {
       toast.error('背景画像は8MB以下にしてください');
       return;
@@ -268,10 +289,13 @@ export default function Settings() {
       formData.append('upload_preset', uploadPreset);
       formData.append('folder', `timeline_backgrounds/${user.id}`);
 
-      const clRes = await fetch(`https://api.cloudinary.com/v1_1/${cloudinaryCloudName}/image/upload`, {
-        method: 'POST',
-        body: formData,
-      });
+      const clRes = await fetch(
+        `https://api.cloudinary.com/v1_1/${cloudinaryCloudName}/image/upload`,
+        {
+          method: 'POST',
+          body: formData,
+        }
+      );
 
       if (!clRes.ok) throw new Error('Cloudinaryへのアップロードに失敗しました');
 
@@ -291,7 +315,6 @@ export default function Settings() {
 
       applyTimelineBackgroundState(uploadedUrl, uploadedPublicId);
       notifyTimelineBackgroundChanged(uploadedUrl);
-
       toast.success('タイムライン背景を更新しました');
     } catch (err: any) {
       console.error('Timeline Background Upload Error:', err);
@@ -303,7 +326,6 @@ export default function Settings() {
 
   const handleRemoveTimelineBackground = async () => {
     if (!timelineBackgroundUrl && !timelineBackgroundPublicId) return;
-
     if (!confirm('背景を削除しますか？')) return;
 
     setIsTimelineBackgroundUploading(true);
@@ -317,7 +339,6 @@ export default function Settings() {
 
       if (error) {
         const maybeContext = (error as any).context;
-
         if (maybeContext?.json) {
           try {
             const payload = await maybeContext.json();
@@ -328,13 +349,11 @@ export default function Settings() {
             }
           }
         }
-
         throw error;
       }
 
       applyTimelineBackgroundState('', '');
       notifyTimelineBackgroundChanged('');
-
       toast.success('タイムライン背景を削除しました');
     } catch (err: any) {
       console.error('Timeline Background Remove Error:', err);
@@ -347,6 +366,7 @@ export default function Settings() {
   const onPickEmojiFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
     setEmojiFile(file);
     const url = URL.createObjectURL(file);
     setEmojiPreview(url);
@@ -367,7 +387,7 @@ export default function Settings() {
     if (!formattedName.startsWith(':')) formattedName = `:${formattedName}`;
     if (!formattedName.endsWith(':')) formattedName = `${formattedName}:`;
 
-    const nameRegex = /^:[a-zA-Z0-9_\-]+:$/;
+    const nameRegex = /^:[a-zA-Z0-9_-]+:$/;
     if (!nameRegex.test(formattedName) || formattedName.length < 3) {
       toast.error('絵文字名は英数字、アンダースコア、ハイフンのみを使用し、前後にコロンを付けてください（例: :my_emoji:）');
       return;
@@ -388,10 +408,13 @@ export default function Settings() {
       formData.append('upload_preset', uploadPreset);
       formData.append('folder', 'custom_emojis');
 
-      const clRes = await fetch(`https://api.cloudinary.com/v1_1/${cloudinaryCloudName}/image/upload`, {
-        method: 'POST',
-        body: formData,
-      });
+      const clRes = await fetch(
+        `https://api.cloudinary.com/v1_1/${cloudinaryCloudName}/image/upload`,
+        {
+          method: 'POST',
+          body: formData,
+        }
+      );
 
       if (!clRes.ok) throw new Error('Cloudinaryへのアップロードに失敗しました');
 
@@ -413,7 +436,6 @@ export default function Settings() {
           toast.error(`「${formattedName}」は既に登録されています。別の名前を入力してください。`);
           return;
         }
-
         throw dbError;
       }
 
@@ -445,7 +467,6 @@ export default function Settings() {
         .eq('id', id);
 
       if (error) throw error;
-
       toast.success('カスタム絵文字を削除しました');
       await fetchCustomEmojis();
     } catch (err) {
@@ -454,82 +475,99 @@ export default function Settings() {
     }
   };
 
-const handleDummyLimeProPurchase = async () => {
-  if (!user?.id) return;
-
-  const previousStatus = hasLimePro;
-  const nextStatus = !hasLimePro;
-
-  const notifyLimeProStatus = (status: boolean) => {
-    setHasLimePro(status);
-    localStorage.setItem('limepro_status', String(status));
-
-    window.dispatchEvent(
-      new CustomEvent('limepro-status-changed', {
-        detail: { hasLimePro: status },
-      })
-    );
-
-    if ('BroadcastChannel' in window) {
-      const channel = new BroadcastChannel('limepro-status');
-      channel.postMessage({ hasLimePro: status });
-      channel.close();
-    }
-  };
-
-  setIsLimeProPurchasing(true);
-
-  // ここが重要：DB完了を待たず、先にロゴ表示を切り替える
-  notifyLimeProStatus(nextStatus);
-
-  try {
-    if (nextStatus) {
-      const { error } = await supabase
-        .from('user_entitlements')
-        .insert({
-          user_id: user.id,
-          feature: 'limepro',
-        });
-
-      if (error) {
-        if (error.code === '23505') {
-          notifyLimeProStatus(true);
-          toast.info('すでにLimeProが有効です');
-          return;
-        }
-
-        throw error;
-      }
-
-      toast.success('LimeProを有効化しました');
+  const handleAddBlueskyHandle = () => {
+    const normalized = normalizeBlueskyHandle(blueskyHandleInput);
+    if (!normalized) {
+      toast.error('Blueskyのユーザー名を入力してください');
       return;
     }
 
-    const { error } = await supabase
-      .from('user_entitlements')
-      .delete()
-      .eq('user_id', user.id)
-      .eq('feature', 'limepro');
+    if (blueskyHandles.includes(normalized)) {
+      toast.info(`@${normalized} はすでに登録されています`);
+      setBlueskyHandleInput('');
+      return;
+    }
 
-    if (error) throw error;
+    const nextHandles = [...blueskyHandles, normalized];
+    const savedHandles = saveConfiguredBlueskyHandles(nextHandles);
+    setBlueskyHandles(savedHandles);
+    setBlueskyHandleInput('');
+    toast.success(`@${normalized} をBluesky連携に追加しました`);
+  };
 
-    toast.success('LimeProを解約しました');
-  } catch (err) {
-    console.error('Dummy LimePro Purchase Error:', err);
+  const handleRemoveBlueskyHandle = (handle: string) => {
+    const nextHandles = blueskyHandles.filter((item) => item !== handle);
+    const savedHandles = saveConfiguredBlueskyHandles(nextHandles);
+    setBlueskyHandles(savedHandles);
+    toast.success(`@${handle} をBluesky連携から削除しました`);
+  };
 
-    // DB処理が失敗したら表示を元に戻す
-    notifyLimeProStatus(previousStatus);
+  const handleDummyLimeProPurchase = async () => {
+    if (!user?.id) return;
 
-    toast.error(nextStatus ? 'LimeProの有効化に失敗しました' : 'LimeProの解約に失敗しました');
-  } finally {
-    setIsLimeProPurchasing(false);
-  }
-};
+    const previousStatus = hasLimePro;
+    const nextStatus = !hasLimePro;
 
+    const notifyLimeProStatus = (status: boolean) => {
+      setHasLimePro(status);
+      localStorage.setItem('limepro_status', String(status));
+      window.dispatchEvent(
+        new CustomEvent('limepro-status-changed', {
+          detail: { hasLimePro: status },
+        })
+      );
+
+      if ('BroadcastChannel' in window) {
+        const channel = new BroadcastChannel('limepro-status');
+        channel.postMessage({ hasLimePro: status });
+        channel.close();
+      }
+    };
+
+    setIsLimeProPurchasing(true);
+    notifyLimeProStatus(nextStatus);
+
+    try {
+      if (nextStatus) {
+        const { error } = await supabase
+          .from('user_entitlements')
+          .insert({
+            user_id: user.id,
+            feature: 'limepro',
+          });
+
+        if (error) {
+          if (error.code === '23505') {
+            notifyLimeProStatus(true);
+            toast.info('すでにLimeProが有効です');
+            return;
+          }
+          throw error;
+        }
+
+        toast.success('LimeProを有効化しました');
+        return;
+      }
+
+      const { error } = await supabase
+        .from('user_entitlements')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('feature', 'limepro');
+
+      if (error) throw error;
+      toast.success('LimeProを解約しました');
+    } catch (err) {
+      console.error('Dummy LimePro Purchase Error:', err);
+      notifyLimeProStatus(previousStatus);
+      toast.error(nextStatus ? 'LimeProの有効化に失敗しました' : 'LimeProの解約に失敗しました');
+    } finally {
+      setIsLimeProPurchasing(false);
+    }
+  };
 
   const updateEmojiOnly = async () => {
     const emojiCount = Array.from(emojiEffect).length;
-
     if (emojiCount > 1) {
       toast.error('エフェクトには1文字だけ入力してください');
       return;
@@ -545,7 +583,6 @@ const handleDummyLimeProPurchase = async () => {
         bot_enabled: botEnabled,
         bot_prompt: botPrompt,
       });
-
       localStorage.setItem('lime_emoji_pref', emojiEffect);
       toast.success('エフェクト設定を更新しました');
     } catch (err) {
@@ -592,7 +629,6 @@ const handleDummyLimeProPurchase = async () => {
     }
 
     const emojiCount = Array.from(emojiEffect).length;
-
     if (emojiCount > 1) {
       toast.error('エフェクトには1文字だけ入力してください');
       return;
@@ -610,9 +646,7 @@ const handleDummyLimeProPurchase = async () => {
         bot_enabled: botEnabled,
         bot_prompt: botPrompt,
       });
-
       localStorage.setItem('lime_emoji_pref', emojiEffect);
-
       toast.success('プロフィールを更新しました');
     } catch (err) {
       console.error('Settings Update Error:', err);
@@ -627,7 +661,6 @@ const handleDummyLimeProPurchase = async () => {
       <div className="overflow-hidden rounded-3xl border border-border/60 bg-card shadow-soft">
         <div className="relative h-40 bg-gradient-cream sm:h-48">
           {coverUrl && <img src={coverUrl} alt="" className="h-full w-full object-cover" />}
-
           <button
             type="button"
             onClick={() => coverRef.current?.click()}
@@ -635,7 +668,6 @@ const handleDummyLimeProPurchase = async () => {
           >
             <ImagePlus className="mr-2 h-5 w-5" /> カバー画像を変更
           </button>
-
           <input
             ref={coverRef}
             type="file"
@@ -652,7 +684,6 @@ const handleDummyLimeProPurchase = async () => {
                 <AvatarImage src={avatarUrl} alt={displayName} />
                 <AvatarFallback>{displayName.slice(0, 1)}</AvatarFallback>
               </Avatar>
-
               <button
                 type="button"
                 onClick={() => avatarRef.current?.click()}
@@ -660,7 +691,6 @@ const handleDummyLimeProPurchase = async () => {
               >
                 <ImagePlus className="h-4 w-4" />
               </button>
-
               <input
                 ref={avatarRef}
                 type="file"
@@ -700,13 +730,13 @@ const handleDummyLimeProPurchase = async () => {
                 maxLength={200}
                 className="resize-none rounded-2xl"
               />
-
               <div className="flex justify-end">
-                <span className={`text-xs ${bio.length > 160 ? 'font-bold text-destructive' : 'text-muted-foreground'}`}>
+                <span
+                  className={`text-xs ${bio.length > 160 ? 'font-bold text-destructive' : 'text-muted-foreground'}`}
+                >
                   {bio.length} / 160
                 </span>
               </div>
-
               {errors.bio && <p className="text-xs text-destructive">{errors.bio}</p>}
             </div>
 
@@ -724,15 +754,78 @@ const handleDummyLimeProPurchase = async () => {
       <Separator />
 
       <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-primary" />
+          <h2 className="font-display text-base font-bold">Bluesky連携</h2>
+        </div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          タイムラインに表示するBlueskyユーザーを追加・削除できます。
+        </p>
+
+        <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+          <Input
+            value={blueskyHandleInput}
+            onChange={(e) => setBlueskyHandleInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                handleAddBlueskyHandle();
+              }
+            }}
+            placeholder="例: @nakkar7.bsky.social"
+            className="h-11 rounded-full bg-background"
+            aria-label="追加するBlueskyユーザー"
+          />
+          <Button
+            type="button"
+            onClick={handleAddBlueskyHandle}
+            className="h-11 rounded-full bg-gradient-primary font-bold shadow-soft"
+          >
+            <Plus className="mr-1.5 h-4 w-4" />
+            追加
+          </Button>
+        </div>
+
+        <div className="mt-4 space-y-2">
+          <Label>登録済みアカウント（{blueskyHandles.length}）</Label>
+          {blueskyHandles.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border/60 bg-background/50 px-4 py-4 text-sm text-muted-foreground">
+              登録されているBlueskyユーザーはありません。
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {blueskyHandles.map((handle) => (
+                <div
+                  key={handle}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-background px-3 py-1.5 text-sm font-bold"
+                >
+                  <span className="max-w-[260px] truncate">@{handle}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveBlueskyHandle(handle)}
+                    className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                    aria-label={`@${handle}を削除`}
+                    title={`@${handle}を削除`}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <Separator />
+
+      <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Bot className="h-4 w-4 text-primary" />
             <h2 className="font-display text-base font-bold">自動投稿の設定</h2>
           </div>
-
           <Switch checked={botEnabled} onCheckedChange={handleBotSwitchChange} />
         </div>
-
         <p className="mt-1 text-sm text-muted-foreground">
           AIがあなたに代わって自動的に投稿を行います
         </p>
@@ -744,7 +837,6 @@ const handleDummyLimeProPurchase = async () => {
                 <MessageSquareText className="h-3.5 w-3.5 text-muted-foreground" />
                 <Label htmlFor="botPrompt">性格・指示</Label>
               </div>
-
               <Textarea
                 id="botPrompt"
                 value={botPrompt}
@@ -753,8 +845,7 @@ const handleDummyLimeProPurchase = async () => {
                 rows={3}
                 className="resize-none rounded-2xl bg-background"
               />
-
-              <p className="text-[10px] text-muted-foreground leading-relaxed">
+              <p className="text-[10px] leading-relaxed text-muted-foreground">
                 ※ AIへの指示を入力してください。この指示に基づいて自動投稿が生成されます。
               </p>
             </div>
@@ -765,7 +856,11 @@ const handleDummyLimeProPurchase = async () => {
               variant="secondary"
               className="w-full rounded-full font-bold shadow-sm"
             >
-              {isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}
+              {isPending ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Check className="mr-2 h-4 w-4" />
+              )}
               自動投稿の設定を更新
             </Button>
           </div>
@@ -780,8 +875,8 @@ const handleDummyLimeProPurchase = async () => {
           <h2 className="font-display text-base font-bold">絵文字の管理</h2>
         </div>
 
-        <div className="mt-4 space-y-4 rounded-2xl border border-border/40 p-4 bg-background/50">
-          <h3 className="text-xs font-bold text-muted-foreground flex items-center gap-1.5">
+        <div className="mt-4 space-y-4 rounded-2xl border border-border/40 bg-background/50 p-4">
+          <h3 className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground">
             <Upload className="h-3 w-3" /> 新規絵文字の登録
           </h3>
 
@@ -792,14 +887,13 @@ const handleDummyLimeProPurchase = async () => {
                 id="emojiName"
                 value={emojiName}
                 onChange={(e) => setEmojiName(e.target.value)}
-                placeholder="例:Nakkar"
+                placeholder="例: Nakkar"
                 className="rounded-full bg-background"
               />
             </div>
 
             <div className="space-y-1.5">
               <Label>画像ファイル</Label>
-
               <div className="flex items-center gap-3">
                 <Button
                   type="button"
@@ -809,7 +903,6 @@ const handleDummyLimeProPurchase = async () => {
                 >
                   画像を選択
                 </Button>
-
                 <input
                   ref={emojiInputRef}
                   type="file"
@@ -817,9 +910,8 @@ const handleDummyLimeProPurchase = async () => {
                   hidden
                   onChange={onPickEmojiFile}
                 />
-
                 {emojiPreview && (
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted border border-border/40 overflow-hidden">
+                  <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl border border-border/40 bg-muted">
                     <img src={emojiPreview} alt="Preview" className="h-full w-full object-contain" />
                   </div>
                 )}
@@ -832,7 +924,11 @@ const handleDummyLimeProPurchase = async () => {
             disabled={isEmojiUploading || !emojiName || !emojiFile}
             className="w-full rounded-full bg-gradient-primary font-bold shadow-soft"
           >
-            {isEmojiUploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+            {isEmojiUploading ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Upload className="mr-2 h-4 w-4" />
+            )}
             絵文字をアップロードして登録
           </Button>
         </div>
@@ -843,33 +939,33 @@ const handleDummyLimeProPurchase = async () => {
           </h3>
 
           {customEmojis.length === 0 ? (
-            <p className="text-xs text-muted-foreground py-4 text-center">
+            <p className="py-4 text-center text-xs text-muted-foreground">
               登録されているカスタム絵文字はありません。
             </p>
           ) : (
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 max-h-60 overflow-y-auto p-1 border border-border/40 rounded-2xl bg-background/30">
+            <div className="grid max-h-60 grid-cols-2 gap-2 overflow-y-auto rounded-2xl border border-border/40 bg-background/30 p-1 sm:grid-cols-3 md:grid-cols-4">
               {customEmojis.map((emoji) => {
                 const optimizedUrl = `https://res.cloudinary.com/${import.meta.env.VITE_CLOUDINARY_CLOUD_NAME}/image/upload/f_auto,q_auto,w_48,h_48,c_limit/${emoji.public_id}.${emoji.format}`;
 
                 return (
                   <div
                     key={emoji.id}
-                    className="flex items-center justify-between p-2 rounded-xl border border-border/40 bg-card shadow-sm"
+                    className="flex items-center justify-between rounded-xl border border-border/40 bg-card p-2 shadow-sm"
                   >
-                    <div className="flex items-center gap-2 overflow-hidden">
-                      <div className="h-8 w-8 flex-shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted border border-border/20">
+                    <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border/20 bg-muted">
                         <img src={optimizedUrl} alt={emoji.name} className="h-full w-full object-contain" />
                       </div>
-
-                      <span className="text-xs font-mono truncate text-foreground/80" title={emoji.name}>
+                      <span className="truncate font-mono text-xs text-foreground/80" title={emoji.name}>
                         {emoji.name}
                       </span>
                     </div>
 
                     {emoji.uploaded_by === user.id && (
                       <button
+                        type="button"
                         onClick={() => handleDeleteCustomEmoji(emoji.id)}
-                        className="p-1 rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition"
+                        className="rounded-md p-1 text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive"
                         title="削除"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -893,25 +989,23 @@ const handleDummyLimeProPurchase = async () => {
           <button
             onClick={() => setTheme('light')}
             className={`flex items-center justify-center gap-2 rounded-xl py-2 text-sm font-bold transition ${
-              theme === 'light' ? 'bg-background shadow-sm text-primary' : 'text-muted-foreground hover:text-foreground'
+              theme === 'light' ? 'bg-background text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'
             }`}
           >
             <Sun className="h-4 w-4" /> ライト
           </button>
-
           <button
             onClick={() => setTheme('dark')}
             className={`flex items-center justify-center gap-2 rounded-xl py-2 text-sm font-bold transition ${
-              theme === 'dark' ? 'bg-background shadow-sm text-primary' : 'text-muted-foreground hover:text-foreground'
+              theme === 'dark' ? 'bg-background text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'
             }`}
           >
             <Moon className="h-4 w-4" /> ダーク
           </button>
-
           <button
             onClick={() => setTheme('system')}
             className={`flex items-center justify-center gap-2 rounded-xl py-2 text-sm font-bold transition ${
-              theme === 'system' ? 'bg-background shadow-sm text-primary' : 'text-muted-foreground hover:text-foreground'
+              theme === 'system' ? 'bg-background text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'
             }`}
           >
             <Monitor className="h-4 w-4" /> システム
@@ -926,14 +1020,12 @@ const handleDummyLimeProPurchase = async () => {
           <Sparkles className="h-4 w-4 text-primary" />
           <h2 className="font-display text-base font-bold">エフェクト設定</h2>
         </div>
-
         <p className="mt-1 text-sm text-muted-foreground">謎機能 ※空白にして更新すると消せる</p>
 
         <div className="mt-4 space-y-4">
           <div className="flex items-center gap-3">
             <div className="flex-1 space-y-1.5">
               <Label htmlFor="emojiEffect">降らせる文字</Label>
-
               <div className="relative">
                 <Input
                   id="emojiEffect"
@@ -942,9 +1034,9 @@ const handleDummyLimeProPurchase = async () => {
                   placeholder="絵文字を入力..."
                   className="rounded-full bg-background pr-10"
                 />
-
                 {emojiEffect && (
                   <button
+                    type="button"
                     onClick={() => setEmojiEffect('')}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground"
                   >
@@ -954,7 +1046,7 @@ const handleDummyLimeProPurchase = async () => {
               </div>
             </div>
 
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-muted text-2xl shadow-inner border border-border/40">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-border/40 bg-muted text-2xl shadow-inner">
               {emojiEffect ? Array.from(emojiEffect)[0] : '？'}
             </div>
           </div>
@@ -965,7 +1057,11 @@ const handleDummyLimeProPurchase = async () => {
             variant="secondary"
             className="w-full rounded-full font-bold shadow-sm"
           >
-            {isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}
+            {isPending ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Check className="mr-2 h-4 w-4" />
+            )}
             エフェクトを更新
           </Button>
         </div>
@@ -978,25 +1074,20 @@ const handleDummyLimeProPurchase = async () => {
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border/60 bg-background text-primary shadow-sm">
             <Crown className="h-5 w-5" />
           </div>
-
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="font-display text-base font-bold">LimePro</h2>
-              <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${
-                hasLimePro
-                  ? 'bg-primary-soft text-primary'
-                  : 'bg-muted text-muted-foreground'
-              }`}>
+              <span
+                className={`rounded-full px-2.5 py-1 text-xs font-bold ${
+                  hasLimePro ? 'bg-primary-soft text-primary' : 'bg-muted text-muted-foreground'
+                }`}
+              >
                 {hasLimePro ? '有効' : '未加入'}
               </span>
             </div>
-
             <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
               開発者向けの機能です。ONにすると挙動が不安定になる場合がございますのでご注意ください。
             </p>
-
-            <div className="mt-3 flex flex-wrap gap-2">
-            </div>
           </div>
         </div>
 
@@ -1017,7 +1108,6 @@ const handleDummyLimeProPurchase = async () => {
           ) : (
             <CreditCard className="mr-2 h-4 w-4" />
           )}
-
           {isLimeProPurchasing
             ? '処理中...'
             : hasLimePro
@@ -1033,7 +1123,6 @@ const handleDummyLimeProPurchase = async () => {
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border/60 bg-background text-primary shadow-sm">
             <ImagePlus className="h-5 w-5" />
           </div>
-
           <div className="min-w-0 flex-1">
             <h2 className="font-display text-base font-bold">背景</h2>
             <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
@@ -1045,16 +1134,11 @@ const handleDummyLimeProPurchase = async () => {
         <div className="mt-4 overflow-hidden rounded-3xl border border-border/60 bg-muted">
           <div
             className="relative flex h-44 items-center justify-center bg-gradient-cream bg-cover bg-center sm:h-56"
-            style={
-              timelineBackgroundUrl
-                ? { backgroundImage: `url(${timelineBackgroundUrl})` }
-                : undefined
-            }
+            style={timelineBackgroundUrl ? { backgroundImage: `url(${timelineBackgroundUrl})` } : undefined}
           >
             {timelineBackgroundUrl && (
               <div className="absolute inset-0 bg-background/10 backdrop-blur-md" />
             )}
-
             <div className="relative z-10 rounded-full border border-border/60 bg-card/70 px-4 py-2 text-xs font-bold text-foreground shadow-soft backdrop-blur-md">
               {isTimelineBackgroundLoading
                 ? '背景設定を確認中...'
@@ -1106,7 +1190,6 @@ const handleDummyLimeProPurchase = async () => {
       <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
         <h2 className="font-display text-base font-bold">アカウント</h2>
         <p className="mt-1 text-sm text-muted-foreground">ログアウトすると認証画面に戻ります</p>
-
         <Button
           variant="outline"
           className="mt-4 rounded-full border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
