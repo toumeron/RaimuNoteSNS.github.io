@@ -180,7 +180,7 @@ export default function SearchPage() {
   const [activeSuggestIdx, setActiveSuggestIdx] = useState<number>(-1);
   const [isScrolled, setIsScrolled] = useState(false);
   const [isRadioPlaying, setIsRadioPlaying] = useState(() => !!window.__limeSearchRadioIsPlaying);
-  
+
   const [hasMore, setHasMore] = useState(true);
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 20;
@@ -703,7 +703,7 @@ export default function SearchPage() {
       if (!radioPlayingRef.current) return;
 
       backgroundAudioRef.current?.play().catch(() => {
-        // ブラウザ側で再開が拒否された場合は、次のユーザー操作で復帰する
+        // ブラウザ側で再開が拒否された場合は読み上げ自体は続ける
       });
       startRadioBeat();
       setRadioBeatVolume(0.24, 0.18);
@@ -874,7 +874,7 @@ export default function SearchPage() {
           .from('follows')
           .select('follower_id')
           .eq('followee_id', currentUser.id);
-        
+
         const authorsWhoFollowMe = followedByData?.map(f => f.follower_id) || [];
         if (authorsWhoFollowMe.length > 0) {
           conditions.push(`user_id.in.(${authorsWhoFollowMe.join(',')})`);
@@ -958,7 +958,7 @@ export default function SearchPage() {
         } else {
           setSearchedPosts(prev => [...prev, ...formatted]);
         }
-        
+
         setHasMore(data.length === PAGE_SIZE);
       }
     } catch (err) {
@@ -1153,7 +1153,7 @@ export default function SearchPage() {
                </button>
             )}
           </div>
-          
+
           {isNewsLoading ? (
             <div className="p-8 flex justify-center">
               <Loader2 className="w-6 h-6 animate-spin text-primary" />
@@ -1193,7 +1193,7 @@ export default function SearchPage() {
             <TrendingUp className="w-5 h-5 text-primary" />
             <h2 className="font-extrabold text-xl">トレンド</h2>
           </div>
-          
+
           {isTrendsLoading ? (
             <div className="p-8 flex justify-center">
               <Loader2 className="w-6 h-6 animate-spin text-primary" />
@@ -1434,7 +1434,7 @@ export default function SearchPage() {
         </div>
       </div>
 
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 max-sm:relative max-sm:left-1/2 max-sm:w-screen max-sm:max-w-none max-sm:-translate-x-1/2">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 max-sm:relative max-sm:left-0 max-sm:w-full max-sm:max-w-none max-sm:translate-x-0 max-sm:px-1">
         <Tabs defaultValue="posts" className="w-full">
           <TabsList className="w-full h-[53px] bg-transparent border-b border-black/[0.03] dark:border-white/[0.05] rounded-none p-0 grid grid-cols-2 relative z-20">
             <TabsTrigger value="posts" className="relative h-full bg-transparent text-[15px] font-medium text-[rgb(83,100,113)] dark:text-gray-400 data-[state=active]:text-[rgb(15,20,25)] dark:data-[state=active]:text-white data-[state=active]:font-bold data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-black/[0.03] dark:hover:bg-white/5 transition-colors data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:w-16 data-[state=active]:after:h-1 data-[state=active]:after:rounded-full data-[state=active]:after:bg-primary">
@@ -1455,7 +1455,7 @@ export default function SearchPage() {
                    <PostCard post={post} />
                  </div>
                ))}
-               
+
                <div ref={lastElementRef} className="h-20 flex items-center justify-center">
                  {hasMore && searchQuery && <Loader2 className="w-6 h-6 text-primary animate-spin" />}
                </div>

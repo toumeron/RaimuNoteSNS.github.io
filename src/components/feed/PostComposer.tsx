@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type PointerEvent as ReactPointerEvent, type UIEvent as ReactUIEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
-import { ImagePlus, Loader2, Send, X, AtSign, Hash, Globe, Users } from 'lucide-react'; // Globe, Usersを追加
+import { ImagePlus, Loader2, Send, X, AtSign, Hash, Globe, Users, Crown } from 'lucide-react'; // Globe, Users, Crownを追加
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -169,7 +169,11 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const quoteId = searchParams.get('quote');
-  
+
+  // メンバー限定投稿を選択できるのは、プロフィール側で加入ボタンを出しているアカウント（@cat / @LimeNote）のみ
+  const normalizedUsername = user?.username ? user.username.trim().replace(/^@+/, '').toLowerCase() : '';
+  const canPostMembersOnly = normalizedUsername === 'cat' || normalizedUsername === 'limenote';
+
   const { mutateAsync, isPending } = useCreatePost();
   
   const [content, setContent] = useState(initialContent);
@@ -221,7 +225,7 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
   const suppressPointerUntilRef = useRef(0);
 
   // 公開範囲用ステート (追加)
-  const [visibility, setVisibility] = useState<'public' | 'following'>('public');
+  const [visibility, setVisibility] = useState<'public' | 'following' | 'members'>('public');
 
   // メンション・ハッシュタグ機能用ステートとRef
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -1444,15 +1448,22 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
                     variant="ghost"
                     className="h-9 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
                   >
-                    {visibility === 'public' ? (
+                    {visibility === 'public' && (
                       <>
                         <Globe className="sm:mr-1.5 h-4 w-4" />
                         <span className="hidden sm:inline">全員</span>
                       </>
-                    ) : (
+                    )}
+                    {visibility === 'following' && (
                       <>
                         <Users className="sm:mr-1.5 h-4 w-4 text-accent" />
                         <span className="text-accent hidden sm:inline">限定</span>
+                      </>
+                    )}
+                    {visibility === 'members' && (
+                      <>
+                        <Crown className="sm:mr-1.5 h-4 w-4 text-fuchsia-500" />
+                        <span className="text-fuchsia-500 hidden sm:inline">メンバー限定</span>
                       </>
                     )}
                   </Button>
@@ -1471,6 +1482,12 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
                     <Users className="mr-2 h-4 w-4" />
                     フォロー中
                   </DropdownMenuItem>
+                  {canPostMembersOnly && (
+                    <DropdownMenuItem onClick={() => setVisibility('members')}>
+                      <Crown className="mr-2 h-4 w-4" />
+                      メンバー限定
+                    </DropdownMenuItem>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
 

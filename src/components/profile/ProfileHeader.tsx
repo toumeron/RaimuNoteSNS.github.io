@@ -1,4 +1,4 @@
-import { ArrowLeft, CalendarDays, Link2, MoreHorizontal, Search, Share2 } from 'lucide-react';
+import { ArrowLeft, CalendarDays, Link2, MoreHorizontal, Radio, Search, Share2, X } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import {
@@ -10,42 +10,36 @@ import {
 import { FollowButton } from './FollowButton';
 import { useFollowStats } from '@/hooks/useProfile';
 import { useAuth } from '@/hooks/useAuth';
+import { useJoinMembership, useLeaveMembership, useMembershipStatus } from '@/hooks/useMembership';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
+import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { User } from '@/types';
-
 function normalizeAppPath(pathname: string) {
   const normalized = pathname.replace(/^\/RaimuNoteSNS\.github\.io(?=\/|$)/, '') || '/';
   return normalized === '' ? '/' : normalized;
 }
-
 function hasGithubPagesBasePath(pathname: string) {
   return /^\/RaimuNoteSNS\.github\.io(?=\/|$)/.test(pathname);
 }
-
 function isProfilePath(pathname: string) {
   return /^\/u\/[^/]+\/?$/.test(normalizeAppPath(pathname));
 }
-
 function getBrowserPathname() {
   if (typeof window === 'undefined') {
     return '';
   }
-
   return window.location.pathname;
 }
-
 function isGithubPagesProfilePath(pathname: string) {
   const browserPathname = getBrowserPathname();
   const hasBasePath = hasGithubPagesBasePath(pathname) || hasGithubPagesBasePath(browserPathname);
-
   if (!hasBasePath) {
     return false;
   }
-
   return isProfilePath(pathname) || isProfilePath(browserPathname);
 }
-
 export function ProfileHeader({ user }: { user: User }) {
   const { user: me } = useAuth();
   const { data: stats } = useFollowStats(user.id);
@@ -53,24 +47,44 @@ export function ProfileHeader({ user }: { user: User }) {
   const navigate = useNavigate();
   const location = useLocation();
   const liftCoverToMobileTop = isGithubPagesProfilePath(location.pathname);
-
+  const normalizedUsername = user.username.trim().replace(/^@+/, '').toLowerCase();
+  const showSubscriptionButton = !isMe && (normalizedUsername === 'cat' || normalizedUsername === 'limenote');
+  const { data: isMember } = useMembershipStatus(showSubscriptionButton ? user.id : undefined);
+  const joinMembership = useJoinMembership(user.id);
+  const leaveMembership = useLeaveMembership(user.id);
+  const [isSubscriptionOpen, setIsSubscriptionOpen] = useState(false);
+  const [membershipError, setMembershipError] = useState<string | null>(null);
+  const [isLinkCopied, setIsLinkCopied] = useState(false);
+  useEffect(() => {
+    if (!isSubscriptionOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsSubscriptionOpen(false);
+    };
+    document.body.style.overflow = 'hidden';
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isSubscriptionOpen]);
+  useEffect(() => {
+    if (isSubscriptionOpen) setMembershipError(null);
+  }, [isSubscriptionOpen]);
   // --- 「もっと見る」メニュー: リンクをコピーする関数 ---
   const handleCopyLink = async () => {
     if (typeof window === 'undefined') return;
-
     try {
       await navigator.clipboard.writeText(window.location.href);
+      setIsLinkCopied(true);
+      window.setTimeout(() => setIsLinkCopied(false), 2200);
     } catch (error) {
       console.error('リンクのコピーに失敗しました', error);
     }
   };
-
   // --- 「もっと見る」メニュー: リンクを共有する関数 ---
   const handleShareLink = async () => {
     if (typeof window === 'undefined') return;
-
     const shareUrl = window.location.href;
-
     if (navigator.share) {
       try {
         await navigator.share({
@@ -87,24 +101,39 @@ export function ProfileHeader({ user }: { user: User }) {
       await handleCopyLink();
     }
   };
-
+  // --- メンバーシップ: 加入する ---
+  const handleJoinMembership = () => {
+    setMembershipError(null);
+    joinMembership.mutate(undefined, {
+      onSuccess: () => setIsSubscriptionOpen(false),
+      onError: (error) => {
+        setMembershipError(error instanceof Error ? error.message : '加入に失敗しました。もう一度お試しください。');
+      },
+    });
+  };
+  // --- メンバーシップ: 解除する ---
+  const handleLeaveMembership = () => {
+    setMembershipError(null);
+    leaveMembership.mutate(undefined, {
+      onSuccess: () => setIsSubscriptionOpen(false),
+      onError: (error) => {
+        setMembershipError(error instanceof Error ? error.message : '解除に失敗しました。もう一度お試しください。');
+      },
+    });
+  };
   // 数値をフォーマットする関数
   const formatDisplayCount = (count: number) => {
     if (count >= 10000) {
       return (count / 10000).toFixed(1).replace(/\.0$/, '') + '万';
     }
-
     return count.toLocaleString();
   };
-
   // --- URLをリンク化する関数 ---
   const renderContentWithLinks = (text: string) => {
     if (!text) return null;
-
     // URLを検知する正規表現
     const urlRegex = /(https?:\/\/[^\s]+)/g;
     const parts = text.split(urlRegex);
-
     return parts.map((part, index) => {
       if (part.match(urlRegex)) {
         return (
@@ -120,22 +149,17 @@ export function ProfileHeader({ user }: { user: User }) {
           </a>
         );
       }
-
       return part;
     });
   };
-
   // --- メンションをリンク化する関数 ---
   const renderContentWithMentions = (text: string) => {
     if (!text) return null;
-
     // @username 形式にマッチさせる正規表現
     const parts = text.split(/(@\w+)/g);
-
     return parts.map((part, index) => {
       if (part.startsWith('@')) {
         const username = part.substring(1);
-
         return (
           <Link
             key={`mention-${index}`}
@@ -147,19 +171,15 @@ export function ProfileHeader({ user }: { user: User }) {
           </Link>
         );
       }
-
       // メンション以外のテキストに対してハッシュタグ処理を適用
       return renderContentWithHashtags(part);
     });
   };
-
   // --- ハッシュタグをリンク化する関数 ---
   const renderContentWithHashtags = (text: string) => {
     if (!text) return null;
-
     // #ハッシュタグ 形式にマッチさせる正規表現（日本語含む、文末や区切り文字を考慮）
     const parts = text.split(/(#[^\s#　.,!?:;'"()\[\]{}<>]+)/g);
-
     return parts.map((part, index) => {
       if (part.startsWith('#')) {
         return (
@@ -169,7 +189,6 @@ export function ProfileHeader({ user }: { user: User }) {
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-
               // 検索ページに「#タグ名」で遷移。
               navigate(`/search?q=${encodeURIComponent(part)}`);
             }}
@@ -179,12 +198,10 @@ export function ProfileHeader({ user }: { user: User }) {
           </button>
         );
       }
-
       // ハッシュタグ以外のテキストに対してURLリンク処理を適用
       return renderContentWithLinks(part);
     });
   };
-
   return (
     <>
       <style>{`
@@ -192,13 +209,11 @@ export function ProfileHeader({ user }: { user: User }) {
           .profile-header-mobile-cover-to-top {
             margin-top: -1.5rem !important;
           }
-
           .profile-header-cover-avatar-gap {
             -webkit-mask-image: radial-gradient(circle 44px at 60px 150px, transparent 43.5px, #000 44px);
             mask-image: radial-gradient(circle 44px at 60px 150px, transparent 43.5px, #000 44px);
           }
         }
-
         @media (min-width: 640px) {
           .profile-header-cover-avatar-gap {
             -webkit-mask-image: radial-gradient(circle 56px at 80px 192px, transparent 55.5px, #000 56px);
@@ -206,7 +221,6 @@ export function ProfileHeader({ user }: { user: User }) {
           }
         }
       `}</style>
-
       <section
         data-lime-mobile-profile-cover-top={liftCoverToMobileTop ? 'true' : undefined}
         className={`relative left-1/2 ${liftCoverToMobileTop ? 'profile-header-mobile-cover-to-top -mt-0' : '-mt-0'} w-screen -translate-x-1/2 overflow-hidden bg-transparent text-foreground sm:left-auto sm:mt-0 sm:w-auto sm:translate-x-0 sm:rounded-3xl sm:border sm:border-border/60 sm:bg-card sm:shadow-soft`}
@@ -221,9 +235,7 @@ export function ProfileHeader({ user }: { user: User }) {
         ) : (
           <div className="h-full w-full bg-gradient-cream" />
         )}
-
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-background/20 to-transparent sm:from-card/40" />
-
         <div className="pointer-events-none absolute inset-0 flex items-start justify-between px-3 pt-8 sm:hidden">
           <button
             type="button"
@@ -233,7 +245,6 @@ export function ProfileHeader({ user }: { user: User }) {
           >
             <ArrowLeft className="h-5 w-5" />
           </button>
-
           <div className="pointer-events-auto flex items-center gap-2">
             <Link
               to={`/search?q=${encodeURIComponent(`@${user.username}`)}`}
@@ -242,7 +253,6 @@ export function ProfileHeader({ user }: { user: User }) {
             >
               <Search className="h-5 w-5" />
             </Link>
-
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
@@ -267,7 +277,6 @@ export function ProfileHeader({ user }: { user: User }) {
           </div>
         </div>
       </div>
-
       <div className="relative px-4 pb-4 sm:px-6 sm:pb-5">
         <div className="relative flex min-h-[52px] items-start justify-between gap-3">
           <div className="-mt-[44px] box-border h-[88px] w-[88px] shrink-0 rounded-full border-4 border-solid border-transparent bg-transparent sm:-mt-14 sm:h-28 sm:w-28">
@@ -282,8 +291,18 @@ export function ProfileHeader({ user }: { user: User }) {
               </AvatarFallback>
             </Avatar>
           </div>
-
           <div className="mt-3 flex shrink-0 items-center">
+            {showSubscriptionButton && (
+              <button
+                type="button"
+                onClick={() => setIsSubscriptionOpen(true)}
+                className={`mr-2 inline-flex h-9 shrink-0 cursor-pointer items-center justify-center rounded-full border-0 px-4 text-sm font-bold text-white sm:h-10 ${
+                  isMember ? 'bg-neutral-500 hover:bg-neutral-600' : 'bg-violet-600 hover:bg-violet-700'
+                }`}
+              >
+                {isMember ? '登録済み' : 'メンバー'}
+              </button>
+            )}
             {isMe ? (
               <Button
                 asChild
@@ -297,7 +316,6 @@ export function ProfileHeader({ user }: { user: User }) {
             )}
           </div>
         </div>
-
         <div className="mt-2 min-w-0">
           <div className="flex min-w-0 flex-col">
             {/* 名前が長すぎてもバッジを押し出さないよう min-w-0 を追加 */}
@@ -305,7 +323,6 @@ export function ProfileHeader({ user }: { user: User }) {
               <h1 className="min-w-0 truncate font-display text-[22px] font-black leading-tight text-foreground sm:text-2xl">
                 {user.displayName}
               </h1>
-
               {user.isOfficial && (
                 <img
                   src={`${import.meta.env.BASE_URL}verified.png`}
@@ -315,24 +332,20 @@ export function ProfileHeader({ user }: { user: User }) {
                 />
               )}
             </div>
-
             <p className="truncate text-[15px] leading-5 text-muted-foreground">
               @{user.username}
             </p>
           </div>
         </div>
-
         {user.bio && (
           <p className="mt-3 whitespace-pre-wrap break-words text-[15px] leading-relaxed text-foreground">
             {renderContentWithMentions(user.bio)}
           </p>
         )}
-
         <div className="mt-3 flex items-center gap-1.5 text-[13px] leading-5 text-muted-foreground">
           <CalendarDays className="h-4 w-4 shrink-0" />
           <span>{dayjs(user.createdAt).format('YYYY年M月')} から参加</span>
         </div>
-
         <div className="mt-4 flex items-center gap-5 text-sm">
           {/* items-baseline に変更して数字とテキストの文字底を統一 */}
           <Link
@@ -344,7 +357,6 @@ export function ProfileHeader({ user }: { user: User }) {
             </span>
             <span className="text-muted-foreground">フォロー中</span>
           </Link>
-
           <Link
             to={`/u/${user.username}/followers_following?tab=followers`}
             className="group flex items-baseline gap-1 hover:no-underline"
@@ -357,6 +369,87 @@ export function ProfileHeader({ user }: { user: User }) {
         </div>
       </div>
       </section>
+      {isSubscriptionOpen && typeof document !== 'undefined' && createPortal(
+        <div
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setIsSubscriptionOpen(false);
+          }}
+          className="fixed inset-0 z-[2147483647] flex items-center justify-center bg-black/70 p-0 sm:p-3"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="subscription-dialog-title"
+            onClick={(event) => event.stopPropagation()}
+            className="relative flex h-[100dvh] w-screen max-h-none max-w-none flex-col overflow-hidden rounded-none text-white shadow-[0_24px_80px_rgba(0,0,0,0.55)] sm:h-[min(82vh,680px)] sm:w-[min(92vw,520px)] sm:max-h-[680px] sm:max-w-[520px] sm:rounded-[22px]"
+            style={{ background: 'linear-gradient(180deg, #c92fd0 0%, #c92fd0 34%, #15151b 70%, #050506 100%)', boxSizing: 'border-box' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 56, padding: '0 12px', flexShrink: 0 }}>
+              <button type="button" onClick={() => setIsSubscriptionOpen(false)} aria-label="閉じる" style={{ width: 40, height: 40, border: 0, background: 'transparent', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <X className="h-6 w-6" />
+              </button>
+              <h2 id="subscription-dialog-title" style={{ margin: 0, fontSize: 20, fontWeight: 900 }}>らいむノ〜トファンクラブ</h2>
+              <button type="button" onClick={handleCopyLink} aria-label="リンクをコピー" style={{ width: 40, height: 40, border: 0, background: 'transparent', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Link2 className="h-5 w-5" />
+              </button>
+            </div>
+            {isLinkCopied && (
+              <div role="status" aria-live="polite" style={{ position: 'absolute', top: 58, left: '50%', transform: 'translateX(-50%)', zIndex: 2, borderRadius: 999, background: 'rgba(25,25,28,0.96)', padding: '8px 14px', fontSize: 13, fontWeight: 800, color: '#fff', whiteSpace: 'nowrap', boxShadow: '0 8px 24px rgba(0,0,0,0.35)' }}>リンクをコピーしました</div>
+            )}
+            <div style={{ minHeight: 0, overflowY: 'auto', padding: '8px 16px 16px', flex: '1 1 auto', boxSizing: 'border-box' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
+                <Avatar className="h-20 w-20 border-2 border-white/90 shadow-xl">
+                  <AvatarImage src={user.avatarUrl} alt={user.displayName} className="h-full w-full object-cover" />
+                  <AvatarFallback className="h-full w-full bg-white/10 text-4xl font-black text-white">{user.displayName.slice(0, 1)}</AvatarFallback>
+                </Avatar>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 10 }}>
+                  <h3 style={{ margin: 0, fontSize: 24, fontWeight: 900 }}>{user.displayName}</h3>
+                </div>
+                <p style={{ margin: '6px 0 0', fontSize: 14, fontWeight: 600, color: 'rgba(255,255,255,0.92)' }}>
+                  {isMember ? '現在メンバーです' : 'メンバ未加入'}
+                </p>
+                <div style={{ width: '100%', marginTop: 16, borderRadius: 18, background: '#000', padding: '18px 18px', textAlign: 'left', boxSizing: 'border-box' }}>
+                  <h4 style={{ margin: 0, fontSize: 21, fontWeight: 900 }}>メンバーになるメリット</h4>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 16 }}>
+                    <div style={{ width: 36, height: 36, borderRadius: 999, background: 'rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Radio className="h-5 w-5 text-white/80" /></div>
+                    <span style={{ fontSize: 18, fontWeight: 600 }}>独占ポスト</span>
+                  </div>
+                  <div style={{ height: 1, width: '100%', background: 'rgba(255,255,255,0.18)', margin: '18px 0' }} />
+                  <h4 style={{ margin: 0, fontSize: 21, fontWeight: 900 }}>さらに....？</h4>
+                  <p style={{ margin: '8px 0 0', fontSize: 14, lineHeight: 1.65, fontWeight: 600, color: 'rgba(255,255,255,0.58)' }}>メンバーになると、限定コンテンツを楽しんだり、メンバー限定の特典を受け取れます。</p>
+                </div>
+              </div>
+            </div>
+            <div style={{ flexShrink: 0, borderTop: '1px solid rgba(255,255,255,0.12)', background: '#000', padding: '10px 16px 14px', boxSizing: 'border-box' }}>
+              {membershipError && (
+                <p style={{ margin: '0 0 8px', fontSize: 12, fontWeight: 600, color: '#ff9d9d', textAlign: 'center' }}>{membershipError}</p>
+              )}
+              {isMember ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-11 w-full rounded-full border-white/30 bg-transparent px-6 text-base font-black text-white hover:bg-white/10 disabled:opacity-60"
+                  onClick={handleLeaveMembership}
+                  disabled={leaveMembership.isPending}
+                >
+                  {leaveMembership.isPending ? '解除中...' : 'メンバーを解除する'}
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  className="h-11 w-full rounded-full bg-fuchsia-500 px-6 text-base font-black text-white hover:bg-fuchsia-600 disabled:opacity-60"
+                  onClick={handleJoinMembership}
+                  disabled={joinMembership.isPending}
+                >
+                  {joinMembership.isPending ? '加入中...' : '無料で加入する'}
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
     </>
   );
 }

@@ -1,7 +1,7 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'; 
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
-import { MessageCircle, MoreHorizontal, Trash2, CalendarDays, ChartBarBig, X, Globe, Lock, Sparkles, Plus, Link as LinkIcon, Upload, Send, Heart } from 'lucide-react'; 
+import { MessageCircle, MoreHorizontal, Trash2, CalendarDays, ChartBarBig, X, Globe, Lock, Sparkles, Plus, Link as LinkIcon, Upload, Send, Heart, Users } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { LikeButton } from '@/components/post/LikeButton';
 import { PostImages } from './PostImages';
@@ -14,14 +14,22 @@ import { YouTubeEmbed } from '@/components/YouTubeEmbed';
 import { SpotifyEmbed } from '@/components/SpotifyEmbed';
 import { supabase } from '@/lib/supabase';
 import dayjs from 'dayjs';
+import { useMembershipStatus } from '@/hooks/useMembership';
 
 import {
   HoverCard,
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/ui/hover-card";
-import { FollowButton } from '../profile/FollowButton'; 
+import { FollowButton } from '../profile/FollowButton';
 import { useFollowStats } from '@/hooks/useProfile';
+
+// --- 公開範囲 ---
+// public    = 全体公開
+// following = 限定公開（フォロー中のユーザー向け）
+// members   = メンバー限定公開
+// following と members は完全に別の公開範囲として扱う。
+type PostVisibility = 'public' | 'following' | 'members';
 
 // --- カスタム絵文字用の型定義 ---
 interface CustomEmoji {
@@ -44,7 +52,7 @@ interface ReactionGroup {
   emoji: string;
   count: number;
   user_ids: string[];
-  users: ReactionUser[]; 
+  users: ReactionUser[];
 }
 
 interface LimeDropTarget {
@@ -112,8 +120,6 @@ const openExternalUrl = (url: string) => {
 
 const POST_REACTION_CACHE_LIMIT = 36;
 const IMAGE_NATURAL_SIZE_CACHE_LIMIT = 64;
-// 画像本体を表示する前に、サイズだけを先行取得する件数を増やす。
-// スクロール調整は行わず、先にサイズを揃えてレイアウトシフト自体を減らす方針。
 const IMAGE_SIZE_PRELOAD_CONCURRENCY = 6;
 const IMAGE_SIZE_PRELOAD_QUEUE_LIMIT = 24;
 const IMAGE_SIZE_PRELOAD_POLL_MS = 16;
@@ -245,8 +251,6 @@ const pumpImageSizePreloadQueue = () => {
 
       const size = resolveImageNaturalSizeFromProbe(image);
       if (size) {
-        // naturalWidth/naturalHeight が得られた時点で目的は達成。
-        // 完全な画像のデコード・保持を待たずに直ちに破棄する。
         finish(size);
         return;
       }
@@ -271,8 +275,6 @@ const pumpImageSizePreloadQueue = () => {
       image.fetchPriority = task.priority;
     }
 
-    // サイズ取得用のプローブ。表示用 <img> とは別物にし、
-    // naturalWidth/naturalHeight が判明した瞬間に src を外す。
     image.src = task.url;
     pollForDimensions();
   }
@@ -451,8 +453,6 @@ const fetchReactionsForPost = async (postId: string, force = false): Promise<Rea
 };
 
 export const preloadPostCardData = async (posts: PostWithAuthor[]) => {
-  // 1回の取得対象を増やして、速いスクロールでも次のカードの画像サイズが
-  // 先に揃っている確率を上げる。ここでは画像本体の描画ではなくサイズ取得だけを行う。
   const warmupPosts = posts.slice(0, 12);
   if (!warmupPosts.length) return;
 
@@ -501,28 +501,16 @@ export const preloadPostCardData = async (posts: PostWithAuthor[]) => {
 
 // ============================================================================
 // --- パフォーマンス最適化用の共有リソース ---
-// カードごとに同じ内容・同じインスタンスを作り直さず、アプリ全体で使い回す。
-// タイムライン上に多数の PostCard が並ぶ状況（特に低スペック端末）で、
-// DOM肥大化・CPU/メモリ消費を抑えることが目的。見た目や挙動は一切変えない。
 // ============================================================================
 
-// カードごとの絵文字ピッカーで使うデフォルト絵文字一覧。
-// 内容が固定なので、レンダリングのたびに新しい配列を作らずモジュール直下に固定する。
 const DEFAULT_EMOJIS = ['👍', '❤️', '😆', '🤔', '😮', '🎉', '💢', '😢', '😇', '🍮'];
 
-// 1枚画像の <img> に渡す style は常に同じ内容なので、
-// レンダリングごとに新しいオブジェクトを作らず固定の参照を使い回す。
 const SINGLE_IMAGE_DISPLAY_STYLE: React.CSSProperties = {
   width: '100%',
   height: 'auto',
   objectFit: 'contain',
 };
 
-// 元々は各カードの JSX 内に <style> タグとして丸ごと埋め込まれており、
-// カードが増えるたびに同じ内容の CSS が DOM 上に複製され、
-// ブラウザが同じスタイルを何度もパースし直す状態になっていた。
-// 見た目・アニメーション内容を一切変えずに、この CSS 文字列をアプリ全体で
-// 1 回だけ document.head に注入するよう変更し、重複パース／DOM肥大化をなくす。
 const POST_CARD_GLOBAL_STYLES_ID = 'postcard-global-styles';
 
 const POST_CARD_GLOBAL_STYLES = `
@@ -570,7 +558,6 @@ const POST_CARD_GLOBAL_STYLES = `
           animation: misskeyButtonElastic 420ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards !important;
         }
 
-        /* --- スマホ専用：画面下部から滑らかにスライド湧き出しするアニメーション --- */
         @keyframes slideUpMobile {
           0% {
             transform: translate(-50%, 24px);
@@ -585,7 +572,6 @@ const POST_CARD_GLOBAL_STYLES = `
           animation: slideUpMobile 240ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
 
-        /* --- PC専用：プラスボタンの直上(absolute)から上に弾むようにズームインするアニメーション --- */
         @keyframes zoomInPc {
           0% {
             transform: scale(0.9) translateY(8px);
@@ -629,11 +615,6 @@ const POST_CARD_GLOBAL_STYLES = `
           color: rgba(24, 22, 20, 0.96) !important;
         }
 
-        /*
-          背景画像付きタイムライン専用の可読性補正。
-          ここではカードごとに light/dark を判定しない。
-          Feed 側の timeline-theme-dark / timeline-theme-light が決めたCSS変数に従う。
-        */
         .timeline-glass-card,
         .timeline-mobile-readable {
           -webkit-font-smoothing: antialiased;
@@ -818,10 +799,6 @@ function ensurePostCardStylesInjected() {
   document.head.appendChild(styleElement);
 }
 
-// カードごとに IntersectionObserver を新規生成せず、1 つの Observer を
-// 複数の要素で共有する。タイムラインに大量のカードが並んでも、
-// ネイティブ Observer インスタンスは常に 1 つだけになり、
-// スクロール時の監視コストを大きく減らせる（rootMargin・判定条件は元と同一）。
 type CardIntersectionCallback = (isIntersecting: boolean) => void;
 
 const cardIntersectionCallbacks = new Map<Element, CardIntersectionCallback>();
@@ -857,10 +834,6 @@ function observeCardIntersection(element: Element, callback: CardIntersectionCal
   };
 }
 
-// 相対時刻表示（「〜分前」など）を定期更新するためのタイマーも、
-// アクティブなカードの数だけ setInterval を作るのではなく、
-// アプリ全体で 1 本だけ動かして購読者（各カード）に通知する形にする。
-// これにより、同時に表示中のカードが何枚あっても実際に動くタイマーは常に 1 つになる。
 type SharedTickListener = () => void;
 
 const sharedTickListeners = new Set<SharedTickListener>();
@@ -897,8 +870,8 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
   const [limeDropSendingUserId, setLimeDropSendingUserId] = useState<string | null>(null);
   const [limeDropFeedback, setLimeDropFeedback] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null); 
-  const [failedUrls, setFailedUrls] = useState<string[]>([]); 
+  const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
+  const [failedUrls, setFailedUrls] = useState<string[]>([]);
   const navigate = useNavigate();
   const [, setTick] = useState(0);
   const isBlueskyPost = isBlueskyPostLike(post);
@@ -907,23 +880,18 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
     ? `https://bsky.app/profile/${post.author.username}`
     : null;
 
-  // --- カスタム絵文字・リアクション用ステート群 ---
   const [showPicker, setShowPicker] = useState(false);
   const [customEmojis, setCustomEmojis] = useState<CustomEmoji[]>([]);
   const [reactions, setReactions] = useState<ReactionGroup[]>([]);
   const [recentEmojis, setRecentEmojis] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isEmojisOpen, setIsEmojisOpen] = useState(true);
-  
-  // 現在アクティブなリアクションポップアップの管理
   const [activePopupEmoji, setActivePopupEmoji] = useState<string | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
 
-  // --- 画像再現エフェクト用のステート ---
   const [activeRings, setActiveRings] = useState<ReplicatedRing[]>([]);
   const [activeDots, setActiveDots] = useState<ReplicatedDot[]>([]);
 
-  // スマホ・PCのリアルタイム判定用ステート
   const [isMobile, setIsMobile] = useState(false);
   const [timelinePortalTheme, setTimelinePortalTheme] = useState<'light' | 'dark'>(() => {
     if (typeof window === 'undefined') return 'dark';
@@ -970,14 +938,12 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
 
   const clearProfileHoverOpenTimer = () => {
     if (profileHoverOpenTimerRef.current === null) return;
-
     window.clearTimeout(profileHoverOpenTimerRef.current);
     profileHoverOpenTimerRef.current = null;
   };
 
   const clearProfileHoverCloseTimer = () => {
     if (profileHoverCloseTimerRef.current === null) return;
-
     window.clearTimeout(profileHoverCloseTimerRef.current);
     profileHoverCloseTimerRef.current = null;
   };
@@ -1015,9 +981,6 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
     e.stopPropagation();
   };
 
-  // グローバル CSS はカードごとに埋め込まず、アプリ全体で共有する 1 つの
-  // <style> にまとめて注入する（内容・見た目は元の <style> ブロックと同一）。
-  // ペイント前に確実に反映させ、スタイル未適用のちらつきが出ないよう useLayoutEffect を使う。
   useLayoutEffect(() => {
     ensurePostCardStylesInjected();
   }, []);
@@ -1103,9 +1066,6 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
       return;
     }
 
-    // 個別に IntersectionObserver を作らず、アプリ全体で 1 つの Observer を共有する。
-    // カードが大量に並ぶタイムラインで Observer インスタンスが乱立するのを防ぎ、
-    // 特に低スペック端末でのメモリ・CPU負荷を抑える（監視条件・判定結果は元と同一）。
     const unobserve = observeCardIntersection(node, (isIntersecting) => {
       setIsCardActive(isIntersecting);
     });
@@ -1147,9 +1107,6 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
     };
   }, [isBlueskyPost, isCardActive, showMenu, showPicker, showShareMenu, showLimeDropPanel, selectedImageUrl, post.id]);
 
-  // 相対時刻表示（「〜分前」など）の定期更新は、カードごとに setInterval を
-  // 持たせず、アプリ全体で共有する 1 本のタイマーに購読する形にする。
-  // 表示中のカードが何枚あっても、実際に動くタイマーは常に 1 つだけになる。
   useEffect(() => {
     const shouldKeepLiveWork = isCardActive || showMenu || showPicker || showShareMenu || showLimeDropPanel || Boolean(selectedImageUrl);
     if (!shouldKeepLiveWork) return;
@@ -1160,7 +1117,6 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
 
     return unsubscribe;
   }, [isCardActive, showMenu, showPicker, showShareMenu, showLimeDropPanel, selectedImageUrl]);
-
 
   useEffect(() => {
     const shouldKeepStateWarm = isCardActive || showMenu || showPicker || showShareMenu || showLimeDropPanel || Boolean(selectedImageUrl);
@@ -1215,8 +1171,6 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
     };
   }, [timelineGlass]);
 
-  // 画像拡大時だけ背後のスクロールを固定する。
-  // リアクションピッカー表示時まで body overflow を触ると、sticky/fixed ヘッダーまで巻き込まれて消える環境がある。
   useEffect(() => {
     if (!selectedImageUrl) return;
 
@@ -1228,8 +1182,6 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
     };
   }, [selectedImageUrl]);
 
-  // もっと見るメニューは、カード内外どこを押してもメニュー外なら閉じる。
-  // overlay が stacking context に巻き込まれて効かないケースを避けるため、document 側でも拾う。
   useEffect(() => {
     if (!showMenu) return;
 
@@ -1274,7 +1226,6 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
     };
   }, [showMenu]);
 
-  // 共有メニューも body 直下の portal で出すため、document 側でも外側クリックを拾って閉じる。
   useEffect(() => {
     if (!showShareMenu) return;
 
@@ -1340,8 +1291,6 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
     };
   }, [showLimeDropPanel]);
 
-  // リアクション追加パネルも、パネル外を押したら確実に閉じる。
-  // overlay を被せず document 側で拾うことで、ヘッダーを隠さない。
   useEffect(() => {
     if (!showPicker) return;
 
@@ -1381,7 +1330,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
     const centerY = rect.top + rect.height / 2;
 
     targetElement.classList.remove('misskey-elastic-active');
-    void targetElement.offsetWidth; 
+    void targetElement.offsetWidth;
     targetElement.classList.add('misskey-elastic-active');
 
     const batchId = Math.random().toString(36).substring(2, 9);
@@ -1395,7 +1344,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
     };
 
     const colors = ['#d4f022', '#e6007e', '#22f0d8', '#d4f022', '#e6007e'];
-    const dotCount = 16; 
+    const dotCount = 16;
     const newDots: ReplicatedDot[] = [];
 
     for (let i = 0; i < dotCount; i++) {
@@ -1409,8 +1358,8 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
         angle: angle,
         distance: maxDistance,
         color: colors[Math.floor(Math.random() * colors.length)],
-        size: Math.random() * 5 + 5, 
-        delay: Math.random() * 40 
+        size: Math.random() * 5 + 5,
+        delay: Math.random() * 40
       });
     }
 
@@ -1517,6 +1466,25 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
   ), [customEmojis, searchQuery]);
 
   const isMyPost = currentUserId === post.userId;
+  const currentVisibility = (post.visibility || 'public') as PostVisibility;
+
+  // メンバー機能を利用できるのは @cat / @LimeNote のみ。
+  // 大文字小文字や先頭の @ の有無に左右されないよう正規化する。
+  const normalizedAuthorUsername = post.author.username.trim().replace(/^@+/, '').toLowerCase();
+  const canUseMembershipPosts = normalizedAuthorUsername === 'cat' || normalizedAuthorUsername === 'limenote';
+
+  // メンバー限定投稿だけ、投稿者を対象に membership を確認する。
+  // following（限定公開）とは完全に独立した判定。
+  const { data: isMember } = useMembershipStatus(
+    currentVisibility === 'members' && !isMyPost
+      ? post.author.id
+      : undefined
+  );
+
+  const isMembersOnlyPost = currentVisibility === 'members';
+  const canViewMembersOnlyPost = !isMembersOnlyPost || isMyPost || isMember === true;
+  const isCheckingMembersOnlyAccess = isMembersOnlyPost && !isMyPost && isMember === undefined;
+
   const { youtubeId, spotifyUrls, allImageUrls, displayContent, singleImageUrl } = useMemo(() => {
     const nextYoutubeId = getYouTubeId(post.content);
     const nextSpotifyUrls = post.content.match(spotifyUrlRegex) || [];
@@ -1559,8 +1527,6 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
     };
   }, [singleImageUrl]);
 
-  // singleImageNaturalSize / isMobile が変わらない限り再計算しないよう useMemo 化。
-  // 値も見た目のロジックも元の getSingleImageFrameStyle() と完全に同一。
   const singleImageFrameStyle = useMemo<React.CSSProperties>(() => {
     if (!singleImageNaturalSize) {
       return {
@@ -1573,12 +1539,6 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
     const naturalHeight = Math.max(1, singleImageNaturalSize.height);
     const ratio = naturalWidth / naturalHeight;
 
-    /*
-      1枚画像は X / Twitter のタイムライン表示に寄せる。
-      基本は画像比率をそのまま使うが、超縦長画像だけはタイムラインを占拠しないよう、
-      表示上限の高さから逆算して幅を段階的に狭める。
-      これで「縦に長いほど左寄せのまま細くなる」挙動になる。
-    */
     const maxTimelineImageHeight = isMobile ? 300 : 480;
     const minimumReadableWidth = isMobile ? 88 : 110;
     const heightLimitedWidth = Math.max(
@@ -1647,7 +1607,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
   const renderContentWithMentions = (text: string) => {
     if (!text) return null;
     const parts = text.split(/(@\w+)/g);
-    
+
     return parts.map((part, index) => {
       if (part.startsWith('@')) {
         const username = part.substring(1);
@@ -1721,20 +1681,25 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
     if (blueskyProfileUrl) openExternalUrl(blueskyProfileUrl);
   };
 
-  const handleToggleVisibility = async (e: React.MouseEvent) => {
+  const handleToggleVisibility = async (
+    e: React.MouseEvent,
+    targetVisibility: PostVisibility
+  ) => {
     e.preventDefault();
     e.stopPropagation();
-    const newVisibility = post.visibility === 'public' ? 'following' : 'public';
-    const confirmMsg = newVisibility === 'public' 
-      ? 'この投稿を全体公開に切り替えますか？' 
-      : 'この投稿を限定公開に切り替えますか？フォロー中のユーザーのみ表示されます。';
-    
-    if (!confirm(confirmMsg)) return;
+
+    const visibilityMessages: Record<PostVisibility, string> = {
+      public: 'この投稿を全体公開に切り替えますか？',
+      following: 'この投稿を限定公開に切り替えますか？フォロー中のユーザーのみ表示されます。',
+      members: 'この投稿をメンバー限定公開に切り替えますか？投稿者のメンバーのみ表示されます。',
+    };
+
+    if (!confirm(visibilityMessages[targetVisibility])) return;
 
     try {
       const { error } = await supabase
         .from('posts')
-        .update({ visibility: newVisibility })
+        .update({ visibility: targetVisibility })
         .eq('id', post.id);
 
       if (error) throw error;
@@ -1762,6 +1727,10 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
       if (showLimeDropPanel) {
         setShowLimeDropPanel(false);
       }
+      return;
+    }
+
+    if (isMembersOnlyPost && !canViewMembersOnlyPost) {
       return;
     }
 
@@ -2084,9 +2053,9 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
   };
 
   const ProfileHoverContent = () => (
-    <HoverCardContent 
-      side="bottom" 
-      align="start" 
+    <HoverCardContent
+      side="bottom"
+      align="start"
       className="w-[280px] rounded-[20px] border border-border/60 bg-card p-4 shadow-xl animate-in fade-in zoom-in duration-200 overflow-hidden"
       onClick={(event) => event.stopPropagation()}
       onMouseEnter={keepProfileHoverOpen}
@@ -2097,7 +2066,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
           <AvatarImage src={post.author.avatarUrl} alt={post.author.displayName} />
           <AvatarFallback>{post.author.displayName.slice(0, 1)}</AvatarFallback>
         </Avatar>
-        
+
         {currentUserId !== post.author.id && !isBlueskyPost && (
           <div className="shrink-0 w-[85px] h-[36px]" onClick={(e) => e.stopPropagation()}>
             <div className="w-full h-full [&>*]:!w-full [&>*]:!h-full [&>*]:!min-w-0 [&>*]:!p-0 [&>*]:!flex [&>*]:!items-center [&>*]:!justify-center [&>*]:!bg-foreground [&>*]:!text-background [&>*]:!rounded-full [&>*]:!text-[14px] [&>*]:!font-bold [&>*]:!border-none [&_svg]:!hidden">
@@ -2113,9 +2082,9 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
             {post.author.displayName}
           </span>
           {post.author.isOfficial && (
-            <img 
-              src={`${import.meta.env.BASE_URL}verified.png`} 
-              alt="Official" 
+            <img
+              src={`${import.meta.env.BASE_URL}verified.png`}
+              alt="Official"
               className="h-[1.1em] w-[1.1em] shrink-0 transform translate-y-[1px]"
             />
           )}
@@ -2144,7 +2113,6 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
 
   return (
     <>
-      {/* --- 高度グラフィックアニメーションレイヤー --- */}
       {(activeRings.length > 0 || activeDots.length > 0) && (
         <div className="fixed inset-0 pointer-events-none z-[9999] overflow-hidden">
           {activeRings.map((r) => (
@@ -2157,7 +2125,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                 width: `${r.width}px`,
                 height: `${r.height}px`,
                 borderRadius: '9999px',
-                border: '4px solid #d4f022', 
+                border: '4px solid #d4f022',
                 backgroundColor: 'transparent',
                 transformOrigin: 'center center',
                 animation: 'misskeyRingExpand 460ms cubic-bezier(0.1, 0.8, 0.3, 1) forwards'
@@ -2187,7 +2155,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
         </div>
       )}
 
-      <article 
+      <article
         ref={cardRootRef}
         onClickCapture={handleCardClickCapture}
         onClick={handleCardClick}
@@ -2208,8 +2176,8 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
         <div className="flex items-start gap-3">
           <HoverCard open={profileHoverTarget === 'avatar'} openDelay={300}>
             <HoverCardTrigger asChild>
-              <Link 
-                to={`/u/${post.author.username}`} 
+              <Link
+                to={`/u/${post.author.username}`}
                 className="inline-flex h-11 w-11 shrink-0 items-center justify-center"
                 onMouseEnter={() => openProfileHover('avatar')}
                 onMouseLeave={closeProfileHover}
@@ -2231,8 +2199,8 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
               <div className="flex items-center w-full min-w-0">
                 <HoverCard open={profileHoverTarget === 'name'} openDelay={300}>
                   <HoverCardTrigger asChild>
-                    <Link 
-                      to={`/u/${post.author.username}`} 
+                    <Link
+                      to={`/u/${post.author.username}`}
                       className="inline-flex w-fit max-w-full shrink-0 items-center font-display font-bold text-foreground hover:underline"
                       onMouseEnter={() => openProfileHover('name')}
                       onMouseLeave={closeProfileHover}
@@ -2245,9 +2213,9 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                           {post.author.displayName}
                         </span>
                         {post.author.isOfficial && (
-                          <img 
+                          <img
                             src={`${import.meta.env.BASE_URL}verified.png`}
-                            alt="Official" 
+                            alt="Official"
                             className="h-4 w-4 shrink-0 transform translate-y-[0.5px]"
                             loading="eager"
                           />
@@ -2257,23 +2225,29 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                   </HoverCardTrigger>
                   <ProfileHoverContent />
                 </HoverCard>
-                
+
                 <span className={isMobile ? "truncate text-[16px] text-muted-foreground ml-1 opacity-80 shrink" : "truncate text-base text-muted-foreground ml-1 opacity-80 shrink"}>
                   @{post.author.username}
                 </span>
-                
+
                 <span className="text-muted-foreground mx-1 shrink-0">·</span>
                 <span className={isMobile ? "text-[16px] text-muted-foreground whitespace-nowrap shrink-0" : "text-sm text-muted-foreground whitespace-nowrap shrink-0"}>
                   {formatRelative(post.createdAt)}
                 </span>
               </div>
-              
+
               <div className="flex items-center shrink-0 ml-2">
-                {post.visibility === 'following' && (
+                {currentVisibility === 'following' && (
                   <span className={isMobile ? "text-[13px] font-bold text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-md whitespace-nowrap mr-1" : "text-[14px] font-bold text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-md whitespace-nowrap mr-1"}>
-                    限定公開
+                    限定
                   </span>
                 )}
+                {currentVisibility === 'members' && (
+                  <span className={isMobile ? "text-[13px] font-bold text-violet-600 dark:text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded-md whitespace-nowrap mr-1" : "text-[14px] font-bold text-violet-600 dark:text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded-md whitespace-nowrap mr-1"}>
+                    メンバー限定
+                  </span>
+                )}
+
                 <div className="relative shrink-0">
                   <button
                     ref={moreButtonRef}
@@ -2301,6 +2275,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                   >
                     <MoreHorizontal className="h-5 w-5" />
                   </button>
+
                   {showMenu && typeof document !== 'undefined' && createPortal(
                     <>
                       <div
@@ -2318,7 +2293,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                           e.stopPropagation();
                         }}
                       />
-                      <div 
+                      <div
                         ref={moreMenuRef}
                         className="fixed w-44 rounded-xl border border-border bg-card p-1 shadow-lg overflow-hidden animate-in fade-in zoom-in duration-100"
                         style={{
@@ -2336,25 +2311,36 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                           {isBlueskyPost ? 'Blueskyで見る' : 'ポストアクティビティー'}
                         </button>
 
-                        {isMyPost && (
+                        {isMyPost && currentVisibility !== 'public' && (
                           <button
-                            onClick={handleToggleVisibility}
+                            onClick={(e) => handleToggleVisibility(e, 'public')}
                             className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
                           >
-                            {post.visibility === 'public' ? (
-                              <>
-                                <Lock className="h-4 w-4" />
-                                限定公開にする
-                              </>
-                            ) : (
-                              <>
-                                <Globe className="h-4 w-4" />
-                                全体公開にする
-                              </>
-                            )}
+                            <Globe className="h-4 w-4" />
+                            全体公開にする
                           </button>
                         )}
-                        
+
+                        {isMyPost && currentVisibility !== 'following' && (
+                          <button
+                            onClick={(e) => handleToggleVisibility(e, 'following')}
+                            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
+                          >
+                            <Lock className="h-4 w-4" />
+                            限定公開にする
+                          </button>
+                        )}
+
+                        {isMyPost && canUseMembershipPosts && currentVisibility !== 'members' && (
+                          <button
+                            onClick={(e) => handleToggleVisibility(e, 'members')}
+                            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
+                          >
+                            <Users className="h-4 w-4" />
+                            メンバー限定公開にする
+                          </button>
+                        )}
+
                         {isMyPost && (
                           <button
                             onClick={handleDelete}
@@ -2373,24 +2359,65 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
             </div>
 
             <div>
-              <div onClick={(e) => { e.stopPropagation(); if (!shouldSuppressCardNavigation()) { if (isBlueskyPost) { if (blueskyPostUrl) openExternalUrl(blueskyPostUrl); } else { navigate(`/post/${post.id}`); } } }}>
-                {displayContent && (
-                  <p className={isMobile ? "whitespace-pre-wrap break-words text-[16px] leading-normal text-foreground mt-1" : "whitespace-pre-wrap break-words text-base leading-relaxed text-foreground mt-1"}>
-                    {renderContentWithMentions(displayContent)}
-                  </p>
-                )}
-                {failedUrls.length > 0 && (
-                  <div className="mt-2 space-y-1">
-                    {failedUrls.map((url, idx) => (
-                      <div key={`failed-${idx}`}>
-                        {renderContentWithLinks(url)}
+              <div
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (shouldSuppressCardNavigation()) return;
+                  if (isMembersOnlyPost && !canViewMembersOnlyPost) return;
+                  if (isBlueskyPost) {
+                    if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
+                  } else {
+                    navigate(`/post/${post.id}`);
+                  }
+                }}
+              >
+                {isCheckingMembersOnlyAccess ? (
+                  <div className="mt-3 rounded-2xl border border-violet-500/20 bg-violet-500/[0.06] px-4 py-5">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-500/10 text-violet-500">
+                        <Lock className="h-5 w-5" />
                       </div>
-                    ))}
+                      <div className="min-w-0">
+                        <p className="text-sm font-black text-foreground">メンバー限定投稿</p>
+                        <p className="mt-1 text-xs text-muted-foreground">閲覧権限を確認しています…</p>
+                      </div>
+                    </div>
                   </div>
+                ) : isMembersOnlyPost && !canViewMembersOnlyPost ? (
+                  <div className="mt-3 rounded-2xl border border-violet-500/20 bg-violet-500/[0.06] px-4 py-5">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-500/10 text-violet-500">
+                        <Lock className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-black text-foreground">メンバー限定投稿</p>
+                        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                          この投稿は @{post.author.username} のメンバーだけが閲覧できます。
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {displayContent && (
+                      <p className={isMobile ? "whitespace-pre-wrap break-words text-[16px] leading-normal text-foreground mt-1" : "whitespace-pre-wrap break-words text-base leading-relaxed text-foreground mt-1"}>
+                        {renderContentWithMentions(displayContent)}
+                      </p>
+                    )}
+                    {failedUrls.length > 0 && (
+                      <div className="mt-2 space-y-1">
+                        {failedUrls.map((url, idx) => (
+                          <div key={`failed-${idx}`}>
+                            {renderContentWithLinks(url)}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
 
-              {((post as any).is_bot || post.isBot) && (
+              {canViewMembersOnlyPost && ((post as any).is_bot || post.isBot) && (
                 <div className="flex items-center gap-1 mt-1.5 text-muted-foreground/70">
                   <Sparkles className="h-3.5 w-3.5" />
                   <span className={isMobile ? "text-[13px] font-medium" : "text-[15px] font-medium"}>AIで生成</span>
@@ -2404,19 +2431,21 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                 </div>
               )}
 
-              {youtubeId && (
+              {canViewMembersOnlyPost && youtubeId && (
                 <div onClick={(e) => e.stopPropagation()} className="mt-3">
                   <YouTubeEmbed videoId={youtubeId} />
                 </div>
               )}
-              {spotifyUrls.length > 0 && (
+
+              {canViewMembersOnlyPost && spotifyUrls.length > 0 && (
                 <div onClick={(e) => e.stopPropagation()} className="space-y-2 mt-3">
                   {spotifyUrls.map((url, idx) => (
                     <SpotifyEmbed key={`spotify-${idx}`} url={url} />
                   ))}
                 </div>
               )}
-              {singleImageUrl ? (
+
+              {canViewMembersOnlyPost && (singleImageUrl ? (
                 <div className="mt-3 flex max-w-full justify-start" onClick={(e) => e.stopPropagation()}>
                   <button
                     type="button"
@@ -2453,7 +2482,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                   </button>
                 </div>
               ) : (
-                <div 
+                <div
                   className="cursor-zoom-in"
                   onClick={(e) => {
                     const target = e.target as HTMLElement;
@@ -2464,8 +2493,8 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                     }
                   }}
                 >
-                  <PostImages 
-                    urls={allImageUrls} 
+                  <PostImages
+                    urls={allImageUrls}
                     onImageError={(url) => {
                       if (!failedUrls.includes(url)) {
                         setFailedUrls(prev => [...prev, url]);
@@ -2473,19 +2502,18 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                     }}
                   />
                 </div>
-              )}
+              ))}
             </div>
 
-            {/* --- リアクションバッジエリア（reactionsがある時のみレンダリングされ、ない時は完全に消滅） --- */}
-            {reactions.length > 0 && (
+            {canViewMembersOnlyPost && reactions.length > 0 && (
               <div className="mt-3 flex flex-wrap gap-1.5 relative" onClick={(e) => e.stopPropagation()}>
                 {reactions.map((g) => {
                   const hasMyReaction = currentUserId ? g.user_ids.includes(currentUserId) : false;
                   const isPopupOpen = activePopupEmoji === g.emoji;
 
                   return (
-                    <div 
-                      key={g.emoji} 
+                    <div
+                      key={g.emoji}
                       className="relative inline-block"
                       onMouseEnter={() => setActivePopupEmoji(g.emoji)}
                       onMouseLeave={() => setActivePopupEmoji(null)}
@@ -2504,10 +2532,8 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                         <span className="tabular-nums text-sm font-black">{g.count}</span>
                       </button>
 
-                      {/* --- リアクションユーザーポップアップ --- */}
                       {isPopupOpen && g.users.length > 0 && (
                         <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-[260px] bg-white dark:bg-[#252932] border border-black/[0.08] dark:border-white/5 rounded-2xl shadow-2xl z-[60] flex p-3 pointer-events-none">
-                          
                           <div className="w-[64px] h-[64px] shrink-0 flex items-center justify-center border-r border-black/[0.08] dark:border-white/10 pr-2.5 mr-2.5">
                             {renderEmojiElement(g.emoji, "h-12 w-12 object-contain")}
                           </div>
@@ -2530,7 +2556,6 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                               </div>
                             ))}
                           </div>
-
                         </div>
                       )}
                     </div>
@@ -2539,7 +2564,6 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
               </div>
             )}
 
-            {/* --- アクションボタンエリア（上部要素とのマージンを mt-3 に均一化） --- */}
             <div className={isMobile ? "mt-2 flex items-center gap-1 text-muted-foreground relative h-8" : "mt-3 flex items-center gap-1 text-muted-foreground relative h-9"}>
               <div onClick={(e) => e.stopPropagation()} className="flex items-center h-full">
                 {isBlueskyPost ? (
@@ -2556,10 +2580,10 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                     <span className={isMobile ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{formatDisplayCount(post.likesCount)}</span>
                   </button>
                 ) : (
-                  <LikeButton 
-                    postId={post.id} 
-                    liked={post.likedByMe} 
-                    count={post.likesCount} 
+                  <LikeButton
+                    postId={post.id}
+                    liked={post.likedByMe}
+                    count={post.likesCount}
                   />
                 )}
               </div>
@@ -2599,6 +2623,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                       if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
                       return;
                     }
+                    if (isMembersOnlyPost && !canViewMembersOnlyPost) return;
                     setShowPicker(!showPicker);
                   }}
                   className={
@@ -2616,16 +2641,14 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
 
                 {showPicker && isMobile && typeof document !== 'undefined' && createPortal(
                   <>
-                    {/* スマホでは body 直下へ出す。backdrop-filter/transform の親に固定配置を壊されないようにする */}
-                    <div 
+                    <div
                       ref={pickerPanelRef}
-                      className={`fixed bottom-[76px] left-1/2 transform -translate-x-1/2 w-[92vw] max-w-[340px] h-[430px] rounded-[24px] border border-border/80 shadow-2xl p-4 animate-slide-up-mobile overflow-y-auto overflow-x-hidden touch-pan-y ${timelinePortalThemeClass}`} 
+                      className={`fixed bottom-[76px] left-1/2 transform -translate-x-1/2 w-[92vw] max-w-[340px] h-[430px] rounded-[24px] border border-border/80 shadow-2xl p-4 animate-slide-up-mobile overflow-y-auto overflow-x-hidden touch-pan-y ${timelinePortalThemeClass}`}
                       style={{ zIndex: 2147483647 }}
                       onPointerDown={(e) => e.stopPropagation()}
                       onTouchStart={(e) => e.stopPropagation()}
                       onScroll={(e) => e.stopPropagation()}
                     >
-                      {/* デフォルト絵文字 */}
                       <div className="grid grid-cols-5 gap-2.5 mb-3.5 shrink-0">
                         {DEFAULT_EMOJIS.map((emoji) => (
                           <button
@@ -2655,7 +2678,6 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                         </div>
                       )}
 
-                      {/* カスタム絵文字：内側の高さ固定を解除しバー全体のスクロールに統合 */}
                       <div className="timeline-portal-divider flex flex-col border-t border-black/[0.08] dark:border-white/5 pt-2">
                         <button
                           onClick={() => setIsEmojisOpen(!isEmojisOpen)}
@@ -2693,15 +2715,11 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
 
                 {showPicker && !isMobile && (
                   <>
-                    {/* =========================================================================
-                       【PC専用ポップアップ：バー全体をスクロール対応化・縦幅 h-[280px]】
-                       ========================================================================= */}
-                    <div 
+                    <div
                       ref={pickerPanelRef}
-                      className={`absolute bottom-full left-0 mb-2 w-[260px] h-[280px] rounded-[20px] border border-border/80 shadow-2xl z-[100001] p-2.5 animate-zoom-in-pc overflow-y-auto overflow-x-hidden ${timelinePortalThemeClass}`} 
+                      className={`absolute bottom-full left-0 mb-2 w-[260px] h-[280px] rounded-[20px] border border-border/80 shadow-2xl z-[100001] p-2.5 animate-zoom-in-pc overflow-y-auto overflow-x-hidden ${timelinePortalThemeClass}`}
                       onWheel={(e) => e.stopPropagation()}
                     >
-                      {/* デフォルト絵文字 */}
                       <div className="grid grid-cols-7 gap-1 mb-2 shrink-0">
                         {DEFAULT_EMOJIS.map((emoji) => (
                           <button
@@ -2731,7 +2749,6 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                         </div>
                       )}
 
-                      {/* カスタム絵文字：内側の高さ制限を外し全体のスクロールに委ねる */}
                       <div className="timeline-portal-divider flex flex-col border-t border-black/[0.08] dark:border-white/5 pt-1.5">
                         <button
                           onClick={() => setIsEmojisOpen(!isEmojisOpen)}
@@ -2763,7 +2780,6 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                         )}
                       </div>
 
-                      {/* 検索バー */}
                       <div className="timeline-portal-divider mt-2 pt-1.5 border-t border-black/[0.08] dark:border-white/5 shrink-0">
                         <input
                           type="text"
@@ -2850,13 +2866,11 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                   document.body
                 )}
               </div>
-
             </div>
           </div>
         </div>
       </article>
 
-      {/* LimeDrop送信先選択 */}
       {showLimeDropPanel && typeof document !== 'undefined' && createPortal(
         <div
           className="fixed inset-0 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
@@ -2957,7 +2971,6 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
         document.body
       )}
 
-      {/* 画像拡大オーバーレイ */}
       {selectedImageUrl && typeof document !== 'undefined' && createPortal(
         <div
           className="fixed inset-0 flex flex-col items-center justify-center bg-black/95 backdrop-blur-sm animate-in fade-in duration-200"
@@ -3014,6 +3027,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                     if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
                     return;
                   }
+                  if (isMembersOnlyPost && !canViewMembersOnlyPost) return;
                   navigate(`/post/${post.id}`);
                 }}
                 className="inline-flex items-center gap-2 text-white/90 hover:text-white transition-colors"
