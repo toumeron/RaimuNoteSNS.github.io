@@ -1680,7 +1680,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
     e.stopPropagation();
     if (!isBlueskyPost) return;
     e.preventDefault();
-    if (blueskyProfileUrl) openExternalUrl(blueskyProfileUrl);
+    navigate(`/u/${encodeURIComponent(post.author.username)}`);
   };
 
   const handleToggleVisibility = async (
@@ -1737,7 +1737,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
     }
 
     if (isBlueskyPost) {
-      if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
+      navigate(`/post/${encodeURIComponent(post.id)}`);
       return;
     }
 
@@ -2381,7 +2381,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                   if (shouldSuppressCardNavigation()) return;
                   if (isMembersOnlyPost && !canViewMembersOnlyPost) return;
                   if (isBlueskyPost) {
-                    if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
+                    navigate(`/post/${encodeURIComponent(post.id)}`);
                   } else {
                     navigate(`/post/${post.id}`);
                   }
@@ -2604,16 +2604,17 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                 )}
               </div>
               {isBlueskyPost ? (
-                <a
-                  href={blueskyPostUrl || '#'}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={(e) => e.stopPropagation()}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigate(`/post/${encodeURIComponent(post.id)}`);
+                  }}
                   className={isMobile ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
                 >
                   <MessageCircle className="h-5 w-5" />
                   <span className={isMobile ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{formatDisplayCount(post.commentsCount)}</span>
-                </a>
+                </button>
               ) : (
                 <Link
                   to={`/post/${post.id}`}
@@ -3040,7 +3041,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                 onClick={() => {
                   setSelectedImageUrl(null);
                   if (isBlueskyPost) {
-                    if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
+                    navigate(`/post/${encodeURIComponent(post.id)}`);
                     return;
                   }
                   if (isMembersOnlyPost && !canViewMembersOnlyPost) return;

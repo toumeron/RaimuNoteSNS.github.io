@@ -9,11 +9,14 @@ import { CommentList } from '@/components/post/CommentList';
 import { CommentForm } from '@/components/post/CommentForm';
 import { PostImages } from '@/components/feed/PostImages';
 import { usePost } from '@/hooks/useFeed';
+import { fetchBlueskyPostThread, type BlueskyMappedPost } from '@/lib/bluesky';
+import { useQuery } from '@tanstack/react-query';
 import { formatDate, formatRelative } from '@/lib/format';
 import { getYouTubeId } from '@/lib/utils';
 import { YouTubeEmbed } from '@/components/YouTubeEmbed';
 import { supabase } from '@/lib/supabase';
 import { getCurrentUserId } from '@/lib/currentUser';
+import type { PostWithAuthor } from '@/types';
 
 // --- カスタム絵文字・リアクション用型定義 ---
 interface CustomEmoji {
@@ -95,12 +98,66 @@ const openExternalUrl = (url: string) => {
   window.open(url, '_blank', 'noopener,noreferrer');
 };
 
+function BlueskyReplyList({
+  replies,
+  isLoading,
+  isError,
+  mobileFlat,
+}: {
+  replies: BlueskyMappedPost[];
+  isLoading: boolean;
+  isError: boolean;
+  mobileFlat: boolean;
+}) {
+  if (isLoading) {
+    return <div className="space-y-3"><div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft"><Skeleton className="h-14 w-full" /></div></div>;
+  }
+  if (isError) {
+    return <div className="rounded-3xl border border-destructive/40 bg-destructive/5 p-6 text-center"><p className="text-sm text-destructive">返信の読み込みに失敗しました。</p></div>;
+  }
+  if (replies.length === 0) {
+    return <div className={mobileFlat ? 'p-8 text-center text-muted-foreground' : 'rounded-3xl border border-border/60 bg-card p-8 text-center text-muted-foreground'}>まだ返信はありません。</div>;
+  }
+
+  return (
+    <ul className="space-y-4">
+      {replies.map((reply) => (
+        <li key={reply.id} className={mobileFlat ? 'border-b border-border/60 px-4 py-3' : 'rounded-3xl border border-border/60 bg-card p-5 shadow-soft'}>
+          <div className="flex gap-3">
+            <Link to={`/u/${encodeURIComponent(reply.author.username)}`}>
+              <Avatar className="h-11 w-11 shrink-0"><AvatarImage src={reply.author.avatarUrl} alt={reply.author.displayName} /><AvatarFallback>{reply.author.displayName.slice(0, 1)}</AvatarFallback></Avatar>
+            </Link>
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-1 text-sm">
+                <Link to={`/u/${encodeURIComponent(reply.author.username)}`} className="truncate font-display font-bold hover:underline">{reply.author.displayName}</Link>
+                <span className="truncate text-muted-foreground">@{reply.author.username}</span>
+                <span className="shrink-0 text-muted-foreground">· {formatRelative(reply.createdAt)}</span>
+              </div>
+              {reply.content && <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">{reply.content}</p>}
+              {reply.imageUrls.length > 0 && <PostImages urls={reply.imageUrls} />}
+            </div>
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export default function PostDetail() {
   const { id = '' } = useParams();
-  const { data, isLoading, isError } = usePost(id);
   const isBlueskyPost = isBlueskyPostLike({ id });
+  const { data: limeData, isLoading: isLimeLoading, isError: isLimeError } = usePost(isBlueskyPost ? '' : id);
+  const { data: blueskyThread, isLoading: isBlueskyLoading, isError: isBlueskyError } = useQuery({
+    queryKey: ['bluesky-post', id],
+    queryFn: ({ signal }) => fetchBlueskyPostThread(id, signal),
+    enabled: isBlueskyPost,
+    staleTime: 1000 * 60,
+  });
+  const blueskyData = blueskyThread?.post;
+  const data = isBlueskyPost ? blueskyData : limeData;
+  const isLoading = isBlueskyPost ? isBlueskyLoading : isLimeLoading;
+  const isError = isBlueskyPost ? isBlueskyError || !blueskyData : isLimeError;
   const blueskyPostUrl = data ? getBlueskyPostUrl(data as unknown as { id?: string; blueskyUrl?: string; author?: { username?: string } }) : null;
-  const blueskyProfileUrl = isBlueskyPost && data ? `https://bsky.app/profile/${data.author.username}` : null;
   const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null); // 拡大用
   const [failedUrls, setFailedUrls] = useState<string[]>([]); // 読み込み失敗URL管理
   const navigate = useNavigate();
@@ -482,12 +539,11 @@ export default function PostDetail() {
     emoji.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  // Blueskyの投稿者をタップした際の処理（外部のBlueskyプロフィールを開く）
+  // Blueskyの投稿者をタップした際の処理
+  // Bluesky由来の投稿でもアプリ内のプロフィール画面（/u/:username）へ遷移する。
+  // Link のデフォルト動作を阻害しない（PostCard.tsxと同様）。
   const handleAuthorNavigate = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!isBlueskyPost) return;
-    e.preventDefault();
-    if (blueskyProfileUrl) openExternalUrl(blueskyProfileUrl);
   };
 
   // 画像クリック時の処理
@@ -1423,11 +1479,11 @@ export default function PostDetail() {
 
           <p className={`mt-4 text-xs text-muted-foreground ${useMobileThreadLayout ? 'post-detail-mobile-meta' : ''}`} title={formatDate(data.createdAt)}>
             {formatDate(data.createdAt)} · {formatRelative(data.createdAt)}
-            {data.clientName && (
+            {!isBlueskyPost && (data as PostWithAuthor).clientName && (
               <>
                 <span className="mx-1">·</span>
                 <span className="text-primary/80 font-medium">
-                  {data.clientName}
+                  {(data as PostWithAuthor).clientName}
                 </span>
               </>
             )}
@@ -1457,16 +1513,14 @@ export default function PostDetail() {
               )}
             </div>
             {isBlueskyPost ? (
-              <a
-                href={blueskyPostUrl || '#'}
-                target="_blank"
-                rel="noopener noreferrer"
+              <button
+                type="button"
                 onClick={(e) => e.stopPropagation()}
                 className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm text-muted-foreground transition-colors hover:text-accent ${isMobile ? 'post-detail-mobile-reply-count' : ''}`}
               >
                 <MessageCircle className="h-5 w-5" />
                 <span className="font-bold tabular-nums">{formatDisplayCount(data.commentsCount)}</span>
-              </a>
+              </button>
             ) : (
               <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm text-muted-foreground ${isMobile ? 'post-detail-mobile-reply-count' : ''}`}>
                 <MessageCircle className="h-5 w-5" />
@@ -1749,7 +1803,7 @@ export default function PostDetail() {
 
       {data && (
         <>
-          {!useMobileThreadLayout && (
+          {!isBlueskyPost && !useMobileThreadLayout && (
             <div>
               <CommentForm postId={data.id} variant="default" />
             </div>
@@ -1758,7 +1812,16 @@ export default function PostDetail() {
             {!useMobileThreadLayout && (
               <h2 className="mb-3 font-display text-base font-bold text-foreground">コメント</h2>
             )}
-            <CommentList postId={data.id} mobileFlat={useMobileThreadLayout} />
+            {isBlueskyPost ? (
+              <BlueskyReplyList
+                replies={blueskyThread?.replies ?? []}
+                isLoading={isBlueskyLoading}
+                isError={isBlueskyError}
+                mobileFlat={useMobileThreadLayout}
+              />
+            ) : (
+              <CommentList postId={data.id} mobileFlat={useMobileThreadLayout} />
+            )}
           </div>
         </>
       )}

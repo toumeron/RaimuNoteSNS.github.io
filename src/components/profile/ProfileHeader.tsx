@@ -1,4 +1,4 @@
-import { ArrowLeft, CalendarDays, Link2, MoreHorizontal, Radio, Search, Share2, X } from 'lucide-react';
+import { ArrowLeft, CalendarDays, Link2, MoreHorizontal, Radio, Search, Share2, UserCheck, UserPlus, X } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import {
@@ -16,6 +16,7 @@ import dayjs from 'dayjs';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { User } from '@/types';
+import { getConfiguredBlueskyHandles, normalizeBlueskyHandle, saveConfiguredBlueskyHandles } from '@/lib/bluesky';
 function normalizeAppPath(pathname: string) {
   const normalized = pathname.replace(/^\/RaimuNoteSNS\.github\.io(?=\/|$)/, '') || '/';
   return normalized === '' ? '/' : normalized;
@@ -40,7 +41,15 @@ function isGithubPagesProfilePath(pathname: string) {
   }
   return isProfilePath(pathname) || isProfilePath(browserPathname);
 }
-export function ProfileHeader({ user }: { user: User }) {
+export function ProfileHeader({
+  user,
+  blueskyStats,
+  isBlueskyProfile = false,
+}: {
+  user: User;
+  blueskyStats?: { following: number; followers: number };
+  isBlueskyProfile?: boolean;
+}) {
   const { user: me } = useAuth();
   const { data: stats } = useFollowStats(user.id);
   const isMe = me?.id === user.id;
@@ -57,6 +66,12 @@ export function ProfileHeader({ user }: { user: User }) {
   const [isCoverOpen, setIsCoverOpen] = useState(false);
   const [membershipError, setMembershipError] = useState<string | null>(null);
   const [isLinkCopied, setIsLinkCopied] = useState(false);
+  const [isBlueskyAdded, setIsBlueskyAdded] = useState(() =>
+    getConfiguredBlueskyHandles().includes(normalizeBlueskyHandle(user.username)),
+  );
+  useEffect(() => {
+    setIsBlueskyAdded(getConfiguredBlueskyHandles().includes(normalizeBlueskyHandle(user.username)));
+  }, [user.username]);
   useEffect(() => {
     if (!isSubscriptionOpen && !isAvatarOpen && !isCoverOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -131,6 +146,17 @@ export function ProfileHeader({ user }: { user: User }) {
         setMembershipError(error instanceof Error ? error.message : '解除に失敗しました。もう一度お試しください。');
       },
     });
+  };
+  const handleToggleBlueskyUser = () => {
+    const handle = normalizeBlueskyHandle(user.username);
+    if (!handle) return;
+    const configured = getConfiguredBlueskyHandles();
+    const saved = saveConfiguredBlueskyHandles(
+      isBlueskyAdded
+        ? configured.filter((item) => item !== handle)
+        : [...configured, handle],
+    );
+    setIsBlueskyAdded(saved.includes(handle));
   };
   // 数値をフォーマットする関数
   const formatDisplayCount = (count: number) => {
@@ -328,7 +354,23 @@ export function ProfileHeader({ user }: { user: User }) {
                 {isMember ? '登録済み' : 'メンバー'}
               </Button>
             )}
-            {isMe ? (
+            {isBlueskyProfile ? (
+              <Button
+                type="button"
+                onClick={handleToggleBlueskyUser}
+                className={`rounded-full px-5 font-bold shadow-soft transition ${
+                  isBlueskyAdded
+                    ? 'bg-secondary text-secondary-foreground hover:bg-destructive/10 hover:text-destructive'
+                    : 'bg-gradient-primary text-primary-foreground hover:shadow-pop'
+                }`}
+              >
+                {isBlueskyAdded ? (
+                  <><UserCheck className="mr-1.5 h-4 w-4" /> 追加済み</>
+                ) : (
+                  <><UserPlus className="mr-1.5 h-4 w-4" /> 追加する</>
+                )}
+              </Button>
+            ) : isMe ? (
               <Button
                 asChild
                 variant="outline"
@@ -378,7 +420,7 @@ export function ProfileHeader({ user }: { user: User }) {
             className="group flex items-baseline gap-1 hover:no-underline"
           >
             <span className="font-display text-base font-bold tabular-nums text-foreground group-hover:underline">
-              {stats ? formatDisplayCount(stats.following) : 0}
+              {formatDisplayCount(blueskyStats?.following ?? stats?.following ?? 0)}
             </span>
             <span className="text-muted-foreground">フォロー中</span>
           </Link>
@@ -387,7 +429,7 @@ export function ProfileHeader({ user }: { user: User }) {
             className="group flex items-baseline gap-1 hover:no-underline"
           >
             <span className="font-display text-base font-bold tabular-nums text-foreground group-hover:underline">
-              {stats ? formatDisplayCount(stats.followers) : 0}
+              {formatDisplayCount(blueskyStats?.followers ?? stats?.followers ?? 0)}
             </span>
             <span className="text-muted-foreground">フォロワー</span>
           </Link>

@@ -18,6 +18,8 @@ import { formatRelative } from '@/lib/format';
 import { getYouTubeId } from '@/lib/utils';
 import { getCurrentUserId } from '@/lib/currentUser';
 import { supabase } from '@/lib/supabase';
+import { fetchBlueskyAuthorFeed, fetchBlueskyProfile } from '@/lib/bluesky';
+import { useQuery } from '@tanstack/react-query';
 import {
   useProfile,
   useUserPostsInfinite,
@@ -103,9 +105,9 @@ const getBlueskyPostUrl = (post: Pick<BlueskyPostFields, 'blueskyUrl'> & { autho
   return `https://bsky.app/profile/${handle}/post/${rkey}`;
 };
 
-const openExternalUrl = (url: string) => {
-  window.open(url, '_blank', 'noopener,noreferrer');
-};
+// Bluesky由来の投稿IDは `bsky:at://did:.../app.bsky.feed.post/rkey` のようにスラッシュを含む。
+// エンコードせず /post/:id に渡すと経路が分割されて404になるため、遷移前に必ずエンコードする（PostCard.tsxと同様）。
+const getAppPostPath = (postId: string) => `/post/${encodeURIComponent(String(postId || ''))}`;
 
 const imageRegex =
   /https?:\/\/[^\s]+?\.(?:png|jpg|jpeg|gif|webp|svg)(?:\?[^\s]*)?|https?:\/\/pbs\.twimg\.com\/media\/[^\s?]+(?:\?[^\s]*)?/gi;
@@ -1986,7 +1988,7 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                if (blueskyUrl) openExternalUrl(blueskyUrl);
+                onReplyClick();
               }}
               className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full sm:px-2.5 sm:text-sm"
             >
@@ -2003,37 +2005,21 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
         </div>
       )}
 
-      {isBluesky ? (
-        <a
-          href={blueskyUrl || '#'}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={(event) => event.stopPropagation()}
-          className={inlineActionClass}
-          aria-label="Blueskyで見る"
-        >
-          <MessageCircle className="h-5 w-5" />
-          {typeof replyCount === 'number' && (
-            <span className="font-bold tabular-nums text-[15px] sm:text-sm">{formatDisplayCount(replyCount)}</span>
-          )}
-        </a>
-      ) : (
-        <button
-          type="button"
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            onReplyClick();
-          }}
-          className={inlineActionClass}
-          aria-label="返信を表示"
-        >
-          <MessageCircle className="h-5 w-5" />
-          {typeof replyCount === 'number' && (
-            <span className="font-bold tabular-nums text-[15px] sm:text-sm">{formatDisplayCount(replyCount)}</span>
-          )}
-        </button>
-      )}
+      <button
+        type="button"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onReplyClick();
+        }}
+        className={inlineActionClass}
+        aria-label="返信を表示"
+      >
+        <MessageCircle className="h-5 w-5" />
+        {typeof replyCount === 'number' && (
+          <span className="font-bold tabular-nums text-[15px] sm:text-sm">{formatDisplayCount(replyCount)}</span>
+        )}
+      </button>
 
       {isBluesky ? (
         <button
@@ -2041,7 +2027,7 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
-            if (blueskyUrl) openExternalUrl(blueskyUrl);
+            onReplyClick();
           }}
           className={iconActionClass}
           aria-label="リアクションを追加"
@@ -2099,14 +2085,13 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
     : null;
 
   const handleParentAuthorClick = (event: ReactMouseEvent) => {
-    if (!isParentBluesky) return;
-    event.preventDefault();
-    if (parentBlueskyProfileUrl) openExternalUrl(parentBlueskyProfileUrl);
+    // Bluesky由来の投稿でもアプリ内のプロフィール画面（/u/:username）へ遷移する。
+    // Link のデフォルト動作を阻害しない（PostCardと同様）。
   };
 
   const openThread = () => {
     if (isParentBluesky) {
-      if (parentBlueskyUrl) openExternalUrl(parentBlueskyUrl);
+      if (parent?.id) navigate(getAppPostPath(parent.id));
       return;
     }
     navigate(`/post/${primaryComment.postId}`);
@@ -2519,7 +2504,25 @@ export default function Profile() {
   const [profileRepliesError, setProfileRepliesError] = useState(false);
   const [profileRepliesRefreshKey, setProfileRepliesRefreshKey] = useState(0);
 
-  const { data: user, isLoading: userLoading, isError: userError } = useProfile(username);
+  const { data: limeUser, isLoading: isLimeUserLoading, isError: isLimeUserError } = useProfile(username);
+  // Lime に存在しないユーザーだけ Bluesky の公開 API で補完するため、
+  // 既存プロフィールの取得・見た目には影響しない。
+  const { data: blueskyProfile, isLoading: isBlueskyProfileLoading, isError: isBlueskyProfileError } = useQuery({
+    queryKey: ['bluesky-profile', username],
+    queryFn: ({ signal }) => fetchBlueskyProfile(username, signal),
+    enabled: Boolean(username) && !isLimeUserLoading && !limeUser,
+    staleTime: 1000 * 60,
+  });
+  const isBlueskyProfile = !limeUser && Boolean(blueskyProfile);
+  const user = limeUser ?? blueskyProfile;
+  const userLoading = isLimeUserLoading || (!limeUser && isBlueskyProfileLoading);
+  const userError = !userLoading && !user && (isLimeUserError || isBlueskyProfileError);
+  const { data: blueskyFeed, isLoading: isBlueskyFeedLoading, isError: isBlueskyFeedError } = useQuery({
+    queryKey: ['bluesky-profile-feed', username],
+    queryFn: ({ signal }) => fetchBlueskyAuthorFeed({ actor: username, limit: 100, signal }),
+    enabled: isBlueskyProfile,
+    staleTime: 1000 * 60,
+  });
 
   // 非表示タブの無限スクロール取得を開始しない。
   // フック自体は常に同じ順序で呼び出し、アクティブなタブだけ userId を渡す。
@@ -2540,13 +2543,15 @@ export default function Profile() {
           : postsQuery;
 
   const {
-    data,
-    isLoading: contentLoading,
+    data: profileData,
+    isLoading: isProfileContentLoading,
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
-    isError: contentError,
+    isError: isProfileContentError,
   } = currentQuery;
+  const contentLoading = isBlueskyProfile ? isBlueskyFeedLoading : isProfileContentLoading;
+  const contentError = isBlueskyProfile ? isBlueskyFeedError : isProfileContentError;
 
   const { ref, inView } = useInView();
 
@@ -2623,6 +2628,12 @@ export default function Profile() {
   }, [user?.id]);
 
   useEffect(() => {
+    if (isBlueskyProfile) {
+      setProfileReplies([]);
+      setProfileRepliesError(false);
+      setProfileRepliesReady(true);
+      return;
+    }
     if (!user?.id || activeTab !== 'posts') return;
 
     let cancelled = false;
@@ -2892,7 +2903,7 @@ export default function Profile() {
     return () => {
       cancelled = true;
     };
-  }, [user?.id, activeTab, profileRepliesRefreshKey]);
+  }, [user?.id, activeTab, isBlueskyProfile, profileRepliesRefreshKey]);
 
   // モーダル表示時にスクロールを固定
   useEffect(() => {
@@ -2911,7 +2922,7 @@ export default function Profile() {
   // props や state に依存しない純粋関数のため、ファイル先頭のモジュール
   // スコープへ移動済み（レンダーの度に関数を再生成しないための軽量化）。
 
-  const pages = data?.pages ?? EMPTY_ARRAY;
+  const pages = isBlueskyProfile ? [blueskyFeed?.posts ?? EMPTY_ARRAY] : profileData?.pages ?? EMPTY_ARRAY;
   const flatPageItems = useMemo(
     () => pages.flatMap((page: any) => (Array.isArray(page) ? page : [])),
     [pages]
@@ -3036,7 +3047,14 @@ export default function Profile() {
     >
       <style>{PROFILE_PAGE_STYLES}</style>
 
-      {user && <ProfileHeader user={user} />}
+      {user && <ProfileHeader
+        user={user}
+        isBlueskyProfile={isBlueskyProfile}
+        blueskyStats={isBlueskyProfile ? {
+          following: blueskyProfile?.followingCount ?? 0,
+          followers: blueskyProfile?.followersCount ?? 0,
+        } : undefined}
+      />}
 
       <Tabs
         value={activeTab}

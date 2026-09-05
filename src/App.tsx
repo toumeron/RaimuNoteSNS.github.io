@@ -300,7 +300,7 @@ interface IncomingLimeDrop {
   id: string;
   sender_id: string;
   recipient_id: string;
-  post_id: string;
+  post_id: string | null;
   post_url: string;
   post_author_display_name: string | null;
   post_author_username: string | null;
@@ -491,7 +491,15 @@ const LimeDropReceiver = () => {
 
       if (error) throw error;
       removeDrop(activeDrop.id);
-      navigate(`/post/${activeDrop.post_id}`);
+
+      // post_id が無い（＝Bluesky発の投稿）場合、内部の /post/:id ページには
+      // 対応するレコードが存在しないため「投稿は見つかりませんでした」になっていた。
+      // その場合は post_url（bsky.appのURL）を外部タブで開く。
+      if (activeDrop.post_id) {
+        navigate(`/post/${activeDrop.post_id}`);
+      } else if (activeDrop.post_url) {
+        window.location.href = activeDrop.post_url;
+      }
     } catch (error) {
       console.error('Accept LimeDrop failed:', error);
     } finally {

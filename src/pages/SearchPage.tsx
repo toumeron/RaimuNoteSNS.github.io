@@ -1,16 +1,13 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Search, X, Clock, Loader2, TrendingUp, Newspaper, Radio, Play, Square, UsersRound } from 'lucide-react';
+import { Search, X, Clock, Loader2, TrendingUp, Newspaper, Radio, Play, Square, UsersRound, Settings2 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PostCard } from '@/components/feed/PostCard';
 import UserCard from '@/components/search/UserCard';
 import { FollowButton } from '@/components/profile/FollowButton';
 import { supabase } from '@/lib/supabase';
+import { searchBluesky } from '@/lib/bluesky';
 import type { User, PostWithAuthor } from '@/types';
-// @ts-ignore - tiny-segmenter has no bundled types
-import TinySegmenter from 'tiny-segmenter';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-
-const segmenter = new TinySegmenter();
 
 const kataToHira = (s: string) =>
   s.replace(/[\u30a1-\u30f6]/g, (c) =>
@@ -173,6 +170,10 @@ export default function SearchPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [searchedPosts, setSearchedPosts] = useState<PostWithAuthor[]>([]);
+  const [blueskyUsers, setBlueskyUsers] = useState<User[]>([]);
+  const [blueskySuggestionUsers, setBlueskySuggestionUsers] = useState<User[]>([]);
+  const [excludeBlueskyPosts, setExcludeBlueskyPosts] = useState(false);
+  const [isSearchSettingsOpen, setIsSearchSettingsOpen] = useState(false);
   const [isUsersLoading, setIsUsersLoading] = useState(false);
   const [isPostsLoading, setIsPostsLoading] = useState(false);
   const [isInputFocused, setIsInputFocused] = useState(false);
@@ -198,6 +199,8 @@ export default function SearchPage() {
   const suggestBoxRef = useRef<HTMLDivElement>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const lastElementRef = useRef<HTMLDivElement>(null);
+  const blueskySearchRequestRef = useRef(0);
+  const appliedSearchParamRef = useRef<string | null>(null);
   const radioPlayingRef = useRef(false);
   const backgroundAudioRef = useRef<HTMLAudioElement | null>(null);
   const backgroundAudioUrlRef = useRef<string | null>(null);
@@ -206,6 +209,9 @@ export default function SearchPage() {
   const radioBeatGainRef = useRef<GainNode | null>(null);
   const isMountedRef = useRef(true);
   const radioInstanceIdRef = useRef(`search-radio-${Date.now()}-${Math.random()}`);
+  // 選択済みの読み上げボイスをキャッシュし、発話のたびに全ボイスを
+  // スコアリングし直す処理(CPU負荷)を避ける
+  const cachedVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
 
   const radioScript = useMemo(() => {
     const newsLines = radioNews
@@ -407,12 +413,14 @@ export default function SearchPage() {
       oscillator.stop(time + 0.24);
     };
 
-    const playSnare = (time: number) => {
+    // ノイズ(ハイハット/スネア)はランダム配列を生成するコストが高いため、
+    // 呼び出しごとに新規生成せず、渡されたバッファを共有して使う
+    const playSnare = (time: number, noiseBuffer: AudioBuffer) => {
       const noise = audioContext.createBufferSource();
       const filter = audioContext.createBiquadFilter();
       const gain = audioContext.createGain();
 
-      noise.buffer = createNoiseBuffer();
+      noise.buffer = noiseBuffer;
       filter.type = 'highpass';
       filter.frequency.setValueAtTime(950, time);
       gain.gain.setValueAtTime(0.0001, time);
@@ -426,12 +434,12 @@ export default function SearchPage() {
       noise.stop(time + 0.15);
     };
 
-    const playHat = (time: number) => {
+    const playHat = (time: number, noiseBuffer: AudioBuffer) => {
       const noise = audioContext.createBufferSource();
       const filter = audioContext.createBiquadFilter();
       const gain = audioContext.createGain();
 
-      noise.buffer = createNoiseBuffer();
+      noise.buffer = noiseBuffer;
       filter.type = 'highpass';
       filter.frequency.setValueAtTime(6200, time);
       gain.gain.setValueAtTime(0.0001, time);
@@ -526,6 +534,11 @@ export default function SearchPage() {
     const schedulePattern = () => {
       if (!radioPlayingRef.current) return;
 
+      // このパターン周期の間、ハイハット/スネアで使い回す
+      // ノイズバッファを1個だけ生成する(以前はステップごとに毎回生成しており、
+      // 1周期で数十個分のランダム配列を確保していた)
+      const cycleNoiseBuffer = createNoiseBuffer(0.18);
+
       const start = audioContext.currentTime + 0.04;
       for (let i = 0; i < patternSteps; i += 1) {
         const time = start + i * step;
@@ -537,8 +550,8 @@ export default function SearchPage() {
           playChord(time, section.chord, step * 16);
         }
         if (stepInBar === 0 || stepInBar === 6 || stepInBar === 10) playKick(time);
-        if (stepInBar === 4 || stepInBar === 12) playSnare(time);
-        if (stepInBar % 2 === 0) playHat(time);
+        if (stepInBar === 4 || stepInBar === 12) playSnare(time, cycleNoiseBuffer);
+        if (stepInBar % 2 === 0) playHat(time, cycleNoiseBuffer);
         if ([0, 3, 6, 10, 13].includes(stepInBar)) playBass(time, section.bass);
         if ([2, 5, 8, 11, 14].includes(stepInBar)) {
           playArp(time, section.arp[(stepInBar + barIndex) % section.arp.length]);
@@ -668,7 +681,11 @@ export default function SearchPage() {
       if (!radioPlayingRef.current) return;
 
       const utterance = new SpeechSynthesisUtterance(`${getRadioTimeIntro()}\n${radioScript}`);
-      const voice = getHumanLikeJapaneseVoice();
+      // ボイス選択は初回だけスコアリングし、以降は使い回す
+      if (!cachedVoiceRef.current) {
+        cachedVoiceRef.current = getHumanLikeJapaneseVoice();
+      }
+      const voice = cachedVoiceRef.current;
       if (voice) utterance.voice = voice;
       utterance.lang = 'ja-JP';
       utterance.rate = 0.98;
@@ -726,6 +743,8 @@ export default function SearchPage() {
 
     const loadVoices = () => {
       window.speechSynthesis.getVoices();
+      // ボイス一覧が変わった場合はキャッシュを破棄して再選択する
+      cachedVoiceRef.current = null;
     };
 
     loadVoices();
@@ -734,6 +753,43 @@ export default function SearchPage() {
       window.speechSynthesis.removeEventListener('voiceschanged', loadVoices);
     };
   }, []);
+
+  useEffect(() => {
+    const query = inputValue.trim();
+    if (!query || excludeBlueskyPosts) {
+      setBlueskySuggestionUsers([]);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      searchBluesky(query, { includePosts: false })
+        .then((result) => {
+          if (cancelled) return;
+          setBlueskySuggestionUsers(result.users.slice(0, 3).map((user) => ({
+            id: user.id,
+            username: user.username,
+            displayName: user.displayName,
+            avatarUrl: user.avatarUrl,
+            coverUrl: user.coverUrl,
+            createdAt: user.createdAt,
+            bio: user.bio,
+            isOfficial: false,
+          })));
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            console.error('Bluesky suggestion search failed:', error);
+            setBlueskySuggestionUsers([]);
+          }
+        });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [inputValue, excludeBlueskyPosts]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -794,24 +850,9 @@ export default function SearchPage() {
     fetchTrends();
   }, []);
 
-  // Realtime同期用のEffect
-  useEffect(() => {
-    if (!searchQuery) return;
-
-    const channel = supabase
-      .channel('search_likes_sync')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'likes' },
-        () => {
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [searchQuery]);
+  // 注: 以前ここには "likes" テーブル全体の変更を購読するRealtime Effectがありましたが、
+  // コールバックが空で実質何もしておらず、サイト全体のいいねイベントを常時受信し続けて
+  // CPU/メモリを無駄に消費するだけだったため削除しました。
 
   useEffect(() => {
     const handleScroll = () => {
@@ -826,7 +867,10 @@ export default function SearchPage() {
     async function fetchUsers() {
       setIsUsersLoading(true);
       try {
-        const { data, error } = await supabase.from('profiles').select('*');
+        // 使用する列だけを取得し、通信量とメモリ使用量を削減
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('id, username, display_name, avatar_url, cover_url, created_at, bio, is_official');
         if (error) throw error;
         if (cancelled) return;
         setAllUsers((data || []).map((u: any) => ({
@@ -857,9 +901,16 @@ export default function SearchPage() {
     return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
 
-  const fetchPosts = useCallback(async (q: string, targetPage: number) => {
+  const fetchPosts = useCallback(async (q: string, targetPage: number, includeBlueskyPosts = !excludeBlueskyPosts) => {
     if (!q.trim()) return;
+    const requestId = ++blueskySearchRequestRef.current;
     if (targetPage === 0) setIsPostsLoading(true);
+    const blueskySearchPromise = targetPage === 0
+      ? searchBluesky(q, { includePosts: includeBlueskyPosts }).catch((error) => {
+          console.error('Bluesky search failed:', error);
+          return { posts: [], users: [] };
+        })
+      : null;
 
     try {
       const { data: { user: currentUser } } = await supabase.auth.getUser();
@@ -881,7 +932,7 @@ export default function SearchPage() {
         }
       }
 
-      // ハンドルネーム（@ユーザー名）で検索された場合、本文一致（返信・メンション）だけでなく
+      // ハンドルネーム(@ユーザー名)で検索された場合、本文一致(返信・メンション)だけでなく
       // そのユーザー自身が投稿した本人の投稿も検索結果に含める
       const handleMatch = q.trim().match(/^@(\S+)$/);
       const matchedUser = handleMatch
@@ -904,24 +955,26 @@ export default function SearchPage() {
       if (error) throw error;
 
       if (data) {
+        // いいね/リポストの自分の状態は互いに独立したクエリなので、
+        // 直列に待たず並列実行して読み込み時間を短縮する
         let myLikes: string[] = [];
-        if (currentUser) {
-          const { data: likesData } = await supabase
-            .from('likes')
-            .select('post_id')
-            .eq('user_id', currentUser.id)
-            .in('post_id', data.map(p => p.id));
-          if (likesData) myLikes = likesData.map(l => l.post_id);
-        }
-
         let myReposts: string[] = [];
         if (currentUser) {
-          const { data: repostsData } = await supabase
-            .from('reposts')
-            .select('post_id')
-            .eq('user_id', currentUser.id)
-            .in('post_id', data.map(p => p.id));
-          if (repostsData) myReposts = repostsData.map(r => r.post_id);
+          const postIds = data.map(p => p.id);
+          const [likesResult, repostsResult] = await Promise.all([
+            supabase
+              .from('likes')
+              .select('post_id')
+              .eq('user_id', currentUser.id)
+              .in('post_id', postIds),
+            supabase
+              .from('reposts')
+              .select('post_id')
+              .eq('user_id', currentUser.id)
+              .in('post_id', postIds),
+          ]);
+          if (likesResult.data) myLikes = likesResult.data.map(l => l.post_id);
+          if (repostsResult.data) myReposts = repostsResult.data.map(r => r.post_id);
         }
 
         const formatted: PostWithAuthor[] = data.map((p: any) => {
@@ -954,7 +1007,27 @@ export default function SearchPage() {
         });
 
         if (targetPage === 0) {
-          setSearchedPosts(formatted);
+          const blueskyResult = await blueskySearchPromise;
+          if (requestId !== blueskySearchRequestRef.current) return;
+          const formattedBlueskyPosts = blueskyResult.posts.map((post) => ({
+            ...post,
+            repostsCount: 0,
+            repostedByMe: false,
+            author: { ...post.author, coverUrl: '' },
+          })) as PostWithAuthor[];
+          setBlueskyUsers(blueskyResult.users.map((user) => ({
+            id: user.id,
+            username: user.username,
+            displayName: user.displayName,
+            avatarUrl: user.avatarUrl,
+            coverUrl: user.coverUrl,
+            createdAt: user.createdAt,
+            bio: user.bio,
+            isOfficial: false,
+          })));
+          setSearchedPosts([...formatted, ...formattedBlueskyPosts].sort(
+            (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+          ));
         } else {
           setSearchedPosts(prev => [...prev, ...formatted]);
         }
@@ -963,10 +1036,31 @@ export default function SearchPage() {
       }
     } catch (err) {
       console.error('Search query failed:', err);
+      if (targetPage === 0 && blueskySearchPromise) {
+        const blueskyResult = await blueskySearchPromise;
+        if (requestId !== blueskySearchRequestRef.current) return;
+        const formattedBlueskyPosts = blueskyResult.posts.map((post) => ({
+          ...post,
+          repostsCount: 0,
+          repostedByMe: false,
+          author: { ...post.author, coverUrl: '' },
+        })) as PostWithAuthor[];
+        setBlueskyUsers(blueskyResult.users.map((user) => ({
+          id: user.id,
+          username: user.username,
+          displayName: user.displayName,
+          avatarUrl: user.avatarUrl,
+          coverUrl: user.coverUrl,
+          createdAt: user.createdAt,
+          bio: user.bio,
+          isOfficial: false,
+        })));
+        setSearchedPosts(formattedBlueskyPosts);
+      }
     } finally {
       setIsPostsLoading(false);
     }
-  }, [allUsers]);
+  }, [allUsers, excludeBlueskyPosts]);
 
   const commitSearch = useCallback(async (raw: string) => {
     const q = raw.trim();
@@ -978,6 +1072,7 @@ export default function SearchPage() {
     setActiveSuggestIdx(-1);
     setPage(0);
     setHasMore(true);
+    setBlueskyUsers([]);
 
     setHistory((prev) => {
       const next = [q, ...prev.filter((h) => h !== q)].slice(0, HISTORY_MAX);
@@ -991,7 +1086,8 @@ export default function SearchPage() {
 
   useEffect(() => {
     const queryParam = searchParams.get('q');
-    if (queryParam) {
+    if (queryParam && queryParam !== appliedSearchParamRef.current) {
+      appliedSearchParamRef.current = queryParam;
       commitSearch(queryParam);
     }
   }, [searchParams, commitSearch]);
@@ -1024,7 +1120,7 @@ export default function SearchPage() {
 
     if (queryCandidates.length === 0) return [];
 
-    return allUsers
+    const localSuggestions = allUsers
       .map((u) => {
         const dn = normalize(u.displayName);
         const un = normalize(u.username);
@@ -1042,9 +1138,17 @@ export default function SearchPage() {
       .sort((a, b) => b.score - a.score)
       .slice(0, 5)
       .map((x) => x.user);
-  }, [inputValue, allUsers]);
+    const seen = new Set(localSuggestions.map((user) => user.id));
+    const blueskySuggestions = blueskySuggestionUsers.filter((user) => !seen.has(user.id)).slice(0, 3);
+    return [...localSuggestions.slice(0, 5 - blueskySuggestions.length), ...blueskySuggestions];
+  }, [inputValue, allUsers, blueskySuggestionUsers]);
 
   const queryTokens = useMemo(() => tokenizeQuery(searchQuery), [searchQuery]);
+  const searchableUsers = useMemo(() => {
+    const byId = new Map<string, User>();
+    [...allUsers, ...blueskyUsers].forEach((user) => byId.set(user.id, user));
+    return Array.from(byId.values());
+  }, [allUsers, blueskyUsers]);
 
   // おすすめユーザー用
   // 公式かどうか・登録日時などでは並び替えず、毎回ランダムに3人選ぶ。
@@ -1063,7 +1167,8 @@ export default function SearchPage() {
   const filteredUsers = useMemo(() => {
     if (!searchQuery || queryTokens.length === 0) return [];
 
-    return allUsers.map((u) => {
+    const blueskyUserIds = new Set(blueskyUsers.map((user) => user.id));
+    const matchingUsers = searchableUsers.map((u) => {
       const hay = buildUserHaystack(u);
       const dn = normalize(u.displayName);
       const un = normalize(u.username);
@@ -1082,7 +1187,12 @@ export default function SearchPage() {
     .filter(Boolean)
     .sort((a: any, b: any) => b.score - a.score)
     .map((x: any) => x.u) as User[];
-  }, [searchQuery, queryTokens, allUsers]);
+
+    return [
+      ...blueskyUsers,
+      ...matchingUsers.filter((user) => !blueskyUserIds.has(user.id)),
+    ].filter((user, index, users) => users.findIndex((candidate) => candidate.id === user.id) === index);
+  }, [searchQuery, queryTokens, searchableUsers, blueskyUsers]);
 
   const suggestionRows = useMemo<SuggestionRow[]>(() => {
     const rows: SuggestionRow[] = [];
@@ -1256,6 +1366,7 @@ export default function SearchPage() {
                     <img
                       src={user.avatarUrl}
                       alt={user.displayName}
+                      loading="lazy"
                       className="w-12 h-12 rounded-full object-cover shrink-0"
                     />
                   ) : (
@@ -1358,14 +1469,53 @@ export default function SearchPage() {
                 onFocus={() => setIsInputFocused(true)}
                 onKeyDown={onKeyDown}
                 placeholder="検索"
-                className="w-full h-full bg-transparent border-none pl-11 pr-11 text-[15px] outline-none dark:placeholder-gray-500"
+                className="w-full h-full bg-transparent border-none pl-11 pr-20 text-[15px] outline-none dark:placeholder-gray-500"
               />
               {inputValue && (
-                <button type="button" onClick={() => { setInputValue(''); inputRef.current?.focus(); }} className="absolute right-3 w-5 h-5 flex items-center justify-center bg-primary rounded-full">
+                <button type="button" onClick={() => { setInputValue(''); inputRef.current?.focus(); }} className="absolute right-11 w-5 h-5 flex items-center justify-center bg-primary rounded-full">
                   <X className="w-3 h-3 text-white" strokeWidth={3} />
                 </button>
               )}
+              <button
+                type="button"
+                aria-label="検索設定"
+                aria-expanded={isSearchSettingsOpen}
+                onClick={() => setIsSearchSettingsOpen((open) => !open)}
+                className="absolute right-3 flex h-7 w-7 items-center justify-center rounded-full text-[rgb(83,100,113)] transition-colors hover:bg-black/10 dark:text-gray-400 dark:hover:bg-white/10"
+              >
+                <Settings2 className="h-[18px] w-[18px]" />
+              </button>
             </div>
+
+            {isSearchSettingsOpen && (
+              <>
+                <button
+                  type="button"
+                  aria-label="検索設定を閉じる"
+                  className="fixed inset-0 z-[55] cursor-default"
+                  onClick={() => setIsSearchSettingsOpen(false)}
+                />
+                <div className="absolute right-0 top-12 z-[60] w-64 rounded-2xl border border-black/5 bg-white p-3 shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:border-white/10 dark:bg-[#15202b]">
+                  <label className="flex cursor-pointer items-center gap-3 rounded-xl px-2 py-2 text-[14px] hover:bg-black/[0.03] dark:hover:bg-white/5">
+                    <input
+                      type="checkbox"
+                      checked={excludeBlueskyPosts}
+                      onChange={(event) => {
+                        const next = event.target.checked;
+                        setExcludeBlueskyPosts(next);
+                        if (searchQuery) {
+                          setPage(0);
+                          setHasMore(true);
+                          void fetchPosts(searchQuery, 0, !next);
+                        }
+                      }}
+                      className="h-4 w-4 accent-primary"
+                    />
+                    <span>Blueskyの投稿を含めない</span>
+                  </label>
+                </div>
+              </>
+            )}
 
             {isInputFocused && suggestionRows.length > 0 && (
               <div ref={suggestBoxRef} className="absolute left-0 right-0 mt-2 bg-white/95 dark:bg-[#15202b]/95 backdrop-blur-xl rounded-2xl shadow-[0_8px_30px_rgba(0,0,0,0.1)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.3)] border border-black/5 dark:border-white/10 overflow-hidden max-h-[420px] overflow-y-auto">
@@ -1405,6 +1555,7 @@ export default function SearchPage() {
                           <img
                             src={row.user.avatarUrl}
                             alt={row.user.displayName}
+                            loading="lazy"
                             className="w-10 h-10 rounded-full object-cover"
                           />
                         ) : (

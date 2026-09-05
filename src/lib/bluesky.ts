@@ -3,6 +3,7 @@
 export const BSKY_AUTHOR_HANDLES = [] as const;
 export const BSKY_AUTHOR_HANDLE = 'jp.bsky.app';
 export const BSKY_PUBLIC_API = 'https://public.api.bsky.app/xrpc';
+const BSKY_SEARCH_API = 'https://api.bsky.app/xrpc';
 export const BSKY_HANDLES_STORAGE_KEY = 'lime_bluesky_author_handles';
 
 export function normalizeBlueskyHandle(value: string): string {
@@ -87,6 +88,26 @@ export type BlueskyAuthorFeedPage = {
   cursor: string | null;
 };
 
+export type BlueskyProfile = BlueskyMappedPost['author'] & {
+  coverUrl: string;
+  followersCount: number;
+  followingCount: number;
+};
+
+export type BlueskyPostThread = {
+  post: BlueskyMappedPost | null;
+  replies: BlueskyMappedPost[];
+};
+
+export type BlueskySearchResults = {
+  posts: BlueskyMappedPost[];
+  users: BlueskyProfile[];
+};
+
+const BLUESKY_SEARCH_CACHE_TTL_MS = 60_000;
+const blueskySearchCache = new Map<string, { expiresAt: number; result: BlueskySearchResults }>();
+const blueskySearchRequests = new Map<string, Promise<BlueskySearchResults>>();
+
 type BlueskyEmbed = {
   $type?: string;
   images?: Array<{ fullsize?: string; thumb?: string }>;
@@ -134,8 +155,73 @@ type BlueskyFeedItem = {
   };
 };
 
+type BlueskyActorProfile = {
+  did?: string;
+  handle?: string;
+  displayName?: string;
+  avatar?: string;
+  banner?: string;
+  description?: string;
+  createdAt?: string;
+  followersCount?: number;
+  followsCount?: number;
+};
+
+type BlueskyThreadView = {
+  post?: BlueskyFeedItem['post'];
+  replies?: BlueskyThreadView[];
+};
+
 const uniqueStrings = (values: Array<string | null | undefined>) =>
   Array.from(new Set(values.filter((value): value is string => Boolean(value))));
+
+function mapBlueskyActorProfile(profile: BlueskyActorProfile): BlueskyProfile | null {
+  if (!profile.did || !profile.handle) return null;
+  return {
+    id: profile.did,
+    username: profile.handle,
+    displayName: profile.displayName || profile.handle,
+    avatarUrl: profile.avatar || '',
+    coverUrl: profile.banner || '',
+    bio: profile.description || '',
+    createdAt: profile.createdAt || new Date().toISOString(),
+    isOfficial: false,
+    followersCount: profile.followersCount ?? 0,
+    followingCount: profile.followsCount ?? 0,
+  };
+}
+
+async function fetchBlueskySearchEndpoint(
+  endpoint: string,
+  params: URLSearchParams,
+  signal?: AbortSignal,
+): Promise<Response> {
+  let lastResponse: Response | null = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    // 公開 AppView はブラウザからの未認証 GET 用に提供されているため、
+    // まずこちらを使う。CDN/CORS などで一方が失敗しても、もう一方を試す。
+    for (const baseUrl of [BSKY_PUBLIC_API, BSKY_SEARCH_API]) {
+      try {
+        const response = await fetch(`${baseUrl}/${endpoint}?${params.toString()}`, {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+          signal,
+        });
+        if (response.ok) return response;
+        lastResponse = response;
+      } catch (error) {
+        if (signal?.aborted) throw error;
+      }
+    }
+    if (attempt === 0 && lastResponse && (lastResponse.status === 403 || lastResponse.status === 429 || lastResponse.status >= 500)) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 300));
+    } else {
+      break;
+    }
+  }
+  if (!lastResponse) throw new Error(`Bluesky ${endpoint} request did not start`);
+  return lastResponse;
+}
 
 function extractImageUrls(embed: BlueskyEmbed | undefined): string[] {
   if (!embed) return [];
@@ -313,10 +399,161 @@ export function mapBlueskyFeedItemToPost(item: BlueskyFeedItem): BlueskyMappedPo
   };
 }
 
+const getBlueskyUriFromPostId = (postId: string) => {
+  const decodedId = (() => {
+    try {
+      return decodeURIComponent(postId);
+    } catch {
+      return postId;
+    }
+  })();
+  const uri = decodedId.startsWith('bsky:') ? decodedId.slice('bsky:'.length) : decodedId;
+  return uri.startsWith('at://') ? uri : null;
+};
+
+export async function fetchBlueskyPostThread(postId: string, signal?: AbortSignal): Promise<BlueskyPostThread> {
+  const uri = getBlueskyUriFromPostId(postId);
+  if (!uri) return { post: null, replies: [] };
+
+  const params = new URLSearchParams({ uri, depth: '1' });
+  const response = await fetch(
+    `${BSKY_PUBLIC_API}/app.bsky.feed.getPostThread?${params.toString()}`,
+    { method: 'GET', headers: { Accept: 'application/json' }, signal },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Bluesky post thread failed: ${response.status}`);
+  }
+
+  const payload = (await response.json()) as { thread?: BlueskyThreadView };
+  const thread = payload.thread;
+  return {
+    post: thread?.post ? mapBlueskyFeedItemToPost({ post: thread.post }) : null,
+    replies: (thread?.replies || [])
+      .map((reply) => reply.post ? mapBlueskyFeedItemToPost({ post: reply.post }) : null)
+      .filter((reply): reply is BlueskyMappedPost => Boolean(reply)),
+  };
+}
+
+export async function fetchBlueskyPost(postId: string, signal?: AbortSignal): Promise<BlueskyMappedPost | null> {
+  const thread = await fetchBlueskyPostThread(postId, signal);
+  return thread.post;
+}
+
+export async function fetchBlueskyProfile(actor: string, signal?: AbortSignal): Promise<BlueskyProfile | null> {
+  const normalizedActor = normalizeBlueskyHandle(actor);
+  if (!normalizedActor) return null;
+
+  const params = new URLSearchParams({ actor: normalizedActor });
+  const response = await fetch(
+    `${BSKY_PUBLIC_API}/app.bsky.actor.getProfile?${params.toString()}`,
+    { method: 'GET', headers: { Accept: 'application/json' }, signal },
+  );
+
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Bluesky profile failed: ${response.status}`);
+
+  return mapBlueskyActorProfile((await response.json()) as BlueskyActorProfile);
+}
+
+async function searchBlueskyUncached(query: string, options?: { includePosts?: boolean; signal?: AbortSignal }): Promise<BlueskySearchResults> {
+  const q = query.trim();
+  if (!q) return { posts: [], users: [] };
+  // Lime のハッシュタグリンクは `#タグ` の形で検索ページへ渡す。一方、
+  // Bluesky の投稿検索ではタグ記号を外した語の方が安定してヒットするため、
+  // 元の語が空振りしたときに使う検索語も用意する。
+  const taglessQuery = q.replace(/(^|[\s\u3000])[#＃]+/g, '$1').trim();
+
+  const actorRequest = fetchBlueskySearchEndpoint(
+    'app.bsky.actor.searchActors', new URLSearchParams({ q, limit: '25' }), options?.signal,
+  );
+  const postRequest = options?.includePosts === false
+    ? Promise.resolve(null)
+    : fetchBlueskySearchEndpoint(
+      'app.bsky.feed.searchPosts', new URLSearchParams({ q, limit: '50' }), options?.signal,
+    );
+  const [actorOutcome, postOutcome] = await Promise.allSettled([actorRequest, postRequest]);
+  if (actorOutcome.status === 'rejected') throw actorOutcome.reason;
+  const actorResponse = actorOutcome.value;
+  const postResponse = postOutcome.status === 'fulfilled' ? postOutcome.value : null;
+  if (!actorResponse.ok) throw new Error(`Bluesky actor search failed: ${actorResponse.status}`);
+
+  const actorPayload = (await actorResponse.json()) as { actors?: BlueskyActorProfile[] };
+  const users = (actorPayload.actors || [])
+    .map(mapBlueskyActorProfile)
+    .filter((user): user is BlueskyProfile => Boolean(user));
+
+  let posts: BlueskyMappedPost[] = [];
+  if (postResponse?.ok) {
+    const postPayload = (await postResponse.json()) as { posts?: BlueskyFeedItem['post'][] };
+    posts = (postPayload.posts || [])
+      .map((post) => mapBlueskyFeedItemToPost({ post }))
+      .filter((post): post is BlueskyMappedPost => Boolean(post));
+  }
+
+  if (posts.length === 0 && options?.includePosts !== false && taglessQuery && taglessQuery !== q) {
+    const taglessResponse = await fetchBlueskySearchEndpoint(
+      'app.bsky.feed.searchPosts', new URLSearchParams({ q: taglessQuery, limit: '50' }), options?.signal,
+    );
+    if (taglessResponse.ok) {
+      const taglessPayload = (await taglessResponse.json()) as { posts?: BlueskyFeedItem['post'][] };
+      posts = (taglessPayload.posts || [])
+        .map((post) => mapBlueskyFeedItemToPost({ post }))
+        .filter((post): post is BlueskyMappedPost => Boolean(post));
+    }
+  }
+
+  if (posts.length === 0 && options?.includePosts !== false) {
+    // 検索用エンドポイントが地域/CDN側で拒否される場合でも、検索結果全体を
+    // 空にしない。該当アカウントの公開フィードから本文一致する投稿を補完する。
+    const normalizedQuery = (taglessQuery || q).toLocaleLowerCase();
+    const pages = await Promise.all(
+      users.slice(0, 10).map((user) => fetchBlueskyAuthorFeed({
+        actor: user.username,
+        limit: 100,
+        filter: 'posts_with_replies',
+      }).catch(() => null)),
+    );
+    posts = pages
+      .flatMap((page) => page?.posts || [])
+      .filter((post) => post.content.toLocaleLowerCase().includes(normalizedQuery));
+  }
+
+  return {
+    users,
+    posts,
+  };
+}
+
+export async function searchBluesky(query: string, options?: { includePosts?: boolean; signal?: AbortSignal }): Promise<BlueskySearchResults> {
+  const q = query.trim();
+  if (!q) return { posts: [], users: [] };
+  if (options?.signal) return searchBlueskyUncached(q, options);
+
+  const key = `${options?.includePosts === false ? 'accounts' : 'all'}:${q.toLocaleLowerCase()}`;
+  const cached = blueskySearchCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.result;
+
+  const inFlight = blueskySearchRequests.get(key);
+  if (inFlight) return inFlight;
+
+  const request = searchBlueskyUncached(q, options)
+    .then((result) => {
+      blueskySearchCache.set(key, { result, expiresAt: Date.now() + BLUESKY_SEARCH_CACHE_TTL_MS });
+      return result;
+    })
+    .finally(() => {
+      blueskySearchRequests.delete(key);
+    });
+  blueskySearchRequests.set(key, request);
+  return request;
+}
+
 export async function fetchBlueskyAuthorFeed(options?: {
   actor?: string;
   cursor?: string | null;
   limit?: number;
+  filter?: 'posts_no_replies' | 'posts_with_replies' | 'posts_and_author_threads';
   signal?: AbortSignal;
 }): Promise<BlueskyAuthorFeedPage> {
   const actor = options?.actor || BSKY_AUTHOR_HANDLE;
@@ -324,7 +561,7 @@ export async function fetchBlueskyAuthorFeed(options?: {
   const params = new URLSearchParams({
     actor,
     limit: String(limit),
-    filter: 'posts_no_replies',
+    filter: options?.filter || 'posts_no_replies',
   });
 
   if (options?.cursor) {
