@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, MessageCircle, X, Plus, Link as LinkIcon, Upload, Send } from 'lucide-react'; // Plusを追加
+import { ArrowLeft, MessageCircle, X, Plus, Link as LinkIcon, Upload, Send, Heart, Globe } from 'lucide-react'; // Plusを追加
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { LikeButton } from '@/components/post/LikeButton';
@@ -64,9 +64,43 @@ interface ReplicatedDot {
   delay: number;
 }
 
+// --- Blueskyの投稿を判定・表示するためのヘルパー（PostCard/Feedと同じロジック） ---
+// このポスト詳細ページをBluesky由来の投稿で開いた場合、外部リンクへ飛ばさずに
+// 本文・画像・埋め込みをそのまま表示しつつ、いいね・リアクション・プロフィール遷移
+// といった実際の操作だけBluesky側で行ってもらうように振り分ける。
+type BlueskyPostFields = {
+  source?: 'lime' | 'bluesky';
+  blueskyUrl?: string;
+  blueskyUri?: string;
+};
+
+const isBlueskyPostLike = (post: { id?: string; source?: string }) => (
+  post.source === 'bluesky' || String(post.id || '').startsWith('bsky:')
+);
+
+const getBlueskyPostUrl = (post: Pick<BlueskyPostFields, 'blueskyUrl'> & { author?: { username?: string }; id?: string }) => {
+  if (post.blueskyUrl) return post.blueskyUrl;
+
+  const id = String(post.id || '');
+  if (!id.startsWith('bsky:')) return null;
+
+  const uri = id.slice('bsky:'.length);
+  const rkey = uri.split('/').pop();
+  const handle = post.author?.username;
+  if (!rkey || !handle) return null;
+  return `https://bsky.app/profile/${handle}/post/${rkey}`;
+};
+
+const openExternalUrl = (url: string) => {
+  window.open(url, '_blank', 'noopener,noreferrer');
+};
+
 export default function PostDetail() {
   const { id = '' } = useParams();
   const { data, isLoading, isError } = usePost(id);
+  const isBlueskyPost = isBlueskyPostLike({ id });
+  const blueskyPostUrl = data ? getBlueskyPostUrl(data as unknown as { id?: string; blueskyUrl?: string; author?: { username?: string } }) : null;
+  const blueskyProfileUrl = isBlueskyPost && data ? `https://bsky.app/profile/${data.author.username}` : null;
   const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null); // 拡大用
   const [failedUrls, setFailedUrls] = useState<string[]>([]); // 読み込み失敗URL管理
   const navigate = useNavigate();
@@ -212,6 +246,12 @@ export default function PostDetail() {
       }
     });
 
+    // Bluesky由来の投稿はSupabase上にリアクションが存在しないため、取得・購読をスキップする
+    if (isBlueskyPost) {
+      setReactions([]);
+      return;
+    }
+
     fetchReactions();
     fetchCustomEmojis();
 
@@ -234,7 +274,7 @@ export default function PostDetail() {
     return () => {
       supabase.removeChannel(channels);
     };
-  }, [id]);
+  }, [id, isBlueskyPost]);
 
   const fetchReactions = async () => {
     if (!id) return;
@@ -442,6 +482,14 @@ export default function PostDetail() {
     emoji.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  // Blueskyの投稿者をタップした際の処理（外部のBlueskyプロフィールを開く）
+  const handleAuthorNavigate = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!isBlueskyPost) return;
+    e.preventDefault();
+    if (blueskyProfileUrl) openExternalUrl(blueskyProfileUrl);
+  };
+
   // 画像クリック時の処理
   const handleImageClick = (e: React.MouseEvent, url: string) => {
     e.preventDefault();
@@ -602,6 +650,10 @@ export default function PostDetail() {
 
   const getPostShareUrl = () => {
     if (!data) return '';
+
+    if (isBlueskyPost && blueskyPostUrl) {
+      return blueskyPostUrl;
+    }
 
     if (typeof window === 'undefined') {
       return `/post/${data.id}`;
@@ -1190,14 +1242,14 @@ export default function PostDetail() {
         }>
           <div className="flex items-center justify-between">
             <div className={`flex items-center gap-3 ${useMobileThreadLayout ? 'post-detail-mobile-author-row' : ''}`}>
-              <Link to={`/u/${data.author.username}`}>
+              <Link to={`/u/${data.author.username}`} onClick={handleAuthorNavigate}>
                 <Avatar className={useMobileThreadLayout ? "post-detail-mobile-avatar" : "h-12 w-12 border-2 border-primary/30"}>
                   <AvatarImage src={data.author.avatarUrl} alt={data.author.displayName} />
                   <AvatarFallback>{data.author.displayName.slice(0, 1)}</AvatarFallback>
                 </Avatar>
               </Link>
               <div className="min-w-0">
-                <Link to={`/u/${data.author.username}`} className="flex items-center gap-0.5 min-w-0 font-display font-bold hover:underline">
+                <Link to={`/u/${data.author.username}`} className="flex items-center gap-0.5 min-w-0 font-display font-bold hover:underline" onClick={handleAuthorNavigate}>
                   <span className={`truncate ${useMobileThreadLayout ? 'post-detail-mobile-name' : ''}`}>
                     {data.author.displayName}
                   </span>
@@ -1239,6 +1291,14 @@ export default function PostDetail() {
                   {renderTextWithUrls(url)}
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Bluesky由来の投稿であることを示すインジケーター */}
+          {isBlueskyPost && (
+            <div className="flex items-center gap-1 mt-1.5 text-muted-foreground/70">
+              <Globe className="h-3.5 w-3.5" />
+              <span className="text-[15px] font-medium">Bluesky</span>
             </div>
           )}
 
@@ -1375,22 +1435,56 @@ export default function PostDetail() {
 
           <div className={isMobile ? "mt-3 flex items-center gap-1 relative h-9 post-detail-mobile-action-row" : "mt-3 flex items-center gap-1 border-t border-border/60 pt-3 relative h-9"}>
             <div onClick={(e) => e.stopPropagation()} className={`flex items-center h-full ${isMobile ? 'post-detail-mobile-action-hit' : ''}`}>
-              <LikeButton 
-                postId={data.id} 
-                liked={data.likedByMe} 
-                count={data.likesCount}
-              />
+              {isBlueskyPost ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"
+                >
+                  <Heart className="h-5 w-5" />
+                  <span className="font-bold tabular-nums text-sm">{formatDisplayCount(data.likesCount)}</span>
+                </button>
+              ) : (
+                <LikeButton 
+                  postId={data.id} 
+                  liked={data.likedByMe} 
+                  count={data.likesCount}
+                />
+              )}
             </div>
-            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm text-muted-foreground ${isMobile ? 'post-detail-mobile-reply-count' : ''}`}>
-              <MessageCircle className="h-5 w-5" />
-              <span className="font-bold tabular-nums">{formatDisplayCount(data.commentsCount)}</span>
-            </span>
+            {isBlueskyPost ? (
+              <a
+                href={blueskyPostUrl || '#'}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm text-muted-foreground transition-colors hover:text-accent ${isMobile ? 'post-detail-mobile-reply-count' : ''}`}
+              >
+                <MessageCircle className="h-5 w-5" />
+                <span className="font-bold tabular-nums">{formatDisplayCount(data.commentsCount)}</span>
+              </a>
+            ) : (
+              <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm text-muted-foreground ${isMobile ? 'post-detail-mobile-reply-count' : ''}`}>
+                <MessageCircle className="h-5 w-5" />
+                <span className="font-bold tabular-nums">{formatDisplayCount(data.commentsCount)}</span>
+              </span>
+            )}
 
             {/* --- プラスボタンエリア --- */}
             <div className="relative inline-flex items-center h-full" onClick={(e) => e.stopPropagation()}>
               <button
                 ref={buttonRef}
-                onClick={() => setShowPicker(!showPicker)}
+                onClick={() => {
+                  if (isBlueskyPost) {
+                    if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
+                    return;
+                  }
+                  setShowPicker(!showPicker);
+                }}
                 className={`inline-flex items-center justify-center p-1.5 rounded-full transition-colors hover:text-accent h-8 w-8 origin-center ${isMobile ? 'post-detail-mobile-plus-button' : ''} ${
                   showPicker ? 'text-accent bg-accent/10' : 'text-muted-foreground'
                 }`}

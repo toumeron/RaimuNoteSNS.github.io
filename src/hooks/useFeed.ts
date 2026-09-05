@@ -38,6 +38,7 @@ const LIMIT = 10;
 type ViewerPostAccess = {
   currentUserId: string | null;
   authorIdsFollowingViewer: Set<string>;
+  creatorIdsViewerIsMemberOf: Set<string>;
 };
 
 const getPostAuthorId = (post: any) => {
@@ -51,21 +52,34 @@ const getViewerPostAccess = async (): Promise<ViewerPostAccess> => {
     return {
       currentUserId: null,
       authorIdsFollowingViewer: new Set<string>(),
+      creatorIdsViewerIsMemberOf: new Set<string>(),
     };
   }
 
-  const { data, error } = await supabase
-    .from('follows')
-    .select('follower_id')
-    .eq('followee_id', currentUserId);
+  const [followsRes, membershipsRes] = await Promise.all([
+    supabase
+      .from('follows')
+      .select('follower_id')
+      .eq('followee_id', currentUserId),
+    supabase
+      .from('memberships')
+      .select('creator_id')
+      .eq('member_id', currentUserId),
+  ]);
 
-  if (error) throw error;
+  if (followsRes.error) throw followsRes.error;
+  if (membershipsRes.error) throw membershipsRes.error;
 
   return {
     currentUserId,
     authorIdsFollowingViewer: new Set(
-      (data || [])
+      (followsRes.data || [])
         .map((follow: any) => follow.follower_id)
+        .filter(Boolean),
+    ),
+    creatorIdsViewerIsMemberOf: new Set(
+      (membershipsRes.data || [])
+        .map((membership: any) => membership.creator_id)
         .filter(Boolean),
     ),
   };
@@ -75,6 +89,7 @@ const canViewPost = (
   post: any,
   currentUserId: string | null,
   authorIdsFollowingViewer: Set<string>,
+  creatorIdsViewerIsMemberOf: Set<string>,
 ) => {
   const visibility = post?.visibility ?? 'public';
   const postAuthorId = getPostAuthorId(post);
@@ -87,6 +102,10 @@ const canViewPost = (
 
   if (visibility === 'following') {
     return authorIdsFollowingViewer.has(postAuthorId);
+  }
+
+  if (visibility === 'members') {
+    return creatorIdsViewerIsMemberOf.has(postAuthorId);
   }
 
   return false;
@@ -132,16 +151,25 @@ export const usePost = (id: string) =>
  * 限定公開 following の表示条件:
  * 閲覧者が投稿者をフォローしているかではなく、
  * 投稿者が閲覧者をフォローしている場合のみ表示します。
+ *
+ * メンバー限定 members の表示条件:
+ * 閲覧者が投稿者(creator)のメンバーになっている場合のみ表示します。
  */
 export const useUserPosts = (userId: string | undefined) =>
   useQuery({
     queryKey: userPostsKey(userId ?? ''),
     queryFn: async () => {
       const posts = await getPostsByUser(userId!);
-      const { currentUserId, authorIdsFollowingViewer } = await getViewerPostAccess();
+      const { currentUserId, authorIdsFollowingViewer, creatorIdsViewerIsMemberOf } =
+        await getViewerPostAccess();
 
       return posts.filter((post: any) => {
-        return canViewPost(post, currentUserId, authorIdsFollowingViewer);
+        return canViewPost(
+          post,
+          currentUserId,
+          authorIdsFollowingViewer,
+          creatorIdsViewerIsMemberOf,
+        );
       });
     },
     enabled: !!userId,

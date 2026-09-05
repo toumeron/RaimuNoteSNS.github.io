@@ -9,7 +9,6 @@ import { formatRelative } from '@/lib/format';
 import type { PostWithAuthor } from '@/types';
 import { deletePost } from '@/api/posts';
 import { getCurrentUserId } from '@/lib/currentUser';
-import { getYouTubeId } from '@/lib/utils';
 import { YouTubeEmbed } from '@/components/YouTubeEmbed';
 import { SpotifyEmbed } from '@/components/SpotifyEmbed';
 import { supabase } from '@/lib/supabase';
@@ -91,31 +90,28 @@ const formatDisplayCount = (count: number) => {
   return count.toLocaleString();
 };
 
-type BlueskyPostFields = {
-  source?: 'lime' | 'bluesky';
-  blueskyUrl?: string;
-  blueskyUri?: string;
-};
-
 const isBlueskyPostLike = (post: { id?: string; source?: string }) => (
   post.source === 'bluesky' || String(post.id || '').startsWith('bsky:')
 );
 
-const getBlueskyPostUrl = (post: Pick<BlueskyPostFields, 'blueskyUrl'> & { author?: { username?: string }; id?: string }) => {
-  if (post.blueskyUrl) return post.blueskyUrl;
 
-  const id = String(post.id || '');
-  if (!id.startsWith('bsky:')) return null;
+// Bluesky由来の投稿IDは `bsky:at://did:.../app.bsky.feed.post/rkey` のように
+// スラッシュを含む。エンコードせず /post/:id に渡すと経路が分割されて404になる。
+// PostDetail は useParams() の id をデコード済みで受け取り、bsky: を判定する。
+const getAppPostPath = (postId: string) => `/post/${encodeURIComponent(String(postId || ''))}`;
+const getAppProfilePath = (username: string) => `/u/${encodeURIComponent(String(username || ''))}`;
 
-  const uri = id.slice('bsky:'.length);
-  const rkey = uri.split('/').pop();
-  const handle = post.author?.username;
-  if (!rkey || !handle) return null;
-  return `https://bsky.app/profile/${handle}/post/${rkey}`;
-};
+// Bluesky投稿は取得経路によって id / blueskyUri のどちらかにAT-URIが入る場合がある。
+// 既存のPostDetailが判定できる bsky:AT-URI に統一してからアプリ内ルートへ渡す。
+const getInternalPostId = (post: PostWithAuthor & { blueskyUri?: string }) => {
+  if (isBlueskyPostLike(post)) {
+    const blueskyUri = String((post as { blueskyUri?: string }).blueskyUri || '').trim();
+    if (blueskyUri) {
+      return blueskyUri.startsWith('bsky:') ? blueskyUri : `bsky:${blueskyUri}`;
+    }
+  }
 
-const openExternalUrl = (url: string) => {
-  window.open(url, '_blank', 'noopener,noreferrer');
+  return String(post.id || '');
 };
 
 const POST_REACTION_CACHE_LIMIT = 36;
@@ -147,7 +143,10 @@ let currentUserIdFetch: Promise<string | null> | null = null;
 
 const spotifyUrlRegex = /https:\/\/open\.spotify\.com\/(?:[\w-]+\/)?(track|album|playlist)\/[a-zA-Z0-9._?=&/%-]+/gi;
 const imageUrlRegex = /https?:\/\/[^\s]+?\.(?:png|jpg|jpeg|gif|webp|svg)(?:\?[^\s]*)?|https?:\/\/pbs\.twimg\.com\/media\/[^\s?]+(?:\?[^\s]*)?/gi;
-const youtubeUrlRegex = /(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|embed\/|shorts\/)?([a-zA-Z0-9_-]{11})([^?\s\n]*)?(\S+)?/g;
+const youtubeUrlRegex = /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})(?:[^\s]*)?/gi;
+const youtubeIdRegex = /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})(?:[^\s]*)?/i;
+
+const extractYouTubeId = (content: string) => content.match(youtubeIdRegex)?.[1] || null;
 
 const safeUnique = <T,>(values: T[]) => Array.from(new Set(values.filter(Boolean)));
 
@@ -875,10 +874,6 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
   const navigate = useNavigate();
   const [, setTick] = useState(0);
   const isBlueskyPost = isBlueskyPostLike(post);
-  const blueskyPostUrl = getBlueskyPostUrl(post as { blueskyUrl?: string; author?: { username?: string }; id?: string });
-  const blueskyProfileUrl = isBlueskyPost
-    ? `https://bsky.app/profile/${post.author.username}`
-    : null;
 
   const [showPicker, setShowPicker] = useState(false);
   const [customEmojis, setCustomEmojis] = useState<CustomEmoji[]>([]);
@@ -1486,7 +1481,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
   const isCheckingMembersOnlyAccess = isMembersOnlyPost && !isMyPost && isMember === undefined;
 
   const { youtubeId, spotifyUrls, allImageUrls, displayContent, singleImageUrl } = useMemo(() => {
-    const nextYoutubeId = getYouTubeId(post.content);
+    const nextYoutubeId = extractYouTubeId(post.content);
     const nextSpotifyUrls = post.content.match(spotifyUrlRegex) || [];
     const extractedImageUrls = post.content.match(imageUrlRegex) || [];
     const nextAllImageUrls = [...(post.imageUrls || []), ...extractedImageUrls].slice(0, 4);
@@ -1666,19 +1661,18 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
     e.preventDefault();
     e.stopPropagation();
     if (isBlueskyPost) {
-      if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
+      navigate(getAppPostPath(getInternalPostId(post)));
       setShowMenu(false);
       return;
     }
-    navigate(`/post/${post.id}/activity`);
+    navigate(`${getAppPostPath(getInternalPostId(post))}/activity`);
     setShowMenu(false);
   };
 
   const handleAuthorNavigate = (e: React.MouseEvent) => {
+    // Bluesky由来の投稿でもアプリ内のプロフィール画面（/u/:username）へ遷移する。
+    // Link のデフォルト動作を阻害しない。
     e.stopPropagation();
-    if (!isBlueskyPost) return;
-    e.preventDefault();
-    if (blueskyProfileUrl) openExternalUrl(blueskyProfileUrl);
   };
 
   const handleToggleVisibility = async (
@@ -1734,26 +1728,18 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
       return;
     }
 
-    if (isBlueskyPost) {
-      if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
-      return;
-    }
-
-    navigate(`/post/${post.id}`);
+    navigate(getAppPostPath(getInternalPostId(post)));
   };
 
   const getPostShareUrl = () => {
-    if (isBlueskyPost && blueskyPostUrl) {
-      return blueskyPostUrl;
-    }
 
     if (typeof window === 'undefined') {
-      return `/post/${post.id}`;
+      return getAppPostPath(post.id);
     }
 
     const baseUrl = import.meta.env.BASE_URL || '/';
     const normalizedBaseUrl = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
-    return new URL(`post/${post.id}`, new URL(normalizedBaseUrl, window.location.origin)).toString();
+    return new URL(getAppPostPath(post.id).slice(1), new URL(normalizedBaseUrl, window.location.origin)).toString();
   };
 
   const getPostShareText = () => {
@@ -2177,7 +2163,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
           <HoverCard open={profileHoverTarget === 'avatar'} openDelay={300}>
             <HoverCardTrigger asChild>
               <Link
-                to={`/u/${post.author.username}`}
+                to={getAppProfilePath(post.author.username)}
                 className="inline-flex h-11 w-11 shrink-0 items-center justify-center"
                 onMouseEnter={() => openProfileHover('avatar')}
                 onMouseLeave={closeProfileHover}
@@ -2200,7 +2186,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                 <HoverCard open={profileHoverTarget === 'name'} openDelay={300}>
                   <HoverCardTrigger asChild>
                     <Link
-                      to={`/u/${post.author.username}`}
+                      to={getAppProfilePath(post.author.username)}
                       className="inline-flex w-fit max-w-full shrink-0 items-center font-display font-bold text-foreground hover:underline"
                       onMouseEnter={() => openProfileHover('name')}
                       onMouseLeave={closeProfileHover}
@@ -2364,11 +2350,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                   e.stopPropagation();
                   if (shouldSuppressCardNavigation()) return;
                   if (isMembersOnlyPost && !canViewMembersOnlyPost) return;
-                  if (isBlueskyPost) {
-                    if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
-                  } else {
-                    navigate(`/post/${post.id}`);
-                  }
+                  navigate(getAppPostPath(getInternalPostId(post)));
                 }}
               >
                 {isCheckingMembersOnlyAccess ? (
@@ -2572,7 +2554,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
+      navigate(getAppPostPath(getInternalPostId(post)));
                     }}
                     className={isMobile ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
                   >
@@ -2587,27 +2569,14 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                   />
                 )}
               </div>
-              {isBlueskyPost ? (
-                <a
-                  href={blueskyPostUrl || '#'}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={(e) => e.stopPropagation()}
-                  className={isMobile ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
-                >
-                  <MessageCircle className="h-5 w-5" />
-                  <span className={isMobile ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{formatDisplayCount(post.commentsCount)}</span>
-                </a>
-              ) : (
-                <Link
-                  to={`/post/${post.id}`}
-                  onClick={(e) => e.stopPropagation()}
-                  className={isMobile ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
-                >
-                  <MessageCircle className="h-5 w-5" />
-                  <span className={isMobile ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{formatDisplayCount(post.commentsCount)}</span>
-                </Link>
-              )}
+              <Link
+                to={getAppPostPath(getInternalPostId(post))}
+                onClick={(e) => e.stopPropagation()}
+                className={isMobile ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
+              >
+                <MessageCircle className="h-5 w-5" />
+                <span className={isMobile ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{formatDisplayCount(post.commentsCount)}</span>
+              </Link>
 
               <div className="relative inline-flex items-center h-full" onClick={(e) => e.stopPropagation()}>
                 <button
@@ -2620,7 +2589,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                     setShowMenu(false);
                     setMoreMenuPosition(null);
                     if (isBlueskyPost) {
-                      if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
+      navigate(getAppPostPath(getInternalPostId(post)));
                       return;
                     }
                     if (isMembersOnlyPost && !canViewMembersOnlyPost) return;
@@ -3005,7 +2974,8 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
+                       setSelectedImageUrl(null);
+      navigate(getAppPostPath(getInternalPostId(post)));
                     }}
                     className="inline-flex items-center gap-2 text-white/90 hover:text-white transition-colors"
                   >
@@ -3023,12 +2993,8 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
               <button
                 onClick={() => {
                   setSelectedImageUrl(null);
-                  if (isBlueskyPost) {
-                    if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
-                    return;
-                  }
                   if (isMembersOnlyPost && !canViewMembersOnlyPost) return;
-                  navigate(`/post/${post.id}`);
+                  navigate(getAppPostPath(getInternalPostId(post)));
                 }}
                 className="inline-flex items-center gap-2 text-white/90 hover:text-white transition-colors"
               >

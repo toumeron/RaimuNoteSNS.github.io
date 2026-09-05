@@ -18,13 +18,14 @@ const getYouTubeEmbedUrl = (videoId: string) => {
     playsinline: '1',
     rel: '0',
     enablejsapi: '1',
+    autoplay: '0',
   });
 
   if (typeof window !== 'undefined') {
     params.set('origin', window.location.origin);
   }
 
-  return `https://www.youtube.com/embed/${videoId}?${params.toString()}`;
+  return `https://www.youtube.com/embed/${encodeURIComponent(videoId)}?${params.toString()}`;
 };
 
 const parseYouTubeMessage = (data: unknown): any | null => {
@@ -111,25 +112,10 @@ export const YouTubeEmbed = ({ videoId }: YouTubeEmbedProps) => {
     };
   }, [mediaKey]);
 
-  useEffect(() => {
-    const handleWindowBlur = () => {
-      window.setTimeout(() => {
-        if (document.activeElement === iframeRef.current) {
-          notifyPlaying();
-        }
-      }, 0);
-    };
-
-    window.addEventListener('blur', handleWindowBlur);
-
-    return () => {
-      window.removeEventListener('blur', handleWindowBlur);
-    };
-  }, [mediaKey]);
-
   const handleIframeLoad = () => {
     sendYouTubeListeningMessage(iframeRef.current, mediaKey);
     window.setTimeout(() => sendYouTubeListeningMessage(iframeRef.current, mediaKey), 500);
+    window.setTimeout(() => sendYouTubeListeningMessage(iframeRef.current, mediaKey), 1500);
   };
 
   return (
@@ -141,7 +127,7 @@ export const YouTubeEmbed = ({ videoId }: YouTubeEmbedProps) => {
         src={embedUrl}
         title="YouTube video player"
         frameBorder="0"
-        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+        allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
         allowFullScreen
         referrerPolicy="strict-origin-when-cross-origin"
         className="block h-full w-full"

@@ -57,7 +57,8 @@ function rowToPost(row: any, likedIds: Set<string>, repostedIds: Set<string>): P
 
 /**
  * タイムライン取得（無限スクロール対応）
- * ロジック: 公開投稿、自分の投稿、または自分をフォローしている人の投稿を表示
+ * ロジック: 公開投稿、自分の投稿、自分をフォローしている人の投稿、
+ * または自分がメンバーになっている投稿主のメンバー限定投稿を表示
  */
 export async function getFeed(page: number = 0, limit: number = 10): Promise<PostWithAuthor[]> {
   const userId = await getCurrentUserId();
@@ -73,6 +74,14 @@ export async function getFeed(page: number = 0, limit: number = 10): Promise<Pos
   
   const authorsWhoFollowMe = followedByData?.map(f => f.follower_id) || [];
 
+  // 自分がメンバーになっている投稿主（creator）のリストを取得
+  const { data: membershipsData } = await supabase
+    .from('memberships')
+    .select('creator_id')
+    .eq('member_id', userId);
+
+  const creatorsIAmMemberOf = membershipsData?.map(m => m.creator_id) || [];
+
   // OR条件の組み立て
   const conditions = [
     'visibility.eq.public', // 全体公開
@@ -82,6 +91,11 @@ export async function getFeed(page: number = 0, limit: number = 10): Promise<Pos
   // 自分をフォローしている投稿主の投稿（限定公開分を含む）を条件に追加
   if (authorsWhoFollowMe.length > 0) {
     conditions.push(`and(user_id.in.(${authorsWhoFollowMe.join(',')}),visibility.eq.following)`);
+  }
+
+  // 自分がメンバーになっている投稿主の、メンバー限定投稿を条件に追加
+  if (creatorsIAmMemberOf.length > 0) {
+    conditions.push(`and(user_id.in.(${creatorsIAmMemberOf.join(',')}),visibility.eq.members)`);
   }
 
   const [postsRes, likesRes, repostsRes] = await Promise.all([
@@ -106,6 +120,8 @@ export async function getFeed(page: number = 0, limit: number = 10): Promise<Pos
 
 /**
  * フォローしているユーザーの投稿のみを取得（無限スクロール対応）
+ * 「フォロー中」タブでも、フォローしている投稿主のメンバー限定投稿は
+ * 自分がそのメンバーになっていれば表示する。
  */
 export async function getFollowingFeed(page: number = 0, limit: number = 10): Promise<PostWithAuthor[]> {
   const userId = await getCurrentUserId();
@@ -131,14 +147,29 @@ export async function getFollowingFeed(page: number = 0, limit: number = 10): Pr
 
   const authorsWhoFollowMe = followedByData?.map(f => f.follower_id) || [];
 
-  // 3. クエリ条件の組み立て
+  // 3. 自分がメンバーになっている投稿主（creator）のリストを取得
+  const { data: membershipsData } = await supabase
+    .from('memberships')
+    .select('creator_id')
+    .eq('member_id', userId);
+
+  const creatorsIAmMemberOf = membershipsData?.map(m => m.creator_id) || [];
+
+  // 4. クエリ条件の組み立て
   // 「フォローしている人の公開投稿」 OR 「フォローしており、かつ相手も自分をフォローしている限定公開投稿」
+  // OR 「フォローしており、かつ自分がメンバーになっているメンバー限定投稿」
   let filterConditions = `and(user_id.in.(${followingIds.join(',')}),visibility.eq.public)`;
   
   // 相互フォロー（相手が自分をフォローしている）の人がいれば、その人の限定公開投稿も加える
   const mutualFollowIds = followingIds.filter(id => authorsWhoFollowMe.includes(id));
   if (mutualFollowIds.length > 0) {
     filterConditions += `,and(user_id.in.(${mutualFollowIds.join(',')}),visibility.eq.following)`;
+  }
+
+  // フォローしている人の中で、自分がメンバーになっている人のメンバー限定投稿も加える
+  const followingCreatorsIAmMemberOf = followingIds.filter(id => creatorsIAmMemberOf.includes(id));
+  if (followingCreatorsIAmMemberOf.length > 0) {
+    filterConditions += `,and(user_id.in.(${followingCreatorsIAmMemberOf.join(',')}),visibility.eq.members)`;
   }
 
   const [postsRes, likesRes, repostsRes] = await Promise.all([
@@ -163,6 +194,10 @@ export async function getFollowingFeed(page: number = 0, limit: number = 10): Pr
 
 /**
  * 特定ユーザーの投稿取得
+ * 閲覧可能な visibility は次の条件で決まる:
+ * - public: 常に表示
+ * - following: 投稿主が閲覧者をフォローしている場合のみ表示
+ * - members: 閲覧者が投稿主のメンバーである場合のみ表示
  */
 export async function getPostsByUser(targetUserId: string, page: number = 0, limit: number = 10): Promise<PostWithAuthor[]> {
   const userId = await getCurrentUserId();
@@ -178,14 +213,31 @@ export async function getPostsByUser(targetUserId: string, page: number = 0, lim
     .eq('followee_id', userId)
     .maybeSingle();
 
+  // 自分がターゲットユーザーのメンバーになっているか確認
+  let viewerIsMember = false;
+  if (userId && userId !== targetUserId) {
+    const { data: membershipRow } = await supabase
+      .from('memberships')
+      .select('id')
+      .eq('creator_id', targetUserId)
+      .eq('member_id', userId)
+      .maybeSingle();
+
+    viewerIsMember = Boolean(membershipRow);
+  }
+
   let query = supabase
     .from('posts')
     .select(POST_SELECT_QUERY)
     .eq('user_id', targetUserId);
 
-  // 本人でもなく、かつターゲット（投稿主）からフォローもされていない場合は公開投稿のみ
-  if (userId !== targetUserId && !authorFollowsMe) {
-    query = query.eq('visibility', 'public');
+  // 本人以外の場合は、条件を満たす visibility のみに絞り込む
+  if (userId !== targetUserId) {
+    const allowedVisibilities: string[] = ['public'];
+    if (authorFollowsMe) allowedVisibilities.push('following');
+    if (viewerIsMember) allowedVisibilities.push('members');
+
+    query = query.in('visibility', allowedVisibilities);
   }
 
   const [postsRes, likesRes, repostsRes] = await Promise.all([
@@ -250,6 +302,8 @@ export async function getLikedPostsByUser(targetUserId: string, page: number = 0
 
 /**
  * 投稿検索
+ * タイムライン(getFeed)と同様に、自分がメンバーになっている投稿主の
+ * メンバー限定投稿も検索結果に含める。
  */
 export async function searchPosts(query: string, page: number = 0, limit: number = 10): Promise<PostWithAuthor[]> {
   const userId = await getCurrentUserId();
@@ -263,6 +317,12 @@ export async function searchPosts(query: string, page: number = 0, limit: number
     .eq('followee_id', userId);
   const authorsWhoFollowMe = followedByData?.map(f => f.follower_id) || [];
 
+  const { data: membershipsData } = await supabase
+    .from('memberships')
+    .select('creator_id')
+    .eq('member_id', userId);
+  const creatorsIAmMemberOf = membershipsData?.map(m => m.creator_id) || [];
+
   const conditions = [
     'visibility.eq.public',
     `user_id.eq.${userId}`
@@ -270,6 +330,10 @@ export async function searchPosts(query: string, page: number = 0, limit: number
 
   if (authorsWhoFollowMe.length > 0) {
     conditions.push(`and(user_id.in.(${authorsWhoFollowMe.join(',')}),visibility.eq.following)`);
+  }
+
+  if (creatorsIAmMemberOf.length > 0) {
+    conditions.push(`and(user_id.in.(${creatorsIAmMemberOf.join(',')}),visibility.eq.members)`);
   }
 
   const [postsRes, likesRes, repostsRes] = await Promise.all([
@@ -314,6 +378,20 @@ export async function getPostById(id: string): Promise<PostWithAuthor | null> {
       .maybeSingle();
     
     if (!authorFollowsMe) return null;
+  }
+
+  // visibilityが'members'の場合、あなたが投稿主のメンバーであるかチェックする
+  if (postRes.data.visibility === 'members' && postRes.data.user_id !== userId) {
+    if (!userId) return null;
+
+    const { data: membershipRow } = await supabase
+      .from('memberships')
+      .select('id')
+      .eq('creator_id', postRes.data.user_id)
+      .eq('member_id', userId)
+      .maybeSingle();
+
+    if (!membershipRow) return null;
   }
 
   const likedIds = new Set<string>(likeRes.data ? [id] : []);

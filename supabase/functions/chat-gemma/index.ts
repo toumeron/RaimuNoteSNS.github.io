@@ -15,7 +15,9 @@ const SUMMARY_MAX_CHARS = 150
 const ANSWER_MAX_TOKENS = 520
 
 const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
-const SUMMARY_MODEL = "llama-3.1-8b-instant"
+const FAST_MODEL = "openai/gpt-oss-20b"
+const ADVANCED_MODEL = "openai/gpt-oss-120b"
+const SUMMARY_MODEL = FAST_MODEL
 
 type ClientContent = {
   role: "user" | "model"
@@ -512,7 +514,7 @@ async function summarizeOldChat(groqApiKey: string, olderItems: ClientContent[])
       ],
       stream: false,
       temperature: 0.1,
-      max_tokens: 120,
+      max_completion_tokens: 120,
     })
 
     return limitText(data.choices?.[0]?.message?.content ?? "", SUMMARY_MAX_CHARS)
@@ -674,7 +676,7 @@ async function classifyToolIntent(
       ],
       stream: false,
       temperature: 0,
-      max_tokens: 80
+      max_completion_tokens: 80
     })
 
     const content = data.choices?.[0]?.message?.content ?? ""
@@ -995,7 +997,7 @@ async function generateHtmlPreviewArtifact(
     ],
     stream: false,
     temperature: 0.45,
-    max_tokens: 3600,
+    max_completion_tokens: 3600,
   })
 
   const content = response.choices?.[0]?.message?.content ?? ""
@@ -2004,7 +2006,7 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
     return
   }
 
-  const model = body.model === "advanced" ? "llama-3.3-70b-versatile" : "llama-3.1-8b-instant"
+  const model = body.model === "advanced" ? ADVANCED_MODEL : FAST_MODEL
   const latestUserText = getLatestUserText(body.contents)
   const routerContext = buildRouterContext(body.contents)
   const baseMessages = await buildBaseMessages(groqApiKey, body.contents, controller)
@@ -2052,7 +2054,7 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
           ],
           stream: true,
           temperature: 0.55,
-          max_tokens: ANSWER_MAX_TOKENS,
+          max_completion_tokens: ANSWER_MAX_TOKENS,
         }, controller)
       } catch (error) {
         console.error("general fallback Groq stream failed:", error)
@@ -2087,7 +2089,7 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
         ],
         stream: true,
         temperature: 0.35,
-        max_tokens: ANSWER_MAX_TOKENS,
+        max_completion_tokens: ANSWER_MAX_TOKENS,
       }, controller)
     } catch (error) {
       console.error("direct search final Groq stream failed:", error)
@@ -2108,7 +2110,7 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
       ],
       stream: true,
       temperature: 0.6,
-      max_tokens: ANSWER_MAX_TOKENS,
+      max_completion_tokens: ANSWER_MAX_TOKENS,
     }, controller)
     return
   }
@@ -2133,7 +2135,7 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
       tool_choice: toolChoiceForIntent(toolIntent.action),
       stream: false,
       temperature: 0.2,
-      max_tokens: 2600,
+      max_completion_tokens: 2600,
     })
     firstMessage = firstResponse.choices?.[0]?.message
   } catch (error) {
@@ -2143,7 +2145,7 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
       messages: baseMessages,
       stream: true,
       temperature: 0.6,
-      max_tokens: ANSWER_MAX_TOKENS,
+      max_completion_tokens: ANSWER_MAX_TOKENS,
     }, controller)
     return
   }
@@ -2193,7 +2195,7 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
       messages: finalMessages,
       stream: true,
       temperature: 0.6,
-      max_tokens: ANSWER_MAX_TOKENS,
+      max_completion_tokens: ANSWER_MAX_TOKENS,
     }, controller)
   } catch (error) {
     console.error("final Groq stream failed:", error)
@@ -2215,7 +2217,7 @@ Deno.serve((req) => {
       try {
         await handleChatStream(req, controller)
       } catch (error) {
-        console.error("chat-gemma fatal error:", error)
+        console.error("limeai fatal error:", error)
         sseText(controller, "一時的なエラーが発生しました。もう一度お試しください。")
         sseDone(controller)
       } finally {

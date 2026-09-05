@@ -2,7 +2,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
 import { useInView } from 'react-intersection-observer';
-import { Loader2, Image as ImageIcon, X, MessageCircle, Plus, Upload, Link as LinkIcon, Send } from 'lucide-react';
+import { Loader2, Image as ImageIcon, X, MessageCircle, Plus, Upload, Link as LinkIcon, Send, Globe, Heart } from 'lucide-react';
 import { ProfileHeader } from '@/components/profile/ProfileHeader';
 import { PostCard } from '@/components/feed/PostCard';
 import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
@@ -74,6 +74,37 @@ const canShowParentPostInsideProfileReplies = ({
   if (currentUserId && authorId && visibleLimitedParentAuthorIds.has(authorId)) return true;
 
   return false;
+};
+
+// --- Blueskyの投稿を判定・表示するためのヘルパー（PostCard/Feedと同じロジック） ---
+// プロフィールの返信スレッドで表示する「親ポスト」がBluesky由来だった場合、
+// 外部リンクへ飛ばさずに内容（本文・画像・埋め込み）はそのまま表示しつつ、
+// プロフィール遷移やリアクション・返信などの実操作だけBluesky側で行ってもらう。
+type BlueskyPostFields = {
+  source?: 'lime' | 'bluesky';
+  blueskyUrl?: string;
+  blueskyUri?: string;
+};
+
+const isBlueskyPostLike = (post: { id?: string; source?: string }) => (
+  post.source === 'bluesky' || String(post.id || '').startsWith('bsky:')
+);
+
+const getBlueskyPostUrl = (post: Pick<BlueskyPostFields, 'blueskyUrl'> & { author?: { username?: string }; id?: string }) => {
+  if (post.blueskyUrl) return post.blueskyUrl;
+
+  const id = String(post.id || '');
+  if (!id.startsWith('bsky:')) return null;
+
+  const uri = id.slice('bsky:'.length);
+  const rkey = uri.split('/').pop();
+  const handle = post.author?.username;
+  if (!rkey || !handle) return null;
+  return `https://bsky.app/profile/${handle}/post/${rkey}`;
+};
+
+const openExternalUrl = (url: string) => {
+  window.open(url, '_blank', 'noopener,noreferrer');
 };
 
 const imageRegex =
@@ -752,9 +783,11 @@ const ProfileThreadEmbeds = memo(function ProfileThreadEmbeds({
 const ProfileThreadAuthorLine = memo(function ProfileThreadAuthorLine({
   author,
   createdAt,
+  onAuthorClick,
 }: {
   author: any;
   createdAt: string;
+  onAuthorClick?: (event: ReactMouseEvent) => void;
 }) {
   const displayName = author?.displayName ?? author?.display_name ?? author?.username ?? 'ユーザー';
   const username = author?.username ?? 'unknown';
@@ -765,7 +798,10 @@ const ProfileThreadAuthorLine = memo(function ProfileThreadAuthorLine({
       <Link
         to={`/u/${username}`}
         className="flex items-center min-w-0 shrink font-display font-bold text-foreground hover:underline"
-        onClick={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
+          onAuthorClick?.(event);
+        }}
       >
         <div className="flex items-center gap-0.5 min-w-0">
           <span className="truncate text-[16px] sm:text-base">
@@ -1432,6 +1468,7 @@ const ProfileShareButton = memo(function ProfileShareButton({
   postAuthor,
   buttonClassName = '',
   className = '',
+  shareUrlOverride = null,
 }: {
   postId: string;
   title: string;
@@ -1439,6 +1476,7 @@ const ProfileShareButton = memo(function ProfileShareButton({
   postAuthor: any;
   buttonClassName?: string;
   className?: string;
+  shareUrlOverride?: string | null;
 }) {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [showShareMenu, setShowShareMenu] = useState(false);
@@ -1453,6 +1491,9 @@ const ProfileShareButton = memo(function ProfileShareButton({
   const shareButtonRef = useRef<HTMLButtonElement>(null);
   const shareMenuRef = useRef<HTMLDivElement>(null);
   const limeDropPanelRef = useRef<HTMLDivElement>(null);
+
+  // Bluesky由来の投稿の場合はLimeNote内のURLではなく、実際のBluesky投稿URLを共有先として使う。
+  const resolveShareUrl = () => shareUrlOverride || getProfilePostShareUrl(postId);
 
   useEffect(() => {
     getCachedCurrentUserId().then(setCurrentUserId);
@@ -1544,7 +1585,7 @@ const ProfileShareButton = memo(function ProfileShareButton({
     event.stopPropagation();
 
     try {
-      await copyTextToClipboard(getProfilePostShareUrl(postId));
+      await copyTextToClipboard(resolveShareUrl());
       setShareFeedback('リンクをコピーしました');
       window.setTimeout(() => setShareFeedback(null), 1400);
       closeShareMenu();
@@ -1559,7 +1600,7 @@ const ProfileShareButton = memo(function ProfileShareButton({
     event.preventDefault();
     event.stopPropagation();
 
-    const url = getProfilePostShareUrl(postId);
+    const url = resolveShareUrl();
 
     try {
       if (typeof navigator !== 'undefined' && navigator.share) {
@@ -1709,7 +1750,7 @@ const ProfileShareButton = memo(function ProfileShareButton({
           sender_id: userId,
           recipient_id: target.id,
           post_id: postId,
-          post_url: getProfilePostShareUrl(postId),
+          post_url: resolveShareUrl(),
           post_author_id: postAuthorId,
           post_author_username: postAuthorUsername,
           post_author_display_name: postAuthorDisplayName,
@@ -1841,7 +1882,7 @@ const ProfileShareButton = memo(function ProfileShareButton({
                   {text}
                 </p>
                 <p className="mt-1 truncate text-xs text-muted-foreground">
-                  {getProfilePostShareUrl(postId)}
+                  {resolveShareUrl()}
                 </p>
               </div>
 
@@ -1916,6 +1957,8 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
   shareText,
   sharePostAuthor,
   onReplyClick,
+  isBluesky = false,
+  blueskyUrl = null,
 }: {
   targetType: 'post' | 'comment';
   targetId: string;
@@ -1927,6 +1970,8 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
   shareText: string;
   sharePostAuthor: any;
   onReplyClick: () => void;
+  isBluesky?: boolean;
+  blueskyUrl?: string | null;
 }) {
   const inlineActionClass = 'inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full sm:px-2.5 sm:text-sm';
   const iconActionClass = 'inline-flex items-center justify-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full origin-center sm:h-8 sm:w-8 sm:p-1.5 sm:px-0';
@@ -1935,7 +1980,22 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
     <div className="profile-thread-actions mt-2 flex items-center gap-1 text-muted-foreground relative h-8 sm:mt-3 sm:h-9" onClick={(event) => event.stopPropagation()}>
       {targetType === 'post' ? (
         <div className="flex items-center h-full">
-          <LikeButton postId={targetId} liked={liked} count={likesCount} />
+          {isBluesky ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (blueskyUrl) openExternalUrl(blueskyUrl);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full sm:px-2.5 sm:text-sm"
+            >
+              <Heart className="h-5 w-5" />
+              <span className="font-bold tabular-nums text-[15px] sm:text-sm">{formatDisplayCount(likesCount)}</span>
+            </button>
+          ) : (
+            <LikeButton postId={targetId} liked={liked} count={likesCount} />
+          )}
         </div>
       ) : (
         <div className="flex items-center h-full profile-thread-comment-like-slot">
@@ -1943,27 +2003,58 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
         </div>
       )}
 
-      <button
-        type="button"
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          onReplyClick();
-        }}
-        className={inlineActionClass}
-        aria-label="返信を表示"
-      >
-        <MessageCircle className="h-5 w-5" />
-        {typeof replyCount === 'number' && (
-          <span className="font-bold tabular-nums text-[15px] sm:text-sm">{formatDisplayCount(replyCount)}</span>
-        )}
-      </button>
+      {isBluesky ? (
+        <a
+          href={blueskyUrl || '#'}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(event) => event.stopPropagation()}
+          className={inlineActionClass}
+          aria-label="Blueskyで見る"
+        >
+          <MessageCircle className="h-5 w-5" />
+          {typeof replyCount === 'number' && (
+            <span className="font-bold tabular-nums text-[15px] sm:text-sm">{formatDisplayCount(replyCount)}</span>
+          )}
+        </a>
+      ) : (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onReplyClick();
+          }}
+          className={inlineActionClass}
+          aria-label="返信を表示"
+        >
+          <MessageCircle className="h-5 w-5" />
+          {typeof replyCount === 'number' && (
+            <span className="font-bold tabular-nums text-[15px] sm:text-sm">{formatDisplayCount(replyCount)}</span>
+          )}
+        </button>
+      )}
 
-      <ProfileReactionButton
-        targetType={targetType}
-        targetId={targetId}
-        buttonClassName={iconActionClass}
-      />
+      {isBluesky ? (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (blueskyUrl) openExternalUrl(blueskyUrl);
+          }}
+          className={iconActionClass}
+          aria-label="リアクションを追加"
+        >
+          <Plus className="h-5 w-5" />
+        </button>
+      ) : (
+        <ProfileReactionButton
+          targetType={targetType}
+          targetId={targetId}
+          buttonClassName={iconActionClass}
+        />
+      )}
 
       <ProfileShareButton
         postId={sharePostId}
@@ -1972,6 +2063,7 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
         postAuthor={sharePostAuthor}
         buttonClassName={iconActionClass}
         className="ml-auto shrink-0"
+        shareUrlOverride={isBluesky ? blueskyUrl : null}
       />
     </div>
   );
@@ -1997,7 +2089,26 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
   const threadAvatarClassName = "h-11 w-11 border-2 border-primary/30";
   const replyAvatarClassName = threadAvatarClassName;
 
+  // 親ポストがBluesky由来の場合、PostCard/Feedと同じ判定ロジックを使い、
+  // 本文・画像・埋め込みはこのままインラインで表示しつつ（＝外部リンクへ飛ばさず閲覧できる）、
+  // プロフィール遷移・返信・リアクションといった実際の操作だけBluesky側で行ってもらう。
+  const isParentBluesky = parent ? isBlueskyPostLike(parent) : false;
+  const parentBlueskyUrl = parent && isParentBluesky ? getBlueskyPostUrl(parent) : null;
+  const parentBlueskyProfileUrl = isParentBluesky && parentAuthor?.username
+    ? `https://bsky.app/profile/${parentAuthor.username}`
+    : null;
+
+  const handleParentAuthorClick = (event: ReactMouseEvent) => {
+    if (!isParentBluesky) return;
+    event.preventDefault();
+    if (parentBlueskyProfileUrl) openExternalUrl(parentBlueskyProfileUrl);
+  };
+
   const openThread = () => {
+    if (isParentBluesky) {
+      if (parentBlueskyUrl) openExternalUrl(parentBlueskyUrl);
+      return;
+    }
     navigate(`/post/${primaryComment.postId}`);
   };
 
@@ -2014,7 +2125,10 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
             <Link
               to={`/u/${parentAuthor?.username ?? 'unknown'}`}
               className="shrink-0"
-              onClick={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                handleParentAuthorClick(event);
+              }}
             >
               <Avatar className={threadAvatarClassName}>
                 <AvatarImage src={parentAuthor?.avatarUrl ?? parentAuthor?.avatar_url ?? ''} alt={parentAuthor?.displayName ?? parentAuthor?.display_name ?? parentAuthor?.username ?? ''} />
@@ -2025,13 +2139,24 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
           </div>
 
           <div className="min-w-0 pb-3">
-            <ProfileThreadAuthorLine author={parentAuthor} createdAt={parent.createdAt ?? parent.created_at ?? ''} />
+            <ProfileThreadAuthorLine
+              author={parentAuthor}
+              createdAt={parent.createdAt ?? parent.created_at ?? ''}
+              onAuthorClick={isParentBluesky ? handleParentAuthorClick : undefined}
+            />
 
             {parentContent ? (
               <p className="whitespace-pre-wrap break-words text-[16px] leading-normal text-foreground mt-1 sm:text-base sm:leading-relaxed">
                 {renderProfileThreadTextWithMentions(parentContent, navigate)}
               </p>
             ) : null}
+
+            {isParentBluesky && (
+              <div className="flex items-center gap-1 mt-1.5 text-muted-foreground/70">
+                <Globe className="h-3.5 w-3.5" />
+                <span className="text-[15px] font-medium">Bluesky</span>
+              </div>
+            )}
 
             <ProfileThreadEmbeds
               item={parent}
@@ -2064,6 +2189,8 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
               shareText={clippedParentContent ? `${parentDisplayName}さんのポスト: ${clippedParentContent}` : `${parentDisplayName}さんのポスト`}
               sharePostAuthor={parentAuthor}
               onReplyClick={openThread}
+              isBluesky={isParentBluesky}
+              blueskyUrl={parentBlueskyUrl}
             />
           </div>
         </div>

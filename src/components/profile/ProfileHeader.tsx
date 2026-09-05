@@ -53,12 +53,23 @@ export function ProfileHeader({ user }: { user: User }) {
   const joinMembership = useJoinMembership(user.id);
   const leaveMembership = useLeaveMembership(user.id);
   const [isSubscriptionOpen, setIsSubscriptionOpen] = useState(false);
+  const [isAvatarOpen, setIsAvatarOpen] = useState(false);
+  const [isCoverOpen, setIsCoverOpen] = useState(false);
   const [membershipError, setMembershipError] = useState<string | null>(null);
   const [isLinkCopied, setIsLinkCopied] = useState(false);
   useEffect(() => {
-    if (!isSubscriptionOpen) return;
+    if (!isSubscriptionOpen && !isAvatarOpen && !isCoverOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setIsSubscriptionOpen(false);
+      if (event.key !== 'Escape') return;
+      if (isAvatarOpen) {
+        setIsAvatarOpen(false);
+        return;
+      }
+      if (isCoverOpen) {
+        setIsCoverOpen(false);
+        return;
+      }
+      setIsSubscriptionOpen(false);
     };
     document.body.style.overflow = 'hidden';
     document.addEventListener('keydown', handleKeyDown);
@@ -66,7 +77,7 @@ export function ProfileHeader({ user }: { user: User }) {
       document.body.style.overflow = '';
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isSubscriptionOpen]);
+  }, [isSubscriptionOpen, isAvatarOpen, isCoverOpen]);
   useEffect(() => {
     if (isSubscriptionOpen) setMembershipError(null);
   }, [isSubscriptionOpen]);
@@ -226,17 +237,24 @@ export function ProfileHeader({ user }: { user: User }) {
         className={`relative left-1/2 ${liftCoverToMobileTop ? 'profile-header-mobile-cover-to-top -mt-0' : '-mt-0'} w-screen -translate-x-1/2 overflow-hidden bg-transparent text-foreground sm:left-auto sm:mt-0 sm:w-auto sm:translate-x-0 sm:rounded-3xl sm:border sm:border-border/60 sm:bg-card sm:shadow-soft`}
       >
       <div className="profile-header-cover-avatar-gap relative h-[150px] w-full overflow-hidden bg-gradient-cream sm:h-48">
-        {user.coverUrl ? (
-          <img
-            src={user.coverUrl}
-            alt=""
-            className="block h-full w-full object-cover object-center"
-          />
-        ) : (
-          <div className="h-full w-full bg-gradient-cream" />
-        )}
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-background/20 to-transparent sm:from-card/40" />
-        <div className="pointer-events-none absolute inset-0 flex items-start justify-between px-3 pt-8 sm:hidden">
+        <button
+          type="button"
+          aria-label={`${user.displayName}のヘッダー画像を拡大表示`}
+          onClick={() => setIsCoverOpen(true)}
+          className="absolute inset-0 z-0 h-full w-full cursor-pointer border-0 bg-transparent p-0"
+        >
+          {user.coverUrl ? (
+            <img
+              src={user.coverUrl}
+              alt=""
+              className="block h-full w-full object-cover object-center"
+            />
+          ) : (
+            <div className="h-full w-full bg-gradient-cream" />
+          )}
+        </button>
+        <div className="pointer-events-none absolute inset-0 z-[1] bg-gradient-to-t from-background/20 to-transparent sm:from-card/40" />
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-start justify-between px-3 pt-8 sm:hidden">
           <button
             type="button"
             onClick={() => navigate(-1)}
@@ -279,8 +297,13 @@ export function ProfileHeader({ user }: { user: User }) {
       </div>
       <div className="relative px-4 pb-4 sm:px-6 sm:pb-5">
         <div className="relative flex min-h-[52px] items-start justify-between gap-3">
-          <div className="-mt-[44px] box-border h-[88px] w-[88px] shrink-0 rounded-full border-4 border-solid border-transparent bg-transparent sm:-mt-14 sm:h-28 sm:w-28">
-            <Avatar className="h-full w-full overflow-hidden rounded-full bg-background">
+          <button
+            type="button"
+            aria-label={`${user.displayName}のプロフィール画像を拡大表示`}
+            onClick={() => setIsAvatarOpen(true)}
+            className="-mt-[44px] box-border h-[88px] w-[88px] shrink-0 cursor-pointer rounded-full border-4 border-solid border-transparent bg-transparent p-0 text-left outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 sm:-mt-14 sm:h-28 sm:w-28"
+          >
+            <Avatar className="h-full w-full overflow-hidden rounded-full bg-background shadow-soft">
               <AvatarImage
                 src={user.avatarUrl}
                 alt={user.displayName}
@@ -290,18 +313,20 @@ export function ProfileHeader({ user }: { user: User }) {
                 {user.displayName.slice(0, 1)}
               </AvatarFallback>
             </Avatar>
-          </div>
+          </button>
           <div className="mt-3 flex shrink-0 items-center">
             {showSubscriptionButton && (
-              <button
+              <Button
                 type="button"
                 onClick={() => setIsSubscriptionOpen(true)}
-                className={`mr-2 inline-flex h-9 shrink-0 cursor-pointer items-center justify-center rounded-full border-0 px-4 text-sm font-bold text-white sm:h-10 ${
-                  isMember ? 'bg-neutral-500 hover:bg-neutral-600' : 'bg-violet-600 hover:bg-violet-700'
+                className={`mr-2 rounded-full px-5 font-bold ${
+                  isMember
+                    ? 'bg-neutral-500 text-white hover:bg-neutral-600'
+                    : 'bg-violet-600 text-white hover:bg-violet-700'
                 }`}
               >
                 {isMember ? '登録済み' : 'メンバー'}
-              </button>
+              </Button>
             )}
             {isMe ? (
               <Button
@@ -369,6 +394,96 @@ export function ProfileHeader({ user }: { user: User }) {
         </div>
       </div>
       </section>
+      {isCoverOpen && typeof document !== 'undefined' && createPortal(
+        <div
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setIsCoverOpen(false);
+          }}
+          className="fixed inset-0 z-[2147483647] flex items-center justify-center bg-black/80 p-4 backdrop-blur-[2px]"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${user.displayName}のヘッダー画像`}
+            onClick={(event) => {
+              if (event.target === event.currentTarget) setIsCoverOpen(false);
+            }}
+            className="relative flex h-full w-full items-center justify-center"
+          >
+            <button
+              type="button"
+              onClick={() => setIsCoverOpen(false)}
+              aria-label="閉じる"
+              className="absolute left-2 top-2 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-black/50 text-white shadow-soft backdrop-blur-sm transition hover:bg-black/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 sm:left-4 sm:top-4"
+            >
+              <X className="h-6 w-6" />
+            </button>
+            <div
+              className="flex max-h-[82vh] max-w-[92vw] items-center justify-center overflow-hidden rounded-2xl bg-background shadow-[0_24px_90px_rgba(0,0,0,0.6)]"
+              onClick={(event) => event.stopPropagation()}
+            >
+              {user.coverUrl ? (
+                <img
+                  src={user.coverUrl}
+                  alt={user.displayName}
+                  className="block max-h-[82vh] max-w-[92vw] object-contain"
+                />
+              ) : (
+                <div className="flex h-[min(48vh,320px)] w-[min(92vw,960px)] items-center justify-center bg-gradient-cream text-lg font-bold text-foreground">
+                  ヘッダー画像がありません
+                </div>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+      {isAvatarOpen && typeof document !== 'undefined' && createPortal(
+        <div
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setIsAvatarOpen(false);
+          }}
+          className="fixed inset-0 z-[2147483647] flex items-center justify-center bg-black/80 p-4 backdrop-blur-[2px]"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${user.displayName}のプロフィール画像`}
+            onClick={(event) => {
+              if (event.target === event.currentTarget) setIsAvatarOpen(false);
+            }}
+            className="relative flex h-full w-full items-center justify-center"
+          >
+            <button
+              type="button"
+              onClick={() => setIsAvatarOpen(false)}
+              aria-label="閉じる"
+              className="absolute left-2 top-2 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-black/50 text-white shadow-soft backdrop-blur-sm transition hover:bg-black/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 sm:left-4 sm:top-4"
+            >
+              <X className="h-6 w-6" />
+            </button>
+            <div
+              className="flex h-[min(82vw,82vh)] w-[min(82vw,82vh)] max-h-[680px] max-w-[680px] items-center justify-center overflow-hidden rounded-full bg-background shadow-[0_24px_90px_rgba(0,0,0,0.6)]"
+              onClick={(event) => event.stopPropagation()}
+            >
+              {user.avatarUrl ? (
+                <img
+                  src={user.avatarUrl}
+                  alt={user.displayName}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center bg-background text-[clamp(5rem,18vw,10rem)] font-black text-foreground">
+                  {user.displayName.slice(0, 1)}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
       {isSubscriptionOpen && typeof document !== 'undefined' && createPortal(
         <div
           role="presentation"
@@ -389,7 +504,6 @@ export function ProfileHeader({ user }: { user: User }) {
               <button type="button" onClick={() => setIsSubscriptionOpen(false)} aria-label="閉じる" style={{ width: 40, height: 40, border: 0, background: 'transparent', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <X className="h-6 w-6" />
               </button>
-              <h2 id="subscription-dialog-title" style={{ margin: 0, fontSize: 20, fontWeight: 900 }}>らいむノ〜トファンクラブ</h2>
               <button type="button" onClick={handleCopyLink} aria-label="リンクをコピー" style={{ width: 40, height: 40, border: 0, background: 'transparent', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <Link2 className="h-5 w-5" />
               </button>
@@ -438,7 +552,7 @@ export function ProfileHeader({ user }: { user: User }) {
               ) : (
                 <Button
                   type="button"
-                  className="h-11 w-full rounded-full bg-fuchsia-500 px-6 text-base font-black text-white hover:bg-fuchsia-600 disabled:opacity-60"
+                  className="h-11 w-full rounded-full bg-fuchsia-500 px-6 text-base font-black text-white shadow-soft transition hover:bg-fuchsia-600 hover:shadow-pop disabled:opacity-60"
                   onClick={handleJoinMembership}
                   disabled={joinMembership.isPending}
                 >
