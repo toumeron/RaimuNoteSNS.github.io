@@ -221,8 +221,8 @@ export function ProfileHeader({ user }: { user: User }) {
             margin-top: -1.5rem !important;
           }
           .profile-header-cover-avatar-gap {
-            -webkit-mask-image: radial-gradient(circle 44px at 60px 150px, transparent 43.5px, #000 44px);
-            mask-image: radial-gradient(circle 44px at 60px 150px, transparent 43.5px, #000 44px);
+            -webkit-mask-image: radial-gradient(circle 48px at 64px 150px, transparent 47.5px, #000 48px);
+            mask-image: radial-gradient(circle 48px at 64px 150px, transparent 47.5px, #000 48px);
           }
         }
         @media (min-width: 640px) {
@@ -301,7 +301,7 @@ export function ProfileHeader({ user }: { user: User }) {
             type="button"
             aria-label={`${user.displayName}のプロフィール画像を拡大表示`}
             onClick={() => setIsAvatarOpen(true)}
-            className="-mt-[44px] box-border h-[88px] w-[88px] shrink-0 cursor-pointer rounded-full border-4 border-solid border-transparent bg-transparent p-0 text-left outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 sm:-mt-14 sm:h-28 sm:w-28"
+            className="-mt-[48px] box-border h-[96px] w-[96px] shrink-0 cursor-pointer rounded-full border-4 border-solid border-transparent bg-transparent p-0 text-left outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 sm:-mt-14 sm:h-28 sm:w-28"
           >
             <Avatar className="h-full w-full overflow-hidden rounded-full bg-background shadow-soft">
               <AvatarImage

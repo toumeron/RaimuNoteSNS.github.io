@@ -280,11 +280,11 @@ export const Header = () => {
               </DropdownMenuItem>
 
               <DropdownMenuItem onClick={() => navigate('/chat')} className={menuItemClass}>
-                <MessageSquare className="mr-2 h-4 w-4" /> チャット
+                <MessageSquare className="mr-2 h-4 w-4" /> LimeAI
               </DropdownMenuItem>
 
               <DropdownMenuItem onClick={() => navigate('/media')} className={menuItemClass}>
-                <Images className="mr-2 h-4 w-4" /> フォト(Beta)
+                <Images className="mr-2 h-4 w-4" /> フォト
               </DropdownMenuItem>
 
               <DropdownMenuSeparator className={separatorClass} />
