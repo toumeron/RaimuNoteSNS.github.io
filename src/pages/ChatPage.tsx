@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
+import { createPost } from '@/api/posts'
 import { formatRelative } from '@/lib/format'
 import { useAuth } from "@/hooks/useAuth"
 import { 
@@ -52,6 +53,23 @@ type CodingArtifact = {
   html: string
 }
 
+type ThinkingStep = {
+  label: string
+  content: string
+}
+
+type ThinkingTrace = {
+  summary: string
+  steps?: ThinkingStep[]
+  activeLabel?: string
+}
+
+type AgentAction = {
+  type: 'create_post'
+  content: string
+  status: 'pending' | 'posting' | 'posted' | 'cancelled' | 'failed'
+}
+
 type PostLinkPreview = {
   id: string
   sourceUrl: string
@@ -75,6 +93,8 @@ type Message = {
   references?: ReferencedPost[]
   codingArtifact?: CodingArtifact
   postPreview?: PostLinkPreview
+  thinking?: ThinkingTrace
+  agentAction?: AgentAction
 }
 
 const getRecordString = (item: Record<string, unknown>, camelKey: string, snakeKey: string) => {
@@ -497,6 +517,96 @@ const ReferencePostsButtonAvatars = ({ posts }: { posts: ReferencedPost[] }) => 
   )
 }
 
+const ThinkingSummaryCard = ({
+  trace,
+  expanded,
+  onToggle,
+}: {
+  trace: ThinkingTrace
+  expanded: boolean
+  onToggle: () => void
+}) => (
+  <div className="mb-4 max-w-2xl overflow-hidden rounded-2xl border border-[#e5e5e5] bg-[#f7f7f8] whitespace-normal dark:border-[#303030] dark:bg-[#1c1c1c]">
+    <button
+      type="button"
+      onClick={onToggle}
+      className="group flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
+      aria-expanded={expanded}
+    >
+      <span className="flex min-w-0 items-center gap-2.5 text-sm font-medium text-[#3f3f46] dark:text-[#e4e4e7]">
+        {trace.activeLabel ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : <Sparkles className="h-4 w-4 shrink-0" />}
+        <span>{trace.activeLabel ? `LimeAI 5.5 Thinking が${trace.activeLabel}` : `Thought for ${trace.steps?.length ?? 0} steps`}</span>
+      </span>
+      <ChevronDown className={`h-4 w-4 shrink-0 text-[#71717a] transition-transform ${expanded ? 'rotate-180' : ''}`} />
+    </button>
+    {expanded && (
+      <div className="border-t border-[#e5e5e5] px-4 py-3 text-sm leading-6 text-[#52525b] dark:border-[#303030] dark:text-[#d4d4d8] whitespace-pre-wrap break-words">
+        {trace.steps && trace.steps.length > 0 ? (
+          <div className="relative space-y-0 before:absolute before:bottom-4 before:left-[7px] before:top-4 before:w-px before:bg-[#d4d4d8] dark:before:bg-[#454545]">
+            {trace.steps.map((step, index) => (
+              <div key={`${step.label}-${index}`} className="relative flex gap-3 pb-4 last:pb-0">
+                <span className="z-10 mt-1 flex h-[15px] w-[15px] shrink-0 items-center justify-center rounded-full bg-[#52525b] text-white dark:bg-[#d4d4d8] dark:text-[#18181b]">
+                  <Check className="h-2.5 w-2.5" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="mb-1 text-xs font-semibold text-[#3f3f46] dark:text-[#f4f4f5]">{step.label}</div>
+                  <div>{step.content}</div>
+                </div>
+              </div>
+            ))}
+            {trace.activeLabel && (
+              <div className="relative flex gap-3 pt-1">
+                <span className="z-10 mt-1 flex h-[15px] w-[15px] shrink-0 items-center justify-center rounded-full bg-[#f7f7f8] text-[#52525b] ring-1 ring-[#a1a1aa] dark:bg-[#1c1c1c] dark:text-[#e4e4e7] dark:ring-[#71717a]">
+                  <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-semibold text-[#3f3f46] dark:text-[#f4f4f5]">{trace.activeLabel}</div>
+                  <div className="text-[#71717a] dark:text-[#a1a1aa]">検討を進めています…</div>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : trace.activeLabel ? (
+          <div className="flex items-center gap-2 text-[#71717a] dark:text-[#a1a1aa]"><Loader2 className="h-3.5 w-3.5 animate-spin" /> {trace.activeLabel}</div>
+        ) : trace.summary}
+      </div>
+    )}
+  </div>
+)
+
+const AgentPostApprovalCard = ({
+  action,
+  onApprove,
+  onCancel,
+}: {
+  action: AgentAction
+  onApprove: () => void
+  onCancel: () => void
+}) => (
+  <div className="mt-3 max-w-xl overflow-hidden rounded-2xl border border-[#eadde3] bg-white dark:border-[#353535] dark:bg-[#191919] whitespace-normal">
+    <div className="border-b border-[#f0e4e8] px-4 py-3 dark:border-[#353535]">
+      <div className="flex items-center gap-2 text-sm font-semibold text-[#2b2b3a] dark:text-[#f4f4f5]">
+        <Send className="h-4 w-4 text-[#ea4c89]" />
+        LimeAIにLimeNoteアカウントへのアクセスを許可しますか？
+      </div>
+      <p className="mt-1 text-xs leading-5 text-[#71717a] dark:text-[#a1a1aa]">承認後、現在ログインしているあなたのアカウントで公開投稿します。</p>
+    </div>
+    <div className="px-4 py-3 text-[15px] leading-6 text-[#2b2b3a] dark:text-[#ececec] break-words">{action.content}</div>
+    <div className="flex items-center gap-2 border-t border-[#f0e4e8] px-4 py-3 dark:border-[#353535]">
+      {action.status === 'pending' && (
+        <>
+          <button type="button" onClick={onApprove} className="rounded-full bg-[#ea4c89] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#d83b77]">投稿する</button>
+          <button type="button" onClick={onCancel} className="rounded-full px-3 py-2 text-sm font-medium text-[#666] transition hover:bg-[#f4f4f5] dark:text-[#aaa] dark:hover:bg-[#282828]">キャンセル</button>
+        </>
+      )}
+      {action.status === 'posting' && <span className="flex items-center gap-2 text-sm text-[#71717a]"><Loader2 className="h-4 w-4 animate-spin" /> 投稿しています…</span>}
+      {action.status === 'posted' && <span className="flex items-center gap-2 text-sm font-medium text-emerald-600 dark:text-emerald-400"><Check className="h-4 w-4" /> LimeNoteに投稿しました</span>}
+      {action.status === 'cancelled' && <span className="text-sm text-[#71717a]">投稿をキャンセルしました</span>}
+      {action.status === 'failed' && <span className="text-sm text-red-600 dark:text-red-400">投稿できませんでした。もう一度お試しください。</span>}
+    </div>
+  </div>
+)
+
 type ChatSession = {
   id: string
   title: string
@@ -525,6 +635,7 @@ export default function ChatPage() {
   const [assistantStreamStatus, setAssistantStreamStatus] = useState<AssistantStreamStatus>('idle')
   const [expandedReferenceMessageId, setExpandedReferenceMessageId] = useState<string | null>(null)
   const [expandedCodeMessageId, setExpandedCodeMessageId] = useState<string | null>(null)
+  const [expandedThinkingMessageId, setExpandedThinkingMessageId] = useState<string | null>(null)
   const [postLinkPreview, setPostLinkPreview] = useState<PostLinkPreview | null>(null)
   const [postLinkPreviewLoading, setPostLinkPreviewLoading] = useState(false)
   const [dismissedPostPreviewId, setDismissedPostPreviewId] = useState<string | null>(null)
@@ -546,6 +657,35 @@ export default function ChatPage() {
     statusRef.current = cached;
     return cached;
   });
+
+  const updateAgentActionStatus = (messageId: string, status: AgentAction['status']) => {
+    setSessions(prev => prev.map(session => ({
+      ...session,
+      messages: session.messages.map(message => message.id === messageId && message.agentAction
+        ? { ...message, agentAction: { ...message.agentAction, status } }
+        : message),
+    })))
+  }
+
+  const handleAgentPostApproval = async (messageId: string, action: AgentAction) => {
+    if (action.status !== 'pending') return
+    if (!user) {
+      updateAgentActionStatus(messageId, 'failed')
+      toast.error('投稿するにはLimeNoteへログインしてください')
+      return
+    }
+
+    updateAgentActionStatus(messageId, 'posting')
+    try {
+      await createPost({ content: action.content, imageUrls: [], visibility: 'public', isBot: false })
+      updateAgentActionStatus(messageId, 'posted')
+      toast.success('LimeNoteに投稿しました')
+    } catch (error) {
+      console.error('LimeAI agent post failed:', error)
+      updateAgentActionStatus(messageId, 'failed')
+      toast.error('投稿に失敗しました')
+    }
+  }
 
   useEffect(() => {
     mountedRef.current = true;
@@ -1042,7 +1182,8 @@ export default function ChatPage() {
           },
           body: JSON.stringify({ 
             contents: sanitizedContents,
-            model: selectedModel
+            model: selectedModel,
+            thinking: selectedModel === 'advanced'
           }),
         }
       )
@@ -1060,6 +1201,10 @@ export default function ChatPage() {
       let buffer = ''
       let referencedPosts: ReferencedPost[] = []
       let codingArtifact: CodingArtifact | undefined = undefined
+      let thinkingSummary = ''
+      let thinkingSteps: ThinkingStep[] = []
+      let activeThinkingLabel = ''
+      let agentAction: AgentAction | undefined = undefined
 
       while (true) {
         const { value, done } = await reader.read()
@@ -1079,6 +1224,52 @@ export default function ChatPage() {
             
             try {
               const parsed = JSON.parse(dataStr)
+
+              if (parsed.type === 'agent_action_request' && parsed.action?.type === 'create_post' && typeof parsed.action.content === 'string') {
+                agentAction = { type: 'create_post', content: parsed.action.content, status: 'pending' }
+                setSessions(prev => prev.map(s => s.id === currentSessionId
+                  ? { ...s, messages: s.messages.map(m => m.id === assistantMessageId ? { ...m, agentAction } : m) }
+                  : s
+                ))
+                continue
+              }
+
+              if (parsed.type === 'thinking_start') {
+                setAssistantStreamStatus('thinking')
+                continue
+              }
+
+              if (parsed.type === 'thinking_step_start' && typeof parsed.label === 'string') {
+                activeThinkingLabel = parsed.label
+                const thinking: ThinkingTrace = {
+                  summary: thinkingSummary,
+                  steps: thinkingSteps,
+                  activeLabel: activeThinkingLabel,
+                }
+                setSessions(prev => prev.map(s => s.id === currentSessionId
+                  ? { ...s, messages: s.messages.map(m => m.id === assistantMessageId ? { ...m, thinking } : m) }
+                  : s
+                ))
+                continue
+              }
+
+              if (parsed.type === 'thinking_delta' && typeof parsed.content === 'string') {
+                const label = typeof parsed.label === 'string' ? parsed.label : activeThinkingLabel || '検討中'
+                thinkingSteps = [...thinkingSteps, { label, content: parsed.content }]
+                thinkingSummary = thinkingSteps.map(step => `【${step.label}】\n${step.content}`).join('\n\n')
+                activeThinkingLabel = ''
+                const thinking: ThinkingTrace = { summary: thinkingSummary, steps: thinkingSteps }
+                setSessions(prev => prev.map(s => s.id === currentSessionId
+                  ? { ...s, messages: s.messages.map(m => m.id === assistantMessageId ? { ...m, thinking } : m) }
+                  : s
+                ))
+                continue
+              }
+
+              if (parsed.type === 'thinking_end') {
+                setAssistantStreamStatus('thinking')
+                continue
+              }
 
               if (parsed.type === 'conversation_summary_start') {
                 setAssistantStreamStatus('summarizing')
@@ -1217,6 +1408,8 @@ export default function ChatPage() {
           content: accumulatedText,
           references: referencedPosts.length > 0 ? referencedPosts : undefined,
           codingArtifact,
+          thinking: thinkingSummary ? { summary: thinkingSummary, steps: thinkingSteps } : undefined,
+          agentAction,
         }
         const finalMessages = [...updatedMessages, finalAssistantMessage]
         await supabase.from('chat_sessions').upsert({
@@ -1366,7 +1559,7 @@ export default function ChatPage() {
 ・現在のユーザー情報: ${user ? `${user.displayName} (@${user.username})` : '未ログインユーザー'}
 ・管理者およびCEO：ねこ氏(@cat)でLimeNoteというSNSを一人で立ち上げた。
 ・本社：神奈川県横浜市戸塚区
-・あなたのモデル名：LimeAI 5.0 Fast
+・あなたのモデル名：${selectedModel === 'advanced' ? 'LimeAI 5.5 Thinking' : 'LimeAI 5.0 Fast'}
 ・あなたの名前：LimeAI
 ■ 応答の絶対ルール
 1. 無駄なプレフィックスや前置きは省き、ユーザーへの純粋な返答・メッセージ本文のみを日本語で直接出力してください
@@ -1401,7 +1594,8 @@ export default function ChatPage() {
           },
           body: JSON.stringify({ 
             contents: sanitizedContents,
-            model: selectedModel
+            model: selectedModel,
+            thinking: selectedModel === 'advanced'
           }),
         }
       )
@@ -1419,6 +1613,10 @@ export default function ChatPage() {
       let buffer = ''
       let referencedPosts: ReferencedPost[] = []
       let codingArtifact: CodingArtifact | undefined = undefined
+      let thinkingSummary = ''
+      let thinkingSteps: ThinkingStep[] = []
+      let activeThinkingLabel = ''
+      let agentAction: AgentAction | undefined = undefined
 
       while (true) {
         const { value, done } = await reader.read()
@@ -1438,6 +1636,52 @@ export default function ChatPage() {
             
             try {
               const parsed = JSON.parse(dataStr)
+
+              if (parsed.type === 'agent_action_request' && parsed.action?.type === 'create_post' && typeof parsed.action.content === 'string') {
+                agentAction = { type: 'create_post', content: parsed.action.content, status: 'pending' }
+                setSessions(prev => prev.map(s => s.id === currentSessionId
+                  ? { ...s, messages: s.messages.map(m => m.id === assistantMessageId ? { ...m, agentAction } : m) }
+                  : s
+                ))
+                continue
+              }
+
+              if (parsed.type === 'thinking_start') {
+                setAssistantStreamStatus('thinking')
+                continue
+              }
+
+              if (parsed.type === 'thinking_step_start' && typeof parsed.label === 'string') {
+                activeThinkingLabel = parsed.label
+                const thinking: ThinkingTrace = {
+                  summary: thinkingSummary,
+                  steps: thinkingSteps,
+                  activeLabel: activeThinkingLabel,
+                }
+                setSessions(prev => prev.map(s => s.id === currentSessionId
+                  ? { ...s, messages: s.messages.map(m => m.id === assistantMessageId ? { ...m, thinking } : m) }
+                  : s
+                ))
+                continue
+              }
+
+              if (parsed.type === 'thinking_delta' && typeof parsed.content === 'string') {
+                const label = typeof parsed.label === 'string' ? parsed.label : activeThinkingLabel || '検討中'
+                thinkingSteps = [...thinkingSteps, { label, content: parsed.content }]
+                thinkingSummary = thinkingSteps.map(step => `【${step.label}】\n${step.content}`).join('\n\n')
+                activeThinkingLabel = ''
+                const thinking: ThinkingTrace = { summary: thinkingSummary, steps: thinkingSteps }
+                setSessions(prev => prev.map(s => s.id === currentSessionId
+                  ? { ...s, messages: s.messages.map(m => m.id === assistantMessageId ? { ...m, thinking } : m) }
+                  : s
+                ))
+                continue
+              }
+
+              if (parsed.type === 'thinking_end') {
+                setAssistantStreamStatus('thinking')
+                continue
+              }
 
               if (parsed.type === 'conversation_summary_start') {
                 setAssistantStreamStatus('summarizing')
@@ -1576,6 +1820,8 @@ export default function ChatPage() {
           content: accumulatedText,
           references: referencedPosts.length > 0 ? referencedPosts : undefined,
           codingArtifact,
+          thinking: thinkingSummary ? { summary: thinkingSummary, steps: thinkingSteps } : undefined,
+          agentAction,
         }
         const finalMessages = [...updatedMessages, finalAssistantMessage]
         await supabase.from('chat_sessions').upsert({
@@ -1789,7 +2035,7 @@ export default function ChatPage() {
                   >
                     <div className="flex flex-col">
                       <span className="text-sm md:text-[15px] font-medium text-[#0d0d0d] dark:text-[#ececec]">
-                        LimeAI 5.1 Thinking
+                        LimeAI 5.5 Thinking
                       </span>
                       <span className="text-[10px] md:text-xs text-[#666666] dark:text-[#999999] mt-0.5">
                         詳しい回答向け
@@ -1855,14 +2101,37 @@ export default function ChatPage() {
                         </div>
                         <div className="text-[16px] leading-7 text-[#2b2b3a] dark:text-[#ececec] whitespace-pre-wrap break-words">
                           {msg.content === '' && isLoading ? (
-                            <span className="flex items-center gap-2 text-[#666666] dark:text-[#999999] text-[15px] animate-pulse">
-                              <Loader2 className="w-4 h-4 animate-spin text-[#ea4c89] dark:text-[#ececec]" />
-                              {assistantStreamStatus === 'checking' ? '検索ツールを開いています...' : assistantStreamStatus === 'searching' ? '検索中...' : assistantStreamStatus === 'coding' ? 'コードを作成中...' : assistantStreamStatus === 'summarizing' ? '会話を短く圧縮中...' : '思考中...'}
-                            </span>
+                            <>
+                              {!isUser && msg.thinking && (
+                                <ThinkingSummaryCard
+                                  trace={msg.thinking}
+                                  expanded={expandedThinkingMessageId === msg.id || (isLoading && msg.content === '')}
+                                  onToggle={() => setExpandedThinkingMessageId(expandedThinkingMessageId === msg.id ? null : msg.id)}
+                                />
+                              )}
+                              <span className="flex items-center gap-2 text-[#666666] dark:text-[#999999] text-[15px] animate-pulse">
+                                <Loader2 className="w-4 h-4 animate-spin text-[#ea4c89] dark:text-[#ececec]" />
+                                {assistantStreamStatus === 'checking' ? '検索ツールを開いています...' : assistantStreamStatus === 'searching' ? '検索中...' : assistantStreamStatus === 'coding' ? 'コードを作成中...' : assistantStreamStatus === 'summarizing' ? '会話を短く圧縮中...' : '思考中...'}
+                              </span>
+                            </>
                           ) : (
                             <>
+                              {!isUser && msg.thinking && (
+                                <ThinkingSummaryCard
+                                  trace={msg.thinking}
+                                  expanded={expandedThinkingMessageId === msg.id}
+                                  onToggle={() => setExpandedThinkingMessageId(expandedThinkingMessageId === msg.id ? null : msg.id)}
+                                />
+                              )}
                               {visibleMessageContent && (
                                 <span>{visibleMessageContent}</span>
+                              )}
+                              {!isUser && msg.agentAction && (
+                                <AgentPostApprovalCard
+                                  action={msg.agentAction}
+                                  onApprove={() => handleAgentPostApproval(msg.id, msg.agentAction!)}
+                                  onCancel={() => updateAgentActionStatus(msg.id, 'cancelled')}
+                                />
                               )}
                               {msg.postPreview && (
                                 <MiniPostPreviewCard post={msg.postPreview} compact />

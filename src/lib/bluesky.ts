@@ -467,15 +467,15 @@ async function searchBlueskyUncached(query: string, options?: { includePosts?: b
   const actorRequest = fetchBlueskySearchEndpoint(
     'app.bsky.actor.searchActors', new URLSearchParams({ q, limit: '25' }), options?.signal,
   );
-  // app.bsky.actor.searchActors(通常の検索結果一覧向けAPI)はフォロワー数などの
-  // 人気度でランキングされるため、フォロワーが少ない/新しい個人アカウントが
-  // 結果から漏れることがある(例: 表示名・ハンドルで検索しても出てこないという
-  // 報告があった)。
-  // 一方 app.bsky.actor.searchActorsTypeahead は入力補完(オートコンプリート)用の
-  // 前方一致検索で、人気度によるランキングの影響を受けにくく、同じキーワードでも
-  // こちらでは見つかることがある。実際のBlueskyアプリの検索ボックスも入力中は
-  // typeahead系のAPIで候補を出している。
+  // app.bsky.actor.searchActors(通常の検索結果一覧向けAPI)は、実際に
+  // 動作確認したところ、表示名が完全一致していてもフォロワー数の多寡に
+  // 関わらず結果に含まれないことがある(フォロワー数が少ないから、という
+  // わけではなく、検索アルゴリズム自体の相性・ランキングの問題と見られる)。
+  // 一方 app.bsky.actor.searchActorsTypeahead(入力補完/オートコンプリート用の
+  // 前方一致検索)では、同じキーワードで検索した際に該当アカウントが
+  // 1位で返ってくることを実際に確認している。
   // そのため両方を並行して呼び、結果をマージ(重複除去)して検索漏れを減らす。
+  // マージの優先順位については後述(typeahead側を先頭に置く)。
   const actorTypeaheadRequest = fetchBlueskySearchEndpoint(
     'app.bsky.actor.searchActorsTypeahead', new URLSearchParams({ q, limit: '25' }), options?.signal,
   ).catch((error) => {
@@ -495,23 +495,33 @@ async function searchBlueskyUncached(query: string, options?: { includePosts?: b
   if (!actorResponse.ok) throw new Error(`Bluesky actor search failed: ${actorResponse.status}`);
 
   const actorPayload = (await actorResponse.json()) as { actors?: BlueskyActorProfile[] };
-  const users = (actorPayload.actors || [])
+  const searchActorsUsers = (actorPayload.actors || [])
     .map(mapBlueskyActorProfile)
     .filter((user): user is BlueskyProfile => Boolean(user));
 
-  // searchActorsTypeahead側の結果を、まだ含まれていないユーザーだけ追加でマージする
+  // searchActorsTypeaheadの結果を先頭に置く。
+  // 以前は searchActors(最大25件)を先に並べ、typeahead側の結果は
+  // 重複しないものを「末尾に追加」していたため、searchActorsだけで
+  // 25件埋まっている場合、typeaheadでしか見つからないアカウントが
+  // 26件目以降に押し出され、その後の呼び出し側で行っている
+  // slice(0, 3)(サジェスト表示)や slice(0, 10)(投稿フォールバック用)で
+  // 切り捨てられてしまっていた。実際に表示名で完全一致するアカウントが
+  // typeaheadでは1位に返ってきているケースを確認したため、
+  // 表示名/ハンドル検索の用途としてはtypeahead側の結果を優先する。
+  let users: BlueskyProfile[] = [];
   if (typeaheadResponse?.ok) {
     const typeaheadPayload = (await typeaheadResponse.json()) as { actors?: BlueskyActorProfile[] };
-    const typeaheadUsers = (typeaheadPayload.actors || [])
+    users = (typeaheadPayload.actors || [])
       .map(mapBlueskyActorProfile)
       .filter((user): user is BlueskyProfile => Boolean(user));
+  }
 
-    const seenUserIds = new Set(users.map((user) => user.id));
-    for (const typeaheadUser of typeaheadUsers) {
-      if (!seenUserIds.has(typeaheadUser.id)) {
-        seenUserIds.add(typeaheadUser.id);
-        users.push(typeaheadUser);
-      }
+  // searchActors側の結果のうち、まだ含まれていないユーザーだけ追加でマージする
+  const seenUserIds = new Set(users.map((user) => user.id));
+  for (const searchActorsUser of searchActorsUsers) {
+    if (!seenUserIds.has(searchActorsUser.id)) {
+      seenUserIds.add(searchActorsUser.id);
+      users.push(searchActorsUser);
     }
   }
 
@@ -536,11 +546,19 @@ async function searchBlueskyUncached(query: string, options?: { includePosts?: b
   }
 
   if (posts.length === 0 && options?.includePosts !== false) {
-    // 検索用エンドポイントが地域/CDN側で拒否される場合でも、検索結果全体を
-    // 空にしない。該当アカウントの公開フィードから本文一致する投稿を補完する。
+    // app.bsky.feed.searchPosts(投稿本文の全文検索API)は、未認証アクセスに対して
+    // CDN/WAF側でブロックされており(実際のレスポンスがtext/htmlのエラーページで、
+    // かつno-store指定になっており、アプリ本体に届く前にCDNの時点で弾かれている
+    // ことを確認済み)、認証なしではBluesky全アカウントを横断した本文検索はできない。
+    // そのため、代わりに actor 検索(searchActors/searchActorsTypeahead)で見つかった
+    // アカウント自身の投稿だけを対象に、本文一致するものを拾う。
+    // これは「関連しそうなアカウントの投稿」しか対象にできないという構造的な限界が
+    // あり、Bluesky全体を対象にした検索の代わりにはならないが、対象アカウント数を
+    // 増やすことでヒット件数は改善できるため、actor検索で得られた候補(最大30件)
+    // 全てのフィードを見に行くようにする(以前は上位10件のみだった)。
     const normalizedQuery = (taglessQuery || q).toLocaleLowerCase();
     const pages = await Promise.all(
-      users.slice(0, 10).map((user) => fetchBlueskyAuthorFeed({
+      users.slice(0, 30).map((user) => fetchBlueskyAuthorFeed({
         actor: user.username,
         limit: 100,
         filter: 'posts_with_replies',

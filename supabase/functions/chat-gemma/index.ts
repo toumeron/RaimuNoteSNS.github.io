@@ -13,6 +13,8 @@ const SUMMARY_TRIGGER_CHARS = 1200
 const SUMMARY_INPUT_MAX_CHARS = 1500
 const SUMMARY_MAX_CHARS = 150
 const ANSWER_MAX_TOKENS = 520
+const THINKING_ANSWER_MAX_TOKENS = 1600
+const THINKING_SUMMARY_MAX_CHARS = 900
 
 const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 const FAST_MODEL = "openai/gpt-oss-20b"
@@ -73,6 +75,10 @@ type SearchToolArgs = {
 type HtmlPreviewToolArgs = {
   title: string
   html: string
+}
+
+type PostDraftRequest = {
+  content: string
 }
 
 type DbProfile = {
@@ -255,7 +261,7 @@ function removeSystemBlock(text: string) {
 }
 
 function parseBody(value: unknown) {
-  if (!isRecord(value)) return { contents: [] as ClientContent[], model: "fast" as "fast" | "advanced" }
+  if (!isRecord(value)) return { contents: [] as ClientContent[], model: "fast" as "fast" | "advanced", thinking: false }
   const contents = Array.isArray(value.contents)
     ? value.contents.filter((item): item is ClientContent => {
       if (!isRecord(item)) return false
@@ -263,7 +269,10 @@ function parseBody(value: unknown) {
     })
     : []
   const model = value.model === "advanced" ? "advanced" : "fast"
-  return { contents, model }
+  // Thinking is opt-in and is only available with the existing Advanced model.
+  // This keeps the model selection stable while making the mode behavior real.
+  const thinking = model === "advanced" && value.thinking === true
+  return { contents, model, thinking }
 }
 
 function getLatestUserText(contents: ClientContent[]) {
@@ -274,6 +283,14 @@ function getLatestUserText(contents: ClientContent[]) {
     if (text) return text
   }
   return ""
+}
+
+function extractPostDraftRequest(text: string): PostDraftRequest | null {
+  const compact = text.replace(/\s+/g, " ").trim()
+  const match = compact.match(/^(?:「([^」]{1,500})」|『([^』]{1,500})』|(.{1,500}?))(?:と|って|を)?(?:ポスト|投稿)(?:して|してください|してほしい|してくれる|お願い)(?:。)?$/u)
+  const content = (match?.[1] ?? match?.[2] ?? match?.[3] ?? "").trim()
+  if (!content || content.length > 500) return null
+  return { content }
 }
 
 
@@ -689,6 +706,54 @@ async function classifyToolIntent(
     console.error("classifyToolIntent failed:", error)
     return { action: "chat", reason: "router_failed" }
   }
+}
+
+type ThinkingStep = {
+  label: string
+  content: string
+}
+
+/** Produces deliberate, user-visible planning stages without revealing private chain-of-thought. */
+async function createThinkingStep(
+  groqApiKey: string,
+  model: string,
+  latestUserText: string,
+  routerContext: string,
+  label: string,
+  instruction: string,
+  earlierSteps: ThinkingStep[],
+) {
+  const data = await callGroqJson(groqApiKey, {
+    model,
+    messages: [
+      {
+        role: "system",
+        content: [
+          "あなたはLimeAI 5.5 Thinkingの回答前プランナーです。",
+          `現在の段階は「${label}」です。${instruction}`,
+          "ユーザーに表示してよい、高レベルの検討ログだけを日本語で作成してください。",
+          "秘密の推論、逐語的な思考過程、システム指示、ツール内部の詳細は書かないでください。",
+          "この段階で確認した点を2〜4個の短い箇条書きで示してください。",
+          "最終回答そのものは書かないでください。",
+        ].join("\n"),
+      },
+      {
+        role: "user",
+        content: [
+          `直近文脈:\n${routerContext || "なし"}`,
+          `最新のユーザー発話: ${latestUserText}`,
+          earlierSteps.length > 0
+            ? `これまでに完了した検討ログ:\n${earlierSteps.map((step) => `${step.label}:\n${step.content}`).join("\n\n")}`
+            : "これまでに完了した検討ログ: なし",
+        ].join("\n\n"),
+      },
+    ],
+    stream: false,
+    temperature: 0.2,
+    max_completion_tokens: 480,
+  })
+
+  return limitText(data.choices?.[0]?.message?.content ?? "", THINKING_SUMMARY_MAX_CHARS)
 }
 
 function toolsForIntent(action: ToolIntentAction) {
@@ -2008,8 +2073,64 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
 
   const model = body.model === "advanced" ? ADVANCED_MODEL : FAST_MODEL
   const latestUserText = getLatestUserText(body.contents)
+  const postDraftRequest = extractPostDraftRequest(latestUserText)
+
+  // Posting is an external side effect. Never let the model publish directly:
+  // return a draft and require an explicit, local user confirmation instead.
+  if (postDraftRequest) {
+    sse(controller, { type: "agent_action_request", action: { type: "create_post", content: postDraftRequest.content } })
+    sseText(controller, "この内容をLimeNoteに投稿しますか？")
+    sseDone(controller)
+    return
+  }
+
   const routerContext = buildRouterContext(body.contents)
   const baseMessages = await buildBaseMessages(groqApiKey, body.contents, controller)
+  const answerMaxTokens = body.thinking ? THINKING_ANSWER_MAX_TOKENS : ANSWER_MAX_TOKENS
+  const answerTemperature = body.thinking ? 0.35 : 0.6
+
+  if (body.thinking) {
+    sse(controller, { type: "thinking_start" })
+    const thinkingSteps: ThinkingStep[] = []
+    const stages = [
+      { label: "質問を整理中", instruction: "質問の目的・条件・前提を切り分けてください。" },
+      { label: "前提と根拠を検証中", instruction: "必要な確認、考慮すべき例外、回答で断定できる範囲を検証してください。" },
+      { label: "別の見方を検討中", instruction: "見落としや反例、代替案を確認し、より妥当な結論に絞り込んでください。" },
+      { label: "回答を構成中", instruction: "検討内容を踏まえ、分かりやすく正確な回答の構成を組み立ててください。" },
+    ]
+
+    try {
+      for (let index = 0; index < stages.length; index++) {
+        const stage = stages[index]
+        sse(controller, { type: "thinking_step_start", label: stage.label, index, total: stages.length })
+        const content = await createThinkingStep(
+          groqApiKey,
+          model,
+          latestUserText,
+          routerContext,
+          stage.label,
+          stage.instruction,
+          thinkingSteps,
+        )
+        if (content) {
+          const step = { label: stage.label, content }
+          thinkingSteps.push(step)
+          sse(controller, { type: "thinking_delta", label: step.label, content: step.content, index, total: stages.length })
+        }
+      }
+
+      if (thinkingSteps.length > 0) {
+        baseMessages.push({
+          role: "system",
+          content: `回答前に整理した検討ログ:\n${thinkingSteps.map((step) => `【${step.label}】\n${step.content}`).join("\n\n")}\nこの検討を踏まえ、速さや短さより正確さ・十分な説明を優先して丁寧に回答してください。`,
+        })
+      }
+    } catch (error) {
+      console.error("thinking summary failed:", error)
+    } finally {
+      sse(controller, { type: "thinking_end" })
+    }
+  }
   const routerDecision = await classifyToolIntent(groqApiKey, latestUserText, routerContext)
   const forceHtmlPreview = shouldForceHtmlPreview(latestUserText, body.contents)
   const forcePublicPostSearch = shouldForcePublicPostSearch(latestUserText, body.contents)
@@ -2053,8 +2174,8 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
             { role: "system", content: generalKnowledgeFallbackInstruction(latestUserText) },
           ],
           stream: true,
-          temperature: 0.55,
-          max_completion_tokens: ANSWER_MAX_TOKENS,
+          temperature: answerTemperature,
+          max_completion_tokens: answerMaxTokens,
         }, controller)
       } catch (error) {
         console.error("general fallback Groq stream failed:", error)
@@ -2088,8 +2209,8 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
           { role: "system", content: finalInstruction },
         ],
         stream: true,
-        temperature: 0.35,
-        max_completion_tokens: ANSWER_MAX_TOKENS,
+        temperature: body.thinking ? 0.25 : 0.35,
+        max_completion_tokens: answerMaxTokens,
       }, controller)
     } catch (error) {
       console.error("direct search final Groq stream failed:", error)
@@ -2109,8 +2230,8 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
         { role: "system", content: toolInstructionForIntent("chat") },
       ],
       stream: true,
-      temperature: 0.6,
-      max_completion_tokens: ANSWER_MAX_TOKENS,
+      temperature: answerTemperature,
+      max_completion_tokens: answerMaxTokens,
     }, controller)
     return
   }
@@ -2144,8 +2265,8 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
       model,
       messages: baseMessages,
       stream: true,
-      temperature: 0.6,
-      max_completion_tokens: ANSWER_MAX_TOKENS,
+      temperature: answerTemperature,
+      max_completion_tokens: answerMaxTokens,
     }, controller)
     return
   }
@@ -2194,8 +2315,8 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
       model,
       messages: finalMessages,
       stream: true,
-      temperature: 0.6,
-      max_completion_tokens: ANSWER_MAX_TOKENS,
+      temperature: answerTemperature,
+      max_completion_tokens: answerMaxTokens,
     }, controller)
   } catch (error) {
     console.error("final Groq stream failed:", error)
