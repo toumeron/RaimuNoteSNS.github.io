@@ -157,6 +157,7 @@ type WebSearchResult = {
 
 type ToolExecutionResult = {
   toolMessage: GroqMessage
+  items?: WebSearchItem[]
   references?: ReferencedPost[]
   searchContext?: string
   hasSearchTool?: boolean
@@ -306,7 +307,7 @@ function parseBody(value: unknown) {
   const model = value.model === "advanced" ? "advanced" : "fast"
   // Thinking is opt-in and is only available with the existing Advanced model.
   // This keeps the model selection stable while making the mode behavior real.
-  const thinking = model === "advanced" && value.thinking === true
+  const thinking = model === "advanced" && (value.thinking === true || value.thinking === "true")
   return { contents, model, thinking }
 }
 
@@ -410,6 +411,7 @@ async function generatePostDraft(
           "会話中に『これ』『それ』『この内容』などの指示がある場合は、直前の会話内容を参照して対象を解決してください。",
           "投稿本文が明示指定されているケースは、この処理には渡されないので、ここでは題材・意図から完成文を新規作成するケースだけを扱います。",
           "SNS投稿として自然な文体にし、不要な前置き・説明・『投稿案です』などのメタ表現は付けません。",
+          "Thinkingモードでは、回答前に行った高レベルの検討結果を踏まえて投稿文を作り、検討していないような即答をしないでください。",
           "外部Web検索結果が渡された場合は、その検索結果に含まれる情報だけを確認済み情報として使い、ユーザーの投稿意図に沿う形で正確に反映してください。検索結果にないスペックや数字を推測で追加しないでください。",
           "事実関係が不明な固有名詞や数字を勝手に付け足さず、一般的な内容で表現してください。",
           "文字数は500文字以内にしてください。",
@@ -2160,6 +2162,7 @@ async function executeDirectWebSearch(
     sse(controller, { type: "web_search_end", results: result.items })
     return {
       hasWebSearchTool: true,
+      items: result.items,
       searchContext: result.context,
       toolMessage: {
         role: "tool",
@@ -2434,35 +2437,96 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
         ? { action: "web_search", reason: "post_request_requires_external_verification" }
         : routerDecision
 
-  // Thinkingモードでは投稿依頼も通常質問と同じく検討工程を実行する。
-  if (body.thinking) {
+  // Web検索が必要と判定された場合は、Thinkingの有無に関係なくバックエンドで必ず実行する。
+  // 投稿依頼でも「今日の天気を調べてポストして」「製品スペックを確認してポストして」のような
+  // 時間依存・外部検証が必要な依頼は、検索を省略せず、検索結果をそのまま投稿生成へ引き継ぐ。
+  let precomputedWebSearchContext: string | null = null
+  const needsDeterministicWebSearch =
+    effectiveRouterDecision.action === "web_search" ||
+    effectiveRouterDecision.action === "web_search_and_html"
+
+  // Thinkingモードでは「考える前に検索を隠れて済ませる」のではなく、画面上のThinkingフローを開始して
+  // その中で検索→要約→投稿化までを一連のエージェント工程として扱う。
+  if (body.thinking && needsDeterministicWebSearch) {
     sse(controller, { type: "thinking_start" })
+    sse(controller, { type: "thinking_step_start", label: "外部情報を調査中", index: 0, total: 6 })
+    sse(controller, {
+      type: "thinking_delta",
+      label: "外部情報を調査中",
+      content: "最新情報が必要な依頼なので、まずWeb上の情報を取得し、確認できた事実をこの後の要約と投稿作成に使います。",
+      index: 0,
+      total: 6,
+    })
+  }
+
+  if (needsDeterministicWebSearch) {
+    const searchQuery = forceCurrentWebSearch
+      ? buildForcedWebSearchQuery(latestUserText)
+      : postDraftRequest
+        ? latestUserText
+            .replace(/(?:ポスト|投稿)(?:して|してください|してほしい|してくれる|お願い)(?:[。！？!?])?$/u, "")
+            .replace(/(?:確認して|確認した上で|調べて|調べた上で|検索して|検索した上で)(?:[。！？!?])?$/u, "")
+            .trim() || latestUserText
+        : latestUserText
+
+    const deterministicWebSearchResult = await executeDirectWebSearch(controller, searchQuery, 5)
+    precomputedWebSearchContext = deterministicWebSearchResult.searchContext ?? null
+  }
+
+  // Thinkingモードでは投稿依頼も通常質問と同じく検討工程を実行する。
+  // 直前にWeb検索を行った場合は、その結果を前提情報として要約・投稿設計に利用する。
+  if (body.thinking) {
+    const webSearchAlreadyStarted = needsDeterministicWebSearch
+    if (!webSearchAlreadyStarted) {
+      sse(controller, { type: "thinking_start" })
+    }
+    sse(controller, { type: "thinking_step_start", label: "検討を開始", index: webSearchAlreadyStarted ? 1 : 0, total: webSearchAlreadyStarted ? 6 : 5 })
     const thinkingSteps: ThinkingStep[] = []
+    // Thinkingモードは投稿依頼でも必ず一定以上の公開可能な検討工程を表示する。
+    // 秘密の逐語的推論は出さず、判断・確認事項・構成方針だけを高レベルで示す。
     const stages = [
-      { label: "依頼を整理中", instruction: "ユーザーが求めている投稿内容、確認対象、投稿先、明示された文面か題材かを切り分けてください。" },
-      { label: "必要な情報を確認中", instruction: "この依頼で外部Web検索やLimeNote検索が必要かを確認し、必要な場合はどの情報を検証すべきか整理してください。" },
-      { label: "内容の正確さを検証中", instruction: "確認すべき数字・仕様・固有名詞・最新情報の有無を検討し、投稿で断定できる範囲を整理してください。" },
-      { label: "投稿内容を構成中", instruction: "確認した内容とユーザーの意図を両立した、実際に投稿できる自然な文章の構成を考えてください。" },
+      { label: "依頼を正確に整理中", instruction: "ユーザーの目的、投稿対象、明示された本文か題材か、投稿先、確認が必要な条件を切り分けてください。" },
+      { label: "検索・確認の必要性を判定中", instruction: "一般知識で足りるか、最新情報・製品仕様・天気・ニュースなど外部Web検索が必須かを判定してください。検索が必要なら、確認すべき事実と優先すべき情報源の種類を高レベルで整理してください。" },
+      { label: "根拠と事実関係を確認中", instruction: "検索結果がある場合は、投稿に使える確かな事実、数字、固有名詞、日付を整理してください。検索結果がない場合は、推測で事実を補わない方針を明確にしてください。" },
+      { label: "投稿の切り口を検討中", instruction: "単なる題材名の言い換えではなく、読者に価値が伝わる具体的な切り口、要点、自然なSNS文体を整理してください。" },
+      { label: "最終投稿文を設計中", instruction: "確認済み情報とユーザーの意図を両立し、実際にそのまま投稿できる完成文の構成を確定してください。明示された本文は改変せず、そのまま扱うルールも確認してください。" },
     ]
 
     try {
       for (let index = 0; index < stages.length; index++) {
         const stage = stages[index]
-        sse(controller, { type: "thinking_step_start", label: stage.label, index, total: stages.length })
-        const content = await createThinkingStep(
-          groqApiKey,
-          model,
-          latestUserText,
-          routerContext,
-          stage.label,
-          `${stage.instruction} 内部ルーターの判定は ${effectiveRouterDecision.action} です。`,
-          thinkingSteps,
-        )
-        if (content) {
-          const step = { label: stage.label, content }
-          thinkingSteps.push(step)
-          sse(controller, { type: "thinking_delta", label: step.label, content: step.content, index, total: stages.length })
+        sse(controller, { type: "thinking_step_start", label: stage.label, index: webSearchAlreadyStarted ? index + 1 : index, total: webSearchAlreadyStarted ? 6 : stages.length })
+        let content = ""
+        try {
+          content = await createThinkingStep(
+            groqApiKey,
+            model,
+            latestUserText,
+            routerContext,
+            stage.label,
+            `${stage.instruction} 内部ルーターの判定は ${effectiveRouterDecision.action} です。${precomputedWebSearchContext ? "外部Web検索は実行済みです。以下の検索結果を根拠として検討してください。\n" + precomputedWebSearchContext : ""}`,
+            thinkingSteps,
+          )
+        } catch (stageError) {
+          console.error(`thinking stage failed: ${stage.label}`, stageError)
         }
+
+        const fallbackByStage: Record<string, string> = {
+          "依頼を正確に整理中": "依頼の目的と投稿対象を切り分け、明示文か題材指示かを確認しました。",
+          "検索・確認の必要性を判定中": effectiveRouterDecision.action === "web_search" || effectiveRouterDecision.action === "web_search_and_html"
+            ? "外部Web検索が必要と判断し、関連情報の確認を優先します。"
+            : "外部Web検索は不要と判断し、既存の知識と会話文脈を中心に構成します。",
+          "根拠と事実関係を確認中": precomputedWebSearchContext
+            ? "実行済みのWeb検索結果から、投稿に使用できる事実と数字を整理します。"
+            : "確認済みの情報だけを使い、不確かな数字や仕様は補いません。",
+          "投稿の切り口を検討中": "題材名の言い換えで終わらせず、読者に伝わる具体的な魅力や要点を入れます。",
+          "最終投稿文を設計中": postDraftRequest?.explicitContent
+            ? "明示された投稿本文は変更せず、そのまま投稿内容として扱います。"
+            : "検討した要点を自然なSNS投稿文にまとめます。",
+        }
+        const step = { label: stage.label, content: content || fallbackByStage[stage.label] || "この段階の確認を完了しました。" }
+        thinkingSteps.push(step)
+        sse(controller, { type: "thinking_delta", label: step.label, content: step.content, index: webSearchAlreadyStarted ? index + 1 : index, total: webSearchAlreadyStarted ? 6 : stages.length })
       }
 
       if (thinkingSteps.length > 0) {
@@ -2479,12 +2543,8 @@ ${thinkingSteps.map((step) => `【${step.label}】\n${step.content}`).join("\n\n
     }
   }
 
-  // 「今日の天気」「現在の価格」など時間依存情報は、ルーター結果に関係なく
-  // ここで直接Web検索を実行し、その結果を最終回答に必ず渡す。
+  // 時間依存情報の強制検索結果は、Thinking後も必ず最終回答に渡す。
   if (forceCurrentWebSearch && !postDraftRequest) {
-    const query = buildForcedWebSearchQuery(latestUserText)
-    const directWebSearchResult = await executeDirectWebSearch(controller, query, 5)
-
     try {
       await streamGroq(groqApiKey, {
         model,
@@ -2494,7 +2554,7 @@ ${thinkingSteps.map((step) => `【${step.label}】\n${step.content}`).join("\n\n
             "外部Web検索を実行済みです。必ず検索結果を確認してから回答してください。",
             "質問が天気・気温などの現在情報なら、検索結果にある最新情報を回答してください。",
             "検索結果が見つからない場合だけ、確認できなかったことを正直に説明してください。検索を実行していないかのような回答は禁止です。",
-            `検索結果:\n${directWebSearchResult.searchContext ?? ""}`,
+            `検索結果:\n${precomputedWebSearchContext ?? ""}`,
           ].join("\n") },
         ],
         stream: true,
@@ -2504,6 +2564,35 @@ ${thinkingSteps.map((step) => `【${step.label}】\n${step.content}`).join("\n\n
     } catch (error) {
       console.error("forced web-search final Groq stream failed:", error)
       sseText(controller, "外部Web検索の結果を取得しましたが、回答生成中にエラーが発生しました。")
+      sseDone(controller)
+    }
+    return
+  }
+
+  // Thinking/非Thinkingを問わず、web_search判定なら検索済みコンテキストだけで最終回答を生成する。
+  // ここでは再度tool callingを許可せず、検索結果の反映を決定論的にする。
+  if (!postDraftRequest && effectiveRouterDecision.action === "web_search" && precomputedWebSearchContext) {
+    try {
+      await streamGroq(groqApiKey, {
+        model,
+        messages: [
+          ...baseMessages,
+          { role: "system", content: [
+            "外部Web検索を実行済みです。検索結果を必ず回答に反映してください。",
+            "検索結果にない情報は、確認済みの事実として断定しないでください。",
+            `検索結果:\n${precomputedWebSearchContext ?? ""}`,
+            postDraftRequest
+              ? "この検索結果は投稿作成のために取得したものです。投稿依頼の場合は検索結果を要約・解釈して、読者に分かりやすい完成した投稿文へ変換してください。"
+              : "検索結果を根拠として回答してください。",
+          ].join("\n") },
+        ],
+        stream: true,
+        temperature: body.thinking ? 0.2 : 0.25,
+        max_completion_tokens: answerMaxTokens,
+      }, controller)
+    } catch (error) {
+      console.error("deterministic web-search final Groq stream failed:", error)
+      sseText(controller, "Web検索の結果を取得しましたが、回答生成中にエラーが発生しました。")
       sseDone(controller)
     }
     return
@@ -2522,20 +2611,8 @@ ${thinkingSteps.map((step) => `【${step.label}】\n${step.content}`).join("\n\n
 
   // 題材型の投稿依頼で外部Web検索が必要とルーターが判断した場合だけ検索する。
   let postWebSearchContext: string | null = null
-  if (postDraftRequest && effectiveRouterDecision.action === "web_search") {
-    const query = latestUserText
-      .replace(/(?:ポスト|投稿)(?:して|してください|してほしい|してくれる|お願い)(?:[。！？!?])?$/u, "")
-      .replace(/(?:確認して|確認した上で|調べて|調べた上で|検索して|検索した上で)(?:[。！？!?])?$/u, "")
-      .trim()
-    sse(controller, { type: "web_search_start", query })
-    try {
-      const result = await searchWeb(query || latestUserText, 5)
-      postWebSearchContext = result.context
-      sse(controller, { type: "web_search_end", results: result.items })
-    } catch (error) {
-      console.error("post web search failed:", error)
-      sse(controller, { type: "web_search_end", results: [] })
-    }
+  if (postDraftRequest && needsDeterministicWebSearch) {
+    postWebSearchContext = precomputedWebSearchContext
   }
 
   if (postDraftRequest) {

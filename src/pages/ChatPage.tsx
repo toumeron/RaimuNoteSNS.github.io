@@ -1112,7 +1112,18 @@ export default function ChatPage() {
       if (s.id === currentSessionId) {
         return {
           ...s,
-          messages: [...updatedMessages, { id: assistantMessageId, role: 'assistant' as const, content: '' }]
+          messages: [...updatedMessages, {
+            id: assistantMessageId,
+            role: 'assistant' as const,
+            content: '',
+            ...(selectedModel === 'advanced' ? {
+              thinking: {
+                summary: '',
+                steps: [],
+                activeLabel: '検討を開始',
+              } satisfies ThinkingTrace,
+            } : {}),
+          }]
         }
       }
       return s
@@ -1236,6 +1247,17 @@ export default function ChatPage() {
 
               if (parsed.type === 'thinking_start') {
                 setAssistantStreamStatus('thinking')
+                if (selectedModel === 'advanced') {
+                  const thinking: ThinkingTrace = {
+                    summary: thinkingSummary,
+                    steps: thinkingSteps,
+                    activeLabel: activeThinkingLabel || '検討を開始',
+                  }
+                  setSessions(prev => prev.map(s => s.id === currentSessionId
+                    ? { ...s, messages: s.messages.map(m => m.id === assistantMessageId ? { ...m, thinking } : m) }
+                    : s
+                  ))
+                }
                 continue
               }
 
@@ -1263,6 +1285,16 @@ export default function ChatPage() {
                   ? { ...s, messages: s.messages.map(m => m.id === assistantMessageId ? { ...m, thinking } : m) }
                   : s
                 ))
+                continue
+              }
+
+              if (parsed.type === 'web_search_start') {
+                setAssistantStreamStatus('searching')
+                continue
+              }
+
+              if (parsed.type === 'web_search_end') {
+                setAssistantStreamStatus('thinking')
                 continue
               }
 
@@ -1648,6 +1680,17 @@ export default function ChatPage() {
 
               if (parsed.type === 'thinking_start') {
                 setAssistantStreamStatus('thinking')
+                if (selectedModel === 'advanced') {
+                  const thinking: ThinkingTrace = {
+                    summary: thinkingSummary,
+                    steps: thinkingSteps,
+                    activeLabel: activeThinkingLabel || '検討を開始',
+                  }
+                  setSessions(prev => prev.map(s => s.id === currentSessionId
+                    ? { ...s, messages: s.messages.map(m => m.id === assistantMessageId ? { ...m, thinking } : m) }
+                    : s
+                  ))
+                }
                 continue
               }
 
@@ -2105,13 +2148,13 @@ export default function ChatPage() {
                               {!isUser && msg.thinking && (
                                 <ThinkingSummaryCard
                                   trace={msg.thinking}
-                                  expanded={expandedThinkingMessageId === msg.id || (isLoading && msg.content === '')}
+                                  expanded={expandedThinkingMessageId === msg.id || (isLoading && selectedModel === 'advanced' && msg.content === '')}
                                   onToggle={() => setExpandedThinkingMessageId(expandedThinkingMessageId === msg.id ? null : msg.id)}
                                 />
                               )}
                               <span className="flex items-center gap-2 text-[#666666] dark:text-[#999999] text-[15px] animate-pulse">
                                 <Loader2 className="w-4 h-4 animate-spin text-[#ea4c89] dark:text-[#ececec]" />
-                                {assistantStreamStatus === 'checking' ? '検索ツールを開いています...' : assistantStreamStatus === 'searching' ? '検索中...' : assistantStreamStatus === 'coding' ? 'コードを作成中...' : assistantStreamStatus === 'summarizing' ? '会話を短く圧縮中...' : '思考中...'}
+                                {assistantStreamStatus === 'checking' ? '検索ツールを開いています...' : assistantStreamStatus === 'searching' ? '検索中...' : assistantStreamStatus === 'coding' ? 'コードを作成中...' : assistantStreamStatus === 'summarizing' ? '会話を短く圧縮中...' : selectedModel === 'advanced' ? '検討中...' : '思考中...'}
                               </span>
                             </>
                           ) : (
