@@ -467,14 +467,30 @@ async function searchBlueskyUncached(query: string, options?: { includePosts?: b
   const actorRequest = fetchBlueskySearchEndpoint(
     'app.bsky.actor.searchActors', new URLSearchParams({ q, limit: '25' }), options?.signal,
   );
+  // app.bsky.actor.searchActors(通常の検索結果一覧向けAPI)はフォロワー数などの
+  // 人気度でランキングされるため、フォロワーが少ない/新しい個人アカウントが
+  // 結果から漏れることがある(例: 表示名・ハンドルで検索しても出てこないという
+  // 報告があった)。
+  // 一方 app.bsky.actor.searchActorsTypeahead は入力補完(オートコンプリート)用の
+  // 前方一致検索で、人気度によるランキングの影響を受けにくく、同じキーワードでも
+  // こちらでは見つかることがある。実際のBlueskyアプリの検索ボックスも入力中は
+  // typeahead系のAPIで候補を出している。
+  // そのため両方を並行して呼び、結果をマージ(重複除去)して検索漏れを減らす。
+  const actorTypeaheadRequest = fetchBlueskySearchEndpoint(
+    'app.bsky.actor.searchActorsTypeahead', new URLSearchParams({ q, limit: '25' }), options?.signal,
+  ).catch((error) => {
+    console.error('Bluesky actor typeahead search failed:', error);
+    return null;
+  });
   const postRequest = options?.includePosts === false
     ? Promise.resolve(null)
     : fetchBlueskySearchEndpoint(
       'app.bsky.feed.searchPosts', new URLSearchParams({ q, limit: '50' }), options?.signal,
     );
-  const [actorOutcome, postOutcome] = await Promise.allSettled([actorRequest, postRequest]);
+  const [actorOutcome, typeaheadOutcome, postOutcome] = await Promise.allSettled([actorRequest, actorTypeaheadRequest, postRequest]);
   if (actorOutcome.status === 'rejected') throw actorOutcome.reason;
   const actorResponse = actorOutcome.value;
+  const typeaheadResponse = typeaheadOutcome.status === 'fulfilled' ? typeaheadOutcome.value : null;
   const postResponse = postOutcome.status === 'fulfilled' ? postOutcome.value : null;
   if (!actorResponse.ok) throw new Error(`Bluesky actor search failed: ${actorResponse.status}`);
 
@@ -482,6 +498,22 @@ async function searchBlueskyUncached(query: string, options?: { includePosts?: b
   const users = (actorPayload.actors || [])
     .map(mapBlueskyActorProfile)
     .filter((user): user is BlueskyProfile => Boolean(user));
+
+  // searchActorsTypeahead側の結果を、まだ含まれていないユーザーだけ追加でマージする
+  if (typeaheadResponse?.ok) {
+    const typeaheadPayload = (await typeaheadResponse.json()) as { actors?: BlueskyActorProfile[] };
+    const typeaheadUsers = (typeaheadPayload.actors || [])
+      .map(mapBlueskyActorProfile)
+      .filter((user): user is BlueskyProfile => Boolean(user));
+
+    const seenUserIds = new Set(users.map((user) => user.id));
+    for (const typeaheadUser of typeaheadUsers) {
+      if (!seenUserIds.has(typeaheadUser.id)) {
+        seenUserIds.add(typeaheadUser.id);
+        users.push(typeaheadUser);
+      }
+    }
+  }
 
   let posts: BlueskyMappedPost[] = [];
   if (postResponse?.ok) {

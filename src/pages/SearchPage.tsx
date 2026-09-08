@@ -27,6 +27,24 @@ const tokenizeQuery = (q: string): string[] => {
   return norm.split(/[\s\u3000]+/).filter(Boolean);
 };
 
+// PostgRESTのフィルタ文字列は "," "(" ")" などが構文上特別な意味を持つため、
+// 検索クエリにこれらの文字が含まれるとフィルタの構文が壊れてしまい、
+// 検索結果が正しく返らなくなる(あるいはリクエスト自体がエラーになる)。
+// ダブルクォートで値を囲むことで安全に埋め込めるようにする。
+const quotePostgrestValue = (value: string) =>
+  `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+
+// ILIKE のワイルドカード文字(% と _)をエスケープし、ユーザーが入力した
+// 文字そのものを(意図しないワイルドカードとしてではなく)検索できるようにする
+const escapeLikeWildcards = (value: string) => value.replace(/[\\%_]/g, (char) => `\\${char}`);
+
+const buildIlikePattern = (query: string) => quotePostgrestValue(`%${escapeLikeWildcards(query)}%`);
+
+// Bluesky側の検索は "@handle" ではなく "handle" 形式のクエリを期待するため、
+// 先頭の "@" を取り除いてから渡す
+// (例: "@km170.bsky.social" で検索してもヒットしなかった原因の一つ)
+const normalizeBlueskyQuery = (query: string) => query.trim().replace(/^@+/, '');
+
 const buildUserHaystack = (u: User): string =>
   normalize(`${u.displayName} ${u.username} @${u.username} ${u.bio || ''}`);
 
@@ -763,7 +781,7 @@ export default function SearchPage() {
 
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      searchBluesky(query, { includePosts: false })
+      searchBluesky(normalizeBlueskyQuery(query), { includePosts: false })
         .then((result) => {
           if (cancelled) return;
           setBlueskySuggestionUsers(result.users.slice(0, 3).map((user) => ({
@@ -901,12 +919,22 @@ export default function SearchPage() {
     return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
 
+  // 投稿一覧を整形する際に allUsers.find() を投稿ごとに呼ぶと
+  // O(投稿数 × ユーザー数) の計算量になり、ユーザー数が多い環境や
+  // 古い端末で表示が目に見えて遅くなる。ここで一度だけ id -> User の
+  // Mapを作っておき、以降はO(1)で参照できるようにする。
+  const usersById = useMemo(() => {
+    const map = new Map<string, User>();
+    allUsers.forEach((u) => map.set(u.id, u));
+    return map;
+  }, [allUsers]);
+
   const fetchPosts = useCallback(async (q: string, targetPage: number, includeBlueskyPosts = !excludeBlueskyPosts) => {
     if (!q.trim()) return;
     const requestId = ++blueskySearchRequestRef.current;
     if (targetPage === 0) setIsPostsLoading(true);
     const blueskySearchPromise = targetPage === 0
-      ? searchBluesky(q, { includePosts: includeBlueskyPosts }).catch((error) => {
+      ? searchBluesky(normalizeBlueskyQuery(q), { includePosts: includeBlueskyPosts }).catch((error) => {
           console.error('Bluesky search failed:', error);
           return { posts: [], users: [] };
         })
@@ -939,16 +967,31 @@ export default function SearchPage() {
         ? allUsers.find((u) => u.username.toLowerCase() === handleMatch[1].toLowerCase())
         : undefined;
 
-      const contentConditions = [`content.ilike.%${q}%`];
+      const contentConditions = [`content.ilike.${buildIlikePattern(q)}`];
       if (matchedUser) {
         contentConditions.push(`user_id.eq.${matchedUser.id}`);
       }
 
+      // 以前はここで `.or()` を2回連続で呼び出しており
+      // (本文一致の条件と公開範囲の条件をそれぞれ別の `.or()` に渡していた)、
+      // PostgREST/postgrest-js は同じ種類のフィルタを2回指定することを
+      // 想定しておらず、正しくAND結合されない状態になっていた。
+      // これが原因で、ローカルの投稿検索が実質的に機能しておらず、
+      // 「京王線」のようなキーワードやハッシュタグを含む投稿を検索しても
+      // 何も出てこない(検索精度が低い)という症状が起きていた。
+      // (本文条件 OR 本文条件) AND (公開範囲条件 OR 公開範囲条件 OR ...) を
+      // 単一の `.or()` 呼び出しで正しく表現するため、分配法則で展開して
+      // or(and(...), and(...), ...) の形に組み立てる。
+      const combinedOrFilter = contentConditions
+        .flatMap((contentCondition) =>
+          conditions.map((visibilityCondition) => `and(${contentCondition},${visibilityCondition})`)
+        )
+        .join(',');
+
       const { data, error } = await supabase
         .from('posts')
         .select(`id, content, image_urls, created_at, user_id, likes_count, reposts_count, visibility`)
-        .or(contentConditions.join(','))
-        .or(conditions.join(','))
+        .or(combinedOrFilter)
         .order('created_at', { ascending: false })
         .range(from, to);
 
@@ -978,7 +1021,10 @@ export default function SearchPage() {
         }
 
         const formatted: PostWithAuthor[] = data.map((p: any) => {
-          const user = allUsers.find(u => u.id === p.user_id);
+          // allUsers.find() は投稿件数 × ユーザー数の計算量になり、
+          // ユーザー数が多い環境や古い端末で顕著に重くなるため、
+          // 事前に構築したMap(usersById)でO(1)参照に変更
+          const user = usersById.get(p.user_id);
           return {
             id: p.id,
             userId: p.user_id,
@@ -1060,7 +1106,7 @@ export default function SearchPage() {
     } finally {
       setIsPostsLoading(false);
     }
-  }, [allUsers, excludeBlueskyPosts]);
+  }, [usersById, excludeBlueskyPosts]);
 
   const commitSearch = useCallback(async (raw: string) => {
     const q = raw.trim();
@@ -1111,6 +1157,23 @@ export default function SearchPage() {
     return () => observerRef.current?.disconnect();
   }, [isPostsLoading, hasMore, page, searchQuery, fetchPosts]);
 
+  // サジェスト候補の計算はキー入力のたびに実行されるため、
+  // normalize() をユーザー数 × 3回、キー入力のたびに再計算するのは無駄が多く、
+  // ユーザー数が多い/古い端末では入力のもたつきにつながる。
+  // ユーザー一覧(allUsers)が変わったときだけ正規化済みの値を作り直し、
+  // キー入力時はこのインデックスを引くだけにする。
+  const allUsersSearchIndex = useMemo(() => {
+    const index = new Map<string, { dn: string; un: string; handle: string }>();
+    allUsers.forEach((u) => {
+      index.set(u.id, {
+        dn: normalize(u.displayName),
+        un: normalize(u.username),
+        handle: normalize(`@${u.username}`),
+      });
+    });
+    return index;
+  }, [allUsers]);
+
   const liveSuggestions = useMemo(() => {
     const raw = inputValue.trim();
     const normalizedRaw = normalize(raw);
@@ -1122,9 +1185,10 @@ export default function SearchPage() {
 
     const localSuggestions = allUsers
       .map((u) => {
-        const dn = normalize(u.displayName);
-        const un = normalize(u.username);
-        const handle = normalize(`@${u.username}`);
+        const idx = allUsersSearchIndex.get(u.id);
+        const dn = idx?.dn ?? '';
+        const un = idx?.un ?? '';
+        const handle = idx?.handle ?? '';
         const fields = [dn, un, handle];
         let score = 0;
 
@@ -1141,7 +1205,7 @@ export default function SearchPage() {
     const seen = new Set(localSuggestions.map((user) => user.id));
     const blueskySuggestions = blueskySuggestionUsers.filter((user) => !seen.has(user.id)).slice(0, 3);
     return [...localSuggestions.slice(0, 5 - blueskySuggestions.length), ...blueskySuggestions];
-  }, [inputValue, allUsers, blueskySuggestionUsers]);
+  }, [inputValue, allUsers, allUsersSearchIndex, blueskySuggestionUsers]);
 
   const queryTokens = useMemo(() => tokenizeQuery(searchQuery), [searchQuery]);
   const searchableUsers = useMemo(() => {
@@ -1149,6 +1213,22 @@ export default function SearchPage() {
     [...allUsers, ...blueskyUsers].forEach((user) => byId.set(user.id, user));
     return Array.from(byId.values());
   }, [allUsers, blueskyUsers]);
+
+  // filteredUsers 側も同様に、検索文字列(queryTokens)が変わるたびに
+  // 全ユーザー分の normalize()/buildUserHaystack() を再計算していたのを防ぐため、
+  // ユーザー一覧(searchableUsers)が変わったときだけ計算するインデックスを用意する。
+  const searchableUsersIndex = useMemo(() => {
+    const index = new Map<string, { dn: string; un: string; handle: string; hay: string }>();
+    searchableUsers.forEach((u) => {
+      index.set(u.id, {
+        dn: normalize(u.displayName),
+        un: normalize(u.username),
+        handle: normalize(`@${u.username}`),
+        hay: buildUserHaystack(u),
+      });
+    });
+    return index;
+  }, [searchableUsers]);
 
   // おすすめユーザー用
   // 公式かどうか・登録日時などでは並び替えず、毎回ランダムに3人選ぶ。
@@ -1169,10 +1249,11 @@ export default function SearchPage() {
 
     const blueskyUserIds = new Set(blueskyUsers.map((user) => user.id));
     const matchingUsers = searchableUsers.map((u) => {
-      const hay = buildUserHaystack(u);
-      const dn = normalize(u.displayName);
-      const un = normalize(u.username);
-      const handle = normalize(`@${u.username}`);
+      const idx = searchableUsersIndex.get(u.id);
+      const hay = idx?.hay ?? '';
+      const dn = idx?.dn ?? '';
+      const un = idx?.un ?? '';
+      const handle = idx?.handle ?? '';
       let score = 0;
       let allMatch = true;
       for (const t of queryTokens) {
@@ -1192,7 +1273,7 @@ export default function SearchPage() {
       ...blueskyUsers,
       ...matchingUsers.filter((user) => !blueskyUserIds.has(user.id)),
     ].filter((user, index, users) => users.findIndex((candidate) => candidate.id === user.id) === index);
-  }, [searchQuery, queryTokens, searchableUsers, blueskyUsers]);
+  }, [searchQuery, queryTokens, searchableUsers, searchableUsersIndex, blueskyUsers]);
 
   const suggestionRows = useMemo<SuggestionRow[]>(() => {
     const rows: SuggestionRow[] = [];
@@ -1443,6 +1524,12 @@ export default function SearchPage() {
     </div>
   );
 
+  // ホーム(未検索時)のセクションは「ポスト」「アカウント」どちらのタブでも
+  // 同じ内容を表示するだけなので、タブごとに毎回関数を呼び直して
+  // 同じJSXを二重に組み立てる(=不要な計算を毎レンダー2回行う)のではなく、
+  // 1レンダーにつき一度だけ計算して使い回す。
+  const homeSections = renderSearchHomeSections();
+
   return (
     <div className="min-h-screen bg-transparent text-[rgb(15,20,25)] dark:text-white">
       <div
@@ -1597,7 +1684,7 @@ export default function SearchPage() {
           </TabsList>
 
           <TabsContent value="posts" className="mt-4 bg-transparent border-none outline-none">
-            {!searchQuery ? renderSearchHomeSections() :
+            {!searchQuery ? homeSections :
              isPostsLoading && page === 0 ? <div>{Array.from({ length: 5 }).map((_, i) => <RowSkeleton key={i} />)}</div> :
              searchedPosts.length === 0 ? <EmptyHint title={`"${searchQuery}" に一致する結果はありません`} desc="キーワードを変えてみてください。" /> :
              <div className="flex flex-col gap-4 bg-transparent max-sm:gap-0">
@@ -1614,7 +1701,7 @@ export default function SearchPage() {
           </TabsContent>
 
           <TabsContent value="users" className="mt-4 bg-transparent border-none outline-none">
-            {!searchQuery ? renderSearchHomeSections() :
+            {!searchQuery ? homeSections :
              isUsersLoading ? <div>{Array.from({ length: 5 }).map((_, i) => <RowSkeleton key={i} />)}</div> :
              filteredUsers.length === 0 ? <EmptyHint title={`"${searchQuery}" に一致するアカウントはありません`} desc="別のキーワードでお試しください。" /> :
              <div className="flex flex-col gap-2 px-4">

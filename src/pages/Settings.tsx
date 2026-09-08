@@ -26,7 +26,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Separator } from '@/components/ui/separator';
 import { useAuth } from '@/hooks/useAuth';
 import { useUpdateProfile } from '@/hooks/useProfile';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { z } from 'zod';
 import { toast } from 'sonner';
 import { useTheme } from 'next-themes';
@@ -52,6 +52,35 @@ interface CustomEmoji {
   uploaded_by: string | null;
   created_at: string;
 }
+
+interface BlueskyProfileInfo {
+  handle: string;
+  displayName?: string;
+  avatar?: string;
+}
+
+const BLUESKY_PUBLIC_PROFILE_API = 'https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile';
+
+// Blueskyの本家プロフィールではなく、サイト内のユーザーページ（/u/handle）へ遷移させる
+const getInternalProfilePath = (handle: string) => `/u/${handle}`;
+
+const fetchBlueskyProfile = async (handle: string): Promise<BlueskyProfileInfo> => {
+  try {
+    const res = await fetch(`${BLUESKY_PUBLIC_PROFILE_API}?actor=${encodeURIComponent(handle)}`);
+    if (!res.ok) {
+      return { handle };
+    }
+    const data = await res.json();
+    return {
+      handle,
+      displayName: data?.displayName || undefined,
+      avatar: data?.avatar || undefined,
+    };
+  } catch (err) {
+    console.error('Fetch Bluesky Profile Error:', err);
+    return { handle };
+  }
+};
 
 export default function Settings() {
   const { user: authUser, logout } = useAuth();
@@ -98,6 +127,8 @@ export default function Settings() {
 
   const [blueskyHandles, setBlueskyHandles] = useState<string[]>(getConfiguredBlueskyHandles);
   const [blueskyHandleInput, setBlueskyHandleInput] = useState('');
+  const [blueskyProfiles, setBlueskyProfiles] = useState<Record<string, BlueskyProfileInfo>>({});
+  const [blueskyProfilesLoading, setBlueskyProfilesLoading] = useState<Record<string, boolean>>({});
 
   const fetchCustomEmojis = async () => {
     try {
@@ -226,6 +257,31 @@ export default function Settings() {
       window.removeEventListener('storage', handleStorage);
     };
   }, []);
+
+  // 登録済みのBlueskyハンドルに対応するプロフィール（アイコン・表示名）を取得する
+  useEffect(() => {
+    const handlesToFetch = blueskyHandles.filter(
+      (handle) => !blueskyProfiles[handle] && !blueskyProfilesLoading[handle]
+    );
+
+    if (handlesToFetch.length === 0) return;
+
+    setBlueskyProfilesLoading((prev) => {
+      const next = { ...prev };
+      handlesToFetch.forEach((handle) => {
+        next[handle] = true;
+      });
+      return next;
+    });
+
+    handlesToFetch.forEach((handle) => {
+      fetchBlueskyProfile(handle).then((profile) => {
+        setBlueskyProfiles((prev) => ({ ...prev, [handle]: profile }));
+        setBlueskyProfilesLoading((prev) => ({ ...prev, [handle]: false }));
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blueskyHandles]);
 
   if (!user) return null;
 
@@ -499,6 +555,11 @@ export default function Settings() {
     const nextHandles = blueskyHandles.filter((item) => item !== handle);
     const savedHandles = saveConfiguredBlueskyHandles(nextHandles);
     setBlueskyHandles(savedHandles);
+    setBlueskyProfiles((prev) => {
+      const next = { ...prev };
+      delete next[handle];
+      return next;
+    });
     toast.success(`@${handle} をBluesky連携から削除しました`);
   };
 
@@ -758,10 +819,6 @@ export default function Settings() {
           <Sparkles className="h-4 w-4 text-primary" />
           <h2 className="font-display text-base font-bold">Bluesky連携</h2>
         </div>
-        <p className="mt-1 text-sm text-muted-foreground">
-          タイムラインに表示するBlueskyユーザーを追加・削除できます。
-        </p>
-
         <div className="mt-4 flex flex-col gap-2 sm:flex-row">
           <Input
             value={blueskyHandleInput}
@@ -794,23 +851,52 @@ export default function Settings() {
             </div>
           ) : (
             <div className="flex flex-wrap gap-2">
-              {blueskyHandles.map((handle) => (
-                <div
-                  key={handle}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-background px-3 py-1.5 text-sm font-bold"
-                >
-                  <span className="max-w-[260px] truncate">@{handle}</span>
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveBlueskyHandle(handle)}
-                    className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                    aria-label={`@${handle}を削除`}
-                    title={`@${handle}を削除`}
+              {blueskyHandles.map((handle) => {
+                const profile = blueskyProfiles[handle];
+                const isProfileLoading = !!blueskyProfilesLoading[handle];
+                const profilePath = getInternalProfilePath(handle);
+
+                return (
+                  <div
+                    key={handle}
+                    className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background py-1 pl-1.5 pr-1.5 text-sm font-bold"
                   >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              ))}
+                    <Link
+                      to={profilePath}
+                      className="flex min-w-0 items-center gap-2 rounded-full py-0.5 pr-2 transition hover:bg-muted"
+                      title={`@${handle} のプロフィールを開く`}
+                    >
+                      <Avatar className="h-6 w-6 shrink-0 border border-border/40">
+                        <AvatarImage src={profile?.avatar} alt={profile?.displayName || handle} />
+                        <AvatarFallback className="text-[10px] font-bold">
+                          {handle.slice(0, 1).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <span className="flex min-w-0 flex-col leading-tight">
+                        <span className="max-w-[200px] truncate">
+                          {isProfileLoading
+                            ? '読み込み中...'
+                            : profile?.displayName || `@${handle}`}
+                        </span>
+                        {profile?.displayName && (
+                          <span className="max-w-[200px] truncate text-[10px] font-normal text-muted-foreground">
+                            @{handle}
+                          </span>
+                        )}
+                      </span>
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveBlueskyHandle(handle)}
+                      className="shrink-0 rounded-full p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                      aria-label={`@${handle}を削除`}
+                      title={`@${handle}を削除`}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
