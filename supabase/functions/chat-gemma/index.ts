@@ -810,6 +810,30 @@ function shouldForceWebSearchForPost(latestUserText: string, request: PostDraftR
   return /(確認して|確認した上で|調べて|調べた上で|検索して|検索した上で|最新|現在|現時点|スペック|仕様|価格|値段|発売日|対応|互換性|性能|比較)/u.test(latestUserText)
 }
 
+function shouldForceCurrentWebSearch(latestUserText: string) {
+  const text = normalizeSearchText(latestUserText)
+  if (!text) return false
+
+  // 現在変化する情報は、ルーターがchatを返した場合でも必ず外部Web検索へ送る。
+  // 特に天気・気温は検索なしで回答してはいけない。
+  const timeSensitivePattern =
+    /(今日|本日|今|現在|いま|現時点|直近|最新|リアルタイム)/u
+  const weatherPattern =
+    /(天気|天候|気温|降水確率|雨|雪|風速|風向き|湿度|警報|注意報|台風)/u
+
+  if (weatherPattern.test(text) && timeSensitivePattern.test(text)) return true
+
+  return /(現在の価格|現在価格|最新価格|現在の在庫|在庫状況|発売状況|今日のニュース|最新ニュース|現在のニュース|最新情報を教えて|現在の状況を教えて)/u.test(text)
+}
+
+function buildForcedWebSearchQuery(latestUserText: string) {
+  const text = latestUserText.trim()
+  if (/(天気|天候|気温|降水確率|雨|雪|風速|風向き|湿度)/u.test(text) && /(今日|本日|今|現在|いま)/u.test(text)) {
+    return `${text} ${toJstDateLabel()} 最新の天気情報`
+  }
+  return `${text} ${toJstDateLabel()}`
+}
+
 async function classifyToolIntent(
   groqApiKey: string,
   latestUserText: string,
@@ -2118,6 +2142,44 @@ async function searchWeb(query: string, limit = 5): Promise<WebSearchResult> {
   return { context, items }
 }
 
+async function executeDirectWebSearch(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  query: string,
+  limit = 5,
+): Promise<ToolExecutionResult> {
+  sse(controller, { type: "web_search_start", query })
+
+  try {
+    let result = await searchWeb(query, limit)
+
+    // 天気など時間依存情報は検索結果が空の場合に限り、検索語を少し変えて再試行する。
+    if (result.items.length === 0 && /(天気|天候|気温|降水確率|警報|注意報)/u.test(query)) {
+      result = await searchWeb(`${query} Weathernews ウェザーニュース`, limit)
+    }
+
+    sse(controller, { type: "web_search_end", results: result.items })
+    return {
+      hasWebSearchTool: true,
+      searchContext: result.context,
+      toolMessage: {
+        role: "tool",
+        content: result.context,
+      },
+    }
+  } catch (error) {
+    console.error("direct web search failed:", error)
+    sse(controller, { type: "web_search_end", results: [] })
+    return {
+      hasWebSearchTool: true,
+      searchContext: "外部Web検索中に一時的なエラーが発生しました。",
+      toolMessage: {
+        role: "tool",
+        content: "外部Web検索中に一時的なエラーが発生しました。",
+      },
+    }
+  }
+}
+
 async function executeDirectSearch(
   req: Request,
   controller: ReadableStreamDefaultController<Uint8Array>,
@@ -2364,10 +2426,13 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
 
   // 最初にツール要否を判定。投稿依頼でも「確認して」「調べて」等なら外部検索ルートへ進める。
   const routerDecision = await classifyToolIntent(groqApiKey, latestUserText, routerContext)
+  const forceCurrentWebSearch = shouldForceCurrentWebSearch(latestUserText)
   const effectiveRouterDecision: ToolIntentDecision =
-    shouldForceWebSearchForPost(latestUserText, postDraftRequest) && routerDecision.action === "chat"
-      ? { action: "web_search", reason: "post_request_requires_external_verification" }
-      : routerDecision
+    forceCurrentWebSearch
+      ? { action: "web_search", reason: "current_information_requires_external_web_verification" }
+      : shouldForceWebSearchForPost(latestUserText, postDraftRequest) && routerDecision.action === "chat"
+        ? { action: "web_search", reason: "post_request_requires_external_verification" }
+        : routerDecision
 
   // Thinkingモードでは投稿依頼も通常質問と同じく検討工程を実行する。
   if (body.thinking) {
@@ -2412,6 +2477,36 @@ ${thinkingSteps.map((step) => `【${step.label}】\n${step.content}`).join("\n\n
     } finally {
       sse(controller, { type: "thinking_end" })
     }
+  }
+
+  // 「今日の天気」「現在の価格」など時間依存情報は、ルーター結果に関係なく
+  // ここで直接Web検索を実行し、その結果を最終回答に必ず渡す。
+  if (forceCurrentWebSearch && !postDraftRequest) {
+    const query = buildForcedWebSearchQuery(latestUserText)
+    const directWebSearchResult = await executeDirectWebSearch(controller, query, 5)
+
+    try {
+      await streamGroq(groqApiKey, {
+        model,
+        messages: [
+          ...baseMessages,
+          { role: "system", content: [
+            "外部Web検索を実行済みです。必ず検索結果を確認してから回答してください。",
+            "質問が天気・気温などの現在情報なら、検索結果にある最新情報を回答してください。",
+            "検索結果が見つからない場合だけ、確認できなかったことを正直に説明してください。検索を実行していないかのような回答は禁止です。",
+            `検索結果:\n${directWebSearchResult.searchContext ?? ""}`,
+          ].join("\n") },
+        ],
+        stream: true,
+        temperature: body.thinking ? 0.2 : 0.25,
+        max_completion_tokens: answerMaxTokens,
+      }, controller)
+    } catch (error) {
+      console.error("forced web-search final Groq stream failed:", error)
+      sseText(controller, "外部Web検索の結果を取得しましたが、回答生成中にエラーが発生しました。")
+      sseDone(controller)
+    }
+    return
   }
 
   // 明示本文の投稿は内容を改変せず、そのまま承認カードへ渡す。
