@@ -26,6 +26,197 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { toast } from 'sonner'
 
+const VPOP_STYLES = `
+@import url('https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap');
+
+/* ============================================================
+   炉なる世界観トークン
+   🩶 シルバーグレーが主役 / 🩵 ライトブルーは差し色
+   ============================================================ */
+.vpop-root {
+  --nr-silver-0: #fbfbfc;
+  --nr-silver-1: #f3f4f6;
+  --nr-silver-2: #e8eaee;
+  --nr-silver-3: #d9dde3;
+  --nr-ink:      #333a42;
+  --nr-ink-sub:  #69707a;
+  --nr-ink-mute: #98a0aa;
+  --nr-blue:     #4fb3e8;
+  --nr-blue-deep:#3aa5e0;
+  --nr-blue-soft:#86c9ee;
+  --nr-blue-pale:#dceef9;
+  --nr-glow:     rgba(79,179,232,.32);
+  --nr-shadow-s: 0 2px 6px -2px rgba(90,105,125,.18);
+  --nr-shadow-m: 0 10px 26px -14px rgba(90,105,125,.45);
+  --nr-shadow-glow: 0 10px 30px -12px rgba(79,179,232,.55);
+
+  font-family: 'Zen Kaku Gothic New', 'Hiragino Kaku Gothic ProN', system-ui, sans-serif;
+  color: var(--nr-ink);
+  letter-spacing: .01em;
+  background:
+    radial-gradient(120% 80% at 14% -10%, #ffffff 0%, rgba(255,255,255,0) 58%),
+    radial-gradient(90% 70% at 88% 110%, rgba(79,179,232,.10) 0%, rgba(255,255,255,0) 60%),
+    linear-gradient(168deg, #fafbfc 0%, #eef0f3 46%, #f5f6f8 100%);
+}
+.dark .vpop-root {
+  --nr-silver-0: #12161b;
+  --nr-silver-1: #171c22;
+  --nr-silver-2: #1e242b;
+  --nr-silver-3: #2b323b;
+  --nr-ink:      #e6e9ed;
+  --nr-ink-sub:  #a8b0ba;
+  --nr-ink-mute: #7e868f;
+  --nr-blue-pale:#1d3446;
+  --nr-glow:     rgba(79,179,232,.5);
+  --nr-shadow-s: 0 2px 8px -2px rgba(0,0,0,.5);
+  --nr-shadow-m: 0 12px 30px -16px rgba(0,0,0,.8);
+  --nr-shadow-glow: 0 0 28px -6px rgba(79,179,232,.45);
+  background:
+    radial-gradient(110% 80% at 14% -10%, rgba(79,179,232,.16) 0%, rgba(0,0,0,0) 58%),
+    radial-gradient(90% 70% at 86% 112%, rgba(79,179,232,.12) 0%, rgba(0,0,0,0) 60%),
+    linear-gradient(168deg, #10151a 0%, #161d25 52%, #0d1116 100%);
+}
+
+/* ---------- 文字組み ---------- */
+.vpop-root .vpop-title {
+  font-family: 'Zen Maru Gothic', 'Zen Kaku Gothic New', sans-serif;
+  font-weight: 900;
+  letter-spacing: .04em;
+  color: var(--nr-ink);
+  text-shadow: 0 2px 0 rgba(255,255,255,.9), 0 10px 26px rgba(79,179,232,.28);
+}
+.dark .vpop-root .vpop-title { text-shadow: 0 0 22px rgba(79,179,232,.6); }
+.vpop-root .vpop-round { font-family: 'Zen Maru Gothic', sans-serif; font-weight: 700; }
+.vpop-root .vpop-num { font-family: 'Roboto Mono', ui-monospace, monospace; letter-spacing: .06em; font-size: .92em; }
+.vpop-mark { color: var(--nr-blue-soft); font-weight: 800; font-size: .9em; vertical-align: .06em; }
+.dark .vpop-mark { color: var(--nr-blue); text-shadow: 0 0 10px rgba(79,179,232,.7); }
+
+/* ---------- 背景レイヤー ---------- */
+.vpop-bg { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; }
+.vpop-blob { position: absolute; border-radius: 9999px; filter: blur(54px); opacity: .5; }
+.vpop-blob-1 { width: 44vw; height: 44vw; left: -10vw; top: -12vw; background: #dfe3e8; animation: vpopDrift 24s ease-in-out infinite; }
+.vpop-blob-2 { width: 34vw; height: 34vw; right: -8vw; top: 20%; background: #cfe6f4; animation: vpopDrift 30s ease-in-out infinite reverse; }
+.vpop-blob-3 { width: 32vw; height: 32vw; left: 32%; bottom: -14vw; background: #e6e9ed; animation: vpopDrift 27s ease-in-out infinite; }
+.dark .vpop-blob { opacity: .22; }
+
+/* 粒状ノイズ（配信画面のざらつき） */
+.vpop-grain {
+  position: absolute; inset: 0; opacity: .35; mix-blend-mode: multiply;
+  background-image: radial-gradient(rgba(120,135,150,.16) .5px, transparent .6px);
+  background-size: 3px 3px;
+}
+.dark .vpop-grain { mix-blend-mode: screen; opacity: .18; background-image: radial-gradient(rgba(180,205,225,.22) .5px, transparent .6px); }
+
+/* 走査線 */
+.vpop-scan {
+  position: absolute; inset: 0;
+  background: repeating-linear-gradient(to bottom, rgba(79,179,232,.05) 0 1px, transparent 1px 4px);
+  opacity: .55;
+}
+.dark .vpop-scan { background: repeating-linear-gradient(to bottom, rgba(134,201,238,.07) 0 1px, transparent 1px 4px); }
+
+/* 配信フレーム（四隅のトンボ付き） */
+.vpop-frame {
+  position: absolute; inset: 12px; border-radius: 30px;
+  border: 1.5px dashed rgba(120,135,150,.22);
+  box-shadow: inset 0 0 80px rgba(79,179,232,.05);
+}
+.dark .vpop-frame { border-color: rgba(134,201,238,.16); box-shadow: inset 0 0 90px rgba(79,179,232,.1); }
+.vpop-corner { position: absolute; width: 22px; height: 22px; border: 2px solid var(--nr-blue-soft); opacity: .55; }
+.vpop-corner-tl { left: 18px; top: 18px; border-right: 0; border-bottom: 0; border-radius: 10px 0 0 0; }
+.vpop-corner-tr { right: 18px; top: 18px; border-left: 0; border-bottom: 0; border-radius: 0 10px 0 0; }
+.vpop-corner-bl { left: 18px; bottom: 18px; border-right: 0; border-top: 0; border-radius: 0 0 0 10px; }
+.vpop-corner-br { right: 18px; bottom: 18px; border-left: 0; border-top: 0; border-radius: 0 0 10px 0; }
+
+.vpop-float {
+  position: absolute; font-size: 19px; color: rgba(79,179,232,.42);
+  font-family: 'Zen Maru Gothic', sans-serif; font-weight: 700;
+  animation: vpopFloat 10s ease-in-out infinite;
+}
+.dark .vpop-float { color: rgba(134,201,238,.5); text-shadow: 0 0 12px rgba(79,179,232,.7); }
+
+.vpop-root > *:not(.vpop-bg) { position: relative; z-index: 1; }
+
+/* ---------- 立ち絵スタンディ ---------- */
+.vpop-standee { position: relative; display: inline-flex; }
+.vpop-standee::after {
+  content: ''; position: absolute; left: 50%; bottom: -16px; translate: -50% 0;
+  width: 92px; height: 14px; border-radius: 9999px;
+  background: radial-gradient(closest-side, rgba(79,179,232,.28), rgba(79,179,232,0));
+  animation: vpopShadow 3.4s ease-in-out infinite;
+}
+.vpop-mascot {
+  animation: vpopBob 3.4s ease-in-out infinite;
+  box-shadow: var(--nr-shadow-glow), inset 0 0 0 4px rgba(255,255,255,.6);
+}
+.dark .vpop-mascot { box-shadow: var(--nr-shadow-glow), inset 0 0 0 4px rgba(79,179,232,.15); }
+.vpop-live {
+  position: absolute; right: -16px; bottom: -4px;
+  font-family: 'Roboto Mono', monospace;
+  font-size: 10px; font-weight: 700; letter-spacing: .14em;
+  padding: 3px 10px; border-radius: 9999px;
+  background: var(--nr-blue); color: #ffffff;
+  box-shadow: 0 6px 16px rgba(79,179,232,.5);
+  animation: vpopPulse 2.2s ease-in-out infinite;
+}
+
+/* 挨拶コピー */
+.vpop-greet { font-family: 'Zen Maru Gothic', sans-serif; font-weight: 700; color: var(--nr-ink-sub); }
+.vpop-greet-strong { color: var(--nr-blue-deep); }
+.dark .vpop-greet-strong { color: var(--nr-blue-soft); }
+
+/* サジェストチップ */
+.vpop-chip {
+  font-family: 'Zen Maru Gothic', sans-serif; font-weight: 700; font-size: 13px;
+  padding: 8px 14px; border-radius: 9999px;
+  background: rgba(255,255,255,.85); color: var(--nr-ink-sub);
+  border: 1.5px solid var(--nr-silver-3);
+  box-shadow: var(--nr-shadow-s);
+}
+.vpop-chip:hover { border-color: var(--nr-blue-soft); color: var(--nr-blue-deep); box-shadow: var(--nr-shadow-glow); }
+.dark .vpop-chip { background: rgba(30,36,43,.8); border-color: var(--nr-silver-3); }
+.dark .vpop-chip:hover { color: var(--nr-blue-soft); }
+
+/* ---------- モーション ---------- */
+.vpop-in { animation: vpopIn .42s cubic-bezier(.22,.9,.28,1.3) both; }
+.vpop-card { will-change: transform; }
+.vpop-card:hover { transform: translateY(-2px); }
+.vpop-root button { transition: transform .16s cubic-bezier(.2,.8,.3,1.2), background-color .2s, color .2s, box-shadow .2s, border-color .2s; }
+.vpop-root button:hover { transform: translateY(-1px); }
+.vpop-root button:active { transform: scale(.94); }
+
+.vpop-root .custom-scrollbar::-webkit-scrollbar { width: 8px; }
+.vpop-root .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(120,135,150,.28); border-radius: 9999px; }
+.vpop-root .custom-scrollbar:hover::-webkit-scrollbar-thumb { background: rgba(79,179,232,.45); }
+
+/* 入力欄：呼吸する水色の光 */
+.vpop-root .vpop-composer { box-shadow: var(--nr-shadow-m); }
+.vpop-root .vpop-composer:focus-within {
+  border-color: var(--nr-blue-soft);
+  box-shadow: 0 0 0 4px var(--nr-glow), 0 16px 34px -18px rgba(58,165,224,.9);
+}
+
+/* 思考中：✦︎ が順に光る */
+.vpop-root .vpop-thinking { animation: vpopShimmer 1.7s ease-in-out infinite; }
+.vpop-spark { display: inline-block; color: var(--nr-blue); animation: vpopSpark 1.2s ease-in-out infinite; }
+.vpop-spark:nth-child(2) { animation-delay: .18s; }
+.vpop-spark:nth-child(3) { animation-delay: .36s; }
+
+@keyframes vpopIn { from { opacity: 0; transform: translateY(14px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes vpopBob { 0%,100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-8px) rotate(2deg); } }
+@keyframes vpopShadow { 0%,100% { opacity: .8; transform: translate(-50%,0) scaleX(1); } 50% { opacity: .45; transform: translate(-50%,0) scaleX(.8); } }
+@keyframes vpopFloat { 0%,100% { transform: translateY(0) rotate(0deg); opacity: .3; } 50% { transform: translateY(-26px) rotate(12deg); opacity: .7; } }
+@keyframes vpopDrift { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(4vw,3vh) scale(1.12); } }
+@keyframes vpopPulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .5; transform: scale(.9); } }
+@keyframes vpopShimmer { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
+@keyframes vpopSpark { 0%,100% { opacity: .25; transform: scale(.85); } 50% { opacity: 1; transform: scale(1.15); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .vpop-root *, .vpop-root *::before, .vpop-root *::after { animation: none !important; transition: none !important; }
+}
+`
+
+
 type ReferencedPost = {
   id: string
   authorUsername: string
@@ -402,7 +593,7 @@ const MiniPostPreviewCard = ({
 
   return (
     <article
-      className={`${compact ? 'mt-2.5' : ''} relative w-fit max-w-full sm:max-w-[480px] whitespace-normal overflow-hidden rounded-[20px] border border-[#cfd9de] bg-transparent text-[#0f1419] shadow-none dark:border-[#2f3336] dark:bg-transparent dark:text-[#e7e9ea]`}
+      className={`${compact ? 'mt-2.5' : ''} relative w-fit max-w-full sm:max-w-[480px] whitespace-normal overflow-hidden rounded-[20px] border border-[#bfe3f7] bg-transparent text-[#333a42] shadow-none dark:border-[#252b33] dark:bg-transparent dark:text-[#e4e7ea]`}
       onClick={(event) => event.stopPropagation()}
     >
       <a
@@ -413,16 +604,16 @@ const MiniPostPreviewCard = ({
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start gap-3">
-          <Avatar className="h-10 w-10 shrink-0 border border-[#cfd9de] bg-transparent dark:border-[#2f3336] dark:bg-transparent">
+          <Avatar className="h-10 w-10 shrink-0 border border-[#bfe3f7] bg-transparent dark:border-[#252b33] dark:bg-transparent">
             <AvatarImage src={post.authorAvatarUrl || undefined} alt={post.authorDisplayName} />
-            <AvatarFallback className="bg-transparent text-[14px] font-bold text-[#0f1419] dark:bg-transparent dark:text-[#e7e9ea]">
+            <AvatarFallback className="bg-transparent text-[14px] font-bold text-[#333a42] dark:bg-transparent dark:text-[#e4e7ea]">
               {post.authorDisplayName.slice(0, 1)}
             </AvatarFallback>
           </Avatar>
 
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0 text-[15px] leading-5">
-              <span className="max-w-[140px] truncate font-bold text-[#0f1419] dark:text-[#e7e9ea] sm:max-w-[180px]">
+              <span className="max-w-[140px] truncate font-bold text-[#333a42] dark:text-[#e4e7ea] sm:max-w-[180px]">
                 {post.authorDisplayName}
               </span>
               {post.authorIsOfficial && (
@@ -433,21 +624,21 @@ const MiniPostPreviewCard = ({
                   loading="eager"
                 />
               )}
-              <span className="max-w-[120px] truncate text-[#536471] dark:text-[#71767b] sm:max-w-[160px]">
+              <span className="max-w-[120px] truncate text-[#868d96] dark:text-[#a8b0ba] sm:max-w-[160px]">
                 @{post.authorUsername}
               </span>
-              <span className="text-[#536471] dark:text-[#71767b]">·</span>
-              <span className="shrink-0 text-[#536471] dark:text-[#71767b]">
+              <span className="text-[#868d96] dark:text-[#a8b0ba]">·</span>
+              <span className="shrink-0 text-[#868d96] dark:text-[#a8b0ba]">
                 {formatRelative(post.createdAt)}
               </span>
             </div>
 
-            <div className="mt-1.5 whitespace-pre-wrap break-words text-[16px] font-normal leading-6 text-[#0f1419] dark:text-[#e7e9ea]">
+            <div className="mt-1.5 whitespace-pre-wrap break-words text-[16px] font-normal leading-6 text-[#333a42] dark:text-[#e4e7ea]">
               {clipPostPreviewText(post.content, contentLimit)}
             </div>
 
             {previewImage && (
-              <div className="mt-3 overflow-hidden rounded-[16px] border border-[#cfd9de] bg-transparent dark:border-[#2f3336] dark:bg-transparent">
+              <div className="mt-3 overflow-hidden rounded-[16px] border border-[#bfe3f7] bg-transparent dark:border-[#252b33] dark:bg-transparent">
                 <img
                   src={previewImage}
                   alt=""
@@ -468,7 +659,7 @@ const MiniPostPreviewCard = ({
             event.stopPropagation()
             onDismiss()
           }}
-          className="absolute right-2 top-2 rounded-full bg-transparent p-1 text-[#536471] transition hover:bg-black/[0.06] hover:text-[#0f1419] dark:text-[#71767b] dark:hover:bg-white/[0.08] dark:hover:text-[#e7e9ea]"
+          className="absolute right-2 top-2 rounded-full bg-transparent p-1 text-[#868d96] transition hover:bg-black/[0.06] hover:text-[#333a42] dark:text-[#a8b0ba] dark:hover:bg-white/[0.08] dark:hover:text-[#e4e7ea]"
           title="閉じる"
         >
           <X className="h-3.5 w-3.5" />
@@ -504,11 +695,11 @@ const ReferencePostsButtonAvatars = ({ posts }: { posts: ReferencedPost[] }) => 
       {avatarPosts.map((post, index) => (
         <Avatar
           key={`${post.authorUsername}-${post.id}`}
-          className={`${index > 0 ? '-ml-2' : ''} h-6 w-6 border-2 border-white bg-[#fff8f0] dark:border-[#121212] dark:bg-[#1a1a1a]`}
+          className={`${index > 0 ? '-ml-2' : ''} h-6 w-6 border-2 border-white bg-[#f7f8f9] dark:border-[#12161b] dark:bg-[#161b21]`}
           title={`${post.authorDisplayName} (@${post.authorUsername})`}
         >
           <AvatarImage src={post.authorAvatarUrl || undefined} alt={post.authorDisplayName} />
-          <AvatarFallback className="bg-[#ffd9e5] text-[10px] font-bold text-[#ea4c89] dark:bg-[#2a2a2a] dark:text-[#ececec]">
+          <AvatarFallback className="bg-[#e2e6ea] text-[10px] font-bold text-[#4fb3e8] dark:bg-[#1e242b] dark:text-[#e4e7ea]">
             {post.authorDisplayName.slice(0, 1)}
           </AvatarFallback>
         </Avatar>
@@ -526,48 +717,48 @@ const ThinkingSummaryCard = ({
   expanded: boolean
   onToggle: () => void
 }) => (
-  <div className="mb-4 max-w-2xl overflow-hidden rounded-2xl border border-[#e5e5e5] bg-[#f7f7f8] whitespace-normal dark:border-[#303030] dark:bg-[#1c1c1c]">
+  <div className="mb-4 max-w-2xl overflow-hidden rounded-[1.75rem] border border-[#e6e9ed] bg-[#fafbfc] whitespace-normal dark:border-[#252b33] dark:bg-[#181d24]">
     <button
       type="button"
       onClick={onToggle}
       className="group flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
       aria-expanded={expanded}
     >
-      <span className="flex min-w-0 items-center gap-2.5 text-sm font-medium text-[#3f3f46] dark:text-[#e4e4e7]">
+      <span className="flex min-w-0 items-center gap-2.5 text-sm font-medium text-[#252b33] dark:text-[#e8eaee]">
         {trace.activeLabel ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : <Sparkles className="h-4 w-4 shrink-0" />}
         <span>{trace.activeLabel ? `LimeAI 5.5 Thinking が${trace.activeLabel}` : `Thought for ${trace.steps?.length ?? 0} steps`}</span>
       </span>
-      <ChevronDown className={`h-4 w-4 shrink-0 text-[#71717a] transition-transform ${expanded ? 'rotate-180' : ''}`} />
+      <ChevronDown className={`h-4 w-4 shrink-0 text-[#a8b0ba] transition-transform ${expanded ? 'rotate-180' : ''}`} />
     </button>
     {expanded && (
-      <div className="border-t border-[#e5e5e5] px-4 py-3 text-sm leading-6 text-[#52525b] dark:border-[#303030] dark:text-[#d4d4d8] whitespace-pre-wrap break-words">
+      <div className="border-t border-[#e6e9ed] px-4 py-3 text-sm leading-6 text-[#69707a] dark:border-[#252b33] dark:text-[#dfe3e8] whitespace-pre-wrap break-words">
         {trace.steps && trace.steps.length > 0 ? (
-          <div className="relative space-y-0 before:absolute before:bottom-4 before:left-[7px] before:top-4 before:w-px before:bg-[#d4d4d8] dark:before:bg-[#454545]">
+          <div className="relative space-y-0 before:absolute before:bottom-4 before:left-[7px] before:top-4 before:w-px before:bg-[#dfe3e8] dark:before:bg-[#334049]">
             {trace.steps.map((step, index) => (
               <div key={`${step.label}-${index}`} className="relative flex gap-3 pb-4 last:pb-0">
-                <span className="z-10 mt-1 flex h-[15px] w-[15px] shrink-0 items-center justify-center rounded-full bg-[#52525b] text-white dark:bg-[#d4d4d8] dark:text-[#18181b]">
+                <span className="z-10 mt-1 flex h-[15px] w-[15px] shrink-0 items-center justify-center rounded-full bg-[#69707a] text-white dark:bg-[#dfe3e8] dark:text-[#12161b]">
                   <Check className="h-2.5 w-2.5" />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <div className="mb-1 text-xs font-semibold text-[#3f3f46] dark:text-[#f4f4f5]">{step.label}</div>
+                  <div className="mb-1 text-xs font-semibold text-[#252b33] dark:text-[#f3f4f6]">{step.label}</div>
                   <div>{step.content}</div>
                 </div>
               </div>
             ))}
             {trace.activeLabel && (
               <div className="relative flex gap-3 pt-1">
-                <span className="z-10 mt-1 flex h-[15px] w-[15px] shrink-0 items-center justify-center rounded-full bg-[#f7f7f8] text-[#52525b] ring-1 ring-[#a1a1aa] dark:bg-[#1c1c1c] dark:text-[#e4e4e7] dark:ring-[#71717a]">
+                <span className="z-10 mt-1 flex h-[15px] w-[15px] shrink-0 items-center justify-center rounded-full bg-[#fafbfc] text-[#69707a] ring-1 ring-[#a8b0ba] dark:bg-[#181d24] dark:text-[#e8eaee] dark:ring-[#a8b0ba]">
                   <Loader2 className="h-2.5 w-2.5 animate-spin" />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <div className="text-xs font-semibold text-[#3f3f46] dark:text-[#f4f4f5]">{trace.activeLabel}</div>
-                  <div className="text-[#71717a] dark:text-[#a1a1aa]">検討を進めています…</div>
+                  <div className="text-xs font-semibold text-[#252b33] dark:text-[#f3f4f6]">{trace.activeLabel}</div>
+                  <div className="text-[#a8b0ba] dark:text-[#a8b0ba]">検討を進めています…</div>
                 </div>
               </div>
             )}
           </div>
         ) : trace.activeLabel ? (
-          <div className="flex items-center gap-2 text-[#71717a] dark:text-[#a1a1aa]"><Loader2 className="h-3.5 w-3.5 animate-spin" /> {trace.activeLabel}</div>
+          <div className="flex items-center gap-2 text-[#a8b0ba] dark:text-[#a8b0ba]"><Loader2 className="h-3.5 w-3.5 animate-spin" /> {trace.activeLabel}</div>
         ) : trace.summary}
       </div>
     )}
@@ -583,25 +774,25 @@ const AgentPostApprovalCard = ({
   onApprove: () => void
   onCancel: () => void
 }) => (
-  <div className="mt-3 max-w-xl overflow-hidden rounded-2xl border border-[#eadde3] bg-white dark:border-[#353535] dark:bg-[#191919] whitespace-normal">
-    <div className="border-b border-[#f0e4e8] px-4 py-3 dark:border-[#353535]">
-      <div className="flex items-center gap-2 text-sm font-semibold text-[#2b2b3a] dark:text-[#f4f4f5]">
-        <Send className="h-4 w-4 text-[#ea4c89]" />
+  <div className="mt-3 max-w-xl overflow-hidden rounded-[1.75rem] border border-[#dfe3e8] bg-white dark:border-[#282f37] dark:bg-[#161b21] whitespace-normal">
+    <div className="border-b border-[#e8eaee] px-4 py-3 dark:border-[#282f37]">
+      <div className="flex items-center gap-2 text-sm font-semibold text-[#333a42] dark:text-[#f3f4f6]">
+        <Send className="h-4 w-4 text-[#4fb3e8]" />
         LimeAIにLimeNoteアカウントへのアクセスを許可しますか？
       </div>
-      <p className="mt-1 text-xs leading-5 text-[#71717a] dark:text-[#a1a1aa]">承認後、現在ログインしているあなたのアカウントで公開投稿します。</p>
+      <p className="mt-1 text-xs leading-5 text-[#a8b0ba] dark:text-[#a8b0ba]">承認後、現在ログインしているあなたのアカウントで公開投稿します。</p>
     </div>
-    <div className="px-4 py-3 text-[15px] leading-6 text-[#2b2b3a] dark:text-[#ececec] break-words">{action.content}</div>
-    <div className="flex items-center gap-2 border-t border-[#f0e4e8] px-4 py-3 dark:border-[#353535]">
+    <div className="px-4 py-3 text-[15px] leading-6 text-[#333a42] dark:text-[#e4e7ea] break-words">{action.content}</div>
+    <div className="flex items-center gap-2 border-t border-[#e8eaee] px-4 py-3 dark:border-[#282f37]">
       {action.status === 'pending' && (
         <>
-          <button type="button" onClick={onApprove} className="rounded-full bg-[#ea4c89] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#d83b77]">投稿する</button>
-          <button type="button" onClick={onCancel} className="rounded-full px-3 py-2 text-sm font-medium text-[#666] transition hover:bg-[#f4f4f5] dark:text-[#aaa] dark:hover:bg-[#282828]">キャンセル</button>
+          <button type="button" onClick={onApprove} className="rounded-full bg-[#4fb3e8] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#2f93cf]">投稿する</button>
+          <button type="button" onClick={onCancel} className="rounded-full px-3 py-2 text-sm font-medium text-[#666] transition hover:bg-[#f3f4f6] dark:text-[#aaa] dark:hover:bg-[#1e242b]">キャンセル</button>
         </>
       )}
-      {action.status === 'posting' && <span className="flex items-center gap-2 text-sm text-[#71717a]"><Loader2 className="h-4 w-4 animate-spin" /> 投稿しています…</span>}
+      {action.status === 'posting' && <span className="flex items-center gap-2 text-sm text-[#a8b0ba]"><Loader2 className="h-4 w-4 animate-spin" /> 投稿しています…</span>}
       {action.status === 'posted' && <span className="flex items-center gap-2 text-sm font-medium text-emerald-600 dark:text-emerald-400"><Check className="h-4 w-4" /> LimeNoteに投稿しました</span>}
-      {action.status === 'cancelled' && <span className="text-sm text-[#71717a]">投稿をキャンセルしました</span>}
+      {action.status === 'cancelled' && <span className="text-sm text-[#a8b0ba]">投稿をキャンセルしました</span>}
       {action.status === 'failed' && <span className="text-sm text-red-600 dark:text-red-400">投稿できませんでした。もう一度お試しください。</span>}
     </div>
   </div>
@@ -1908,41 +2099,65 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="fixed inset-0 top-0 md:top-16 bottom-[60px] md:bottom-0 left-0 right-0 w-full bg-[#fff8f0] dark:bg-[#0f0f10] text-[#2b2b3a] dark:text-[#ececec] overflow-hidden font-sans flex z-40">
+    <div className="vpop-root fixed inset-0 top-0 md:top-16 bottom-[60px] md:bottom-0 left-0 right-0 w-full text-[#333a42] dark:text-[#e4e7ea] overflow-hidden flex z-40">
+      <style>{VPOP_STYLES}</style>
+
+      {/* 背景：シルバー×ライトブルーのグラデーション＋配信枠風の飾り */}
+      <div className="vpop-bg" aria-hidden="true">
+        <span className="vpop-blob vpop-blob-1" />
+        <span className="vpop-blob vpop-blob-2" />
+        <span className="vpop-blob vpop-blob-3" />
+        <span className="vpop-frame" />
+        <span className="vpop-corner vpop-corner-tl" />
+        <span className="vpop-corner vpop-corner-tr" />
+        <span className="vpop-corner vpop-corner-bl" />
+        <span className="vpop-corner vpop-corner-br" />
+        <span className="vpop-scan" />
+        <span className="vpop-grain" />
+        <span className="vpop-float" style={{ left: '6%', top: '18%', animationDelay: '0s' }}>✦︎</span>
+        <span className="vpop-float" style={{ left: '22%', top: '72%', animationDelay: '1.4s' }}>.ᐟ</span>
+        <span className="vpop-float" style={{ left: '48%', top: '12%', animationDelay: '2.6s' }}>♪</span>
+        <span className="vpop-float" style={{ left: '74%', top: '62%', animationDelay: '0.8s' }}>✧</span>
+        <span className="vpop-float" style={{ left: '88%', top: '26%', animationDelay: '3.2s' }}>✦︎</span>
+        <span className="vpop-float" style={{ left: '36%', top: '44%', animationDelay: '4.1s' }}>.ᐟ.ᐟ</span>
+        <span className="vpop-float" style={{ left: '62%', top: '86%', animationDelay: '2.0s' }}>♪</span>
+      </div>
+
+
       {/* サイドバー */}
       <div className={`${
         isSidebarOpen 
-          ? 'w-64 opacity-100 visible duration-250 ease-[cubic-bezier(0.25,1,0.5,1)]' 
+          ? 'w-full md:w-64 opacity-100 visible duration-250 ease-[cubic-bezier(0.25,1,0.5,1)]' 
           : 'w-0 opacity-0 invisible duration-300 ease-[cubic-bezier(0.3,0,0,1)]'
-      } shrink-0 bg-white/95 dark:bg-[#121212] flex flex-col h-full border-r border-[#eadde3] dark:border-[#2f2f2f] transition-all overflow-hidden absolute md:relative z-50 md:z-auto`}>
-        <div className="w-64 flex flex-col h-full shrink-0">
+      } shrink-0 bg-white/95 dark:bg-[#12161b] flex flex-col h-full border-r border-[#dfe3e8] dark:border-[#252b33] transition-all overflow-hidden absolute md:relative z-50 md:z-auto`}>
+        <div className="w-full md:w-64 flex flex-col h-full shrink-0">
           <div className="p-3.5 flex items-center justify-between gap-2">
             <button
               onClick={createNewSession}
-              className="flex-1 flex items-center justify-between px-3 py-2.5 rounded-xl bg-[#fff8f0] hover:bg-[#ffd9e5]/55 dark:bg-transparent dark:hover:bg-[#212121] transition duration-200 text-sm font-semibold text-[#2b2b3a] dark:text-[#ececec] border border-[#f0c9d6] dark:border-[#2f2f2f]"
+              className="flex-1 flex items-center justify-between px-3 py-2.5 rounded-2xl bg-[#f7f8f9] hover:bg-[#e2e6ea]/55 dark:bg-transparent dark:hover:bg-[#1c2128] transition duration-200 text-sm font-semibold text-[#333a42] dark:text-[#e4e7ea] border border-[#bfe3f7] dark:border-[#252b33]"
             >
               <span className="flex items-center gap-2">
-                <Plus className="w-4 h-4 text-[#ea4c89] dark:text-[#ececec]" /> 新しいチャット
+                <Plus className="w-4 h-4 text-[#4fb3e8] dark:text-[#e4e7ea]" /> 新しいチャット
               </span>
             </button>
 
             <button
               onClick={() => setIsSidebarOpen(false)}
-              className="md:hidden p-2.5 rounded-xl hover:bg-[#ffd9e5]/55 dark:hover:bg-[#212121] text-[#666666] dark:text-[#999999] hover:text-[#2b2b3a] dark:hover:text-[#ececec] transition shrink-0"
+              className="md:hidden p-2.5 rounded-2xl hover:bg-[#e2e6ea]/55 dark:hover:bg-[#1c2128] text-[#69707a] dark:text-[#a8b0ba] hover:text-[#333a42] dark:hover:text-[#e4e7ea] transition shrink-0"
             >
               <PanelLeftClose className="w-5 h-5" />
             </button>
 
             <button
               onClick={() => setIsSidebarOpen(false)}
-              className="hidden md:block p-2.5 rounded-xl hover:bg-[#ffd9e5]/55 dark:hover:bg-[#212121] text-[#666666] dark:text-[#999999] hover:text-[#2b2b3a] dark:hover:text-[#ececec] transition shrink-0"
+              className="hidden md:block p-2.5 rounded-2xl hover:bg-[#e2e6ea]/55 dark:hover:bg-[#1c2128] text-[#69707a] dark:text-[#a8b0ba] hover:text-[#333a42] dark:hover:text-[#e4e7ea] transition shrink-0"
             >
               <PanelLeftClose className="w-5 h-5" />
             </button>
           </div>
 
           <div className="flex-1 overflow-y-auto px-3 space-y-1 custom-scrollbar">
-            <div className="py-2 text-xs font-semibold text-[#8a6f7a] dark:text-[#999999] sticky top-0 bg-white/95 dark:bg-[#121212] z-10">
+            <div className="py-2 text-xs font-semibold text-[#8b929b] dark:text-[#a8b0ba] sticky top-0 bg-white/95 dark:bg-[#12161b] z-10">
               チャット履歴
             </div>
             {sessions.map((s) => (
@@ -1954,19 +2169,19 @@ export default function ChatPage() {
                     setIsSidebarOpen(false)
                   }
                 }}
-                className={`group flex items-center justify-between px-3 py-2.5 rounded-xl cursor-pointer text-sm transition duration-150 ${
+                className={`vpop-card group flex items-center justify-between px-3 py-2.5 rounded-2xl cursor-pointer text-sm transition duration-150 ${
                   s.id === currentSessionId 
-                    ? 'bg-[#d5f0ef]/75 dark:bg-[#212121] text-[#2b2b3a] dark:text-[#ececec] font-semibold' 
-                    : 'text-[#2b2b3a]/90 dark:text-[#ececec] hover:bg-[#ffd9e5]/45 dark:hover:bg-[#212121]'
+                    ? 'bg-[#e2e6ea] dark:bg-[#1c2128] text-[#333a42] dark:text-[#e4e7ea] font-bold border-l-4 border-[#3aa5e0] shadow-[0_6px_16px_-10px_rgba(58,165,224,0.9)]' 
+                    : 'text-[#333a42]/90 dark:text-[#e4e7ea] hover:bg-[#e2e6ea]/45 dark:hover:bg-[#1c2128]'
                 }`}
               >
                 <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                  <MessageSquare className="w-4 h-4 shrink-0 opacity-60 text-[#ea4c89] dark:text-[#ececec]" />
+                  <MessageSquare className="w-4 h-4 shrink-0 opacity-60 text-[#4fb3e8] dark:text-[#e4e7ea]" />
                   <span className="truncate">{s.title}</span>
                 </div>
                 <button
                   onClick={(e) => deleteSession(s.id, e)}
-                  className="opacity-100 md:opacity-0 group-hover:opacity-100 p-1 hover:bg-white/70 dark:hover:bg-[#2a2a2a] rounded text-[#2b2b3a] dark:text-[#ececec] hover:text-red-500 transition"
+                  className="opacity-100 md:opacity-0 group-hover:opacity-100 p-1 hover:bg-white/70 dark:hover:bg-[#1e242b] rounded text-[#333a42] dark:text-[#e4e7ea] hover:text-red-500 transition"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
@@ -1975,14 +2190,14 @@ export default function ChatPage() {
           </div>
 
           {user && (
-            <div className="p-3 border-t border-[#eadde3] dark:border-[#2f2f2f] bg-white/95 dark:bg-[#121212] flex items-center gap-3">
+            <div className="p-3 border-t border-[#dfe3e8] dark:border-[#252b33] bg-white/95 dark:bg-[#12161b] flex items-center gap-3">
               <Avatar className="h-8 w-8">
                 <AvatarImage src={user.avatarUrl} />
-                <AvatarFallback className="bg-[#ffd9e5] dark:bg-[#2a2a2a] text-[#ea4c89] dark:text-[#ececec] font-semibold">{user.displayName?.slice(0, 1)}</AvatarFallback>
+                <AvatarFallback className="bg-[#e2e6ea] dark:bg-[#1e242b] text-[#4fb3e8] dark:text-[#e4e7ea] font-semibold">{user.displayName?.slice(0, 1)}</AvatarFallback>
               </Avatar>
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-semibold text-[#2b2b3a] dark:text-[#ececec] truncate leading-tight">{user.displayName}</div>
-                <div className="text-xs text-[#666666] dark:text-[#999999] truncate leading-none mt-0.5">@{user.username}</div>
+                <div className="text-sm font-semibold text-[#333a42] dark:text-[#e4e7ea] truncate leading-tight">{user.displayName}</div>
+                <div className="text-xs text-[#69707a] dark:text-[#a8b0ba] truncate leading-none mt-0.5">@{user.username}</div>
               </div>
             </div>
           )}
@@ -2005,7 +2220,7 @@ export default function ChatPage() {
           {!isSidebarOpen && (
             <button
               onClick={() => setIsSidebarOpen(true)}
-              className="p-2 md:p-2.5 mr-1 md:mr-2 rounded-xl hover:bg-[#ffd9e5]/55 dark:hover:bg-[#212121] text-[#666666] dark:text-[#999999] hover:text-[#2b2b3a] dark:hover:text-[#ececec] transition"
+              className="p-2 md:p-2.5 mr-1 md:mr-2 rounded-2xl hover:bg-[#e2e6ea]/55 dark:hover:bg-[#1c2128] text-[#69707a] dark:text-[#a8b0ba] hover:text-[#333a42] dark:hover:text-[#e4e7ea] transition"
             >
               <PanelLeft className="w-4 h-4 md:w-5 md:h-5" />
             </button>
@@ -2014,13 +2229,13 @@ export default function ChatPage() {
           <div className={`${messages.length > 0 ? 'hidden md:block' : 'block'} relative`}>
             <button
               onClick={() => setIsModelSelectorOpen(!isModelSelectorOpen)}
-              className="flex items-center gap-2 text-base md:text-xl font-semibold text-[#2b2b3a] dark:text-[#ececec] hover:bg-[#ffd9e5]/45 dark:hover:bg-[#212121] px-2 md:px-3 py-1.5 md:py-2 rounded-2xl transition"
+              className="vpop-title flex items-center gap-2 text-lg md:text-2xl text-[#3aa5e0] dark:text-[#86c9ee] hover:bg-[#e2e6ea]/60 dark:hover:bg-[#1c2128] px-2 md:px-3 py-1.5 md:py-2 rounded-[1.75rem] transition"
             >
-              <span className="grid h-6 w-6 place-items-center rounded-full bg-[#ffd9e5] dark:bg-[#2a2a2a]">
-                <Sparkles className="w-3.5 h-3.5 text-[#ea4c89] dark:text-[#ececec]" />
+              <span className="grid h-8 w-8 place-items-center rounded-full border-2 border-white bg-gradient-to-br from-[#ffd166] to-[#4fb3e8] shadow-[0_4px_12px_-4px_rgba(58,165,224,0.8)]">
+                <Sparkles className="w-4 h-4 text-white" />
               </span>
               LimeAI
-              <ChevronDown className="w-4 h-4 md:w-5 md:h-5 text-[#666666] dark:text-[#999999]" />
+              <ChevronDown className="w-4 h-4 md:w-5 md:h-5 text-[#69707a] dark:text-[#a8b0ba]" />
             </button>
 
             {isModelSelectorOpen && (
@@ -2030,9 +2245,9 @@ export default function ChatPage() {
                   onClick={() => setIsModelSelectorOpen(false)}
                 />
 
-                <div className="absolute top-full left-0 mt-2 w-64 md:w-[320px] bg-white dark:bg-[#212121] rounded-2xl border border-[#eadde3] dark:border-[#2f2f2f] p-2 md:p-3 flex flex-col z-50 animate-in fade-in zoom-in-95 duration-100">
+                <div className="absolute top-full left-0 mt-2 w-64 md:w-[320px] bg-white dark:bg-[#1c2128] rounded-[1.75rem] border border-[#dfe3e8] dark:border-[#252b33] p-2 md:p-3 flex flex-col z-50 animate-in fade-in zoom-in-95 duration-100">
 
-                  <div className="text-[11px] md:text-xs font-semibold text-[#666666] dark:text-[#999999] mb-2 px-2">
+                  <div className="text-[11px] md:text-xs font-semibold text-[#69707a] dark:text-[#a8b0ba] mb-2 px-2">
                     AIモードを選択
                   </div>
 
@@ -2041,23 +2256,23 @@ export default function ChatPage() {
                       setSelectedModel('fast');
                       setIsModelSelectorOpen(false);
                     }}
-                    className={`flex items-center justify-between p-2.5 md:p-3 rounded-xl transition text-left ${
+                    className={`flex items-center justify-between p-2.5 md:p-3 rounded-2xl transition text-left ${
                       selectedModel === 'fast'
-                        ? 'bg-[#d5f0ef]/70 dark:bg-[#2a2a2a]/60'
-                        : 'hover:bg-[#ececec]/50 dark:hover:bg-[#2a2a2a]/50'
+                        ? 'bg-[#e4e7eb]/70 dark:bg-[#1e242b]/60'
+                        : 'hover:bg-[#e4e7ea]/50 dark:hover:bg-[#1e242b]/50'
                     }`}
                   >
                     <div className="flex flex-col">
-                      <span className="text-sm md:text-[15px] font-medium text-[#0d0d0d] dark:text-[#ececec]">
+                      <span className="text-sm md:text-[15px] font-medium text-[#2e343b] dark:text-[#e4e7ea]">
                         LimeAI 5.0 Fast
                       </span>
-                      <span className="text-[10px] md:text-xs text-[#666666] dark:text-[#999999] mt-0.5">
+                      <span className="text-[10px] md:text-xs text-[#69707a] dark:text-[#a8b0ba] mt-0.5">
                         普段の会話向け
                       </span>
                     </div>
 
                     {selectedModel === 'fast' && (
-                      <Check className="w-4 h-4 md:w-5 md:h-5 text-[#0d0d0d] dark:text-[#ececec]" />
+                      <Check className="w-4 h-4 md:w-5 md:h-5 text-[#2e343b] dark:text-[#e4e7ea]" />
                     )}
                   </button>
 
@@ -2070,29 +2285,29 @@ export default function ChatPage() {
                         window.location.href = '/RaimuNoteSNS.github.io/LimePro';
                       }
                     }}
-                    className={`flex items-center justify-between p-2.5 md:p-3 rounded-xl transition text-left mt-1 ${
+                    className={`flex items-center justify-between p-2.5 md:p-3 rounded-2xl transition text-left mt-1 ${
                       selectedModel === 'advanced'
-                        ? 'bg-[#d5f0ef]/70 dark:bg-[#2a2a2a]/60'
-                        : 'hover:bg-[#ececec]/50 dark:hover:bg-[#2a2a2a]/50'
+                        ? 'bg-[#e4e7eb]/70 dark:bg-[#1e242b]/60'
+                        : 'hover:bg-[#e4e7ea]/50 dark:hover:bg-[#1e242b]/50'
                     }`}
                   >
                     <div className="flex flex-col">
-                      <span className="text-sm md:text-[15px] font-medium text-[#0d0d0d] dark:text-[#ececec]">
+                      <span className="text-sm md:text-[15px] font-medium text-[#2e343b] dark:text-[#e4e7ea]">
                         LimeAI 5.5 Thinking
                       </span>
-                      <span className="text-[10px] md:text-xs text-[#666666] dark:text-[#999999] mt-0.5">
+                      <span className="text-[10px] md:text-xs text-[#69707a] dark:text-[#a8b0ba] mt-0.5">
                         詳しい回答向け
                       </span>
                     </div>
 
                     <div className="flex items-center gap-2">
                       {!hasLimePro && (
-                        <span className="px-4 py-1.5 text-[12px] font-medium text-[#1e40af] dark:text-[#93c5fd] border border-[#d1d5db] dark:border-[#3a3a3a] rounded-full">
+                        <span className="px-4 py-1.5 text-[12px] font-medium text-[#1e40af] dark:text-[#93c5fd] border border-[#d9dde3] dark:border-[#2c333c] rounded-full">
                           アップグレード
                         </span>
                       )}
                       {selectedModel === 'advanced' && (
-                        <Check className="w-4 h-4 md:w-5 md:h-5 text-[#0d0d0d] dark:text-[#ececec]" />
+                        <Check className="w-4 h-4 md:w-5 md:h-5 text-[#2e343b] dark:text-[#e4e7ea]" />
                       )}
                     </div>
                   </button>
@@ -2106,14 +2321,21 @@ export default function ChatPage() {
         <div className="flex-1 overflow-y-auto custom-scrollbar bg-transparent">
           {messages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center max-w-md mx-auto space-y-5 px-4 pb-20">
-              <div className="w-12 h-12 flex items-center justify-center rounded-full border border-[#f0c9d6] dark:border-[#383838] animate-fade-in bg-[#fff8f0] dark:bg-[#212121]">
-                <Sparkles className="w-6 h-6 text-[#ea4c89] dark:text-[#ececec]" />
+              <div className="vpop-standee">
+                <div className="vpop-mascot w-24 h-24 flex items-center justify-center rounded-full border-[3px] border-[#bfe3f7] dark:border-[#4fb3e8]/70 bg-white/80 dark:bg-[#1c2128]">
+                  <Sparkles className="w-9 h-9 text-[#4fb3e8] dark:text-[#86c9ee]" />
+                </div>
+
               </div>
-              <h2 className="text-2xl font-semibold text-[#2b2b3a] dark:text-[#ececec] tracking-tight">LimeAI</h2>
-              <p className="text-[15px] text-[#666666] dark:text-[#999999] leading-relaxed">
-                LimeAI 5.5 Thinking 登場。さらに便利なLimeNoteへ
+              <h2 className="vpop-title text-[34px] md:text-[42px] leading-none">
+                <span className="vpop-mark">✦︎</span> LimeAI <span className="vpop-mark">✦︎</span>
+              </h2>
+              <p className="vpop-greet text-[17px] leading-relaxed">
+            <span className="vpop-greet-strong">LimeAI 5.5 Thinking</span>登場
+                <span className="vpop-mark"> .ᐟ.ᐟ</span>
               </p>
             </div>
+
           ) : (
             <div className="w-full pb-4">
               {messages.map((msg) => {
@@ -2122,27 +2344,32 @@ export default function ChatPage() {
                 return (
                   <div 
                     key={msg.id} 
-                    className="w-full py-4 md:py-5 flex justify-center bg-transparent transition-colors duration-150"
+                    className="vpop-in w-full py-4 md:py-5 flex justify-center bg-transparent transition-colors duration-150"
                   >
                     <div className="max-w-3xl w-full flex gap-4 px-4 sm:px-6">
                       <div className="shrink-0 mt-0.5">
                         {isUser ? (
-                          <Avatar className="h-6 w-6">
+                          <Avatar className="h-9 w-9 border-2 border-white shadow-[0_4px_12px_-4px_rgba(58,165,224,0.6)] dark:border-[#4fb3e8]/60">
                             <AvatarImage src={user?.avatarUrl} />
-                            <AvatarFallback className="bg-[#d5f0ef] dark:bg-[#2f2f2f]"><User className="w-3.5 h-3.5 text-[#2b2b3a] dark:text-[#ececec]" /></AvatarFallback>
+                            <AvatarFallback className="bg-[#e4e7eb] dark:bg-[#252b33]"><User className="w-4 h-4 text-[#333a42] dark:text-[#e4e7ea]" /></AvatarFallback>
                           </Avatar>
                         ) : (
-                          <div className="w-6 h-6 rounded-full bg-[#ffd9e5] dark:bg-white flex items-center justify-center border border-[#f0c9d6] dark:border-white">
-                            <Sparkles className="w-3.5 h-3.5 text-[#ea4c89] dark:text-black" />
+                          <div className="w-9 h-9 rounded-full flex items-center justify-center border-2 border-white bg-gradient-to-br from-[#a8d8f4] to-[#4fb3e8] shadow-[0_4px_14px_-4px_rgba(58,165,224,0.75)] dark:border-[#86c9ee]/60">
+                            <Sparkles className="w-4 h-4 text-white" />
                           </div>
                         )}
                       </div>
 
                       <div className="flex-1 space-y-1.5 md:max-w-2xl lg:max-w-3xl min-w-0">
-                        <div className="text-[15px] font-semibold text-[#2b2b3a] dark:text-[#ececec]">
+                        <div className={`text-[14px] font-bold tracking-wide ${isUser ? 'text-[#333a42] dark:text-[#e4e7ea]' : 'text-[#3aa5e0] dark:text-[#86c9ee]'}`}>
                           {isUser ? 'あなた' : 'LimeAI'}
+                          {!isUser && <span className="ml-1 text-[#ffb845]">✧</span>}
                         </div>
-                        <div className="text-[16px] leading-7 text-[#2b2b3a] dark:text-[#ececec] whitespace-pre-wrap break-words">
+                        <div className={`text-[16px] leading-7 whitespace-pre-wrap break-words ${
+                          isUser
+                            ? 'inline-block max-w-full rounded-[1.5rem] rounded-tr-md bg-[#3aa5e0] px-4 py-2.5 text-white shadow-[0_8px_20px_-8px_rgba(58,165,224,0.7)]'
+                            : 'text-[#333a42] dark:text-[#e4e7ea]'
+                        }`}>
                           {msg.content === '' && isLoading ? (
                             <>
                               {!isUser && msg.thinking && (
@@ -2152,9 +2379,13 @@ export default function ChatPage() {
                                   onToggle={() => setExpandedThinkingMessageId(expandedThinkingMessageId === msg.id ? null : msg.id)}
                                 />
                               )}
-                              <span className="flex items-center gap-2 text-[#666666] dark:text-[#999999] text-[15px] animate-pulse">
-                                <Loader2 className="w-4 h-4 animate-spin text-[#ea4c89] dark:text-[#ececec]" />
-                                {assistantStreamStatus === 'checking' ? '検索ツールを開いています...' : assistantStreamStatus === 'searching' ? '検索中...' : assistantStreamStatus === 'coding' ? 'コードを作成中...' : assistantStreamStatus === 'summarizing' ? '会話を短く圧縮中...' : selectedModel === 'advanced' ? '検討中...' : '思考中...'}
+                              <span className="vpop-thinking flex items-center gap-2 text-[#8b929b] dark:text-[#86c9ee] text-[15px] font-semibold">
+                                <span className="flex items-center gap-[3px] text-[13px] font-black">
+                                  <span className="vpop-spark">✦︎</span>
+                                  <span className="vpop-spark">✦︎</span>
+                                  <span className="vpop-spark">✦︎</span>
+                                </span>
+                                {assistantStreamStatus === 'checking' ? '検索ツール開いてる〜？' : assistantStreamStatus === 'searching' ? '検索中.ᐟ.ᐟ' : assistantStreamStatus === 'coding' ? 'コード書いてる.ᐟ.ᐟ' : assistantStreamStatus === 'summarizing' ? 'お話まとめてる〜？' : selectedModel === 'advanced' ? 'なるほど…検討中.ᐟ.ᐟ' : 'なるほど….ᐟ.ᐟ'}
                               </span>
                             </>
                           ) : (
@@ -2184,7 +2415,7 @@ export default function ChatPage() {
                                   <button
                                     type="button"
                                     onClick={() => setExpandedReferenceMessageId(expandedReferenceMessageId === msg.id ? null : msg.id)}
-                                    className="inline-flex items-center gap-2 rounded-full border border-[#2b2b3a]/15 dark:border-[#3a3a3a] bg-white/75 dark:bg-[#121212] px-2.5 py-1.5 text-[#2b2b3a] dark:text-[#ececec] hover:bg-[#ffd9e5]/35 dark:hover:bg-[#212121] transition"
+                                    className="inline-flex items-center gap-2 rounded-full border border-[#333a42]/15 dark:border-[#2c333c] bg-white/75 dark:bg-[#12161b] px-2.5 py-1.5 text-[#333a42] dark:text-[#e4e7ea] hover:bg-[#e2e6ea]/35 dark:hover:bg-[#1c2128] transition"
                                     title="参照した公開ポストを表示"
                                   >
                                     <ReferencePostsButtonAvatars posts={msg.references} />
@@ -2198,20 +2429,20 @@ export default function ChatPage() {
                                       {msg.references.map((post) => (
                                         <div
                                           key={post.id}
-                                          className="rounded-2xl border border-[#eadde3] dark:border-[#2f2f2f] bg-white/85 dark:bg-[#151515] p-3 text-sm leading-6 text-[#2b2b3a] dark:text-[#ececec]"
+                                          className="rounded-[1.75rem] border border-[#dfe3e8] dark:border-[#252b33] bg-white/85 dark:bg-[#141920] p-3 text-sm leading-6 text-[#333a42] dark:text-[#e4e7ea]"
                                         >
                                           <div className="flex flex-wrap items-center justify-between gap-2">
                                             <div className="font-semibold truncate">
                                               {post.authorDisplayName} (@{post.authorUsername}){post.authorIsOfficial ? ' / 公式' : ''}
                                             </div>
-                                            <div className="text-xs text-[#8a6f7a] dark:text-[#999999] shrink-0">
+                                            <div className="text-xs text-[#8b929b] dark:text-[#a8b0ba] shrink-0">
                                               {formatRelative(post.createdAt)}
                                             </div>
                                           </div>
-                                          <div className="mt-1 text-[#2b2b3a]/90 dark:text-[#ececec]/90 break-words">
+                                          <div className="mt-1 text-[#333a42]/90 dark:text-[#e4e7ea]/90 break-words">
                                             {post.contentSnippet}
                                           </div>
-                                          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[#666666] dark:text-[#999999]">
+                                          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[#69707a] dark:text-[#a8b0ba]">
                                             <span>いいね {post.likesCount}</span>
                                             <span>リポスト {post.repostsCount}</span>
                                             <span>コメント {post.commentsCount}</span>
@@ -2226,13 +2457,13 @@ export default function ChatPage() {
                                 </div>
                               )}
                               {!isUser && msg.codingArtifact && (
-                                <div className="mt-4 whitespace-normal rounded-3xl border border-[#f0c9d6] dark:border-[#2f2f2f] bg-white/85 dark:bg-[#151515] overflow-hidden">
-                                  <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-[#eadde3] dark:border-[#2f2f2f]">
+                                <div className="mt-4 whitespace-normal rounded-[2rem] border border-[#bfe3f7] dark:border-[#252b33] bg-white/85 dark:bg-[#141920] overflow-hidden">
+                                  <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-[#dfe3e8] dark:border-[#252b33]">
                                     <div className="min-w-0">
-                                      <div className="text-sm font-semibold text-[#2b2b3a] dark:text-[#ececec] truncate">
+                                      <div className="text-sm font-semibold text-[#333a42] dark:text-[#e4e7ea] truncate">
                                         {msg.codingArtifact.title}
                                       </div>
-                                      <div className="text-xs text-[#8a6f7a] dark:text-[#999999] mt-0.5">
+                                      <div className="text-xs text-[#8b929b] dark:text-[#a8b0ba] mt-0.5">
                                         HTMLプレビューとコード
                                       </div>
                                     </div>
@@ -2240,14 +2471,14 @@ export default function ChatPage() {
                                       <button
                                         type="button"
                                         onClick={() => handleCopy(msg.codingArtifact?.html || '')}
-                                        className="px-3 py-1.5 rounded-full text-xs font-semibold border border-[#f0c9d6] dark:border-[#3a3a3a] hover:bg-[#ffd9e5]/45 dark:hover:bg-[#212121] transition"
+                                        className="px-3 py-1.5 rounded-full text-xs font-semibold border border-[#bfe3f7] dark:border-[#2c333c] hover:bg-[#e2e6ea]/45 dark:hover:bg-[#1c2128] transition"
                                       >
                                         コードをコピー
                                       </button>
                                       <button
                                         type="button"
                                         onClick={() => setExpandedCodeMessageId(expandedCodeMessageId === msg.id ? null : msg.id)}
-                                        className="px-3 py-1.5 rounded-full text-xs font-semibold border border-[#f0c9d6] dark:border-[#3a3a3a] hover:bg-[#ffd9e5]/45 dark:hover:bg-[#212121] transition"
+                                        className="px-3 py-1.5 rounded-full text-xs font-semibold border border-[#bfe3f7] dark:border-[#2c333c] hover:bg-[#e2e6ea]/45 dark:hover:bg-[#1c2128] transition"
                                       >
                                         {expandedCodeMessageId === msg.id ? 'コードを閉じる' : 'コードを表示'}
                                       </button>
@@ -2264,34 +2495,34 @@ export default function ChatPage() {
                                   </div>
 
                                   {expandedCodeMessageId === msg.id && (
-                                    <pre className="max-h-[420px] overflow-auto bg-[#1f1f24] text-[#f4f4f5] text-xs leading-5 p-4 whitespace-pre-wrap break-words">
+                                    <pre className="max-h-[420px] overflow-auto bg-[#12161b] text-[#f3f4f6] text-xs leading-5 p-4 whitespace-pre-wrap break-words">
                                       <code>{msg.codingArtifact.html}</code>
                                     </pre>
                                   )}
                                 </div>
                               )}
                               {!isUser && msg.content && (
-                                <div className="flex items-center gap-1.5 mt-3 text-[#666666] dark:text-[#999999]">
-                                  <button onClick={() => handleCopy(msg.content)} className="p-1.5 hover:bg-[#ffd9e5]/45 dark:hover:bg-[#212121] rounded-md transition text-[#666666] dark:text-[#999999] hover:text-[#2b2b3a] dark:hover:text-[#ececec]" title="コピー">
+                                <div className="flex items-center gap-1.5 mt-3 text-[#69707a] dark:text-[#a8b0ba]">
+                                  <button onClick={() => handleCopy(msg.content)} className="p-1.5 hover:bg-[#e2e6ea]/45 dark:hover:bg-[#1c2128] rounded-md transition text-[#69707a] dark:text-[#a8b0ba] hover:text-[#333a42] dark:hover:text-[#e4e7ea]" title="コピー">
                                     <Copy className="w-4 h-4" />
                                   </button>
-                                  <button onClick={() => handleRegenerate(messages.findIndex(m => m.id === msg.id))} className="p-1.5 hover:bg-[#ffd9e5]/45 dark:hover:bg-[#212121] rounded-md transition text-[#666666] dark:text-[#999999] hover:text-[#2b2b3a] dark:hover:text-[#ececec]" title="再度考えてもらう" disabled={isLoading}>
+                                  <button onClick={() => handleRegenerate(messages.findIndex(m => m.id === msg.id))} className="p-1.5 hover:bg-[#e2e6ea]/45 dark:hover:bg-[#1c2128] rounded-md transition text-[#69707a] dark:text-[#a8b0ba] hover:text-[#333a42] dark:hover:text-[#e4e7ea]" title="再度考えてもらう" disabled={isLoading}>
                                     <RotateCcw className={`w-4 h-4 ${isLoading ? 'opacity-50' : ''}`} />
                                   </button>
                                   
                                   <button 
                                     onClick={() => handleSpeak(msg.id, msg.content)} 
-                                    className={`p-1.5 hover:bg-[#ececec] dark:hover:bg-[#212121] rounded-md transition ${
+                                    className={`p-1.5 hover:bg-[#e4e7ea] dark:hover:bg-[#1c2128] rounded-md transition ${
                                       speakingMessageId === msg.id 
                                         ? 'text-red-500 dark:text-red-400 hover:text-red-600' 
-                                        : 'text-[#666666] dark:text-[#999999] hover:text-[#0d0d0d] dark:hover:text-[#ececec]'
+                                        : 'text-[#69707a] dark:text-[#a8b0ba] hover:text-[#2e343b] dark:hover:text-[#e4e7ea]'
                                     }`} 
                                     title={speakingMessageId === msg.id ? "読み上げを停止" : "音声で読み上げ"}
                                   >
                                     {speakingMessageId === msg.id ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
                                   </button>
                                   
-                                  <button onClick={() => handleShare(msg.content)} className="p-1.5 hover:bg-[#ffd9e5]/45 dark:hover:bg-[#212121] rounded-md transition text-[#666666] dark:text-[#999999] hover:text-[#2b2b3a] dark:hover:text-[#ececec]" title="共有">
+                                  <button onClick={() => handleShare(msg.content)} className="p-1.5 hover:bg-[#e2e6ea]/45 dark:hover:bg-[#1c2128] rounded-md transition text-[#69707a] dark:text-[#a8b0ba] hover:text-[#333a42] dark:hover:text-[#e4e7ea]" title="共有">
                                     <Share className="w-4 h-4" />
                                   </button>
                                 </div>
@@ -2314,8 +2545,8 @@ export default function ChatPage() {
           {(postLinkPreviewLoading || postLinkPreview) && (
             <div className="mb-3">
               {postLinkPreviewLoading && !postLinkPreview ? (
-                <div className="flex items-center gap-2 rounded-2xl border border-[#f0c9d6] dark:border-[#2f2f2f] bg-white/85 dark:bg-[#151515] px-4 py-3 text-sm text-[#666666] dark:text-[#999999]">
-                  <Loader2 className="h-4 w-4 animate-spin text-[#ea4c89] dark:text-[#ececec]" />
+                <div className="flex items-center gap-2 rounded-[1.75rem] border border-[#bfe3f7] dark:border-[#252b33] bg-white/85 dark:bg-[#141920] px-4 py-3 text-sm text-[#69707a] dark:text-[#a8b0ba]">
+                  <Loader2 className="h-4 w-4 animate-spin text-[#4fb3e8] dark:text-[#e4e7ea]" />
                   ポストを読み込み中...
                 </div>
               ) : postLinkPreview ? (
@@ -2330,24 +2561,24 @@ export default function ChatPage() {
               ) : null}
             </div>
           )}
-          <form onSubmit={handleSend} className="relative flex items-center w-full border border-[#f0c9d6] dark:border-[#2f2f2f] rounded-[1.5rem] bg-white/95 dark:bg-[#1e1e1e] pl-3 pr-2 py-1">
+          <form onSubmit={handleSend} className="vpop-composer relative flex items-center w-full border-2 border-[#bfe3f7] dark:border-[#2c333c] rounded-[2rem] bg-white/95 dark:bg-[#1a1f26] pl-4 pr-2 py-1.5 shadow-[0_10px_30px_-16px_rgba(58,165,224,0.8)]">
             <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="LimeAIへメッセージを送信する..."
-              className="flex-1 bg-transparent border-none focus:outline-none text-[#0d0d0d] dark:text-[#ececec] text-[15px] px-2 py-3 placeholder:text-[#999999]"
+              placeholder="どんなことでもお尋ねください"
+              className="vpop-round flex-1 bg-transparent border-none focus:outline-none text-[#2e343b] dark:text-[#e4e7ea] text-[15px] px-2 py-3 placeholder:text-[#a8b0ba] placeholder:font-normal"
               disabled={isLoading}
             />
             <button
               type="submit"
               disabled={!input.trim() || isLoading}
-              className={`p-2.5 rounded-full transition flex items-center justify-center ${!input.trim() || isLoading ? 'bg-[#ececec] dark:bg-[#333333] text-[#999999]' : 'bg-[#ea4c89] text-white dark:bg-white dark:text-black'}`}
+              className={`p-3 rounded-full transition flex items-center justify-center ${!input.trim() || isLoading ? 'bg-[#e4e7ea] dark:bg-[#252b33] text-[#a8b0ba]' : 'bg-gradient-to-br from-[#86c9ee] to-[#3aa5e0] text-white shadow-[0_6px_18px_-6px_rgba(58,165,224,0.9)]'}`}
             >
               <Send className="w-4 h-4 ml-[2px]" />
             </button>
           </form>
-          <div className="text-center text-xs text-[#999999] mt-3">
+          <div className="text-center text-xs text-[#a8b0ba] mt-3">
             LimeAI は AI のため、誤りを含む可能性があります。引用元は必ずご確認ください。
           </div>
         </div>

@@ -318,6 +318,177 @@ const useProfileViewportIsMobile = () => {
   return isMobile;
 };
 
+// ==== プルダウン更新（Pull to refresh） ====
+// Twitter同様に、タイムライン最上部でさらに上へ引っ張ると最新の投稿を
+// 再取得できるようにする。モバイルはタッチ操作、PCはマウスドラッグの
+// 両方に対応する（スクロール位置が最上部のときだけ反応し、それ以外の
+// 通常のスクロール・クリック操作には一切影響しない）。
+const PULL_REFRESH_THRESHOLD = 64; // これ以上引っ張ると離した時に更新される
+const PULL_REFRESH_MAX = 96; // インジケーターが追従する見た目上の最大距離
+
+const usePullToRefresh = (onRefresh: () => Promise<void> | void, enabled: boolean) => {
+  const [pullDistance, setPullDistance] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isPulling, setIsPulling] = useState(false);
+
+  const startYRef = useRef<number | null>(null);
+  const draggingRef = useRef(false);
+  const pullDistanceRef = useRef(0);
+  const isRefreshingRef = useRef(false);
+  const onRefreshRef = useRef(onRefresh);
+
+  useEffect(() => {
+    onRefreshRef.current = onRefresh;
+  }, [onRefresh]);
+
+  const applyPullDistance = useCallback((value: number) => {
+    pullDistanceRef.current = value;
+    setPullDistance(value);
+  }, []);
+
+  useEffect(() => {
+    if (!enabled || typeof window === 'undefined') return;
+
+    const getScrollTop = () => window.scrollY || document.documentElement.scrollTop || 0;
+
+    const beginDrag = (clientY: number) => {
+      if (getScrollTop() > 0 || isRefreshingRef.current) {
+        startYRef.current = null;
+        draggingRef.current = false;
+        return;
+      }
+
+      startYRef.current = clientY;
+      draggingRef.current = true;
+    };
+
+    const updateDrag = (clientY: number, event: { preventDefault: () => void; cancelable?: boolean }) => {
+      if (!draggingRef.current || startYRef.current === null) return;
+
+      if (getScrollTop() > 0) {
+        // 引っ張っている最中に本文側がスクロールしてしまったら中断する
+        draggingRef.current = false;
+        startYRef.current = null;
+        setIsPulling(false);
+        applyPullDistance(0);
+        return;
+      }
+
+      const delta = clientY - startYRef.current;
+
+      if (delta <= 0) {
+        applyPullDistance(0);
+        return;
+      }
+
+      if (event.cancelable !== false) {
+        event.preventDefault();
+      }
+
+      setIsPulling(true);
+      // 引っ張るほど抵抗が強くなるようにダンピングをかける（Twitter等と同様の挙動）
+      applyPullDistance(Math.min(PULL_REFRESH_MAX, delta * 0.5));
+    };
+
+    const endDrag = async () => {
+      if (!draggingRef.current) return;
+
+      draggingRef.current = false;
+      startYRef.current = null;
+      setIsPulling(false);
+
+      const shouldRefresh = pullDistanceRef.current >= PULL_REFRESH_THRESHOLD;
+
+      if (shouldRefresh && !isRefreshingRef.current) {
+        isRefreshingRef.current = true;
+        setIsRefreshing(true);
+        applyPullDistance(PULL_REFRESH_THRESHOLD);
+
+        try {
+          await onRefreshRef.current();
+        } catch (error) {
+          console.error('Pull to refresh failed:', error);
+        } finally {
+          isRefreshingRef.current = false;
+          setIsRefreshing(false);
+          applyPullDistance(0);
+        }
+      } else {
+        applyPullDistance(0);
+      }
+    };
+
+    const handleTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 1) return;
+      beginDrag(event.touches[0].clientY);
+    };
+
+    const handleTouchMove = (event: TouchEvent) => {
+      if (event.touches.length !== 1) return;
+      updateDrag(event.touches[0].clientY, event);
+    };
+
+    const handleTouchEnd = () => {
+      void endDrag();
+    };
+
+    const handleMouseDown = (event: MouseEvent) => {
+      // 左クリックのみ対象。入力欄・ボタン・リンク上でのドラッグ開始は無視して
+      // 既存の操作（テキスト選択やクリック）を邪魔しないようにする。
+      if (event.button !== 0) return;
+
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('input, textarea, select, button, a, [role="button"], [contenteditable="true"]')) {
+        return;
+      }
+
+      beginDrag(event.clientY);
+    };
+
+    const handleMouseMove = (event: MouseEvent) => {
+      if (!draggingRef.current) return;
+      updateDrag(event.clientY, event);
+    };
+
+    const handleMouseUp = () => {
+      void endDrag();
+    };
+
+    window.addEventListener('touchstart', handleTouchStart, { passive: true });
+    window.addEventListener('touchmove', handleTouchMove, { passive: false });
+    window.addEventListener('touchend', handleTouchEnd, { passive: true });
+    window.addEventListener('touchcancel', handleTouchEnd, { passive: true });
+
+    window.addEventListener('mousedown', handleMouseDown);
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      window.removeEventListener('touchstart', handleTouchStart);
+      window.removeEventListener('touchmove', handleTouchMove);
+      window.removeEventListener('touchend', handleTouchEnd);
+      window.removeEventListener('touchcancel', handleTouchEnd);
+
+      window.removeEventListener('mousedown', handleMouseDown);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [enabled, applyPullDistance]);
+
+  // ドラッグ中はブラウザ標準のテキスト選択が走らないようにする
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+
+    document.body.style.userSelect = isPulling ? 'none' : '';
+
+    return () => {
+      document.body.style.userSelect = '';
+    };
+  }, [isPulling]);
+
+  return { pullDistance, isRefreshing, isPulling };
+};
+
 type ProfileFeedItem = ProfilePostItem | ProfileReplyItem | any;
 
 const isProfileReplyItem = (item: ProfileFeedItem): item is ProfileReplyItem => {
@@ -2517,7 +2688,12 @@ export default function Profile() {
   const user = limeUser ?? blueskyProfile;
   const userLoading = isLimeUserLoading || (!limeUser && isBlueskyProfileLoading);
   const userError = !userLoading && !user && (isLimeUserError || isBlueskyProfileError);
-  const { data: blueskyFeed, isLoading: isBlueskyFeedLoading, isError: isBlueskyFeedError } = useQuery({
+  const {
+    data: blueskyFeed,
+    isLoading: isBlueskyFeedLoading,
+    isError: isBlueskyFeedError,
+    refetch: refetchBlueskyFeed,
+  } = useQuery({
     queryKey: ['bluesky-profile-feed', username],
     queryFn: ({ signal }) => fetchBlueskyAuthorFeed({ actor: username, limit: 100, signal }),
     enabled: isBlueskyProfile,
@@ -2549,6 +2725,7 @@ export default function Profile() {
     hasNextPage,
     isFetchingNextPage,
     isError: isProfileContentError,
+    refetch: refetchCurrentQuery,
   } = currentQuery;
   const contentLoading = isBlueskyProfile ? isBlueskyFeedLoading : isProfileContentLoading;
   const contentError = isBlueskyProfile ? isBlueskyFeedError : isProfileContentError;
@@ -2619,6 +2796,37 @@ export default function Profile() {
       window.removeEventListener('profile-thread-reaction-changed', handleReactionChanged);
     };
   }, [activeTab]);
+
+  // Twitterと同様、タイムライン最上部でのプルダウンで最新の投稿を再取得する。
+  // Blueskyプロフィールの場合はBluesky側のフィードを、それ以外はアクティブな
+  // タブ（ポスト/メディア/いいね/リアクション）のクエリと、posts タブでの
+  // 返信スレッド（コメント）を合わせて再取得する。
+  const handleProfilePullRefresh = useCallback(async () => {
+    const tasks: Array<Promise<any>> = [];
+
+    if (isBlueskyProfile) {
+      if (typeof refetchBlueskyFeed === 'function') {
+        tasks.push(refetchBlueskyFeed());
+      }
+    } else {
+      if (typeof refetchCurrentQuery === 'function') {
+        tasks.push(refetchCurrentQuery());
+      }
+
+      if (activeTab === 'posts') {
+        setProfileRepliesRefreshKey((value) => value + 1);
+      }
+    }
+
+    await Promise.all(tasks);
+  }, [isBlueskyProfile, refetchBlueskyFeed, refetchCurrentQuery, activeTab]);
+
+  // モーダル表示中や初期ロード中はプルダウン更新を無効化する
+  const isPullToRefreshEnabled = !userLoading && !selectedMedia && !selectedThreadImage;
+  const { pullDistance, isRefreshing: isPullRefreshing, isPulling } = usePullToRefresh(
+    handleProfilePullRefresh,
+    isPullToRefreshEnabled
+  );
 
   useEffect(() => {
     setProfileReplies([]);
@@ -3046,6 +3254,31 @@ export default function Profile() {
       style={{ visibility: isViewportReady ? 'visible' : 'hidden' }}
     >
       <style>{PROFILE_PAGE_STYLES}</style>
+
+      {/* プルダウン更新インジケーター（Twitter風）。モバイルのタッチ操作、
+          PCのマウスドラッグどちらでも、タイムライン最上部から下へ引っ張ると表示される。 */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed left-1/2 top-0 z-[70] flex justify-center"
+        style={{
+          transform: `translate(-50%, ${(isPullRefreshing ? PULL_REFRESH_THRESHOLD : pullDistance) - 36}px)`,
+          opacity: isPullRefreshing || pullDistance > 4 ? 1 : 0,
+          transition: isPulling
+            ? 'none'
+            : 'transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 200ms ease',
+        }}
+      >
+        <div className="mt-2 flex h-10 w-10 items-center justify-center rounded-full border border-border/70 bg-card/95 shadow-lg backdrop-blur-sm">
+          <Loader2
+            className={`h-5 w-5 text-pink-500 ${isPullRefreshing ? 'animate-spin' : ''}`}
+            style={
+              isPullRefreshing
+                ? undefined
+                : { transform: `rotate(${Math.min(360, (pullDistance / PULL_REFRESH_THRESHOLD) * 360)}deg)` }
+            }
+          />
+        </div>
+      </div>
 
       {user && <ProfileHeader
         user={user}
