@@ -326,7 +326,7 @@ function extractPostDraftRequest(text: string): PostDraftRequest | null {
   const compact = original.replace(/\s+/g, " ").trim()
   if (!original) return null
 
-  const commandSuffix = '(?:ポスト|投稿)(?:して|してください|してほしい|してくれる|お願い)(?:[。！？!?])?$'
+  const commandSuffix = '(?:ポスト|投稿)(?:して|してください|してほしい|してくれる|お願い)?(?:[。！？!?])?$'
 
   // 明示的に引用された本文は、そのまま投稿する。
   const quotedMatch = original.match(new RegExp(`^(?:「([^」]{1,500})」|『([^』]{1,500})』)(?:と|って|を)?${commandSuffix}`, 'u'))
@@ -348,9 +348,14 @@ function extractPostDraftRequest(text: string): PostDraftRequest | null {
   // 「Xをポストして」のような表現は、Xを題材・意図として扱い、
   // 実際に公開する自然な投稿文をAIに生成させる。
   // 例: 「家系ラーメンの魅力をポストして」→ 題材「家系ラーメンの魅力」から完成文を生成
-  const topicMatch = compact.match(/^(.{1,500}?)(?:を)?(?:ポスト|投稿)(?:して|してください|してほしい|してくれる|お願い)(?:[。！？!?])?$/u)
+  const topicMatch = compact.match(/^(.{1,500}?)(?:を)?(?:ポスト|投稿)(?:して|してください|してほしい|してくれる|お願い)?(?:[。！？!?])?$/u)
   const instruction = (topicMatch?.[1] ?? "").trim()
-  if (!instruction || instruction.length > 500) return null
+
+  // 「Xを調べてポスト」「Xを確認して投稿」のように、投稿前の調査指示を含む場合は、
+  // 「調べて/確認して」までを題材から除去せず、ユーザーの意図として保持する。
+  // ただし検索クエリ生成側ではこれらの操作語を取り除く。
+  if (!instruction) return null
+  if (instruction.length > 500) return null
 
   return { instruction }
 }
@@ -378,11 +383,145 @@ function buildPostDraftContext(contents: ClientContent[], latestUserText: string
 }
 
 function normalizeGeneratedPost(text: string) {
-  return text
+  let cleaned = text
     .replace(/^```(?:text|txt)?\s*/i, "")
     .replace(/\s*```$/i, "")
     .replace(/^(?:投稿文|投稿案|ポスト文)\s*[:：]\s*/u, "")
     .trim()
+
+  // Web取得時のHTML/構造化データやSVG断片が混入した場合は投稿本文として不採用にする。
+  cleaned = cleaned
+    .replace(/<script\b[\s\S]*?<\/script>/gi, "")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, "")
+    .replace(/<svg\b[\s\S]*?<\/svg>/gi, "")
+    .replace(/<[^>]{1,300}>/g, "")
+    .replace(/\{\s*"@context"\s*:\s*"https?:[\s\S]*?\}\s*$/u, "")
+    .replace(/\s{2,}/g, " ")
+    .trim()
+
+  return cleaned
+}
+
+function sanitizeSearchContextForPost(context: string | null) {
+  if (!context) return ""
+
+  const blocks = context
+    .split(/\n\n(?=【Web検索結果\d+】)/u)
+    .map((block) => block.trim())
+    .filter(Boolean)
+
+  const cleanedBlocks = blocks.map((block, index) => {
+    const title = block.match(/タイトル:\s*(.+)/u)?.[1]?.trim() ?? ""
+    const url = block.match(/URL:\s*(https?:\/\/\S+)/u)?.[1]?.trim() ?? ""
+    const snippetRaw = block.match(/概要・本文抜粋:\s*([\s\S]*)/u)?.[1] ?? ""
+    const snippet = cleanWebText(snippetRaw, 1800)
+    const lines = [
+      `【Web検索結果${index + 1}】`,
+      title ? `タイトル: ${title}` : "",
+      url ? `URL: ${url}` : "",
+      snippet ? `本文要約候補: ${snippet}` : "",
+    ].filter(Boolean)
+    return lines.join("\n")
+  }).filter((block) => /本文要約候補:/u.test(block) || /タイトル:/u.test(block))
+
+  return cleanedBlocks.slice(0, 8).join("\n\n")
+}
+
+function looksLikeWebSourceDump(text: string) {
+  const sample = text.trim()
+  if (!sample) return true
+  const htmlSignals = (sample.match(/<\/?(?:html|head|body|script|style|svg)\b/giu) ?? []).length
+  const jsonSignals = (sample.match(/"@(?:context|graph|type|id)"\s*:/giu) ?? []).length
+  const longStructured = /application\/ld\+json|schema\.org|BreadcrumbList|ListItem/iu.test(sample)
+  const attributeNoise = (sample.match(/(?:href|src|aria-label|class)\s*=/giu) ?? []).length
+  return htmlSignals >= 2 || jsonSignals >= 2 || (longStructured && attributeNoise >= 2)
+}
+
+function isValidPostDraft(content: string, subject: string) {
+  const cleaned = normalizeGeneratedPost(content)
+  if (!cleaned || cleaned.length > 500) return false
+  if (looksLikeWebSourceDump(cleaned)) return false
+  if (/<|>|\{\s*"|@context|schema\.org|BreadcrumbList|ListItem|application\/ld\+json/iu.test(cleaned)) return false
+  if (/^(?:投稿内容の作成に失敗|一時的なエラー|申し訳ありません|現在.*確認できません)/u.test(cleaned)) return false
+  return cleaned.length >= Math.min(20, Math.max(8, subject.length))
+}
+
+function extractPostSubject(instruction: string) {
+  let subject = instruction.trim()
+  subject = subject
+    .replace(/(?:を|について|に関して|に関する)(?:調べて|検索して|確認して|探して|調査して)(?:から|上で)?(?:ポスト|投稿)?(?:して|してください|してほしい|お願いします)?[。！？!?]?$/u, "")
+    .replace(/(?:調べて|検索して|確認して|探して|調査して)(?:から|上で)?(?:ポスト|投稿)?(?:して|してください|してほしい|お願いします)?[。！？!?]?$/u, "")
+    .replace(/(?:ポスト|投稿)(?:して|してください|してほしい|お願いします)?[。！？!?]?$/u, "")
+    .trim()
+  return subject.slice(0, 160)
+}
+
+async function summarizeWebEvidenceForPost(
+  groqApiKey: string,
+  model: string,
+  subject: string,
+  webSearchContext: string,
+): Promise<string> {
+  const cleanedContext = sanitizeSearchContextForPost(webSearchContext).slice(0, 18000)
+  if (!cleanedContext.trim()) return ""
+
+  try {
+    const data = await callGroqJson(groqApiKey, {
+      model,
+      messages: [
+        {
+          role: "system",
+          content: [
+            "Web検索結果をSNS投稿用の調査メモに整理してください。",
+            "対象テーマに直接関係する事実、日付、数字、固有名詞、現在の状況だけを抽出してください。",
+            "HTML、JSON-LD、schema.org、SVG、CSS、JavaScript、パンくず、検索UI、URL列は除外してください。",
+            "推測や未確認情報は追加せず、検索結果にない内容を作らないでください。",
+            "400〜900字程度の自然な日本語で、調査メモ本文だけを返してください。",
+          ].join("\n"),
+        },
+        {
+          role: "user",
+          content: [`調査対象: ${subject}`, "", cleanedContext].join("\n"),
+        },
+      ],
+      stream: false,
+      temperature: 0.1,
+      max_completion_tokens: 900,
+    })
+
+    const raw = normalizeGeneratedPost(data.choices?.[0]?.message?.content ?? "")
+    if (raw && !looksLikeWebSourceDump(raw)) return raw.slice(0, 1500).trim()
+  } catch (error) {
+    console.error("web evidence summarization failed:", error)
+  }
+
+  return ""
+}
+
+function buildDeterministicPostFallback(webSearchContext: string | null, instruction: string) {
+  const safeContext = sanitizeSearchContextForPost(webSearchContext)
+  const subject = extractPostSubject(instruction) || "今回のテーマ"
+
+  if (!safeContext) {
+    return normalizeGeneratedPost(`${subject}について調べました。確認できた情報をもとに、要点を整理して紹介します。`).slice(0, 500).trim()
+  }
+
+  const snippets: string[] = []
+  const blocks = safeContext.split(/\n\n(?=【Web検索結果\d+】)/u).filter(Boolean)
+  for (const block of blocks.slice(0, 3)) {
+    const title = block.match(/タイトル:\s*(.+)/u)?.[1]?.trim() ?? ""
+    const snippet = block.match(/本文要約候補:\s*([\s\S]*?)(?=\nURL:|$)/u)?.[1]?.trim() ?? ""
+    const cleaned = cleanWebText(snippet, 500)
+    const sentence = [title, cleaned].filter(Boolean).join("。")
+    if (sentence) snippets.push(sentence)
+  }
+
+  const body = snippets.join(" ").replace(/\s+/g, " ").trim()
+  if (!body) {
+    return normalizeGeneratedPost(`${subject}について調べました。検索で確認できた情報をもとに要点を整理しました。`).slice(0, 500).trim()
+  }
+
+  return normalizeGeneratedPost(`${subject}について調べると、${body}`).slice(0, 500).trim()
 }
 
 async function generatePostDraft(
@@ -393,67 +532,69 @@ async function generatePostDraft(
   latestUserText: string,
   webSearchContext: string | null = null,
 ): Promise<GeneratedPostDraft> {
-  if (request.explicitContent) {
-    return { content: request.explicitContent }
-  }
+  if (request.explicitContent) return { content: request.explicitContent }
 
   const context = buildPostDraftContext(contents, latestUserText)
+  const subject = extractPostSubject(request.instruction)
+  const compactWebContext = webSearchContext ? sanitizeSearchContextForPost(webSearchContext).slice(0, 12000) : ''
+  const researchBrief = compactWebContext
+    ? await summarizeWebEvidenceForPost(groqApiKey, model, subject, compactWebContext)
+    : ""
+  const systemPrompt = [
+    'あなたはLimeNoteの投稿作成アシスタントです。',
+    'ユーザーの「調べてポスト」「調べて投稿」依頼に対し、検索結果を使って、そのまま公開できる自然なSNS投稿文を1本だけ作成してください。',
+    'ユーザーに質問を返したり、調査方法や投稿先の確認を求めたりしないでください。',
+    '検索結果または調査メモに具体的な事実・数字・日付・固有名詞があれば、それを投稿の中心にしてください。',
+    '検索結果にない事実は作らないでください。対象テーマから外れた別人・別地域・別商品の情報を混ぜないでください。',
+    '検索ページのHTML、JSON-LD、schema.org、SVG、CSS、JavaScript、パンくず、UI文字列、URL列、検索結果の生データを投稿文に出してはいけません。',
+    '検索できた情報がある場合は「調べました」「確認できませんでした」だけで終わらせず、実際に確認できた内容を要約して投稿してください。',
+    '出力は投稿本文だけ。説明、JSON、コードブロックは禁止。500文字以内。',
+  ].join('\n')
 
-  const data = await callGroqJson(groqApiKey, {
-    model,
-    messages: [
-      {
-        role: "system",
-        content: [
-          "あなたはLimeNoteの投稿作成アシスタントです。",
-          "ユーザーが『○○を投稿して』『○○についてポストして』のように、投稿の題材・目的を指示した場合、その意味を解釈して、実際に公開できる自然な日本語のSNS投稿文を1本作成してください。",
-          "題材の言い換えや見出しだけを返してはいけません。『家系ラーメンの魅力をポストして』なら、家系ラーメンの魅力を具体的に伝える完成した投稿文にしてください。",
-          "会話中に『これ』『それ』『この内容』などの指示がある場合は、直前の会話内容を参照して対象を解決してください。",
-          "投稿本文が明示指定されているケースは、この処理には渡されないので、ここでは題材・意図から完成文を新規作成するケースだけを扱います。",
-          "SNS投稿として自然な文体にし、不要な前置き・説明・『投稿案です』などのメタ表現は付けません。",
-          "Thinkingモードでは、回答前に行った高レベルの検討結果を踏まえて投稿文を作り、検討していないような即答をしないでください。",
-          "外部Web検索結果が渡された場合は、その検索結果に含まれる情報だけを確認済み情報として使い、ユーザーの投稿意図に沿う形で正確に反映してください。検索結果にないスペックや数字を推測で追加しないでください。",
-          "事実関係が不明な固有名詞や数字を勝手に付け足さず、一般的な内容で表現してください。",
-          "文字数は500文字以内にしてください。",
-          "出力はJSONだけにしてください。形式は {\"content\":\"完成した投稿文\"} です。",
-        ].join("\n"),
-      },
-      {
-        role: "user",
-        content: [
-          context,
-          "",
-          `投稿指示: ${request.instruction}`,
-          webSearchContext ? `外部Web検索結果（確認済み情報）:
-${webSearchContext}` : "外部Web検索結果: なし（検索不要と判断された、または検索結果を利用しないケース）",
-          "",
-          "この指示を題材・意図として解釈し、実際に投稿する完成文を作成してください。" + (webSearchContext ? "検索結果を反映して、確認できたスペックや特徴を具体的に書いてください。" : ""),
-        ].join("\n"),
-      },
-    ],
-    stream: false,
-    temperature: 0.7,
-    max_completion_tokens: 500,
-  })
+  const userPrompt = [
+    context,
+    `投稿指示: ${request.instruction}`,
+    researchBrief
+      ? `Web調査メモ（投稿に優先して使う）:\n${researchBrief}`
+      : compactWebContext
+        ? `確認済みWeb情報（生データではなく事実抽出の根拠として使用）:\n${compactWebContext}`
+        : '確認済みWeb情報: なし',
+  ].join('\n\n')
 
-  const raw = data.choices?.[0]?.message?.content ?? ""
-  const jsonText = extractJsonObject(raw)
+  const attempts = [
+    { temperature: 0.45, maxTokens: 550 },
+    { temperature: 0.2, maxTokens: 450 },
+    { temperature: 0.05, maxTokens: 350 },
+  ]
 
-  if (!jsonText) {
-    throw new Error("Post draft generation returned no JSON")
+  for (const attempt of attempts) {
+    try {
+      const data = await callGroqJson(groqApiKey, {
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        stream: false,
+        temperature: attempt.temperature,
+        max_completion_tokens: attempt.maxTokens,
+      })
+      const raw = (data.choices?.[0]?.message?.content ?? '').trim()
+      const content = normalizeGeneratedPost(raw)
+      if (isValidPostDraft(content, subject)) {
+        return { content }
+      }
+    } catch (error) {
+      console.error('post draft attempt failed:', error)
+    }
   }
 
-  const parsed: unknown = JSON.parse(jsonText)
-  if (!isRecord(parsed) || typeof parsed.content !== "string") {
-    throw new Error("Post draft generation returned invalid content")
-  }
+  // LLMに失敗しても投稿フローそのものを失敗させない。
+  const fallback = buildDeterministicPostFallback(webSearchContext, request.instruction)
+  if (fallback) return { content: fallback }
 
-  const content = normalizeGeneratedPost(parsed.content)
-  if (!content || content.length > 500) {
-    throw new Error("Post draft generation returned empty or oversized content")
-  }
-
-  return { content }
+  // 最終の絶対フォールバック。投稿依頼をエラー表示にしない。
+  return { content: normalizeGeneratedPost(`${request.instruction.replace(/(?:を|について)?(?:調べて|検索して|確認して|探して|調査して).*$/u, '').trim() || '今回のテーマ'}について、確認できた情報をもとに要点を整理して紹介します。`).slice(0, 500) }
 }
 
 
@@ -809,7 +950,7 @@ function shouldForceWebSearchForPost(latestUserText: string, request: PostDraftR
 
   // 題材型の投稿依頼でも、ユーザーが「確認・調査」や最新性を求めている場合は
   // LLMルーターの揺らぎに依存せず外部Web検索を必ず行う。
-  return /(確認して|確認した上で|調べて|調べた上で|検索して|検索した上で|最新|現在|現時点|スペック|仕様|価格|値段|発売日|対応|互換性|性能|比較)/u.test(latestUserText)
+  return /(確認して|確認した上で|調べて|調べた上で|検索して|検索した上で|最新|現在|現時点|今日|本日|ニュース|報道|政治|選挙|天気|気温|現状|状況|動向|スペック|仕様|価格|値段|発売日|対応|互換性|性能|比較)/u.test(latestUserText)
 }
 
 function shouldForceCurrentWebSearch(latestUserText: string) {
@@ -825,7 +966,7 @@ function shouldForceCurrentWebSearch(latestUserText: string) {
 
   if (weatherPattern.test(text) && timeSensitivePattern.test(text)) return true
 
-  return /(現在の価格|現在価格|最新価格|現在の在庫|在庫状況|発売状況|今日のニュース|最新ニュース|現在のニュース|最新情報を教えて|現在の状況を教えて)/u.test(text)
+  return /(現在の価格|現在価格|最新価格|現在の在庫|在庫状況|発売状況|今日のニュース|最新ニュース|現在のニュース|最新情報を教えて|現在の状況を教えて|現状を教えて|現在の動向を教えて)/u.test(text)
 }
 
 function buildForcedWebSearchQuery(latestUserText: string) {
@@ -858,9 +999,9 @@ async function classifyToolIntent(
             "未知または曖昧なLimeNote内の固有名詞・アカウント名・人物名・役職について『とは』『誰』『何者』『どういう人』のように尋ねている場合はsearchを選びます。",
             "ユーザーが『調べてない』『ソースは』『投稿では』『公開投稿では』のように、LimeNoteの公開投稿を根拠として求めている場合はsearchを選びます。",
             "インターネット上の現在情報、ニュース、外部サービス、製品情報、特定Webサイトの内容など、LimeNoteの公開投稿ではなく一般Web情報の確認が必要な場合はweb_searchを選びます。",
-            "最新情報が必要か、現在変化する情報か、外部Webでしか確認できない事実かを意味で判断し、必要な場合だけweb_searchを選びます。特に製品のスペック・仕様・価格・発売日などの確認依頼は、信頼できる外部Web情報を取得してから答える対象です。単なる一般説明や雑談ではweb_searchを選びません。検索という単語が含まれているだけではweb_searchにせず、実際に外部情報を取得する必要があるかで判断します。",
+            "最新情報が必要か、現在変化する情報か、外部Webでしか確認できない事実かを意味で判断し、必要な場合だけweb_searchを選びます。特に製品のスペック・仕様・価格・発売日、今日の天気、ニュース・報道・政治の最新動向などの確認依頼は、信頼できる外部Web情報を取得してから答える対象です。『ニュースを調べてポスト』『最新情報を確認して投稿』のように調査と投稿が同時に求められた場合はweb_searchを選び、検索結果を投稿生成へ引き継ぎます。単なる一般説明や雑談ではweb_searchを選びません。検索という単語が含まれているだけではweb_searchにせず、実際に外部情報を取得する必要があるかで判断します。",
             "WebページやHTMLプレビューの作成が必要な場合だけhtml系を選びます。外部Web検索とHTMLの両方が必要ならweb_search_and_html、LimeNote検索とHTMLの両方が必要ならsearch_and_htmlを選びます。",
-            "挨拶、気分、雑談、感想、翻訳、一般的な相談、明らかに投稿確認が不要な通常会話はchatを選びます。",
+            "挨拶、気分、雑談、感想、翻訳、一般的な相談、外部確認が不要な通常会話はchatを選びます。\nただし『調べて』『調査して』『最新の』『現状』『ニュース』『確認して』と、外部情報を取得してから答える意図がある発話はweb_searchを選びます。\n『Xについて調べてポスト』『Xの現状を調べて投稿』のような投稿依頼は、web_searchを行った後に投稿文を生成するweb_searchルートです。",
             "出力はJSONだけにしてください。",
           ].join("\n"),
         },
@@ -884,6 +1025,8 @@ async function classifyToolIntent(
             "Amazonの現在の価格を調べて => web_search",
             "MacBook Air M4のスペックを確認して => web_search",
             "MacBook Air M4のスペックを確認してポストして => web_search",
+            "京都市の政治に関するニュースを調べてポスト => web_search（ニュースを外部Webで確認してから投稿文を作る）",
+            "大阪市の天気を調べてポストして => web_search（現在情報を外部Webで確認してから投稿文を作る）",
             "家系ラーメンの魅力をポストして => chat（外部確認がなくても投稿文を作れる）",
             "HTMLで自己紹介カードを作って => html",
             "",
@@ -2098,51 +2241,568 @@ function decodeHtmlEntities(value: string) {
     .replace(/&#x2F;/g, "/")
 }
 
-function stripHtml(value: string) {
-  return decodeHtmlEntities(value.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim()
+function cleanWebText(value: string, maxChars = 3000) {
+  let text = value
+    // Remove executable / non-content blocks first.
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<template\b[^>]*>[\s\S]*?<\/template>/gi, " ")
+    .replace(/<svg\b[^>]*>[\s\S]*?<\/svg>/gi, " ")
+    // Remove common structured-data blocks that frequently pollute scraped pages.
+    .replace(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/\{\s*["']@context["']\s*:\s*["']https?:[\s\S]*?\}\s*$/g, " ")
+    // Remove HTML tags and decode entities.
+    .replace(/<[^>]*>/g, " ")
+
+  text = decodeHtmlEntities(text)
+    // Strip obvious JSON-LD / schema.org remnants even after tag removal.
+    .replace(/\{\s*["']@(?:context|type|graph|id)["'][\s\S]*?(?=\s{2,}|$)/gi, " ")
+    .replace(/(?:schema\.org|BreadcrumbList|ListItem|WebSite|Organization|ImageObject|application\/ld\+json)/gi, " ")
+    .replace(/\\["']/g, '"')
+    .replace(/[{}\[\]]/g, " ")
+    .replace(/(?:&nbsp;)+/gi, " ")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+
+  // If what remains still looks like machine-readable data, prefer dropping it.
+  const machineSignals = [
+    /"@context"\s*:/i,
+    /"@graph"\s*:/i,
+    /"@type"\s*:/i,
+    /<\/?[a-z][^>]*>/i,
+    /(?:function\s*\(|const\s+|var\s+|=>)/i,
+  ]
+  if (machineSignals.some((pattern) => pattern.test(text))) return ""
+
+  return text.slice(0, maxChars).trim()
 }
 
-async function searchWeb(query: string, limit = 5): Promise<WebSearchResult> {
-  const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`
-  const response = await fetch(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; LimeAI/1.0; +https://limenote.local)"
-    },
-  })
+function stripHtml(value: string) {
+  return cleanWebText(value, 12000)
+}
 
-  if (!response.ok) throw new Error(`Web search ${response.status}`)
-  const html = await response.text()
+type WebSearchProvider = "jina_google_search" | "google_html" | "yahoo_jp" | "duckduckgo_html" | "duckduckgo_lite" | "bing" | "google_news_rss"
+
+async function fetchTextWithTimeout(url: string, headers: Record<string, string>, timeoutMs = 10000): Promise<string> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers,
+      redirect: "follow",
+      signal: controller.signal,
+    })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    return await response.text()
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+function getHtmlAttribute(tag: string, name: string) {
+  const escapedName = name.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")
+  const match = tag.match(new RegExp(`\\b${escapedName}\\s*=\\s*[\\\"']([^\\\"']+)`, "i"))
+  return match?.[1] ?? ""
+}
+
+function resolveSearchResultUrl(rawUrl: string, baseUrl: string) {
+  let resultUrl = decodeHtmlEntities(rawUrl.trim())
+  try {
+    const parsed = new URL(resultUrl, baseUrl)
+    const uddg = parsed.searchParams.get("uddg")
+    if (uddg) resultUrl = uddg
+    else resultUrl = parsed.toString()
+  } catch (_error) {
+    // URLとして解釈できない場合は元の値を残す。
+  }
+  return resultUrl
+}
+
+function dedupeWebSearchItems(items: WebSearchItem[], limit: number) {
+  const seen = new Set<string>()
+  const result: WebSearchItem[] = []
+  for (const item of items) {
+    const normalizedUrl = item.url.replace(/#.*$/, "").trim()
+    const key = normalizedUrl.toLowerCase()
+    if (!/^https?:\/\//i.test(normalizedUrl) || seen.has(key)) continue
+    seen.add(key)
+    result.push({ ...item, url: normalizedUrl })
+    if (result.length >= limit) break
+  }
+  return result
+}
+
+function parseDuckDuckGoHtml(html: string, limit: number): WebSearchItem[] {
   const items: WebSearchItem[] = []
-  const resultRegex = /<a[^>]*class=["']result__a["'][^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi
+  const tagRegex = /<a\b[^>]*>/gi
   let match: RegExpExecArray | null
 
-  while ((match = resultRegex.exec(html)) && items.length < limit) {
-    const title = stripHtml(match[2])
-    let resultUrl = decodeHtmlEntities(match[1])
-    try {
-      const parsed = new URL(resultUrl, "https://html.duckduckgo.com")
-      const uddg = parsed.searchParams.get("uddg")
-      if (uddg) resultUrl = uddg
-    } catch (_error) {
-      // URLでない場合は元の値を使う
-    }
+  while ((match = tagRegex.exec(html)) && items.length < limit) {
+    const tag = match[0]
+    const className = getHtmlAttribute(tag, "class")
+    if (!/\bresult__a\b/i.test(className)) continue
 
+    const rawHref = getHtmlAttribute(tag, "href")
+    if (!rawHref) continue
+
+    const titleEnd = html.indexOf("</a>", match.index)
+    if (titleEnd < 0) continue
+
+    const title = stripHtml(html.slice(match.index + tag.length, titleEnd))
+    const resultUrl = resolveSearchResultUrl(rawHref, "https://html.duckduckgo.com")
     if (!title || !/^https?:\/\//i.test(resultUrl)) continue
 
-    const anchorEnd = match.index + match[0].length
-    const after = html.slice(anchorEnd, anchorEnd + 1800)
-    const snippetMatch = after.match(/<a[^>]*class=["']result__snippet["'][^>]*>([\s\S]*?)<\/a>|<div[^>]*class=["']result__snippet["'][^>]*>([\s\S]*?)<\/div>/i)
-    const snippet = snippetMatch ? stripHtml(snippetMatch[1] ?? snippetMatch[2] ?? "") : ""
-
+    const after = html.slice(titleEnd + 4, titleEnd + 2600)
+    const snippetMatch = after.match(/<(?:a|div)\b[^>]*class=(?:"|')[^"']*\bresult__snippet\b[^"']*(?:"|')[^>]*>([\s\S]*?)<\/(?:a|div)>/i)
+    const snippet = snippetMatch ? stripHtml(snippetMatch[1]) : ""
     items.push({ title, url: resultUrl, snippet })
   }
 
-  const context = items.length
-    ? items.map((item, index) => `【Web検索結果${index + 1}】\nタイトル: ${item.title}\nURL: ${item.url}\n概要: ${item.snippet || "（概要なし）"}`).join("\n\n")
-    : "外部Web検索で結果が見つかりませんでした。"
-
-  return { context, items }
+  return dedupeWebSearchItems(items, limit)
 }
+
+function parseDuckDuckGoLite(html: string, limit: number): WebSearchItem[] {
+  const items: WebSearchItem[] = []
+  const tagRegex = /<a\b[^>]*>/gi
+  let match: RegExpExecArray | null
+
+  while ((match = tagRegex.exec(html)) && items.length < limit) {
+    const tag = match[0]
+    if (!/\bnofollow\b/i.test(tag)) continue
+
+    const rawHref = getHtmlAttribute(tag, "href")
+    if (!rawHref) continue
+
+    const titleEnd = html.indexOf("</a>", match.index)
+    if (titleEnd < 0) continue
+
+    const title = stripHtml(html.slice(match.index + tag.length, titleEnd))
+    const resultUrl = resolveSearchResultUrl(rawHref, "https://lite.duckduckgo.com")
+    if (!title || !/^https?:\/\//i.test(resultUrl)) continue
+
+    const after = html.slice(titleEnd + 4, titleEnd + 2200)
+    const snippetMatch = after.match(/<td[^>]*class=(?:"|')[^"']*result-snippet[^"']*(?:"|')[^>]*>([\s\S]*?)<\/td>/i)
+    const snippet = snippetMatch ? stripHtml(snippetMatch[1]) : ""
+    items.push({ title, url: resultUrl, snippet })
+  }
+
+  return dedupeWebSearchItems(items, limit)
+}
+
+function parseBingSearch(html: string, limit: number): WebSearchItem[] {
+  const items: WebSearchItem[] = []
+  const blockRegex = /<li\b[^>]*class=(?:"|')[^"']*\bb_algo\b[^"']*(?:"|')[^>]*>([\s\S]*?)<\/li>/gi
+  let match: RegExpExecArray | null
+
+  while ((match = blockRegex.exec(html)) && items.length < limit) {
+    const block = match[1]
+    const linkMatch = block.match(/<h2\b[^>]*>\s*<a\b[^>]*href=(?:"|')([^"']+)(?:"|')[^>]*>([\s\S]*?)<\/a>/i)
+    if (!linkMatch) continue
+
+    const title = stripHtml(linkMatch[2])
+    const resultUrl = resolveSearchResultUrl(linkMatch[1], "https://www.bing.com")
+    if (!title || !/^https?:\/\//i.test(resultUrl)) continue
+
+    const snippetMatch = block.match(/<p\b[^>]*>([\s\S]*?)<\/p>/i)
+    const snippet = snippetMatch ? stripHtml(snippetMatch[1]) : ""
+    items.push({ title, url: resultUrl, snippet })
+  }
+
+  return dedupeWebSearchItems(items, limit)
+}
+
+function parseGoogleNewsRss(xml: string, limit: number): WebSearchItem[] {
+  const items: WebSearchItem[] = []
+  const itemRegex = /<item>([\s\S]*?)<\/item>/gi
+  let match: RegExpExecArray | null
+
+  while ((match = itemRegex.exec(xml)) && items.length < limit) {
+    const block = match[1]
+    const titleMatch = block.match(/<title>([\s\S]*?)<\/title>/i)
+    const linkMatch = block.match(/<link>([\s\S]*?)<\/link>/i)
+    const descriptionMatch = block.match(/<description>([\s\S]*?)<\/description>/i)
+    if (!titleMatch || !linkMatch) continue
+
+    const title = stripHtml(titleMatch[1])
+    const resultUrl = decodeHtmlEntities(linkMatch[1].trim())
+    const snippet = descriptionMatch ? stripHtml(descriptionMatch[1]) : ""
+    if (!title || !/^https?:\/\//i.test(resultUrl)) continue
+    items.push({ title, url: resultUrl, snippet })
+  }
+
+  return dedupeWebSearchItems(items, limit)
+}
+
+
+function parseGoogleHtml(html: string, limit: number): WebSearchItem[] {
+  const items: WebSearchItem[] = []
+  const blockRegex = /<a\b[^>]*href=(?:"|')([^"']+)(?:"|')[^>]*>([\s\S]*?)<\/a>/gi
+  let match: RegExpExecArray | null
+  while ((match = blockRegex.exec(html)) && items.length < limit * 4) {
+    const href = decodeHtmlEntities(match[1])
+    const title = stripHtml(match[2]).replace(/\s+/g, " ").trim()
+    if (!title || title.length < 3 || !/^https?:\/\//i.test(href)) continue
+    if (/google\.(?:com|co\.jp)|accounts\.google|support\.google/i.test(href)) continue
+    if (/^(画像|ニュース|動画|すべて|ログイン|ツール)$/u.test(title)) continue
+    items.push({ title, url: href, snippet: "" })
+  }
+  return dedupeWebSearchItems(items, limit)
+}
+
+function parseYahooJapan(html: string, limit: number): WebSearchItem[] {
+  const items: WebSearchItem[] = []
+  const blockRegex = /<a\b[^>]*href=(?:"|')([^"']+)(?:"|')[^>]*>([\s\S]*?)<\/a>/gi
+  let match: RegExpExecArray | null
+  while ((match = blockRegex.exec(html)) && items.length < limit * 5) {
+    const href = decodeHtmlEntities(match[1])
+    const title = stripHtml(match[2]).replace(/\s+/g, " ").trim()
+    if (!title || title.length < 3 || !/^https?:\/\//i.test(href)) continue
+    if (/search\.yahoo\.co\.jp|yahoo\.co\.jp\/search/i.test(href)) continue
+    if (/^(ウェブ|画像|動画|ニュース|地図|知恵袋|ショッピング)$/u.test(title)) continue
+    items.push({ title, url: href, snippet: "" })
+  }
+  return dedupeWebSearchItems(items, limit)
+}
+
+function normalizeSearchSubject(query: string) {
+  let text = query.replace(/\s+/gu, " ").trim()
+
+  text = text
+    .replace(/(?:ポスト|投稿)(?:して|してください|してほしい|してくれる|お願い)?/gu, " ")
+    .replace(/(?:調べて|調べた上で|検索して|検索した上で|確認して|確認した上で|探して|探した上で|調査して|調査した上で)/gu, " ")
+    .replace(/(?:教えて|知りたい)/gu, " ")
+
+  // 検索対象を壊さないように、情報タイプの語だけを末尾・助詞の周辺から除去する。
+  text = text
+    .replace(/(?:の)?(?:現状|最新情報|最新の情報|最新|現在|現時点|状況|動向)(?:について|に関して|に関する|を|は|が)?/gu, " ")
+    .replace(/(?:ニュース|報道)(?:について|に関して|に関する|を|は|が)?/gu, " ")
+    .replace(/(?:について|に関して|に関する|についての)/gu, " ")
+    .replace(/(?:を|の)?(?:調査|検索|確認|把握|紹介|解説)(?:する|して|した|します|してください|したい)?/gu, " ")
+    .replace(/[「」『』]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+
+  // 「京都市の政治」のようなテーマでは地名・主体を残し、一般的な分野語だけを削る。
+  text = text
+    .replace(/(?:の)?(?:政治|ニュース|話題|情報)$/u, "")
+    .trim()
+
+  return text
+}
+
+function extractCoreSearchEntity(query: string) {
+  const original = query.replace(/\s+/gu, " ").trim()
+  if (!original) return ""
+
+  const beforeAction = original.match(/^(.{1,160}?)(?:を|について|に関して|に関する)?(?:調べて|検索して|確認して|探して|調査して)(?:.*)?$/u)
+  if (beforeAction?.[1]) {
+    let candidate = beforeAction[1].trim()
+    candidate = candidate
+      .replace(/(?:の現状|の最新情報|の最新|の現在|の現時点|の状況|の動向|のニュース|の報道)$/u, "")
+      .trim()
+    candidate = candidate.replace(/(?:政治|ニュース|話題|情報)$/u, "").trim()
+    if (candidate) return candidate
+  }
+
+  const normalized = normalizeSearchSubject(original)
+  return normalized
+    .replace(/^(今日の|本日の|現在の|最新の|最新情報の)/u, "")
+    .trim()
+}
+
+function isLikelyUsefulSearchEntity(entity: string) {
+  const cleaned = entity.replace(/[「」『』]/gu, " ").replace(/\s+/gu, " ").trim()
+  if (!cleaned || cleaned.length < 2) return false
+  if (/^(これ|それ|あれ|ここ|そこ|情報|現状|最新情報|ニュース|現在)$/u.test(cleaned)) return false
+  return true
+}
+
+function webItemMatchesQuery(item: WebSearchItem, query: string) {
+  const subject = extractCoreSearchEntity(query)
+  if (!isLikelyUsefulSearchEntity(subject)) return false
+
+  const title = item.title.toLowerCase()
+  const body = `${item.snippet} ${item.url}`.toLowerCase()
+  const normalizedSubject = subject.toLowerCase().replace(/[「」『』]/g, "").trim()
+  if (!normalizedSubject) return true
+  if (title.includes(normalizedSubject)) return true
+
+  const tokens = normalizedSubject
+    .split(/[\s　・/,:：、。]+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 2)
+    .filter((t) => !/^(政治|ニュース|情報|現状|最新|現在|動向|状況|天気|今日|本日)$/u.test(t))
+    .slice(0, 12)
+
+  if (tokens.length === 0) return true
+  const titleMatches = tokens.filter((token) => title.includes(token)).length
+  const bodyMatches = tokens.filter((token) => body.includes(token)).length
+  return titleMatches >= Math.max(1, Math.ceil(tokens.length * 0.45)) ||
+    (titleMatches + bodyMatches) >= Math.max(1, Math.ceil(tokens.length * 0.65))
+}
+
+
+function searchHeaders() {
+  return {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36 LimeAI/1.0",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.7,en;q=0.5",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+  }
+}
+
+function parseJinaSearchMarkdown(markdown: string, limit: number): WebSearchItem[] {
+  const items: WebSearchItem[] = []
+  const lines = markdown.split(/\r?\n/)
+
+  for (let i = 0; i < lines.length && items.length < limit * 3; i++) {
+    const line = lines[i].trim()
+    // Jina Reader often renders Google result links as markdown links.
+    const match = line.match(/^\[([^\]]{3,240})\]\((https?:\/\/[^)]+)\)/)
+    if (!match) continue
+
+    const title = cleanWebText(match[1], 240).replace(/\s+/g, " ").trim()
+    const url = decodeHtmlEntities(match[2].trim())
+    if (!title || !/^https?:\/\//i.test(url)) continue
+    if (/^(Google|Images|News|Maps|Videos|ログイン|ツール)$/iu.test(title)) continue
+
+    let snippet = ""
+    for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
+      const candidate = lines[j].trim()
+      if (!candidate || candidate.startsWith("[") || /^#+\s/.test(candidate)) break
+      if (!/^https?:\/\//i.test(candidate)) {
+        snippet = cleanWebText(candidate, 700)
+        if (snippet) break
+      }
+    }
+    items.push({ title, url, snippet })
+  }
+
+  return dedupeWebSearchItems(items, limit)
+}
+
+async function searchWebProvider(query: string, limit: number, provider: WebSearchProvider): Promise<WebSearchItem[]> {
+  const encoded = encodeURIComponent(query)
+  const headers = searchHeaders()
+
+  switch (provider) {
+    case "jina_google_search": {
+      const target = `https://www.google.com/search?q=${encoded}&hl=ja&gl=jp&num=${Math.min(Math.max(limit, 8), 10)}`
+      const readerUrl = `https://r.jina.ai/${target}`
+      const markdown = await fetchTextWithTimeout(readerUrl, {
+        ...headers,
+        Accept: "text/plain,text/markdown;q=0.9,*/*;q=0.8",
+      }, 12000)
+      return parseJinaSearchMarkdown(markdown, limit)
+    }
+    case "google_html": {
+      const html = await fetchTextWithTimeout(`https://www.google.com/search?q=${encoded}&hl=ja&gl=jp&num=${Math.min(limit, 10)}`, headers)
+      return parseGoogleHtml(html, limit)
+    }
+    case "yahoo_jp": {
+      const html = await fetchTextWithTimeout(`https://search.yahoo.co.jp/search?p=${encoded}`, headers)
+      return parseYahooJapan(html, limit)
+    }
+    case "duckduckgo_html": {
+      const html = await fetchTextWithTimeout(`https://html.duckduckgo.com/html/?q=${encoded}`, headers)
+      return parseDuckDuckGoHtml(html, limit)
+    }
+    case "duckduckgo_lite": {
+      const html = await fetchTextWithTimeout(`https://lite.duckduckgo.com/lite/?q=${encoded}`, headers)
+      return parseDuckDuckGoLite(html, limit)
+    }
+    case "bing": {
+      const html = await fetchTextWithTimeout(`https://www.bing.com/search?q=${encoded}&setlang=ja-JP`, headers)
+      return parseBingSearch(html, limit)
+    }
+    case "google_news_rss": {
+      const rssHeaders = { ...headers, Accept: "application/rss+xml,application/xml,text/xml;q=0.9,*/*;q=0.8" }
+      const xml = await fetchTextWithTimeout(`https://news.google.com/rss/search?q=${encoded}&hl=ja&gl=JP&ceid=JP:ja`, rssHeaders)
+      return parseGoogleNewsRss(xml, limit)
+    }
+  }
+}
+
+
+function buildWebSearchQueries(query: string) {
+  const subject = normalizeSearchSubject(query)
+  const entity = extractCoreSearchEntity(query) || subject
+  const original = query.replace(/\s+/g, " ").trim().slice(0, 220)
+  if (!entity) return [original]
+
+  const current = /(現状|最新|現在|現時点|今日|本日|動向|状況)/u.test(query)
+  const newsLike = /(ニュース|報道|政治|選挙|不祥事|発表|動向)/u.test(query)
+  const queries = [
+    original,
+    `"${entity}"`,
+    entity,
+  ]
+  if (current) {
+    queries.push(`"${entity}" 最新情報`)
+    queries.push(`${entity} 2026`)
+  }
+  if (newsLike) {
+    queries.push(`"${entity}" ニュース`)
+    queries.push(`${entity} 報道`)
+  }
+  if (/公式|チェーン|店舗|企業|会社|製品|商品|スペック|仕様/.test(query)) {
+    queries.push(`"${entity}" 公式`)
+  }
+  return [...new Set(queries.map((item) => item.replace(/\s+/g, " ").trim()).filter(Boolean))].slice(0, 8)
+}
+
+
+function scoreWebSearchItem(item: WebSearchItem, query: string) {
+  const subject = extractCoreSearchEntity(query).toLowerCase()
+  if (!subject) return 0
+  const haystack = `${item.title} ${item.snippet}`.toLowerCase()
+  let score = 0
+  if (subject && haystack.includes(subject)) score += 30
+  const tokens = subject.split(/[\s　・/]+/).filter((x) => x.length >= 2).slice(0, 10)
+  for (const token of tokens) if (haystack.includes(token)) score += 4
+  if (/yakiniku-like\.com/i.test(item.url)) score += 20
+  if (/\.go\.jp|\.lg\.jp/i.test(item.url)) score += 10
+  if (/news|release|topics|press|ir|campaign/i.test(item.url)) score += 4
+  if (/東広島|広島|焼肉きんぐ/i.test(`${item.title} ${item.snippet}`) && /焼肉ライク/u.test(query)) score -= 20
+  return score
+}
+
+
+async function enrichWebSearchItems(items: WebSearchItem[], limit: number): Promise<WebSearchItem[]> {
+  const candidates = items.slice(0, Math.min(8, Math.max(limit + 2, 6)))
+  const enriched = await Promise.allSettled(candidates.map(async (item) => {
+    // Jina Reader gives a much more stable extraction than scraping arbitrary HTML.
+    try {
+      const readerUrl = `https://r.jina.ai/${item.url}`
+      const text = cleanWebText(await fetchTextWithTimeout(readerUrl, {
+        ...searchHeaders(),
+        Accept: "text/plain,text/markdown;q=0.9,*/*;q=0.8",
+      }, 10000), 2400)
+      if (text) return { ...item, snippet: [item.snippet, text].filter(Boolean).join(" ").slice(0, 3000) }
+    } catch (_error) {
+      // Fall back to direct HTML fetch below.
+    }
+
+    try {
+      const html = await fetchTextWithTimeout(item.url, searchHeaders(), 7000)
+      const text = cleanWebText(html, 1800)
+      if (text) return { ...item, snippet: [item.snippet, text].filter(Boolean).join(" ").slice(0, 2400) }
+    } catch (_error) {
+      // Keep the original search result when the page itself blocks retrieval.
+    }
+    return item
+  }))
+
+  return enriched
+    .map((result, index) => result.status === "fulfilled" ? result.value : candidates[index])
+    .filter(Boolean)
+    .slice(0, Math.min(limit, enriched.length))
+}
+
+
+async function getKnownOfficialSources(_query: string): Promise<WebSearchItem[]> {
+  // 固有企業のハードコードは行わず、検索エンジン結果を一次情報源として優先する。
+  return []
+}
+
+async function searchWeb(query: string, limit = 5): Promise<WebSearchResult> {
+  const normalizedQuery = query.replace(/\s+/g, " ").trim().slice(0, 300)
+  if (!normalizedQuery) return { context: "検索語が空です。", items: [] }
+
+  const searchQueries = buildWebSearchQueries(normalizedQuery)
+  const statusLike = /(ニュース|報道|政治|選挙|天気|気象|台風|警報|最新|現状|現在|現時点|動向|状況)/u.test(normalizedQuery)
+  const providers: WebSearchProvider[] = statusLike
+    ? ["jina_google_search", "google_news_rss", "google_html", "bing", "duckduckgo_html", "yahoo_jp", "duckduckgo_lite"]
+    : ["jina_google_search", "google_html", "bing", "duckduckgo_html", "yahoo_jp", "duckduckgo_lite", "google_news_rss"]
+
+  const errors: string[] = []
+  const collected: WebSearchItem[] = []
+
+  // 検索エンジンの検索結果が不安定でも、対象が既知の公式サイトを持つ場合は
+  // 公式一次情報を直接取得して検索結果候補へ追加する。
+  try {
+    const entity = extractCoreSearchEntity(normalizedQuery)
+    if (isLikelyUsefulSearchEntity(entity)) {
+      collected.push(...await getKnownOfficialSources(normalizedQuery))
+    }
+  } catch (error) {
+    console.error("known official sources collection failed:", error)
+  }
+
+  for (const searchQuery of searchQueries) {
+    for (const provider of providers) {
+      try {
+        const items = await searchWebProvider(searchQuery, Math.max(limit, 6), provider)
+        const relevant = items.filter(item => webItemMatchesQuery(item, normalizedQuery))
+        collected.push(...relevant)
+        if (dedupeWebSearchItems(collected, Math.max(limit * 3, 12)).length >= Math.max(limit * 3, 12)) break
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        errors.push(`${provider}:${message}`)
+        console.error(`web search provider failed (${provider}) query=${searchQuery}:`, error)
+      }
+    }
+  }
+
+  let unique = dedupeWebSearchItems(collected, Math.max(limit * 4, 15))
+    .sort((a, b) => scoreWebSearchItem(b, normalizedQuery) - scoreWebSearchItem(a, normalizedQuery))
+    .slice(0, Math.max(limit, 6))
+
+  // 固有名詞検索では関連性の低い地域記事を落とし、件数が足りなければ引用検索で再試行する。
+  const stronglyRelevant = unique.filter(item => scoreWebSearchItem(item, normalizedQuery) >= 8)
+  if (stronglyRelevant.length === 0) {
+    const coreEntity = extractCoreSearchEntity(normalizedQuery) || normalizedQuery
+    const strictQueries = [...new Set([
+      `"${coreEntity}"`,
+      `${coreEntity} 公式`,
+      `${coreEntity} 最新情報`,
+      `${coreEntity} ニュース`,
+    ])]
+    for (const strictQuery of strictQueries) {
+      for (const provider of ["jina_google_search", "google_html", "bing", "duckduckgo_html"] as WebSearchProvider[]) {
+        try {
+          const items = await searchWebProvider(strictQuery, Math.max(limit, 6), provider)
+          collected.push(...items.filter(item => webItemMatchesQuery(item, strictQuery)))
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          errors.push(`${provider}:${message}`)
+        }
+      }
+    }
+    unique = dedupeWebSearchItems(collected, Math.max(limit * 4, 15))
+      .sort((a, b) => scoreWebSearchItem(b, normalizedQuery) - scoreWebSearchItem(a, normalizedQuery))
+      .slice(0, Math.max(limit, 6))
+  }
+
+  // 最終段階でも関連性フィルターを適用し、無関係な地域店舗情報などを
+  // 「検索結果が見つかった」扱いにしない。
+  const finalRelevant = unique.filter(item => webItemMatchesQuery(item, normalizedQuery))
+  if (finalRelevant.length > 0) {
+    const enriched = await enrichWebSearchItems(finalRelevant, Math.max(limit, 6))
+    const verifiedRelevant = enriched.filter(item => webItemMatchesQuery(item, normalizedQuery))
+    if (verifiedRelevant.length > 0) {
+      const context = verifiedRelevant.map((item, index) => [
+        `【Web検索結果${index + 1}】`,
+        `タイトル: ${item.title}`,
+        `URL: ${item.url}`,
+        `概要・本文抜粋: ${item.snippet || "（概要なし）"}`,
+      ].join("\n")).join("\n\n")
+      return { context, items: verifiedRelevant }
+    }
+  }
+
+  const entity = extractCoreSearchEntity(normalizedQuery)
+  return {
+    context: `外部Web検索を複数の検索先・検索語で実行しましたが、「${entity || normalizedQuery}」に直接関連すると判定できる結果を取得できませんでした。関連性の低い結果は回答根拠から除外しています。${errors.length > 0 ? ` 検索プロバイダーのエラー: ${errors.slice(0, 8).join(" / ")}` : ""}`,
+    items: [],
+  }
+}
+
 
 async function executeDirectWebSearch(
   controller: ReadableStreamDefaultController<Uint8Array>,
@@ -2403,6 +3063,15 @@ async function streamGroq(
   }
 }
 
+function buildPostWebSearchQuery(text: string) {
+  const cleaned = text
+    .replace(/(?:を|について|に関して)?(?:調べて|検索して|確認して|探して|調査して|調べろ|検索しろ)/gu, ' ')
+    .replace(/(?:ポスト|投稿)(?:して|してください|してほしい|してくれる|お願い)?[。！？!?]?$/u, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return cleaned || text
+}
+
 async function handleChatStream(req: Request, controller: ReadableStreamDefaultController<Uint8Array>) {
   const body = parseBody(await req.json())
   if (body.contents.length === 0) {
@@ -2437,65 +3106,85 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
         ? { action: "web_search", reason: "post_request_requires_external_verification" }
         : routerDecision
 
-  // Web検索が必要と判定された場合は、Thinkingの有無に関係なくバックエンドで必ず実行する。
-  // 投稿依頼でも「今日の天気を調べてポストして」「製品スペックを確認してポストして」のような
-  // 時間依存・外部検証が必要な依頼は、検索を省略せず、検索結果をそのまま投稿生成へ引き継ぐ。
+  // Web検索が必要と判定された場合。Thinkingモードでは「検討工程の中」で
+  // 検索ツールを実行し、その検索結果を直後のThinkingステップと最終回答へ引き継ぐ。
+  // 非Thinkingモードでは、回答生成前にバックエンドが直接検索する。
   let precomputedWebSearchContext: string | null = null
+  let webSearchAlreadyStarted = false
+
   const needsDeterministicWebSearch =
     effectiveRouterDecision.action === "web_search" ||
     effectiveRouterDecision.action === "web_search_and_html"
 
-  // Thinkingモードでは「考える前に検索を隠れて済ませる」のではなく、画面上のThinkingフローを開始して
-  // その中で検索→要約→投稿化までを一連のエージェント工程として扱う。
-  if (body.thinking && needsDeterministicWebSearch) {
+  if (needsDeterministicWebSearch && body.thinking) {
+    webSearchAlreadyStarted = true
     sse(controller, { type: "thinking_start" })
     sse(controller, { type: "thinking_step_start", label: "外部情報を調査中", index: 0, total: 6 })
-    sse(controller, {
-      type: "thinking_delta",
-      label: "外部情報を調査中",
-      content: "最新情報が必要な依頼なので、まずWeb上の情報を取得し、確認できた事実をこの後の要約と投稿作成に使います。",
-      index: 0,
-      total: 6,
-    })
-  }
 
-  if (needsDeterministicWebSearch) {
     const searchQuery = forceCurrentWebSearch
       ? buildForcedWebSearchQuery(latestUserText)
       : postDraftRequest
-        ? latestUserText
-            .replace(/(?:ポスト|投稿)(?:して|してください|してほしい|してくれる|お願い)(?:[。！？!?])?$/u, "")
-            .replace(/(?:確認して|確認した上で|調べて|調べた上で|検索して|検索した上で)(?:[。！？!?])?$/u, "")
-            .trim() || latestUserText
+        ? buildPostWebSearchQuery(latestUserText)
         : latestUserText
 
-    const deterministicWebSearchResult = await executeDirectWebSearch(controller, searchQuery, 5)
-    precomputedWebSearchContext = deterministicWebSearchResult.searchContext ?? null
+    try {
+      const deterministicWebSearchResult = await executeDirectWebSearch(controller, searchQuery, 5)
+      precomputedWebSearchContext = deterministicWebSearchResult.searchContext ?? null
+      sse(controller, {
+        type: "thinking_delta",
+        label: "外部情報を調査中",
+        content: precomputedWebSearchContext
+          ? "Web検索を実行し、取得した情報をこの後の検討・要約・投稿作成に引き継ぎます。"
+          : "Web検索を実行しましたが、十分な検索結果を取得できませんでした。確認できた範囲だけで慎重に検討します。",
+        index: 0,
+        total: 6,
+      })
+    } catch (searchError) {
+      console.error("thinking web search failed:", searchError)
+      sse(controller, {
+        type: "thinking_delta",
+        label: "外部情報を調査中",
+        content: "Web検索を試行しましたが結果を取得できませんでした。未確認の情報を事実として補わず、確認できた情報だけで続行します。",
+        index: 0,
+        total: 6,
+      })
+    }
+  } else if (needsDeterministicWebSearch) {
+    const searchQuery = forceCurrentWebSearch
+      ? buildForcedWebSearchQuery(latestUserText)
+      : postDraftRequest
+        ? buildPostWebSearchQuery(latestUserText)
+        : latestUserText
+
+    try {
+      const deterministicWebSearchResult = await executeDirectWebSearch(controller, searchQuery, 5)
+      precomputedWebSearchContext = deterministicWebSearchResult.searchContext ?? null
+    } catch (searchError) {
+      console.error("deterministic web search failed:", searchError)
+    }
   }
 
   // Thinkingモードでは投稿依頼も通常質問と同じく検討工程を実行する。
   // 直前にWeb検索を行った場合は、その結果を前提情報として要約・投稿設計に利用する。
   if (body.thinking) {
-    const webSearchAlreadyStarted = needsDeterministicWebSearch
     if (!webSearchAlreadyStarted) {
       sse(controller, { type: "thinking_start" })
     }
-    sse(controller, { type: "thinking_step_start", label: "検討を開始", index: webSearchAlreadyStarted ? 1 : 0, total: webSearchAlreadyStarted ? 6 : 5 })
     const thinkingSteps: ThinkingStep[] = []
-    // Thinkingモードは投稿依頼でも必ず一定以上の公開可能な検討工程を表示する。
-    // 秘密の逐語的推論は出さず、判断・確認事項・構成方針だけを高レベルで示す。
     const stages = [
-      { label: "依頼を正確に整理中", instruction: "ユーザーの目的、投稿対象、明示された本文か題材か、投稿先、確認が必要な条件を切り分けてください。" },
-      { label: "検索・確認の必要性を判定中", instruction: "一般知識で足りるか、最新情報・製品仕様・天気・ニュースなど外部Web検索が必須かを判定してください。検索が必要なら、確認すべき事実と優先すべき情報源の種類を高レベルで整理してください。" },
+      { label: "依頼を正確に整理中", instruction: "ユーザーの目的、対象、明示された本文か題材か、検索が必要か、投稿に必要な情報を切り分けてください。投稿先や文字数など、ユーザーが指定していない事項を質問し直すのではなく、LimeNoteのSNS投稿として最適な形を判断してください。" },
+      { label: "検索結果を確認・要約中", instruction: "今回の検索結果を読み、質問に直接関係する事実、数値、日付、固有名詞を整理してください。検索結果が複数ある場合は内容を照合し、矛盾や不確かな点を区別してください。" },
       { label: "根拠と事実関係を確認中", instruction: "検索結果がある場合は、投稿に使える確かな事実、数字、固有名詞、日付を整理してください。検索結果がない場合は、推測で事実を補わない方針を明確にしてください。" },
       { label: "投稿の切り口を検討中", instruction: "単なる題材名の言い換えではなく、読者に価値が伝わる具体的な切り口、要点、自然なSNS文体を整理してください。" },
       { label: "最終投稿文を設計中", instruction: "確認済み情報とユーザーの意図を両立し、実際にそのまま投稿できる完成文の構成を確定してください。明示された本文は改変せず、そのまま扱うルールも確認してください。" },
     ]
-
+    sse(controller, { type: "thinking_step_start", label: "検討を開始", index: webSearchAlreadyStarted ? 1 : 0, total: webSearchAlreadyStarted ? stages.length + 1 : stages.length + 1 })
+    // Thinkingモードは投稿依頼でも必ず一定以上の公開可能な検討工程を表示する。
+    // 秘密の逐語的推論は出さず、判断・確認事項・構成方針だけを高レベルで示す。
     try {
       for (let index = 0; index < stages.length; index++) {
         const stage = stages[index]
-        sse(controller, { type: "thinking_step_start", label: stage.label, index: webSearchAlreadyStarted ? index + 1 : index, total: webSearchAlreadyStarted ? 6 : stages.length })
+        sse(controller, { type: "thinking_step_start", label: stage.label, index: webSearchAlreadyStarted ? index + 1 : index, total: webSearchAlreadyStarted ? stages.length + 1 : stages.length })
         let content = ""
         try {
           content = await createThinkingStep(
@@ -2513,9 +3202,9 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
 
         const fallbackByStage: Record<string, string> = {
           "依頼を正確に整理中": "依頼の目的と投稿対象を切り分け、明示文か題材指示かを確認しました。",
-          "検索・確認の必要性を判定中": effectiveRouterDecision.action === "web_search" || effectiveRouterDecision.action === "web_search_and_html"
-            ? "外部Web検索が必要と判断し、関連情報の確認を優先します。"
-            : "外部Web検索は不要と判断し、既存の知識と会話文脈を中心に構成します。",
+          "検索結果を確認・要約中": precomputedWebSearchContext
+            ? "実行したWeb検索結果を確認し、投稿や回答に必要な事実を要約します。"
+            : "検索結果がないため、未確認の情報を事実として補わずに進めます。",
           "根拠と事実関係を確認中": precomputedWebSearchContext
             ? "実行済みのWeb検索結果から、投稿に使用できる事実と数字を整理します。"
             : "確認済みの情報だけを使い、不確かな数字や仕様は補いません。",
@@ -2526,7 +3215,7 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
         }
         const step = { label: stage.label, content: content || fallbackByStage[stage.label] || "この段階の確認を完了しました。" }
         thinkingSteps.push(step)
-        sse(controller, { type: "thinking_delta", label: step.label, content: step.content, index: webSearchAlreadyStarted ? index + 1 : index, total: webSearchAlreadyStarted ? 6 : stages.length })
+        sse(controller, { type: "thinking_delta", label: step.label, content: step.content, index: webSearchAlreadyStarted ? index + 1 : index, total: webSearchAlreadyStarted ? stages.length + 1 : stages.length })
       }
 
       if (thinkingSteps.length > 0) {
@@ -2579,7 +3268,7 @@ ${thinkingSteps.map((step) => `【${step.label}】\n${step.content}`).join("\n\n
           ...baseMessages,
           { role: "system", content: [
             "外部Web検索を実行済みです。検索結果を必ず回答に反映してください。",
-            "検索結果にない情報は、確認済みの事実として断定しないでください。",
+            "検索結果にない情報は、確認済みの事実として断定しないでください。検索結果がある場合に一般知識だけへ逃げず、得られた情報を必ず回答へ反映してください。",
             `検索結果:\n${precomputedWebSearchContext ?? ""}`,
             postDraftRequest
               ? "この検索結果は投稿作成のために取得したものです。投稿依頼の場合は検索結果を要約・解釈して、読者に分かりやすい完成した投稿文へ変換してください。"
@@ -2635,7 +3324,18 @@ ${thinkingSteps.map((step) => `【${step.label}】\n${step.content}`).join("\n\n
         : "AIが投稿文を作成しました。この内容をLimeNoteに投稿しますか？")
     } catch (error) {
       console.error("post draft generation failed:", error)
-      sseText(controller, "投稿内容の作成に失敗しました。もう一度お試しください。")
+      const fallback = buildDeterministicPostFallback(postWebSearchContext, postDraftRequest.instruction)
+      if (fallback) {
+        sse(controller, {
+          type: "agent_action_request",
+          action: { type: "create_post", content: fallback },
+        })
+        sseText(controller, postWebSearchContext
+          ? "Webで確認した情報を要約して投稿案を作成しました。この内容をLimeNoteに投稿しますか？"
+          : "投稿案を作成しました。この内容をLimeNoteに投稿しますか？")
+      } else {
+        sseText(controller, "投稿案の生成に失敗しました。")
+      }
     }
     sseDone(controller)
     return

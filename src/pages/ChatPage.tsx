@@ -2111,7 +2111,7 @@ export default function ChatPage() {
               </div>
               <h2 className="text-2xl font-semibold text-[#2b2b3a] dark:text-[#ececec] tracking-tight">LimeAI</h2>
               <p className="text-[15px] text-[#666666] dark:text-[#999999] leading-relaxed">
-                LimeNoteのAI革命に乗ろう
+                LimeAI 5.5 Thinking 登場。さらに便利なLimeNoteへ
               </p>
             </div>
           ) : (
