@@ -78,6 +78,11 @@ type HtmlPreviewToolArgs = {
 }
 
 type PostDraftRequest = {
+  instruction: string
+  explicitContent?: string
+}
+
+type GeneratedPostDraft = {
   content: string
 }
 
@@ -139,11 +144,23 @@ type SearchResult = {
   references: ReferencedPost[]
 }
 
+type WebSearchItem = {
+  title: string
+  url: string
+  snippet: string
+}
+
+type WebSearchResult = {
+  context: string
+  items: WebSearchItem[]
+}
+
 type ToolExecutionResult = {
   toolMessage: GroqMessage
   references?: ReferencedPost[]
   searchContext?: string
   hasSearchTool?: boolean
+  hasWebSearchTool?: boolean
   hasCodingTool?: boolean
 }
 
@@ -217,6 +234,24 @@ const searchTool = {
   },
 } as const
 
+const webSearchTool = {
+  type: "function",
+  function: {
+    name: "search_web",
+    description:
+      "インターネット上の公開Webページを検索する。最新ニュース、現在の情報、特定サイト・製品・人物・サービスの外部情報、または一般知識だけでは確信できない情報の確認が必要な場合にだけ使う。通常会話、雑談、翻訳、一般的な説明など、外部検索が不要な場合は使わない。検索語はユーザーの最新発話の意図に沿って作成し、過去の検索話題を勝手に引き継がない。",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        query: { type: "string" },
+        limit: { type: "integer", minimum: 1, maximum: 5 },
+      },
+      required: ["query", "limit"],
+    },
+  },
+} as const
+
 const htmlPreviewTool = {
   type: "function",
   function: {
@@ -286,10 +321,136 @@ function getLatestUserText(contents: ClientContent[]) {
 }
 
 function extractPostDraftRequest(text: string): PostDraftRequest | null {
-  const compact = text.replace(/\s+/g, " ").trim()
-  const match = compact.match(/^(?:「([^」]{1,500})」|『([^』]{1,500})』|(.{1,500}?))(?:と|って|を)?(?:ポスト|投稿)(?:して|してください|してほしい|してくれる|お願い)(?:。)?$/u)
-  const content = (match?.[1] ?? match?.[2] ?? match?.[3] ?? "").trim()
-  if (!content || content.length > 500) return null
+  const original = text.trim()
+  const compact = original.replace(/\s+/g, " ").trim()
+  if (!original) return null
+
+  const commandSuffix = '(?:ポスト|投稿)(?:して|してください|してほしい|してくれる|お願い)(?:[。！？!?])?$'
+
+  // 明示的に引用された本文は、そのまま投稿する。
+  const quotedMatch = original.match(new RegExp(`^(?:「([^」]{1,500})」|『([^』]{1,500})』)(?:と|って|を)?${commandSuffix}`, 'u'))
+  const quotedContent = (quotedMatch?.[1] ?? quotedMatch?.[2] ?? "").trim()
+  if (quotedContent) {
+    return { instruction: original, explicitContent: quotedContent }
+  }
+
+  // 「Xとポストして」「Xって投稿してください」のような表現は、
+  // Xが「投稿してほしい本文そのもの」を指定していると解釈する。
+  // 本文部分は original から直接抜き出すため、空白や句読点を勝手に変更しない。
+  // 例: 「家系ラーメンが大好きだとポストしてください」→「家系ラーメンが大好きだ」をそのまま投稿
+  const directContentMatch = original.match(new RegExp(`^([\\s\\S]{1,500}?)(?:と|って)${commandSuffix}`, 'u'))
+  const directContent = (directContentMatch?.[1] ?? "").trim()
+  if (directContent) {
+    return { instruction: original, explicitContent: directContent }
+  }
+
+  // 「Xをポストして」のような表現は、Xを題材・意図として扱い、
+  // 実際に公開する自然な投稿文をAIに生成させる。
+  // 例: 「家系ラーメンの魅力をポストして」→ 題材「家系ラーメンの魅力」から完成文を生成
+  const topicMatch = compact.match(/^(.{1,500}?)(?:を)?(?:ポスト|投稿)(?:して|してください|してほしい|してくれる|お願い)(?:[。！？!?])?$/u)
+  const instruction = (topicMatch?.[1] ?? "").trim()
+  if (!instruction || instruction.length > 500) return null
+
+  return { instruction }
+}
+
+function buildPostDraftContext(contents: ClientContent[], latestUserText: string) {
+  const rows: string[] = []
+
+  for (const item of contents.slice(-6)) {
+    const text = removeSystemBlock(getText(item))
+    if (!text) continue
+
+    rows.push(`${roleLabel(item.role)}: ${limitText(text, 700)}`)
+  }
+
+  if (!rows.length) {
+    return `最新のユーザー発話: ${latestUserText}`
+  }
+
+  return [
+    "直近の会話:",
+    rows.join("\n"),
+    "",
+    `最新のユーザー発話: ${latestUserText}`,
+  ].join("\n")
+}
+
+function normalizeGeneratedPost(text: string) {
+  return text
+    .replace(/^```(?:text|txt)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .replace(/^(?:投稿文|投稿案|ポスト文)\s*[:：]\s*/u, "")
+    .trim()
+}
+
+async function generatePostDraft(
+  groqApiKey: string,
+  model: string,
+  request: PostDraftRequest,
+  contents: ClientContent[],
+  latestUserText: string,
+  webSearchContext: string | null = null,
+): Promise<GeneratedPostDraft> {
+  if (request.explicitContent) {
+    return { content: request.explicitContent }
+  }
+
+  const context = buildPostDraftContext(contents, latestUserText)
+
+  const data = await callGroqJson(groqApiKey, {
+    model,
+    messages: [
+      {
+        role: "system",
+        content: [
+          "あなたはLimeNoteの投稿作成アシスタントです。",
+          "ユーザーが『○○を投稿して』『○○についてポストして』のように、投稿の題材・目的を指示した場合、その意味を解釈して、実際に公開できる自然な日本語のSNS投稿文を1本作成してください。",
+          "題材の言い換えや見出しだけを返してはいけません。『家系ラーメンの魅力をポストして』なら、家系ラーメンの魅力を具体的に伝える完成した投稿文にしてください。",
+          "会話中に『これ』『それ』『この内容』などの指示がある場合は、直前の会話内容を参照して対象を解決してください。",
+          "投稿本文が明示指定されているケースは、この処理には渡されないので、ここでは題材・意図から完成文を新規作成するケースだけを扱います。",
+          "SNS投稿として自然な文体にし、不要な前置き・説明・『投稿案です』などのメタ表現は付けません。",
+          "外部Web検索結果が渡された場合は、その検索結果に含まれる情報だけを確認済み情報として使い、ユーザーの投稿意図に沿う形で正確に反映してください。検索結果にないスペックや数字を推測で追加しないでください。",
+          "事実関係が不明な固有名詞や数字を勝手に付け足さず、一般的な内容で表現してください。",
+          "文字数は500文字以内にしてください。",
+          "出力はJSONだけにしてください。形式は {\"content\":\"完成した投稿文\"} です。",
+        ].join("\n"),
+      },
+      {
+        role: "user",
+        content: [
+          context,
+          "",
+          `投稿指示: ${request.instruction}`,
+          webSearchContext ? `外部Web検索結果（確認済み情報）:
+${webSearchContext}` : "外部Web検索結果: なし（検索不要と判断された、または検索結果を利用しないケース）",
+          "",
+          "この指示を題材・意図として解釈し、実際に投稿する完成文を作成してください。" + (webSearchContext ? "検索結果を反映して、確認できたスペックや特徴を具体的に書いてください。" : ""),
+        ].join("\n"),
+      },
+    ],
+    stream: false,
+    temperature: 0.7,
+    max_completion_tokens: 500,
+  })
+
+  const raw = data.choices?.[0]?.message?.content ?? ""
+  const jsonText = extractJsonObject(raw)
+
+  if (!jsonText) {
+    throw new Error("Post draft generation returned no JSON")
+  }
+
+  const parsed: unknown = JSON.parse(jsonText)
+  if (!isRecord(parsed) || typeof parsed.content !== "string") {
+    throw new Error("Post draft generation returned invalid content")
+  }
+
+  const content = normalizeGeneratedPost(parsed.content)
+  if (!content || content.length > 500) {
+    throw new Error("Post draft generation returned empty or oversized content")
+  }
+
   return { content }
 }
 
@@ -602,7 +763,7 @@ function getToolCalls(value: unknown): GroqToolCall[] {
 }
 
 
-type ToolIntentAction = "chat" | "search" | "html" | "search_and_html"
+type ToolIntentAction = "chat" | "search" | "web_search" | "html" | "search_and_html" | "web_search_and_html"
 
 type ToolIntentDecision = {
   action: ToolIntentAction
@@ -620,7 +781,7 @@ function normalizeToolIntent(value: unknown): ToolIntentDecision {
   if (!isRecord(value)) return { action: "chat", reason: "invalid_router_output" }
 
   const actionValue = typeof value.action === "string" ? value.action : "chat"
-  const action: ToolIntentAction = actionValue === "search" || actionValue === "html" || actionValue === "search_and_html"
+  const action: ToolIntentAction = actionValue === "search" || actionValue === "web_search" || actionValue === "html" || actionValue === "search_and_html" || actionValue === "web_search_and_html"
     ? actionValue
     : "chat"
 
@@ -641,6 +802,14 @@ function buildRouterContext(contents: ClientContent[]) {
   return rows.slice(-4).join("\n")
 }
 
+function shouldForceWebSearchForPost(latestUserText: string, request: PostDraftRequest | null) {
+  if (!request || request.explicitContent) return false
+
+  // 題材型の投稿依頼でも、ユーザーが「確認・調査」や最新性を求めている場合は
+  // LLMルーターの揺らぎに依存せず外部Web検索を必ず行う。
+  return /(確認して|確認した上で|調べて|調べた上で|検索して|検索した上で|最新|現在|現時点|スペック|仕様|価格|値段|発売日|対応|互換性|性能|比較)/u.test(latestUserText)
+}
+
 async function classifyToolIntent(
   groqApiKey: string,
   latestUserText: string,
@@ -659,10 +828,12 @@ async function classifyToolIntent(
             "あなたはLimeAIの内部ルーターです。最新のユーザー発話を中心に、ツールが必要か意味で判断します。",
             "固定ワードの有無で判定してはいけません。発話が何を求めているかで判断してください。",
             "直近文脈は、代名詞・指摘・『調べてない』などの追及が何を指すかを補う時だけ使います。最新発話が挨拶や雑談として完結している場合は、直近文脈を引き継がずchatにします。",
-            "LimeNote内の公開投稿、特定ユーザーの投稿、ハッシュタグ、SNS上での言及・反応、LimeNote内の人物・呼称・役職・出来事を公開投稿から確認して答える必要がある場合はsearchを選びます。",
-            "未知または曖昧な固有名詞・アカウント名・人物名・役職について『とは』『誰』『何者』『どういう人』のように尋ねている場合、LimeNote内の公開情報確認が必要なのでsearchを選びます。",
-            "ユーザーが『調べてない』『ソースは』『投稿では』『公開投稿では』のように、前の回答の根拠確認を求めている場合は、直近文脈の対象でsearchを選びます。",
-            "WebページやHTMLプレビューの作成が必要な場合だけhtmlを選びます。",
+            "LimeNote内の公開投稿、特定ユーザーの投稿、ハッシュタグ、LimeNote内の人物・呼称・役職・出来事を公開投稿から確認して答える必要がある場合はsearchを選びます。",
+            "未知または曖昧なLimeNote内の固有名詞・アカウント名・人物名・役職について『とは』『誰』『何者』『どういう人』のように尋ねている場合はsearchを選びます。",
+            "ユーザーが『調べてない』『ソースは』『投稿では』『公開投稿では』のように、LimeNoteの公開投稿を根拠として求めている場合はsearchを選びます。",
+            "インターネット上の現在情報、ニュース、外部サービス、製品情報、特定Webサイトの内容など、LimeNoteの公開投稿ではなく一般Web情報の確認が必要な場合はweb_searchを選びます。",
+            "最新情報が必要か、現在変化する情報か、外部Webでしか確認できない事実かを意味で判断し、必要な場合だけweb_searchを選びます。特に製品のスペック・仕様・価格・発売日などの確認依頼は、信頼できる外部Web情報を取得してから答える対象です。単なる一般説明や雑談ではweb_searchを選びません。検索という単語が含まれているだけではweb_searchにせず、実際に外部情報を取得する必要があるかで判断します。",
+            "WebページやHTMLプレビューの作成が必要な場合だけhtml系を選びます。外部Web検索とHTMLの両方が必要ならweb_search_and_html、LimeNote検索とHTMLの両方が必要ならsearch_and_htmlを選びます。",
             "挨拶、気分、雑談、感想、翻訳、一般的な相談、明らかに投稿確認が不要な通常会話はchatを選びます。",
             "出力はJSONだけにしてください。",
           ].join("\n"),
@@ -671,7 +842,7 @@ async function classifyToolIntent(
           role: "user",
           content: [
             "次の形式だけで返してください:",
-            "{\"action\":\"chat|search|html|search_and_html\",\"reason\":\"短い理由\"}",
+            "{\"action\":\"chat|search|web_search|html|search_and_html|web_search_and_html\",\"reason\":\"短い理由\"}",
             "",
             "判定例:",
             "こんにちは! => chat",
@@ -683,6 +854,11 @@ async function classifyToolIntent(
             "LimeNoteでミセスの投稿を探して => search",
             "@catの最新投稿は? => search",
             "今日の公開投稿をまとめて => search",
+            "OpenAIの最新ニュースを調べて => web_search",
+            "Amazonの現在の価格を調べて => web_search",
+            "MacBook Air M4のスペックを確認して => web_search",
+            "MacBook Air M4のスペックを確認してポストして => web_search",
+            "家系ラーメンの魅力をポストして => chat（外部確認がなくても投稿文を作れる）",
             "HTMLで自己紹介カードを作って => html",
             "",
             `直近文脈:\n${routerContext || "なし"}`,
@@ -760,10 +936,14 @@ function toolsForIntent(action: ToolIntentAction) {
   switch (action) {
     case "search":
       return [searchTool]
+    case "web_search":
+      return [webSearchTool]
     case "html":
       return [htmlPreviewTool]
     case "search_and_html":
       return [searchTool, htmlPreviewTool]
+    case "web_search_and_html":
+      return [webSearchTool, htmlPreviewTool]
     case "chat":
     default:
       return []
@@ -773,6 +953,10 @@ function toolsForIntent(action: ToolIntentAction) {
 function toolChoiceForIntent(action: ToolIntentAction): unknown {
   if (action === "search") {
     return { type: "function", function: { name: "search_limenote_public_posts" } }
+  }
+
+  if (action === "web_search") {
+    return { type: "function", function: { name: "search_web" } }
   }
 
   if (action === "html") {
@@ -785,11 +969,15 @@ function toolChoiceForIntent(action: ToolIntentAction): unknown {
 function toolInstructionForIntent(action: ToolIntentAction) {
   switch (action) {
     case "search":
-      return "内部ルーターは、最新発話に公開投稿検索が必要だと判定しました。search_limenote_public_postsを使い、結果に基づいて短く答えてください。"
+      return "内部ルーターは、最新発話にLimeNote公開投稿検索が必要だと判定しました。search_limenote_public_postsを使い、結果に基づいて短く答えてください。"
+    case "web_search":
+      return "内部ルーターは、最新発話に外部Web検索が必要だと判定しました。search_webを使い、Web検索結果に基づいて答えてください。検索結果にない事実は検索結果だけを根拠に断定しないでください。"
     case "html":
       return "内部ルーターは、最新発話にHTMLプレビュー作成が必要だと判定しました。create_html_previewを使ってください。"
     case "search_and_html":
-      return "内部ルーターは、公開投稿検索とHTMLプレビュー作成の両方が必要だと判定しました。必要なツールだけを使ってください。"
+      return "内部ルーターは、LimeNote公開投稿検索とHTMLプレビュー作成の両方が必要だと判定しました。必要なツールだけを使ってください。"
+    case "web_search_and_html":
+      return "内部ルーターは、外部Web検索とHTMLプレビュー作成の両方が必要だと判定しました。必要なツールだけを使ってください。"
     case "chat":
     default:
       return "内部ルーターは、最新発話にツールは不要だと判定しました。公開投稿や過去の検索結果には触れず、最新発話に自然に返答してください。"
@@ -1867,6 +2055,69 @@ async function searchLimeNotePublicPosts(_req: Request, args: SearchToolArgs): P
 
 
 
+function parseWebSearchArgs(text: string, fallbackQuery: string) {
+  const args = parseJsonArgs(text)
+  const query = typeof args.query === "string" && args.query.trim() ? args.query.trim() : fallbackQuery.trim()
+  const limit = typeof args.limit === "number" && Number.isFinite(args.limit) ? Math.max(1, Math.min(5, Math.floor(args.limit))) : 5
+  return { query: query.slice(0, 300), limit }
+}
+
+function decodeHtmlEntities(value: string) {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#x2F;/g, "/")
+}
+
+function stripHtml(value: string) {
+  return decodeHtmlEntities(value.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim()
+}
+
+async function searchWeb(query: string, limit = 5): Promise<WebSearchResult> {
+  const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (compatible; LimeAI/1.0; +https://limenote.local)"
+    },
+  })
+
+  if (!response.ok) throw new Error(`Web search ${response.status}`)
+  const html = await response.text()
+  const items: WebSearchItem[] = []
+  const resultRegex = /<a[^>]*class=["']result__a["'][^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi
+  let match: RegExpExecArray | null
+
+  while ((match = resultRegex.exec(html)) && items.length < limit) {
+    const title = stripHtml(match[2])
+    let resultUrl = decodeHtmlEntities(match[1])
+    try {
+      const parsed = new URL(resultUrl, "https://html.duckduckgo.com")
+      const uddg = parsed.searchParams.get("uddg")
+      if (uddg) resultUrl = uddg
+    } catch (_error) {
+      // URLでない場合は元の値を使う
+    }
+
+    if (!title || !/^https?:\/\//i.test(resultUrl)) continue
+
+    const anchorEnd = match.index + match[0].length
+    const after = html.slice(anchorEnd, anchorEnd + 1800)
+    const snippetMatch = after.match(/<a[^>]*class=["']result__snippet["'][^>]*>([\s\S]*?)<\/a>|<div[^>]*class=["']result__snippet["'][^>]*>([\s\S]*?)<\/div>/i)
+    const snippet = snippetMatch ? stripHtml(snippetMatch[1] ?? snippetMatch[2] ?? "") : ""
+
+    items.push({ title, url: resultUrl, snippet })
+  }
+
+  const context = items.length
+    ? items.map((item, index) => `【Web検索結果${index + 1}】\nタイトル: ${item.title}\nURL: ${item.url}\n概要: ${item.snippet || "（概要なし）"}`).join("\n\n")
+    : "外部Web検索で結果が見つかりませんでした。"
+
+  return { context, items }
+}
+
 async function executeDirectSearch(
   req: Request,
   controller: ReadableStreamDefaultController<Uint8Array>,
@@ -1922,6 +2173,37 @@ async function executeToolCall(
         tool_call_id: toolCall.id,
         content: `HTMLプレビューを作成しました。タイトル: ${args.title}`,
       },
+    }
+  }
+
+  if (toolCall.function.name === "search_web") {
+    const args = parseWebSearchArgs(toolCall.function.arguments, latestUserText)
+    sse(controller, { type: "web_search_start", query: args.query })
+
+    try {
+      const result = await searchWeb(args.query, args.limit)
+      sse(controller, { type: "web_search_end", results: result.items })
+      return {
+        hasWebSearchTool: true,
+        searchContext: result.context,
+        toolMessage: {
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: result.context,
+        },
+      }
+    } catch (error) {
+      console.error("search_web failed:", error)
+      sse(controller, { type: "web_search_end", results: [] })
+      return {
+        hasWebSearchTool: true,
+        searchContext: "外部Web検索中に一時的なエラーが発生しました。",
+        toolMessage: {
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: "外部Web検索中に一時的なエラーが発生しました。検索結果なしとして回答してください。",
+        },
+      }
     }
   }
 
@@ -2075,28 +2357,27 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
   const latestUserText = getLatestUserText(body.contents)
   const postDraftRequest = extractPostDraftRequest(latestUserText)
 
-  // Posting is an external side effect. Never let the model publish directly:
-  // return a draft and require an explicit, local user confirmation instead.
-  if (postDraftRequest) {
-    sse(controller, { type: "agent_action_request", action: { type: "create_post", content: postDraftRequest.content } })
-    sseText(controller, "この内容をLimeNoteに投稿しますか？")
-    sseDone(controller)
-    return
-  }
-
   const routerContext = buildRouterContext(body.contents)
   const baseMessages = await buildBaseMessages(groqApiKey, body.contents, controller)
   const answerMaxTokens = body.thinking ? THINKING_ANSWER_MAX_TOKENS : ANSWER_MAX_TOKENS
   const answerTemperature = body.thinking ? 0.35 : 0.6
 
+  // 最初にツール要否を判定。投稿依頼でも「確認して」「調べて」等なら外部検索ルートへ進める。
+  const routerDecision = await classifyToolIntent(groqApiKey, latestUserText, routerContext)
+  const effectiveRouterDecision: ToolIntentDecision =
+    shouldForceWebSearchForPost(latestUserText, postDraftRequest) && routerDecision.action === "chat"
+      ? { action: "web_search", reason: "post_request_requires_external_verification" }
+      : routerDecision
+
+  // Thinkingモードでは投稿依頼も通常質問と同じく検討工程を実行する。
   if (body.thinking) {
     sse(controller, { type: "thinking_start" })
     const thinkingSteps: ThinkingStep[] = []
     const stages = [
-      { label: "質問を整理中", instruction: "質問の目的・条件・前提を切り分けてください。" },
-      { label: "前提と根拠を検証中", instruction: "必要な確認、考慮すべき例外、回答で断定できる範囲を検証してください。" },
-      { label: "別の見方を検討中", instruction: "見落としや反例、代替案を確認し、より妥当な結論に絞り込んでください。" },
-      { label: "回答を構成中", instruction: "検討内容を踏まえ、分かりやすく正確な回答の構成を組み立ててください。" },
+      { label: "依頼を整理中", instruction: "ユーザーが求めている投稿内容、確認対象、投稿先、明示された文面か題材かを切り分けてください。" },
+      { label: "必要な情報を確認中", instruction: "この依頼で外部Web検索やLimeNote検索が必要かを確認し、必要な場合はどの情報を検証すべきか整理してください。" },
+      { label: "内容の正確さを検証中", instruction: "確認すべき数字・仕様・固有名詞・最新情報の有無を検討し、投稿で断定できる範囲を整理してください。" },
+      { label: "投稿内容を構成中", instruction: "確認した内容とユーザーの意図を両立した、実際に投稿できる自然な文章の構成を考えてください。" },
     ]
 
     try {
@@ -2109,7 +2390,7 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
           latestUserText,
           routerContext,
           stage.label,
-          stage.instruction,
+          `${stage.instruction} 内部ルーターの判定は ${effectiveRouterDecision.action} です。`,
           thinkingSteps,
         )
         if (content) {
@@ -2122,7 +2403,8 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
       if (thinkingSteps.length > 0) {
         baseMessages.push({
           role: "system",
-          content: `回答前に整理した検討ログ:\n${thinkingSteps.map((step) => `【${step.label}】\n${step.content}`).join("\n\n")}\nこの検討を踏まえ、速さや短さより正確さ・十分な説明を優先して丁寧に回答してください。`,
+          content: `回答前に整理した高レベルの検討ログ:
+${thinkingSteps.map((step) => `【${step.label}】\n${step.content}`).join("\n\n")}\nこの検討結果を踏まえ、検索が必要な場合は検索結果を優先して正確に回答してください。`,
         })
       }
     } catch (error) {
@@ -2131,17 +2413,78 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
       sse(controller, { type: "thinking_end" })
     }
   }
-  const routerDecision = await classifyToolIntent(groqApiKey, latestUserText, routerContext)
+
+  // 明示本文の投稿は内容を改変せず、そのまま承認カードへ渡す。
+  if (postDraftRequest?.explicitContent) {
+    sse(controller, {
+      type: "agent_action_request",
+      action: { type: "create_post", content: postDraftRequest.explicitContent },
+    })
+    sseText(controller, "指定された文章をそのまま投稿内容にしました。この内容をLimeNoteに投稿しますか？")
+    sseDone(controller)
+    return
+  }
+
+  // 題材型の投稿依頼で外部Web検索が必要とルーターが判断した場合だけ検索する。
+  let postWebSearchContext: string | null = null
+  if (postDraftRequest && effectiveRouterDecision.action === "web_search") {
+    const query = latestUserText
+      .replace(/(?:ポスト|投稿)(?:して|してください|してほしい|してくれる|お願い)(?:[。！？!?])?$/u, "")
+      .replace(/(?:確認して|確認した上で|調べて|調べた上で|検索して|検索した上で)(?:[。！？!?])?$/u, "")
+      .trim()
+    sse(controller, { type: "web_search_start", query })
+    try {
+      const result = await searchWeb(query || latestUserText, 5)
+      postWebSearchContext = result.context
+      sse(controller, { type: "web_search_end", results: result.items })
+    } catch (error) {
+      console.error("post web search failed:", error)
+      sse(controller, { type: "web_search_end", results: [] })
+    }
+  }
+
+  if (postDraftRequest) {
+    try {
+      const postDraft = await generatePostDraft(
+        groqApiKey,
+        model,
+        postDraftRequest,
+        body.contents,
+        latestUserText,
+        postWebSearchContext,
+      )
+
+      sse(controller, {
+        type: "agent_action_request",
+        action: { type: "create_post", content: postDraft.content },
+      })
+      sseText(controller, postWebSearchContext
+        ? "Webで仕様を確認し、投稿文を作成しました。この内容をLimeNoteに投稿しますか？"
+        : "AIが投稿文を作成しました。この内容をLimeNoteに投稿しますか？")
+    } catch (error) {
+      console.error("post draft generation failed:", error)
+      sseText(controller, "投稿内容の作成に失敗しました。もう一度お試しください。")
+    }
+    sseDone(controller)
+    return
+  }
+
   const forceHtmlPreview = shouldForceHtmlPreview(latestUserText, body.contents)
   const forcePublicPostSearch = shouldForcePublicPostSearch(latestUserText, body.contents)
   const toolIntent: ToolIntentDecision = forceHtmlPreview
     ? {
-      action: routerDecision.action === "search" || forcePublicPostSearch ? "search_and_html" : "html",
+      action: effectiveRouterDecision.action === "search" || forcePublicPostSearch
+        ? "search_and_html"
+        : effectiveRouterDecision.action === "web_search"
+          ? "web_search_and_html"
+          : "html",
       reason: "explicit_html_preview_request",
     }
-    : routerDecision.action === "chat" && forcePublicPostSearch
+    : effectiveRouterDecision.action === "chat" && forcePublicPostSearch
       ? { action: "search", reason: "explicit_or_identity_search_request" }
-      : routerDecision
+      : effectiveRouterDecision
+  // 重要: ルーターがchatを選んだ通常会話には検索ツールを渡さない。
+  // これにより、モデルが「念のため検索」する挙動を防ぐ。
   const availableTools = toolsForIntent(toolIntent.action)
   const allowedToolNames = new Set<string>(availableTools.map((tool) => tool.function.name))
 
@@ -2287,18 +2630,22 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
   }
 
   const hasSearchTool = toolResults.some((result) => result.hasSearchTool)
+  const hasWebSearchTool = toolResults.some((result) => result.hasWebSearchTool)
   const hasCodingTool = toolResults.some((result) => result.hasCodingTool)
   const hasSearchEvidence = toolResults.some((result) => result.hasSearchTool && hasUsableSearchEvidence(result))
+  const hasWebSearchEvidence = toolResults.some((result) => result.hasWebSearchTool && Boolean(result.searchContext && !/結果が見つかりませんでした|一時的なエラー/.test(result.searchContext)))
 
   const finalInstruction = [
     hasSearchTool && hasSearchEvidence ? "公開投稿の検索結果がある時は、投稿本文を主情報として読み、投稿日時は必要な時だけ確認します。検索結果ヘッダーの現在日時や検索期間だけを回答にしてはいけません。投稿者の認証状態や公式表示は、回答可否・順位・信頼度の根拠にしません。公式以外の公開投稿も同じ公開投稿として扱います。@ユーザー名の検索では別の語句へ言い換えず、そのユーザーの結果だけを使います。投稿番号、内部ラベル、取得中という表現は使いません。" : "",
-    hasSearchTool && !hasSearchEvidence ? generalKnowledgeFallbackInstruction(latestUserText) : "",
+    hasWebSearchTool && hasWebSearchEvidence ? "外部Web検索結果を使う場合は、検索結果のタイトル・URL・概要を根拠にし、検索結果にない事実を検索結果から導いたように断定しません。最新性が重要な内容は検索結果の記載日時やページ上の明示情報が確認できる範囲で述べます。必要な場合は回答中にURLを提示して構いません。" : "",
+    hasSearchTool && !hasSearchEvidence && !hasWebSearchTool ? generalKnowledgeFallbackInstruction(latestUserText) : "",
+    hasWebSearchTool && !hasWebSearchEvidence ? "外部Web検索で有用な結果を取得できなかった場合は、検索結果を捏造せず、確信できる一般知識だけで必要最小限に回答してください。" : "",
     hasCodingTool ? "HTMLプレビューは画面に表示済みです。回答では作成したことを短く伝え、コード全文は貼りません。" : "",
     "回答は短くまとめます。",
   ].filter(Boolean).join("\n")
 
   const toolContextMessages: GroqMessage[] = toolResults
-    .filter((result) => !result.hasSearchTool || hasUsableSearchEvidence(result))
+    .filter((result) => !result.hasSearchTool || hasUsableSearchEvidence(result) || result.hasWebSearchTool)
     .map((result, index) => ({
       role: "system" as const,
       content: `ツール結果${index + 1}:\n${result.searchContext ?? result.toolMessage.content ?? "結果なし"}`,
@@ -2322,7 +2669,9 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
     console.error("final Groq stream failed:", error)
     const fallback = hasSearchTool
       ? buildSearchFallbackAnswer(toolResults, latestUserText)
-      : "回答生成中に一時的なエラーが発生しました。もう一度お試しください。"
+      : hasWebSearchTool
+        ? "外部Web検索の結果を取得できませんでした。"
+        : "回答生成中に一時的なエラーが発生しました。もう一度お試しください。"
     sseText(controller, fallback)
     sseDone(controller)
   }
