@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, MessageCircle, X, Plus, Link as LinkIcon, Upload, Send, Heart, Globe } from 'lucide-react'; // Plusを追加
+import { ArrowLeft, MessageCircle, X, Plus, Link as LinkIcon, Upload, Send, Heart, Globe, MoreHorizontal, Trash2, ChartBarBig, Lock, Users } from 'lucide-react'; // Plus, MoreHorizontal等を追加
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { LikeButton } from '@/components/post/LikeButton';
@@ -16,7 +16,14 @@ import { getYouTubeId } from '@/lib/utils';
 import { YouTubeEmbed } from '@/components/YouTubeEmbed';
 import { supabase } from '@/lib/supabase';
 import { getCurrentUserId } from '@/lib/currentUser';
+import { deletePost } from '@/api/posts';
 import type { PostWithAuthor } from '@/types';
+
+// --- 公開範囲 ---
+// public    = 全体公開
+// following = 限定公開（フォロー中のユーザー向け）
+// members   = メンバー限定公開
+type PostVisibility = 'public' | 'following' | 'members';
 
 // --- カスタム絵文字・リアクション用型定義 ---
 interface CustomEmoji {
@@ -179,6 +186,10 @@ export default function PostDetail() {
   const [limeDropLoading, setLimeDropLoading] = useState(false);
   const [limeDropSendingUserId, setLimeDropSendingUserId] = useState<string | null>(null);
   const [limeDropFeedback, setLimeDropFeedback] = useState<string | null>(null);
+
+  // --- 「もっと見る」（3点）メニュー用ステート ---
+  const [showMenu, setShowMenu] = useState(false);
+  const [moreMenuPosition, setMoreMenuPosition] = useState<{ top: number; right: number } | null>(null);
   
   // スマホ・PC判定用
   const [isMobile, setIsMobile] = useState(false);
@@ -193,6 +204,8 @@ export default function PostDetail() {
   const shareButtonRef = useRef<HTMLButtonElement>(null);
   const shareMenuRef = useRef<HTMLDivElement>(null);
   const limeDropPanelRef = useRef<HTMLDivElement>(null);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
   let longPressTimer: NodeJS.Timeout;
 
   const defaultEmojis = ['👍', '❤️', '😆', '🤔', '😮', '🎉', '💢', '😢', '😇', '🍮'];
@@ -225,6 +238,49 @@ export default function PostDetail() {
     }
     return () => { document.body.style.overflow = 'unset'; };
   }, [selectedImageUrl]);
+
+  // --- 「もっと見る」メニューの外側クリック・スクロール/リサイズで閉じる処理（PostCardと同様） ---
+  useEffect(() => {
+    if (!showMenu) return;
+
+    const closeMenuFromOutside = () => {
+      setShowMenu(false);
+      setMoreMenuPosition(null);
+    };
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+
+      if (moreButtonRef.current?.contains(target)) return;
+      if (moreMenuRef.current?.contains(target)) return;
+
+      closeMenuFromOutside();
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown, true);
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+    };
+  }, [showMenu]);
+
+  useEffect(() => {
+    if (!showMenu) return;
+
+    const closeOnViewportChange = () => {
+      setShowMenu(false);
+      setMoreMenuPosition(null);
+    };
+
+    window.addEventListener('scroll', closeOnViewportChange, true);
+    window.addEventListener('resize', closeOnViewportChange);
+
+    return () => {
+      window.removeEventListener('scroll', closeOnViewportChange, true);
+      window.removeEventListener('resize', closeOnViewportChange);
+    };
+  }, [showMenu]);
 
   useEffect(() => {
     if (!showShareMenu) return;
@@ -625,9 +681,20 @@ export default function PostDetail() {
 
   // 本文から画像URLを抽出
   const extractedImageUrls = data?.content.match(imageRegex) || [];
-  
+
+  // YouTube IDの抽出（画像URLの合体判定より先に算出しておく）
+  const youtubeId = data ? getYouTubeId(data.content) : null;
+
   // 元々の画像配列と、本文から抽出した画像を合体させ、最大4枚に制限
-  const allImageUrls = data ? [...(data.imageUrls || []), ...extractedImageUrls].slice(0, 4) : [];
+  // ただし、BlueskyのYouTubeリンクは外部リンクカードのサムネイル画像が
+  // data.imageUrls に入ってくるため、何もしないとYouTube埋め込み本体と
+  // サムネイル画像が二重に表示されてしまう。YouTubeのvideoIdが検出できた
+  // Bluesky投稿では画像側を出さず、埋め込み本体（YouTubeEmbed）だけを表示する。
+  const allImageUrls = data
+    ? (isBlueskyPost && youtubeId)
+      ? []
+      : [...(data.imageUrls || []), ...extractedImageUrls].slice(0, 4)
+    : [];
   const singleImageUrl = allImageUrls.length === 1 ? allImageUrls[0] : null;
 
   useEffect(() => {
@@ -693,8 +760,7 @@ export default function PostDetail() {
     objectFit: 'contain',
   });
 
-  // YouTube IDの抽出と本文の加工（YouTube URLと画像URLを除去）
-  const youtubeId = data ? getYouTubeId(data.content) : null;
+  // 本文の加工（YouTube URLと画像URLを除去）
   const displayContent = (data && (youtubeId || extractedImageUrls.length > 0))
     ? data.content
         .replace(/(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|embed\/|shorts\/)?([a-zA-Z0-9_-]{11})([^?\s\n]*)?(\S+)?/g, '')
@@ -703,6 +769,71 @@ export default function PostDetail() {
     : data?.content;
 
   const useMobileThreadLayout = isMobile;
+
+  // --- 「もっと見る」メニュー用の判定（PostCardと同様のロジック） ---
+  const isMyPost = !isBlueskyPost && !!data && currentUserId === (data as PostWithAuthor).userId;
+  const currentVisibility = ((data as PostWithAuthor | undefined)?.visibility || 'public') as PostVisibility;
+  // メンバー機能を利用できるのは @cat / @LimeNote のみ（PostCardと同じ正規化ロジック）。
+  const normalizedAuthorUsername = (data?.author.username || '').trim().replace(/^@+/, '').toLowerCase();
+  const canUseMembershipPosts = normalizedAuthorUsername === 'cat' || normalizedAuthorUsername === 'limenote';
+
+  const handleActivityClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!data) return;
+
+    if (isBlueskyPost) {
+      if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
+      setShowMenu(false);
+      return;
+    }
+    navigate(`/post/${data.id}/activity`);
+    setShowMenu(false);
+  };
+
+  const handleToggleVisibility = async (
+    e: React.MouseEvent,
+    targetVisibility: PostVisibility
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!data) return;
+
+    const visibilityMessages: Record<PostVisibility, string> = {
+      public: 'この投稿を全体公開に切り替えますか？',
+      following: 'この投稿を限定公開に切り替えますか？フォロー中のユーザーのみ表示されます。',
+      members: 'この投稿をメンバー限定公開に切り替えますか？投稿者のメンバーのみ表示されます。',
+    };
+
+    if (!confirm(visibilityMessages[targetVisibility])) return;
+
+    try {
+      const { error } = await supabase
+        .from('posts')
+        .update({ visibility: targetVisibility })
+        .eq('id', data.id);
+
+      if (error) throw error;
+      window.location.reload();
+    } catch (err) {
+      console.error(err);
+      alert('公開設定の変更に失敗しました');
+    }
+  };
+
+  const handleDelete = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!data) return;
+    if (!confirm('投稿を削除しますか？')) return;
+    try {
+      await deletePost(data.id);
+      // 表示中の投稿自体を削除するため、リロードではなく前の画面へ戻る。
+      navigate(-1);
+    } catch (err) {
+      alert('削除に失敗しました');
+    }
+  };
 
   const getPostShareUrl = () => {
     if (!data) return '';
@@ -775,6 +906,8 @@ export default function PostDetail() {
       right: Math.max(8, window.innerWidth - rect.right),
     });
     setShowPicker(false);
+    setShowMenu(false);
+    setMoreMenuPosition(null);
     setShowShareMenu(true);
   };
 
@@ -1324,12 +1457,126 @@ export default function PostDetail() {
               </div>
             </div>
 
-            {/* 限定公開ラベル（カード右上に配置） */}
-            {data.visibility === 'following' && (
-              <span className="text-[14px] font-bold text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-md whitespace-nowrap -translate-y-[30px]">
-                限定公開
-              </span>
-            )}
+            {/* 公開範囲ラベル + 「もっと見る」（3点）メニュー（PostCardと同様） */}
+            <div className="flex items-center shrink-0 gap-1">
+              {!isBlueskyPost && currentVisibility === 'following' && (
+                <span className="text-[14px] font-bold text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-md whitespace-nowrap">
+                  限定公開
+                </span>
+              )}
+              {!isBlueskyPost && currentVisibility === 'members' && (
+                <span className="text-[14px] font-bold text-violet-600 dark:text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded-md whitespace-nowrap">
+                  メンバー限定
+                </span>
+              )}
+
+              <div className="relative shrink-0">
+                <button
+                  ref={moreButtonRef}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    if (showMenu) {
+                      setShowMenu(false);
+                      setMoreMenuPosition(null);
+                      return;
+                    }
+
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setMoreMenuPosition({
+                      top: rect.bottom + 4,
+                      right: Math.max(8, window.innerWidth - rect.right),
+                    });
+                    setShowShareMenu(false);
+                    setShareMenuPosition(null);
+                    setShowPicker(false);
+                    setShowMenu(true);
+                  }}
+                  className="p-1 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                >
+                  <MoreHorizontal className="h-5 w-5" />
+                </button>
+
+                {showMenu && typeof document !== 'undefined' && createPortal(
+                  <>
+                    <div
+                      className="fixed inset-0 bg-transparent"
+                      style={{ zIndex: 2147483646 }}
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setShowMenu(false);
+                        setMoreMenuPosition(null);
+                      }}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                      }}
+                    />
+                    <div
+                      ref={moreMenuRef}
+                      className="fixed w-44 rounded-xl border border-border bg-card p-1 shadow-lg overflow-hidden animate-in fade-in zoom-in duration-100"
+                      style={{
+                        top: moreMenuPosition?.top ?? 0,
+                        right: moreMenuPosition?.right ?? 8,
+                        zIndex: 2147483647,
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        onClick={handleActivityClick}
+                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
+                      >
+                        <ChartBarBig className="h-4 w-4" />
+                        {isBlueskyPost ? 'Blueskyで見る' : 'ポストアクティビティー'}
+                      </button>
+
+                      {isMyPost && currentVisibility !== 'public' && (
+                        <button
+                          onClick={(e) => handleToggleVisibility(e, 'public')}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
+                        >
+                          <Globe className="h-4 w-4" />
+                          全体公開にする
+                        </button>
+                      )}
+
+                      {isMyPost && currentVisibility !== 'following' && (
+                        <button
+                          onClick={(e) => handleToggleVisibility(e, 'following')}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
+                        >
+                          <Lock className="h-4 w-4" />
+                          限定公開にする
+                        </button>
+                      )}
+
+                      {isMyPost && canUseMembershipPosts && currentVisibility !== 'members' && (
+                        <button
+                          onClick={(e) => handleToggleVisibility(e, 'members')}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
+                        >
+                          <Users className="h-4 w-4" />
+                          メンバー限定公開にする
+                        </button>
+                      )}
+
+                      {isMyPost && (
+                        <button
+                          onClick={handleDelete}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-destructive hover:bg-destructive/10 transition-colors border-t border-border/50 mt-1"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          削除
+                        </button>
+                      )}
+                    </div>
+                  </>,
+                  document.body
+                )}
+              </div>
+            </div>
           </div>
 
           {/* 加工した本文を表示（メンション・ハッシュタグ・URL処理を適用） */}

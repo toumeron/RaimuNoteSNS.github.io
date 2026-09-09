@@ -329,7 +329,7 @@ export function ProfileHeader({
             onClick={() => setIsAvatarOpen(true)}
             className="-mt-[48px] box-border h-[96px] w-[96px] shrink-0 cursor-pointer rounded-full border-4 border-solid border-transparent bg-transparent p-0 text-left outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 sm:-mt-14 sm:h-28 sm:w-28"
           >
-            <Avatar className="h-full w-full overflow-hidden rounded-full bg-background shadow-soft">
+            <Avatar className="h-full w-full overflow-hidden rounded-full bg-background shadow-none">
               <AvatarImage
                 src={user.avatarUrl}
                 alt={user.displayName}

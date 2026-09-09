@@ -104,6 +104,12 @@ export type BlueskySearchResults = {
   users: BlueskyProfile[];
 };
 
+// フォロー/フォロワー一覧取得のページ結果
+export type BlueskyFollowListPage = {
+  users: BlueskyProfile[];
+  cursor: string | null;
+};
+
 const BLUESKY_SEARCH_CACHE_TTL_MS = 60_000;
 const blueskySearchCache = new Map<string, { expiresAt: number; result: BlueskySearchResults }>();
 const blueskySearchRequests = new Map<string, Promise<BlueskySearchResults>>();
@@ -644,6 +650,74 @@ export async function fetchBlueskyAuthorFeed(options?: {
     posts,
     cursor: payload.cursor || null,
   };
+}
+
+// ------------------------------------------------------------------
+// フォロー/フォロワー一覧
+// ------------------------------------------------------------------
+
+async function fetchBlueskyFollowList(
+  endpoint: 'app.bsky.graph.getFollowers' | 'app.bsky.graph.getFollows',
+  resultKey: 'followers' | 'follows',
+  options: { actor: string; cursor?: string | null; limit?: number; signal?: AbortSignal },
+): Promise<BlueskyFollowListPage> {
+  const actor = normalizeBlueskyHandle(options.actor);
+  if (!actor) return { users: [], cursor: null };
+
+  const limit = Math.min(100, Math.max(1, options.limit ?? 50));
+  const params = new URLSearchParams({ actor, limit: String(limit) });
+  if (options.cursor) {
+    params.set('cursor', options.cursor);
+  }
+
+  const response = await fetch(
+    `${BSKY_PUBLIC_API}/${endpoint}?${params.toString()}`,
+    {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: options.signal,
+    },
+  );
+
+  // アカウントが存在しない/非公開などの場合は空リストとして扱う
+  if (response.status === 404) return { users: [], cursor: null };
+  if (!response.ok) {
+    throw new Error(`Bluesky ${endpoint} failed: ${response.status}`);
+  }
+
+  const payload = (await response.json()) as Record<string, unknown> & { cursor?: string };
+  const rawList = (payload[resultKey] as BlueskyActorProfile[] | undefined) || [];
+  const users = rawList
+    .map(mapBlueskyActorProfile)
+    .filter((user): user is BlueskyProfile => Boolean(user));
+
+  return {
+    users,
+    cursor: payload.cursor || null,
+  };
+}
+
+export async function fetchBlueskyFollowers(options: {
+  actor: string;
+  cursor?: string | null;
+  limit?: number;
+  signal?: AbortSignal;
+}): Promise<BlueskyFollowListPage> {
+  return fetchBlueskyFollowList('app.bsky.graph.getFollowers', 'followers', options);
+}
+
+export async function fetchBlueskyFollows(options: {
+  actor: string;
+  cursor?: string | null;
+  limit?: number;
+  signal?: AbortSignal;
+}): Promise<BlueskyFollowListPage> {
+  return fetchBlueskyFollowList('app.bsky.graph.getFollows', 'follows', options);
+}
+
+// BlueskyのDIDは "did:" で始まるため、これでLimeの内部ユーザーと区別できる
+export function isBlueskyProfileId(id: string | null | undefined): boolean {
+  return typeof id === 'string' && id.startsWith('did:');
 }
 
 export function mergePostsByCreatedAt<T extends { id: string; createdAt: string }>(

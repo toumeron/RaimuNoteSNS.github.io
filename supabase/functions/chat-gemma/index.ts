@@ -217,7 +217,7 @@ const searchTool = {
   function: {
     name: "search_limenote_public_posts",
     description:
-      "LimeNoteのvisibility=publicの投稿本文を検索する。最新のユーザー発話が、LimeNote内の公開投稿、特定ユーザーの投稿、ハッシュタグ、SNS上の反応、投稿を情報源にした回答を明確に求めている場合だけ使う。通常会話、挨拶、雑談、翻訳、一般説明、数学、前の検索話題を引き継がない単独発話では使わない。検索条件はユーザーの意図から判断し、固定語の有無だけで決めない。全体を見る質問ではauthorUsernameをnullにし、公式アカウントと一般アカウントを同じ扱いにする。期間指定が本当に検索条件として求められている場合だけtimeRangeを指定する。@ユーザー名がある場合はauthorUsernameにその値だけを入れ、queryやtermsを別の言葉へ言い換えない。",
+      "LimeNoteのvisibility=publicの投稿本文を検索する。最新のユーザー発話が、LimeNote内の公開投稿、特定ユーザーの投稿、ハッシュタグ、SNS上の反応、投稿を情報源にした回答を明確に求めている場合だけ使う。通常会話、挨拶、雑談、翻訳、一般説明、数学、前の検索話題を引き継がない単独発話では使わない。検索条件はユーザーの意図から判断し、固定語の有無だけで判断しない。全体を見る質問ではauthorUsernameをnullにし、公式アカウントと一般アカウントを同じ扱いにする。期間指定が本当に検索条件として求められている場合だけtimeRangeを指定する。@ユーザー名がある場合はauthorUsernameにその値だけを入れ、queryやtermsを別の言葉へ言い換えない。",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -867,6 +867,7 @@ async function buildBaseMessages(
       "検索結果では公式アカウントと一般アカウントの投稿本文を同じ重みで読みます。公式かどうかを信頼度や順位の根拠にしてはいけません。",
       "ユーザーがWebサイト、HTMLページ、プレビュー付きコードの作成を求めた時は、画面表示用のHTMLプレビューを作成します。",
       "ツールを使う必要がない時は、最新発話にそのまま返答します。",
+      "最新発話が短い相槌や聞き返し（例:「はい？」「え？」「それで？」）の場合は、直前の自分の発言・直前のやり取りの流れを踏まえて具体的に応答してください。文脈を無視して『何かお手伝いできることはありますか？』のような汎用的な相槌だけで終わらせてはいけません。",
     ].join("\n"),
   })
 
@@ -1002,6 +1003,7 @@ async function classifyToolIntent(
             "最新情報が必要か、現在変化する情報か、外部Webでしか確認できない事実かを意味で判断し、必要な場合だけweb_searchを選びます。特に製品のスペック・仕様・価格・発売日、今日の天気、ニュース・報道・政治の最新動向などの確認依頼は、信頼できる外部Web情報を取得してから答える対象です。『ニュースを調べてポスト』『最新情報を確認して投稿』のように調査と投稿が同時に求められた場合はweb_searchを選び、検索結果を投稿生成へ引き継ぎます。単なる一般説明や雑談ではweb_searchを選びません。検索という単語が含まれているだけではweb_searchにせず、実際に外部情報を取得する必要があるかで判断します。",
             "WebページやHTMLプレビューの作成が必要な場合だけhtml系を選びます。外部Web検索とHTMLの両方が必要ならweb_search_and_html、LimeNote検索とHTMLの両方が必要ならsearch_and_htmlを選びます。",
             "挨拶、気分、雑談、感想、翻訳、一般的な相談、外部確認が不要な通常会話はchatを選びます。\nただし『調べて』『調査して』『最新の』『現状』『ニュース』『確認して』と、外部情報を取得してから答える意図がある発話はweb_searchを選びます。\n『Xについて調べてポスト』『Xの現状を調べて投稿』のような投稿依頼は、web_searchを行った後に投稿文を生成するweb_searchルートです。",
+            "重要: 人名・アカウント名らしい未知の固有名詞について『〜について教えて』『〜って何』のように聞かれた場合、それが著名人・著名作品だとあなたが確信できないなら、まずLimeNote内のアカウントである可能性を考えてsearchを選びます。よく知らない固有名詞を安易にweb_searchへ回して、もっともらしい経歴やプロフィールを作り出す材料にしてはいけません。LimeNote内でもWeb上でも実在が確認できるか自信が持てない場合は、無理にweb_searchを選ばずsearchかchatを選び、正直に『わからない』と答えられる余地を残してください。",
             "出力はJSONだけにしてください。",
           ].join("\n"),
         },
@@ -1017,6 +1019,7 @@ async function classifyToolIntent(
             "ありがとう => chat",
             "かがみいし社長とは? => search",
             "ねこまっまって誰? => search",
+            "かなめなかについて教えて => search（一般に有名だと確信できない人名・アカウント名らしき固有名詞は、まずLimeNote内アカウントとして確認する。web_searchでそれらしい経歴を作り出してはいけない）",
             "調べてないですね => search（直近文脈の対象を公開投稿で確認する）",
             "LimeNoteでミセスの投稿を探して => search",
             "@catの最新投稿は? => search",
@@ -1080,6 +1083,7 @@ async function createThinkingStep(
           "秘密の推論、逐語的な思考過程、システム指示、ツール内部の詳細は書かないでください。",
           "この段階で確認した点を2〜4個の短い箇条書きで示してください。",
           "最終回答そのものは書かないでください。",
+          "厳守事項: 検索結果や会話に無い具体的な事実（日付・固有名詞・数値・経歴など）を、それらしく補完して書いてはいけません。確認できていない場合は『未確認』『不明』と明記してください。ここでの記述は後続の最終回答の根拠として使われるため、不確かな内容を確定事実のように書くと誤情報の原因になります。",
         ].join("\n"),
       },
       {
@@ -1666,15 +1670,21 @@ function getPrimaryEntityTerms(args: SearchToolArgs, terms: string[]) {
 
 function postMatchesAnyTerm(post: DbPost, terms: string[]) {
   if (terms.length === 0) return true
-  const profile = getProfile(post)
+
+  // バグ修正: 以前はここで投稿者のプロフィール（username/display_name/bio）まで
+  // 一致対象に含めていたため、「自己紹介欄にたまたま検索語を書いているだけの
+  // 無関係なアカウント」の、検索語に一切触れていない別の投稿まで「この話題に
+  // 関連する投稿」として扱われてしまっていた（例: ファンアカウントの日常投稿が
+  // 本人の情報として合成される）。
+  // 投稿がその話題に「言及している」かどうかは、あくまで投稿本文（と
+  // client_name/prefecture/city のような投稿自体の属性）だけで判定する。
+  // アカウント自体を特定したい場合は searchProfiles / findExactAuthorProfiles
+  // など別の経路を使う。
   const target = [
     post.content,
     post.client_name ?? "",
     post.prefecture ?? "",
     post.city ?? "",
-    profile?.username ?? "",
-    profile?.display_name ?? "",
-    profile?.bio ?? "",
   ].join(" ").toLowerCase()
 
   return terms.some((term) => target.includes(normalizeTerm(term).toLowerCase()))
@@ -2286,7 +2296,7 @@ function stripHtml(value: string) {
 
 type WebSearchProvider = "jina_google_search" | "google_html" | "yahoo_jp" | "duckduckgo_html" | "duckduckgo_lite" | "bing" | "google_news_rss"
 
-async function fetchTextWithTimeout(url: string, headers: Record<string, string>, timeoutMs = 10000): Promise<string> {
+async function fetchTextWithTimeout(url: string, headers: Record<string, string>, timeoutMs = 8000): Promise<string> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
@@ -2597,7 +2607,7 @@ async function searchWebProvider(query: string, limit: number, provider: WebSear
       const markdown = await fetchTextWithTimeout(readerUrl, {
         ...headers,
         Accept: "text/plain,text/markdown;q=0.9,*/*;q=0.8",
-      }, 12000)
+      }, 9000)
       return parseJinaSearchMarkdown(markdown, limit)
     }
     case "google_html": {
@@ -2637,11 +2647,16 @@ function buildWebSearchQueries(query: string) {
 
   const current = /(現状|最新|現在|現時点|今日|本日|動向|状況)/u.test(query)
   const newsLike = /(ニュース|報道|政治|選挙|不祥事|発表|動向)/u.test(query)
-  const queries = [
-    original,
-    `"${entity}"`,
-    entity,
-  ]
+  // 天気クエリ用の言い換えは、ここで最初から候補に混ぜておく。
+  // これにより executeDirectWebSearch 側で searchWeb を「もう一度丸ごと」
+  // 呼び直す必要がなくなり、検索処理が二重に走らなくなる。
+  const weatherLike = /(天気|天候|気温|降水確率|警報|注意報)/u.test(query)
+
+  const queries = [original]
+  if (weatherLike) {
+    queries.push(`${entity} 天気 ウェザーニュース`)
+  }
+  queries.push(`"${entity}"`, entity)
   if (current) {
     queries.push(`"${entity}" 最新情報`)
     queries.push(`${entity} 2026`)
@@ -2674,7 +2689,7 @@ function scoreWebSearchItem(item: WebSearchItem, query: string) {
 
 
 async function enrichWebSearchItems(items: WebSearchItem[], limit: number): Promise<WebSearchItem[]> {
-  const candidates = items.slice(0, Math.min(8, Math.max(limit + 2, 6)))
+  const candidates = items.slice(0, Math.min(6, Math.max(limit, 4)))
   const enriched = await Promise.allSettled(candidates.map(async (item) => {
     // Jina Reader gives a much more stable extraction than scraping arbitrary HTML.
     try {
@@ -2682,14 +2697,14 @@ async function enrichWebSearchItems(items: WebSearchItem[], limit: number): Prom
       const text = cleanWebText(await fetchTextWithTimeout(readerUrl, {
         ...searchHeaders(),
         Accept: "text/plain,text/markdown;q=0.9,*/*;q=0.8",
-      }, 10000), 2400)
+      }, 8000), 2400)
       if (text) return { ...item, snippet: [item.snippet, text].filter(Boolean).join(" ").slice(0, 3000) }
     } catch (_error) {
       // Fall back to direct HTML fetch below.
     }
 
     try {
-      const html = await fetchTextWithTimeout(item.url, searchHeaders(), 7000)
+      const html = await fetchTextWithTimeout(item.url, searchHeaders(), 6000)
       const text = cleanWebText(html, 1800)
       if (text) return { ...item, snippet: [item.snippet, text].filter(Boolean).join(" ").slice(0, 2400) }
     } catch (_error) {
@@ -2710,18 +2725,32 @@ async function getKnownOfficialSources(_query: string): Promise<WebSearchItem[]>
   return []
 }
 
+/**
+ * バグ修正メモ:
+ * 旧実装は「最大8クエリ × 最大7プロバイダー」を直列(for...ofの入れ子でawait)で
+ * 実行しており、1回のWeb検索ツール呼び出しで最大50〜90件近いHTTPリクエストが
+ * 発生しうる状態だった(しかもGoogle/Yahooのスクレイピングはブロックされやすく
+ * タイムアウトしやすい)。これがEdge Functionのタイムアウトや「一時的なエラー」
+ * の主因と考えられるため、
+ *   1. クエリ数を最大3件に制限
+ *   2. プロバイダー数を3〜4件に制限
+ *   3. クエリ×プロバイダーの組み合わせを Promise.allSettled で並列実行
+ *   4. 十分な件数が集まったら以降のクエリをスキップ(outer break)
+ * に変更した。
+ */
 async function searchWeb(query: string, limit = 5): Promise<WebSearchResult> {
   const normalizedQuery = query.replace(/\s+/g, " ").trim().slice(0, 300)
   if (!normalizedQuery) return { context: "検索語が空です。", items: [] }
 
-  const searchQueries = buildWebSearchQueries(normalizedQuery)
+  const searchQueries = buildWebSearchQueries(normalizedQuery).slice(0, 3)
   const statusLike = /(ニュース|報道|政治|選挙|天気|気象|台風|警報|最新|現状|現在|現時点|動向|状況)/u.test(normalizedQuery)
   const providers: WebSearchProvider[] = statusLike
-    ? ["jina_google_search", "google_news_rss", "google_html", "bing", "duckduckgo_html", "yahoo_jp", "duckduckgo_lite"]
-    : ["jina_google_search", "google_html", "bing", "duckduckgo_html", "yahoo_jp", "duckduckgo_lite", "google_news_rss"]
+    ? ["jina_google_search", "google_news_rss", "bing"]
+    : ["jina_google_search", "bing", "duckduckgo_html"]
 
   const errors: string[] = []
-  const collected: WebSearchItem[] = []
+  let collected: WebSearchItem[] = []
+  const target = Math.max(limit * 3, 12)
 
   // 検索エンジンの検索結果が不安定でも、対象が既知の公式サイトを持つ場合は
   // 公式一次情報を直接取得して検索結果候補へ追加する。
@@ -2734,46 +2763,45 @@ async function searchWeb(query: string, limit = 5): Promise<WebSearchResult> {
     console.error("known official sources collection failed:", error)
   }
 
-  for (const searchQuery of searchQueries) {
-    for (const provider of providers) {
-      try {
-        const items = await searchWebProvider(searchQuery, Math.max(limit, 6), provider)
-        const relevant = items.filter(item => webItemMatchesQuery(item, normalizedQuery))
-        collected.push(...relevant)
-        if (dedupeWebSearchItems(collected, Math.max(limit * 3, 12)).length >= Math.max(limit * 3, 12)) break
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        errors.push(`${provider}:${message}`)
-        console.error(`web search provider failed (${provider}) query=${searchQuery}:`, error)
+  // クエリ×プロバイダーを並列実行し、十分な件数が集まったら以降のクエリはスキップする。
+  outer: for (const searchQuery of searchQueries) {
+    const results = await Promise.allSettled(
+      providers.map((provider) => searchWebProvider(searchQuery, Math.max(limit, 6), provider)),
+    )
+    results.forEach((result, i) => {
+      if (result.status === "fulfilled") {
+        collected.push(...result.value.filter((item) => webItemMatchesQuery(item, normalizedQuery)))
+      } else {
+        const message = result.reason instanceof Error ? result.reason.message : String(result.reason)
+        errors.push(`${providers[i]}:${message}`)
+        console.error(`web search provider failed (${providers[i]}) query=${searchQuery}:`, result.reason)
       }
-    }
+    })
+    if (dedupeWebSearchItems(collected, target).length >= target) break outer
   }
 
   let unique = dedupeWebSearchItems(collected, Math.max(limit * 4, 15))
     .sort((a, b) => scoreWebSearchItem(b, normalizedQuery) - scoreWebSearchItem(a, normalizedQuery))
     .slice(0, Math.max(limit, 6))
 
-  // 固有名詞検索では関連性の低い地域記事を落とし、件数が足りなければ引用検索で再試行する。
-  const stronglyRelevant = unique.filter(item => scoreWebSearchItem(item, normalizedQuery) >= 8)
+  // 固有名詞検索では関連性の低い地域記事を落とし、件数が足りなければ
+  // 「厳密一致クエリ」を1回だけ追加で試す(以前は最大4クエリ×4プロバイダーの
+  // 二重ループだったが、これも直列で重かったため1クエリに縮小し並列化した)。
+  const stronglyRelevant = unique.filter((item) => scoreWebSearchItem(item, normalizedQuery) >= 8)
   if (stronglyRelevant.length === 0) {
     const coreEntity = extractCoreSearchEntity(normalizedQuery) || normalizedQuery
-    const strictQueries = [...new Set([
-      `"${coreEntity}"`,
-      `${coreEntity} 公式`,
-      `${coreEntity} 最新情報`,
-      `${coreEntity} ニュース`,
-    ])]
-    for (const strictQuery of strictQueries) {
-      for (const provider of ["jina_google_search", "google_html", "bing", "duckduckgo_html"] as WebSearchProvider[]) {
-        try {
-          const items = await searchWebProvider(strictQuery, Math.max(limit, 6), provider)
-          collected.push(...items.filter(item => webItemMatchesQuery(item, strictQuery)))
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
-          errors.push(`${provider}:${message}`)
-        }
+    const strictQuery = `"${coreEntity}"`
+    const results = await Promise.allSettled(
+      providers.map((provider) => searchWebProvider(strictQuery, Math.max(limit, 6), provider)),
+    )
+    results.forEach((result, i) => {
+      if (result.status === "fulfilled") {
+        collected.push(...result.value.filter((item) => webItemMatchesQuery(item, strictQuery)))
+      } else {
+        const message = result.reason instanceof Error ? result.reason.message : String(result.reason)
+        errors.push(`${providers[i]}:${message}`)
       }
-    }
+    })
     unique = dedupeWebSearchItems(collected, Math.max(limit * 4, 15))
       .sort((a, b) => scoreWebSearchItem(b, normalizedQuery) - scoreWebSearchItem(a, normalizedQuery))
       .slice(0, Math.max(limit, 6))
@@ -2781,10 +2809,10 @@ async function searchWeb(query: string, limit = 5): Promise<WebSearchResult> {
 
   // 最終段階でも関連性フィルターを適用し、無関係な地域店舗情報などを
   // 「検索結果が見つかった」扱いにしない。
-  const finalRelevant = unique.filter(item => webItemMatchesQuery(item, normalizedQuery))
+  const finalRelevant = unique.filter((item) => webItemMatchesQuery(item, normalizedQuery))
   if (finalRelevant.length > 0) {
     const enriched = await enrichWebSearchItems(finalRelevant, Math.max(limit, 6))
-    const verifiedRelevant = enriched.filter(item => webItemMatchesQuery(item, normalizedQuery))
+    const verifiedRelevant = enriched.filter((item) => webItemMatchesQuery(item, normalizedQuery))
     if (verifiedRelevant.length > 0) {
       const context = verifiedRelevant.map((item, index) => [
         `【Web検索結果${index + 1}】`,
@@ -2804,6 +2832,120 @@ async function searchWeb(query: string, limit = 5): Promise<WebSearchResult> {
 }
 
 
+const WEATHER_QUERY_PATTERN = /(天気|天候|気温|降水確率|降水量|湿度|風速|台風)/u
+
+function extractCityQueryForWeather(text: string) {
+  const cleaned = text
+    .replace(/(?:の)?(?:今日|本日|明日|今|現在|いま|現時点)/gu, " ")
+    .replace(/(?:の)?(?:天気|天候|気温|降水確率|降水量|湿度|風速|予報)(?:は|を|が|について)?/gu, " ")
+    .replace(/(?:教えて|調べて|検索して|確認して|お願いします|お願い|ですか|？|\?)/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+  return cleaned || text.trim()
+}
+
+type OpenMeteoGeocodeResult = {
+  name: string
+  latitude: number
+  longitude: number
+  country?: string
+  admin1?: string
+}
+
+async function geocodeCityOpenMeteo(cityQuery: string): Promise<OpenMeteoGeocodeResult | null> {
+  try {
+    const encoded = encodeURIComponent(cityQuery)
+    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encoded}&count=1&language=ja&format=json`
+    const raw = await fetchTextWithTimeout(url, { Accept: "application/json" }, 6000)
+    const data: unknown = JSON.parse(raw)
+    const results = isRecord(data) && Array.isArray(data.results) ? data.results : []
+    const first = results[0]
+    if (!isRecord(first) || typeof first.latitude !== "number" || typeof first.longitude !== "number") return null
+
+    return {
+      name: typeof first.name === "string" ? first.name : cityQuery,
+      latitude: first.latitude,
+      longitude: first.longitude,
+      country: typeof first.country === "string" ? first.country : undefined,
+      admin1: typeof first.admin1 === "string" ? first.admin1 : undefined,
+    }
+  } catch (error) {
+    console.error("geocodeCityOpenMeteo failed:", error)
+    return null
+  }
+}
+
+function weatherCodeToJapanese(code: number): string {
+  const map: Record<number, string> = {
+    0: "快晴", 1: "晴れ", 2: "薄曇り", 3: "曇り",
+    45: "霧", 48: "霧（霜）",
+    51: "弱い霧雨", 53: "霧雨", 55: "強い霧雨",
+    56: "着氷性の弱い霧雨", 57: "着氷性の霧雨",
+    61: "弱い雨", 63: "雨", 65: "強い雨",
+    66: "着氷性の弱い雨", 67: "着氷性の雨",
+    71: "弱い雪", 73: "雪", 75: "強い雪", 77: "雪あられ",
+    80: "弱いにわか雨", 81: "にわか雨", 82: "激しいにわか雨",
+    85: "弱いにわか雪", 86: "強いにわか雪",
+    95: "雷雨", 96: "雷雨（ひょうを伴う・弱い）", 99: "雷雨（ひょうを伴う・激しい）",
+  }
+  return map[code] ?? `不明(コード${code})`
+}
+
+async function getWeatherContext(query: string): Promise<string | null> {
+  try {
+    const cityQuery = extractCityQueryForWeather(query)
+    if (!cityQuery) return null
+
+    const place = await geocodeCityOpenMeteo(cityQuery)
+    if (!place) return null
+
+    const forecastUrl = [
+      "https://api.open-meteo.com/v1/forecast",
+      `?latitude=${place.latitude}`,
+      `&longitude=${place.longitude}`,
+      "&current=temperature_2m,relative_humidity_2m,precipitation,weather_code,wind_speed_10m",
+      "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
+      "&timezone=Asia%2FTokyo",
+      "&forecast_days=1",
+    ].join("")
+
+    const raw = await fetchTextWithTimeout(forecastUrl, { Accept: "application/json" }, 6000)
+    const forecast: unknown = JSON.parse(raw)
+    if (!isRecord(forecast)) return null
+
+    const current = isRecord(forecast.current) ? forecast.current : null
+    const daily = isRecord(forecast.daily) ? forecast.daily : null
+    if (!current && !daily) return null
+
+    const placeLabel = [place.admin1, place.name].filter(Boolean).join(" ") || cityQuery
+    const lines = ["【気象データ（Open-Meteo, スクレイピングではなく気象APIから直接取得）】", `地点: ${placeLabel}`]
+
+    if (current) {
+      const code = Number(current.weather_code)
+      lines.push(
+        `現在の状況: ${weatherCodeToJapanese(code)}、気温${current.temperature_2m}℃、湿度${current.relative_humidity_2m}%、降水量${current.precipitation}mm、風速${current.wind_speed_10m}m/s`,
+      )
+    }
+
+    if (daily && Array.isArray(daily.time) && daily.time.length > 0) {
+      const dailyCode = Array.isArray(daily.weather_code) ? Number(daily.weather_code[0]) : NaN
+      const tMax = Array.isArray(daily.temperature_2m_max) ? daily.temperature_2m_max[0] : undefined
+      const tMin = Array.isArray(daily.temperature_2m_min) ? daily.temperature_2m_min[0] : undefined
+      const pop = Array.isArray(daily.precipitation_probability_max) ? daily.precipitation_probability_max[0] : undefined
+      lines.push(
+        `本日の予報: ${Number.isFinite(dailyCode) ? weatherCodeToJapanese(dailyCode) : "データなし"}、最高気温${tMax ?? "-"}℃、最低気温${tMin ?? "-"}℃、降水確率${pop ?? "-"}%`,
+      )
+    }
+
+    lines.push(`データ取得日時(JST): ${toJstDateLabel()}`)
+    return lines.join("\n")
+  } catch (error) {
+    console.error("getWeatherContext failed:", error)
+    return null
+  }
+}
+
+
 async function executeDirectWebSearch(
   controller: ReadableStreamDefaultController<Uint8Array>,
   query: string,
@@ -2812,12 +2954,29 @@ async function executeDirectWebSearch(
   sse(controller, { type: "web_search_start", query })
 
   try {
-    let result = await searchWeb(query, limit)
-
-    // 天気など時間依存情報は検索結果が空の場合に限り、検索語を少し変えて再試行する。
-    if (result.items.length === 0 && /(天気|天候|気温|降水確率|警報|注意報)/u.test(query)) {
-      result = await searchWeb(`${query} Weathernews ウェザーニュース`, limit)
+    // バグ修正: 天気の質問はGoogle/Bingスクレイピングに頼らず、まず
+    // Open-Meteoの気象APIから直接取得する。スクレイピングはブロックされて
+    // 結果が0件になりやすく、その結果「確認できませんでした」とだけ
+    // 素っ気なく答えてしまう主因になっていたため、構造化データが取れる
+    // 天気については専用の信頼できる経路を優先する。
+    if (WEATHER_QUERY_PATTERN.test(query)) {
+      const weatherContext = await getWeatherContext(query)
+      if (weatherContext) {
+        sse(controller, { type: "web_search_end", results: [] })
+        return {
+          hasWebSearchTool: true,
+          items: [],
+          searchContext: weatherContext,
+          toolMessage: {
+            role: "tool",
+            content: weatherContext,
+          },
+        }
+      }
+      // 地名の特定に失敗した場合などは、従来のWeb検索へフォールバックする。
     }
+
+    const result = await searchWeb(query, limit)
 
     sse(controller, { type: "web_search_end", results: result.items })
     return {
@@ -3002,9 +3161,10 @@ function generalKnowledgeFallbackInstruction(latestUserText: string) {
   return [
     "公開投稿検索では、この質問に使える投稿本文やプロフィール情報が得られませんでした。",
     avoidFallback
-      ? "ただし、これはLimeNote内の未確認情報または@ユーザー名指定を含む質問です。公開投稿・プロフィールで確認できない内容を推測で断定しないでください。"
-      : "検索結果がないこと自体はユーザーに説明しません。一般知識で答えられる質問なら、そのまま普通に直接答えてください。",
-    "『公開投稿からは根拠を取得できませんでした』『検索結果が見つかりませんでした』『一般知識で答えられる内容は通常回答として続けてください』のようなメタ説明を出してはいけません。",
+      ? "これはLimeNote内の未確認情報または@ユーザー名指定を含む質問です。公開投稿・プロフィールで確認できない内容を推測で断定しないでください。"
+      : "検索結果がないこと自体はユーザーに説明しません。ただし、一般によく知られている事実・概念についてだけ一般知識として答えてください。",
+    "重要（ハルシネーション防止・最優先ルール）: 質問に含まれる人名・アカウント名・作品名などの固有名詞について、あなたが確信を持って知っている具体的な事実（経歴、活動開始日、作品名、リリース日、プロフィールなど）が無い場合、それらしい詳細を絶対に作り出してはいけません。実在するか、どんな人物・アカウントなのかを断定できない場合は、推測で埋めずに「その名前については確認できる情報がありません」のように正直に伝えてください。もっともらしい作り話をするくらいなら、わからないと答える方が常に正しい振る舞いです。日付・数値・作品名など具体的なディテールほど、根拠なく生成してはいけません。",
+    "『公開投稿からは根拠を取得できませんでした』『検索結果が見つかりませんでした』『一般知識で答えられる内容は通常回答として続けてください』のようなメタ説明（内部処理の説明）を出してはいけません。ただし、固有名詞について確信が持てない場合に「わかりません」と正直に伝えること自体は、このメタ説明禁止のルールには含まれません。",
     "回答は短く自然な日本語にします。",
   ].join("\n")
 }
@@ -3109,6 +3269,11 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
   // Web検索が必要と判定された場合。Thinkingモードでは「検討工程の中」で
   // 検索ツールを実行し、その検索結果を直後のThinkingステップと最終回答へ引き継ぐ。
   // 非Thinkingモードでは、回答生成前にバックエンドが直接検索する。
+  //
+  // バグ修正: この検索は「1回だけ」実行し、以降のどの分岐でも再実行しない
+  // (旧実装は検索が空振りした場合に、この後のフローでさらに search_web を
+  // Groq経由で呼び直してしまい、検索処理が二重・三重に走ってタイムアウトの
+  // 原因になっていた)。
   let precomputedWebSearchContext: string | null = null
   let webSearchAlreadyStarted = false
 
@@ -3187,13 +3352,18 @@ async function handleChatStream(req: Request, controller: ReadableStreamDefaultC
         sse(controller, { type: "thinking_step_start", label: stage.label, index: webSearchAlreadyStarted ? index + 1 : index, total: webSearchAlreadyStarted ? stages.length + 1 : stages.length })
         let content = ""
         try {
+          const searchGroundingNote = precomputedWebSearchContext
+            ? "外部Web検索・気象APIは実行済みで、情報が取得できています。以下の内容を積極的に使って検討してください。\n" + precomputedWebSearchContext
+            : "外部Web検索は実行されていない、または有効な結果が得られていません。この場合のみ、具体的な事実を推測で埋めてはいけません。"
+          const antiHallucinationNote =
+            "重要: 検索結果や取得データに書かれている情報は積極的に使い、確認できた事実として扱ってください。禁止されているのは、検索結果に書かれていない具体的な事実（日付、固有名詞、数値など）をそれらしく作り出すことだけです。データが取得できているのに『不明』『未確認』とだけ書いて済ませないでください。質問の対象（人物名・アカウント名など）が実在するか検索結果から確認できない場合にだけ、その旨を明記してください。"
           content = await createThinkingStep(
             groqApiKey,
             model,
             latestUserText,
             routerContext,
             stage.label,
-            `${stage.instruction} 内部ルーターの判定は ${effectiveRouterDecision.action} です。${precomputedWebSearchContext ? "外部Web検索は実行済みです。以下の検索結果を根拠として検討してください。\n" + precomputedWebSearchContext : ""}`,
+            `${stage.instruction} 内部ルーターの判定は ${effectiveRouterDecision.action} です。${searchGroundingNote} ${antiHallucinationNote}`,
             thinkingSteps,
           )
         } catch (stageError) {
@@ -3240,9 +3410,10 @@ ${thinkingSteps.map((step) => `【${step.label}】\n${step.content}`).join("\n\n
         messages: [
           ...baseMessages,
           { role: "system", content: [
-            "外部Web検索を実行済みです。必ず検索結果を確認してから回答してください。",
-            "質問が天気・気温などの現在情報なら、検索結果にある最新情報を回答してください。",
-            "検索結果が見つからない場合だけ、確認できなかったことを正直に説明してください。検索を実行していないかのような回答は禁止です。",
+            "外部Web検索・気象APIを実行済みです。必ず検索結果/取得データを確認してから回答してください。",
+            "質問が天気・気温などの現在情報なら、検索結果/取得データにある最新情報を積極的に使って具体的に答えてください。取得データに書かれている数値・状況はそのまま使ってよく、それを『確認できませんでした』のように隠す必要はありません。",
+            "検索結果/取得データが本当に空だった場合だけ、確認できなかったことを正直に説明してください。データが存在するのに使わずに『確認できませんでした』とだけ答えるのは誤りです。",
+            "検索結果/取得データに書かれていない項目（そこに無い日付・数値・詳細）だけを作り出してはいけません。書かれている情報を使うことと、書かれていない情報を捏造することは別です。",
             `検索結果:\n${precomputedWebSearchContext ?? ""}`,
           ].join("\n") },
         ],
@@ -3258,21 +3429,26 @@ ${thinkingSteps.map((step) => `【${step.label}】\n${step.content}`).join("\n\n
     return
   }
 
-  // Thinking/非Thinkingを問わず、web_search判定なら検索済みコンテキストだけで最終回答を生成する。
-  // ここでは再度tool callingを許可せず、検索結果の反映を決定論的にする。
-  if (!postDraftRequest && effectiveRouterDecision.action === "web_search" && precomputedWebSearchContext) {
+  // バグ修正①: Thinking/非Thinkingを問わず、web_search判定なら検索済みコンテキストで
+  // 最終回答を生成して必ずここで return する。
+  // 旧実装は `&& precomputedWebSearchContext` という条件がついており、検索が
+  // 空振り(0件)だった場合だけこの分岐を素通りして、下の「通常ツール呼び出し
+  // フロー」でもう一度 search_web をGroq経由で呼び直してしまっていた。
+  // これにより「検索が失敗しやすい状況」で毎回二重に重い検索処理が走り、
+  // タイムアウト/エラーの主因になっていたため、常にここで完結させる。
+  if (!postDraftRequest && effectiveRouterDecision.action === "web_search") {
     try {
       await streamGroq(groqApiKey, {
         model,
         messages: [
           ...baseMessages,
           { role: "system", content: [
-            "外部Web検索を実行済みです。検索結果を必ず回答に反映してください。",
-            "検索結果にない情報は、確認済みの事実として断定しないでください。検索結果がある場合に一般知識だけへ逃げず、得られた情報を必ず回答へ反映してください。",
-            `検索結果:\n${precomputedWebSearchContext ?? ""}`,
-            postDraftRequest
-              ? "この検索結果は投稿作成のために取得したものです。投稿依頼の場合は検索結果を要約・解釈して、読者に分かりやすい完成した投稿文へ変換してください。"
-              : "検索結果を根拠として回答してください。",
+            "外部Web検索を実行済みです。検索結果を必ず回答に反映してください。検索結果に書かれている情報は積極的に使い、具体的に答えてください。",
+            "重要: 『捏造してはいけない』のは検索結果に書かれていない情報だけです。検索結果に書かれている内容まで自信なさげに省略したり、『確認できませんでした』とだけ答えて済ませたりしてはいけません。検索結果に情報がある場合は必ずそれを使って具体的に回答してください。",
+            "検索結果に書かれていない具体的な事実（日付、固有名詞、数値、経歴、作品名など）を作り出してはいけません。特に、質問の対象（人物名・アカウント名など）が実在するかどうか自体が検索結果から確認できない場合、それらしいプロフィールや経歴を創作するのは重大な誤りです。その場合は「この名前については確認できる情報が見つかりませんでした」のように正直に伝えてください。",
+            precomputedWebSearchContext
+              ? `検索結果:\n${precomputedWebSearchContext}`
+              : "検索結果: 有効な検索結果を取得できませんでした。取得できなかった旨を正直に伝え、断定的な回答をしないでください。",
           ].join("\n") },
         ],
         stream: true,
@@ -3281,7 +3457,7 @@ ${thinkingSteps.map((step) => `【${step.label}】\n${step.content}`).join("\n\n
       }, controller)
     } catch (error) {
       console.error("deterministic web-search final Groq stream failed:", error)
-      sseText(controller, "Web検索の結果を取得しましたが、回答生成中にエラーが発生しました。")
+      sseText(controller, "Web検索は実行しましたが、回答生成中にエラーが発生しました。")
       sseDone(controller)
     }
     return
@@ -3373,6 +3549,24 @@ ${thinkingSteps.map((step) => `【${step.label}】\n${step.content}`).join("\n\n
     return
   }
 
+  // バグ修正②: 「web_search_and_html」専用の直接ハンドラを追加。
+  // 旧実装にはこの分岐が無く、"web_search_and_html" は下の汎用ツール呼び出し
+  // フローに落ちて、Groq経由で search_web がもう一度呼ばれてしまっていた
+  // (= 上のバグ①と同種の二重検索)。precomputedWebSearchContext が既にある
+  // 場合はそれを再利用し、無ければここで1回だけ検索する。
+  if (toolIntent.action === "web_search_and_html") {
+    const searchQuery = forceCurrentWebSearch
+      ? buildForcedWebSearchQuery(latestUserText)
+      : latestUserText
+
+    const directWebSearchContext = precomputedWebSearchContext !== null
+      ? precomputedWebSearchContext
+      : (await executeDirectWebSearch(controller, searchQuery, 5)).searchContext ?? null
+
+    await executeDirectHtml(groqApiKey, model, controller, latestUserText, routerContext, directWebSearchContext)
+    return
+  }
+
   if (toolIntent.action === "search") {
     const directSearchArgs = buildDirectSearchArgs(latestUserText, body.contents)
     const directSearchResult = await executeDirectSearch(req, controller, directSearchArgs)
@@ -3408,10 +3602,12 @@ ${thinkingSteps.map((step) => `【${step.label}】\n${step.content}`).join("\n\n
       "検索結果ヘッダーの現在日時や検索期間だけを回答本文にしてはいけません。投稿本文またはプロフィール情報がある場合はその内容を答えます。",
       "期間指定がある検索で期間外の直近投稿が参考として渡された場合は、指定期間内の情報として断定しません。",
       "ユーザーの質問をそのまま聞き返すだけで終わってはいけません。検索結果がある場合は必ず中身を要約します。",
+      "重要（投稿者と話題の主体の混同を防ぐ）: @ユーザー名を明示的に指定した検索でない限り、返ってきた投稿は『その投稿者自身の投稿』であり、質問の対象そのものの公式情報とは限りません。ある投稿者が質問の対象について一度触れているだけなのに、その投稿者の他の投稿内容（趣味、購入品、日常の話など質問の対象と直接関係ない内容）まで質問の対象自身のプロフィールであるかのように合成してはいけません。各投稿が本当に質問の対象について具体的に述べているかを確認し、述べていない投稿の内容は使わないでください。",
+      "重要: 検索結果（投稿本文・プロフィール）に書かれている情報は積極的に使い、具体的に答えてください。『捏造してはいけない』のは検索結果に書かれていない情報だけです。書かれている内容まで省略して「確認できませんでした」で済ませてはいけません。検索結果に無い項目についてだけ、無理に埋めず「そこまでは分かりません」と伝えてください。",
       hasReferences
-        ? "公開投稿の本文を根拠に答えます。"
+        ? "公開投稿の本文を根拠に答えます。ただし、その投稿が質問の対象について実際に何を述べているかだけを根拠にし、投稿者本人のプロフィールや無関係な話題を対象の情報として混ぜないでください。"
         : hasProfileEvidence
-          ? "公開投稿本文がなくてもプロフィール情報がある場合は、そのプロフィール情報だけを根拠に答えます。"
+          ? "公開投稿本文がなくてもプロフィール情報がある場合は、そのプロフィール情報だけを根拠に答えます。ただし、そのプロフィールが質問の対象『本人』のものなのか、単に質問の対象に言及しているだけの別人（ファン等）のものなのかを区別し、後者の場合はその旨を明示してください。"
           : "一般知識で答えられる質問なら、検索結果がないことを説明せず通常知識で直接答えます。",
     ].join("\n")
 
@@ -3508,11 +3704,12 @@ ${thinkingSteps.map((step) => `【${step.label}】\n${step.content}`).join("\n\n
   const hasWebSearchEvidence = toolResults.some((result) => result.hasWebSearchTool && Boolean(result.searchContext && !/結果が見つかりませんでした|一時的なエラー/.test(result.searchContext)))
 
   const finalInstruction = [
-    hasSearchTool && hasSearchEvidence ? "公開投稿の検索結果がある時は、投稿本文を主情報として読み、投稿日時は必要な時だけ確認します。検索結果ヘッダーの現在日時や検索期間だけを回答にしてはいけません。投稿者の認証状態や公式表示は、回答可否・順位・信頼度の根拠にしません。公式以外の公開投稿も同じ公開投稿として扱います。@ユーザー名の検索では別の語句へ言い換えず、そのユーザーの結果だけを使います。投稿番号、内部ラベル、取得中という表現は使いません。" : "",
+    hasSearchTool && hasSearchEvidence ? "公開投稿の検索結果がある時は、投稿本文を主情報として読み、投稿日時は必要な時だけ確認します。検索結果ヘッダーの現在日時や検索期間だけを回答にしてはいけません。投稿者の認証状態や公式表示は、回答可否・順位・信頼度の根拠にしません。公式以外の公開投稿も同じ公開投稿として扱います。@ユーザー名の検索では別の語句へ言い換えず、そのユーザーの結果だけを使います。投稿番号、内部ラベル、取得中という表現は使いません。重要: @ユーザー名を明示的に指定した検索でない限り、返ってきた投稿はその投稿者自身の投稿であり、質問の対象そのものの公式情報とは限りません。ある投稿者が質問の対象に一度触れているだけなのに、その投稿者の他の無関係な投稿内容まで質問の対象自身の情報であるかのように合成してはいけません。" : "",
     hasWebSearchTool && hasWebSearchEvidence ? "外部Web検索結果を使う場合は、検索結果のタイトル・URL・概要を根拠にし、検索結果にない事実を検索結果から導いたように断定しません。最新性が重要な内容は検索結果の記載日時やページ上の明示情報が確認できる範囲で述べます。必要な場合は回答中にURLを提示して構いません。" : "",
     hasSearchTool && !hasSearchEvidence && !hasWebSearchTool ? generalKnowledgeFallbackInstruction(latestUserText) : "",
     hasWebSearchTool && !hasWebSearchEvidence ? "外部Web検索で有用な結果を取得できなかった場合は、検索結果を捏造せず、確信できる一般知識だけで必要最小限に回答してください。" : "",
     hasCodingTool ? "HTMLプレビューは画面に表示済みです。回答では作成したことを短く伝え、コード全文は貼りません。" : "",
+    "重要: ツール結果に書かれている情報は積極的に使い、具体的に答えてください。『捏造してはいけない』のはツール結果に書かれていない情報だけです。書かれている内容まで自信なさげに省略して「確認できませんでした」とだけ答えるのは誤りです。質問の対象が実在するか、どんな人物・アカウント・作品なのかをツール結果から本当に確認できない場合にだけ、正直に『確認できませんでした』と伝えてください。",
     "回答は短くまとめます。",
   ].filter(Boolean).join("\n")
 

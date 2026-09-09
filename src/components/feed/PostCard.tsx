@@ -1491,7 +1491,15 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
     const nextYoutubeId = extractYouTubeId(post.content);
     const nextSpotifyUrls = post.content.match(spotifyUrlRegex) || [];
     const extractedImageUrls = post.content.match(imageUrlRegex) || [];
-    const nextAllImageUrls = [...(post.imageUrls || []), ...extractedImageUrls].slice(0, 4);
+
+    // Blueskyの投稿にYouTubeリンクが含まれる場合、Bluesky側が生成する
+    // 外部リンクカードのサムネイル画像が post.imageUrls に入ってくるため、
+    // 何もしないと YouTube 埋め込み本体とサムネイル画像が二重に表示されてしまう。
+    // YouTube の videoId が検出できた Bluesky 投稿では画像側を出さず、
+    // 埋め込み本体（YouTubeEmbed）だけを表示する。
+    const nextAllImageUrls = (isBlueskyPost && nextYoutubeId)
+      ? []
+      : [...(post.imageUrls || []), ...extractedImageUrls].slice(0, 4);
 
     const nextDisplayContent = post.content
       .replace(youtubeUrlRegex, '')
@@ -1506,7 +1514,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
       displayContent: nextDisplayContent,
       singleImageUrl: nextAllImageUrls.length === 1 ? nextAllImageUrls[0] : null,
     };
-  }, [post.content, post.imageUrls]);
+  }, [post.content, post.imageUrls, isBlueskyPost]);
 
   useEffect(() => {
     const cached = singleImageUrl ? getCachedNaturalSize(singleImageUrl) : null;
