@@ -7,7 +7,6 @@ import { PostCard } from '@/components/feed/PostCard';
 import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
 import { useFeed } from '@/hooks/useFeed';
 import { useIsPWA } from '@/hooks/useIsPWA';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/lib/supabase';
 import { getPostById } from '@/api/posts';
 import type { PostWithAuthor } from '@/types';
@@ -74,6 +73,23 @@ type FeedPostInsertPayload = {
 const ESTIMATED_POST_HEIGHT = 360;
 const VIRTUAL_OVERSCAN = 4;
 const MIN_VIRTUALIZED_POSTS = 12;
+// バグ修正: Bluesky投稿がLime投稿の取得ペースを追い越しすぎないようにするための上限。
+// Lime側にまだ読み込んでいない投稿が残っている間は、Bluesky側の取得済み件数が
+// Lime側の取得済み件数よりこの値以上多くならないようペースを合わせる。
+// これがないと、Bluesky側(1回で最大30件×アカウント数を並列取得)がLime側
+// (1回10件)より遥かに速く積み上がり、スクロールするほどBluesky投稿ばかりが
+// 表示されてしまう(日付順マージの結果、Lime投稿がまだ残っていても埋もれてしまう)。
+const BLUESKY_LEAD_LIMIT = 20;
+
+// 最新/フォロー中の選択状態はヘッダー側に移設したため、Feed側はこのキーと
+// カスタムイベント('lime-active-feed-tab-changed')経由で状態を受け取るだけにする。
+// (Headerコンポーネント側の実装と対になっている)
+const ACTIVE_FEED_TAB_STORAGE_KEY = 'lime_active_feed_tab';
+
+function readStoredActiveFeedTab(): FeedTab {
+  if (typeof window === 'undefined') return 'all';
+  return localStorage.getItem(ACTIVE_FEED_TAB_STORAGE_KEY) === 'following' ? 'following' : 'all';
+}
 
 const insertPostAtLocalFeedHead = (current: PostWithAuthor[], post: PostWithAuthor) => {
   if (current.some((item) => item.id === post.id)) return current;
@@ -149,8 +165,7 @@ function readCachedTimelineDesignForReturnNavigation() {
 }
 
 export default function Feed() {
-  const [activeTab, setActiveTab] = useState<'all' | 'following'>('all');
-  const [isScrolled, setIsScrolled] = useState(false);
+  const [activeTab, setActiveTab] = useState<FeedTab>(() => readStoredActiveFeedTab());
   const [timelineBackgroundUrl, setTimelineBackgroundUrl] = useState<string | null>(() => {
     const cachedDesign = readCachedTimelineDesignForReturnNavigation();
     return cachedDesign?.backgroundUrl ?? null;
@@ -163,9 +178,7 @@ export default function Feed() {
   const queryClient = useQueryClient();
   const isPWA = useIsPWA();
   const [isMobile, setIsMobile] = useState(false);
-  const isScrolledRef = useRef(false);
   const isMobileRef = useRef(false);
-  const scrollRafRef = useRef<number | null>(null);
   const resizeRafRef = useRef<number | null>(null);
   const [initialMobileBackgroundFrame] = useState(() => {
     if (typeof window === 'undefined') {
@@ -225,9 +238,26 @@ export default function Feed() {
     () => mergeRealtimePostsWithFetchedPosts(realtimePostsByTab[activeTab], fetchedPosts),
     [activeTab, fetchedPosts, realtimePostsByTab]
   );
+
+  // バグ修正: マウント直後の初回ロードでは、設定済みのBlueskyアカウント全件を
+  // 並列に(1アカウントあたり最大30件)まとめて取得してしまうため、Lime側の
+  // 最初の1ページ(10件)よりはるかに多いBluesky投稿が、スクロールが始まる前から
+  // 既にメモリ上に存在してしまう。取得のペースだけを抑えても、この「初回に
+  // 積み上がった分」自体は減らせないため、実際にタイムラインへ混ぜて表示する
+  // Bluesky投稿の件数を、Lime投稿の取得件数に応じてここでキャップする。
+  // blueskyPosts自体は既に新しい順にソート済みなので、先頭からcap件だけを使えば
+  // 「直近のBluesky投稿」を段階的に見せつつ、裏で先読み済みの残りは
+  // Lime側の読み込みが追いつくにつれて順次表示されていく。
+  // Lime側を最後まで読み切った後(hasNextPage === false)は制限を解除する。
+  const visibleBlueskyPosts = useMemo(() => {
+    if (!hasNextPage) return blueskyPosts;
+    const cap = Math.max(0, limePosts.length + BLUESKY_LEAD_LIMIT);
+    return blueskyPosts.slice(0, cap);
+  }, [blueskyPosts, limePosts.length, hasNextPage]);
+
   const allPosts = useMemo(
-    () => mergePostsByCreatedAt(limePosts, blueskyPosts),
-    [limePosts, blueskyPosts]
+    () => mergePostsByCreatedAt(limePosts, visibleBlueskyPosts),
+    [limePosts, visibleBlueskyPosts]
   );
 
   const normalizeBlueskyPostForFeed = useCallback(
@@ -763,23 +793,6 @@ export default function Feed() {
   }, []);
 
   useEffect(() => {
-    const updateScrolledState = () => {
-      const nextIsScrolled = window.scrollY > 10;
-      if (isScrolledRef.current === nextIsScrolled) return;
-
-      isScrolledRef.current = nextIsScrolled;
-      setIsScrolled(nextIsScrolled);
-    };
-
-    const handleScroll = () => {
-      if (scrollRafRef.current !== null) return;
-
-      scrollRafRef.current = window.requestAnimationFrame(() => {
-        scrollRafRef.current = null;
-        updateScrolledState();
-      });
-    };
-
     const updateMobileState = () => {
       const nextIsMobile = window.innerWidth < 640;
       if (isMobileRef.current === nextIsMobile) return;
@@ -797,24 +810,16 @@ export default function Feed() {
       });
     };
 
-    updateScrolledState();
     updateMobileState();
 
-    window.addEventListener('scroll', handleScroll, { passive: true });
     window.addEventListener('resize', checkMobile);
 
     return () => {
-      if (scrollRafRef.current !== null) {
-        window.cancelAnimationFrame(scrollRafRef.current);
-        scrollRafRef.current = null;
-      }
-
       if (resizeRafRef.current !== null) {
         window.cancelAnimationFrame(resizeRafRef.current);
         resizeRafRef.current = null;
       }
 
-      window.removeEventListener('scroll', handleScroll);
       window.removeEventListener('resize', checkMobile);
     };
   }, []);
@@ -962,10 +967,35 @@ export default function Feed() {
     if (inView && hasNextPage && !isFetchingNextPage) {
       fetchNextPage();
     }
-    if (inView && blueskyHasMore && !blueskyLoading) {
+
+    // バグ修正: 以前はスクロールで画面下部(inView)に到達するたびBluesky側の
+    // 設定済みアカウント全件を並列取得しており(1回あたり最大30件×アカウント数)、
+    // Lime側(1回10件)よりはるかに速く投稿がたまっていった。
+    // 日付順にマージして表示する仕組みのため、この差が開くほどBluesky投稿が
+    // 先に表示され続け、Lime側にまだ読み込んでいない投稿が残っているにも
+    // かかわらず「スクロールするとBluesky投稿しか出てこない」状態になっていた。
+    // ここでは、Lime側にまだ次のページがある間(hasNextPage === true)は、
+    // Bluesky投稿の取得済み件数がLime投稿の取得済み件数より
+    // BLUESKY_LEAD_LIMIT件以上先行しないよう歯止めをかける。
+    // Lime側を読み込み切った後(hasNextPage === false)はこの制限を解除し、
+    // Bluesky投稿は通常どおり無限スクロールで取得し続ける。
+    const blueskyLeadOverLime = blueskyPosts.length - limePosts.length;
+    const isBlueskyAllowedToLoadMore = !hasNextPage || blueskyLeadOverLime < BLUESKY_LEAD_LIMIT;
+
+    if (inView && blueskyHasMore && !blueskyLoading && isBlueskyAllowedToLoadMore) {
       void loadBlueskyPosts(false);
     }
-  }, [inView, hasNextPage, isFetchingNextPage, fetchNextPage, blueskyHasMore, blueskyLoading, loadBlueskyPosts]);
+  }, [
+    inView,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+    blueskyHasMore,
+    blueskyLoading,
+    loadBlueskyPosts,
+    blueskyPosts.length,
+    limePosts.length,
+  ]);
 
   useEffect(() => {
     let frame: number | null = null;
@@ -1028,10 +1058,33 @@ export default function Feed() {
     window.setTimeout(restore, 80);
   }, []);
 
-  const handleTabChange = useCallback((value: string) => {
-    const previousScrollY = window.scrollY;
-    setActiveTab(value as 'all' | 'following');
-    restoreScrollPositionAfterControlInteraction(previousScrollY);
+  // 最新/フォロー中の切り替えUIはヘッダー(Header.tsx)に移設した。
+  // Header側でタブがクリックされると 'lime-active-feed-tab-changed' が
+  // dispatchされるので、ここではそれを受け取ってactiveTabを更新するだけにする。
+  // タブ切り替え時にスクロール位置がガクッと動かないよう、従来の
+  // handleTabChangeと同じくスクロール位置の復元も行う。
+  useEffect(() => {
+    const handleActiveFeedTabChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ tab?: string }>).detail;
+      const nextTab: FeedTab = detail?.tab === 'following' ? 'following' : 'all';
+      const previousScrollY = window.scrollY;
+
+      setActiveTab(nextTab);
+      restoreScrollPositionAfterControlInteraction(previousScrollY);
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== ACTIVE_FEED_TAB_STORAGE_KEY) return;
+      setActiveTab(readStoredActiveFeedTab());
+    };
+
+    window.addEventListener('lime-active-feed-tab-changed', handleActiveFeedTabChanged as EventListener);
+    window.addEventListener('storage', handleStorage);
+
+    return () => {
+      window.removeEventListener('lime-active-feed-tab-changed', handleActiveFeedTabChanged as EventListener);
+      window.removeEventListener('storage', handleStorage);
+    };
   }, [restoreScrollPositionAfterControlInteraction]);
 
   // ============================================================================
@@ -1406,7 +1459,7 @@ export default function Feed() {
             {/* スマホ専用の LimeNoteBeta ボックス */}
             <span className="ribbon-tag sm:hidden">
               <Sparkles className="h-3 w-3" />
-              LimeNote 2.4.1
+              LimeNote 2.5.0
             </span>
           </div>
 
@@ -1415,65 +1468,12 @@ export default function Feed() {
         {/* PC専用の LimeNoteBeta ボックス */}
         <span className="ribbon-tag hidden sm:inline-flex">
           <Sparkles className="h-3 w-3" />
-          LimeNote 2.4.1
+          LimeNote 2.5.0
         </span>
       </div>
 
       <div className="relative z-[1]">
         <PostComposer timelineGlass={hasTimelineBackground} />
-      </div>
-
-      {/* 特別扱い：ヘッダー統合タブ */}
-      <div
-        className={`sticky top-0 transition-all duration-300 py-3 px-0 border-none pointer-events-none ${
-          isScrolled 
-            ? 'z-[500] h-16 flex items-center justify-center' 
-            : 'z-[500] bg-transparent h-auto'
-        }`}
-        style={{ zIndex: 500 }}
-      >
-        <div className="max-w-md mx-auto w-full pointer-events-auto">
-          <Tabs 
-            defaultValue="all" 
-            className="w-full border-none shadow-none" 
-            onValueChange={handleTabChange}
-          >
-            <TabsList
-              className={`grid w-full grid-cols-2 h-11 items-center justify-center rounded-full p-1 ring-0 border-none backdrop-blur-2xl ${
-                hasTimelineBackground
-                  ? 'timeline-tabs-list shadow-none'
-                  : 'bg-muted/80 border-none shadow-none'
-              }`}
-              style={{
-                boxShadow: 'none',
-                border: '0',
-                WebkitBackdropFilter: hasTimelineBackground ? 'blur(34px) saturate(190%)' : undefined,
-                backdropFilter: hasTimelineBackground ? 'blur(34px) saturate(190%)' : undefined,
-              }}
-            >
-              <TabsTrigger 
-                value="all" 
-                className={`h-9 w-full justify-center rounded-full px-6 font-bold transition-all duration-200 shadow-none border-none outline-none focus-visible:ring-0 ${
-                  hasTimelineBackground
-                    ? 'timeline-tabs-trigger'
-                    : 'data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=inactive]:text-foreground/70 data-[state=inactive]:hover:bg-background/40'
-                }`}
-              >
-                最新
-              </TabsTrigger>
-              <TabsTrigger 
-                value="following" 
-                className={`h-9 w-full justify-center rounded-full px-6 font-bold transition-all duration-200 shadow-none border-none outline-none focus-visible:ring-0 ${
-                  hasTimelineBackground
-                    ? 'timeline-tabs-trigger'
-                    : 'data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=inactive]:text-foreground/70 data-[state=inactive]:hover:bg-background/40'
-                }`}
-              >
-                フォロー中
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-        </div>
       </div>
 
       <div

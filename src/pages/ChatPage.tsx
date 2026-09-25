@@ -815,6 +815,76 @@ const readCachedLimeProStatus = () => {
   return null;
 };
 
+/**
+ * モバイルSafari(iOS)対策:
+ * position:fixedでレイアウトしている画面の中でテキスト入力にフォーカスすると、
+ * ブラウザがページ全体を自動スクロールしてfixed要素の見た目の位置がズレる
+ * （ヘッダーが見切れる／ボトムナビが画面中央に浮く等）バグが起きる。
+ *
+ * window.visualViewport を監視し、
+ *  - キーボードが開いているかどうか
+ *  - 実際に見えている（キーボードに隠れていない）ビューポートの高さ
+ * を取得し、キーボード表示中はその高さぴったりにルートコンテナをリサイズすることで
+ * 入力欄を常にキーボードの直上に固定表示する。
+ */
+function useMobileKeyboardViewport() {
+  const [state, setState] = useState<{ isKeyboardOpen: boolean; viewportHeight: number | null }>({
+    isKeyboardOpen: false,
+    viewportHeight: null,
+  })
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const viewport = window.visualViewport
+
+    const update = () => {
+      const isMobileWidth = window.innerWidth < 768
+
+      if (!isMobileWidth || !viewport) {
+        setState((prev) => (prev.isKeyboardOpen || prev.viewportHeight !== null
+          ? { isKeyboardOpen: false, viewportHeight: null }
+          : prev))
+        return
+      }
+
+      const heightDiff = window.innerHeight - viewport.height
+      const keyboardOpen = heightDiff > 120
+      const nextViewportHeight = keyboardOpen ? viewport.height : null
+
+      setState((prev) => {
+        if (prev.isKeyboardOpen === keyboardOpen && prev.viewportHeight === nextViewportHeight) {
+          return prev
+        }
+        return { isKeyboardOpen: keyboardOpen, viewportHeight: nextViewportHeight }
+      })
+
+      // iOS Safariはfixed要素配下の入力にフォーカスすると
+      // ページ自体を勝手にスクロールしてしまうことがあるため、
+      // キーボード表示中はスクロール位置を強制的に0へ戻す
+      if (keyboardOpen && (window.scrollY !== 0 || document.documentElement.scrollTop !== 0)) {
+        window.scrollTo(0, 0)
+      }
+    }
+
+    update()
+
+    viewport?.addEventListener('resize', update)
+    viewport?.addEventListener('scroll', update)
+    window.addEventListener('resize', update)
+    window.addEventListener('orientationchange', update)
+
+    return () => {
+      viewport?.removeEventListener('resize', update)
+      viewport?.removeEventListener('scroll', update)
+      window.removeEventListener('resize', update)
+      window.removeEventListener('orientationchange', update)
+    }
+  }, [])
+
+  return state
+}
+
 export default function ChatPage() {
   const { user } = useAuth()
   
@@ -835,6 +905,9 @@ export default function ChatPage() {
   const [selectedModel, setSelectedModel] = useState<'fast' | 'advanced'>('fast')
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false)
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null)
+
+  // モバイルでソフトキーボードが開いたときのレイアウト崩れ対策
+  const { isKeyboardOpen, viewportHeight } = useMobileKeyboardViewport()
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -2099,7 +2172,14 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="vpop-root fixed inset-0 top-0 md:top-16 bottom-[60px] md:bottom-0 left-0 right-0 w-full text-[#333a42] dark:text-[#e4e7ea] overflow-hidden flex z-40">
+    <div
+      className={`vpop-root fixed left-0 right-0 w-full text-[#333a42] dark:text-[#e4e7ea] overflow-hidden flex z-40 ${
+        isKeyboardOpen
+          ? 'top-0 bottom-auto'
+          : 'inset-0 top-0 md:top-16 bottom-[60px] md:bottom-0'
+      }`}
+      style={isKeyboardOpen && viewportHeight ? { height: `${viewportHeight}px`, bottom: 'auto' } : undefined}
+    >
       <style>{VPOP_STYLES}</style>
 
       {/* 背景：シルバー×ライトブルーのグラデーション＋配信枠風の飾り */}

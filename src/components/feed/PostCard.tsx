@@ -2209,7 +2209,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                 onBlur={closeProfileHover}
                 onClick={handleAuthorNavigate}
               >
-                <Avatar className={isMobile ? "h-11 w-11 border-2 border-primary/30" : "h-11 w-11 border-2 border-primary/30"}>
+                <Avatar className="h-11 w-11 translate-y-1">
                   <AvatarImage src={post.author.avatarUrl} alt={post.author.displayName} />
                   <AvatarFallback>{post.author.displayName.slice(0, 1)}</AvatarFallback>
                 </Avatar>

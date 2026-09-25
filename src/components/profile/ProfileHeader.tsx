@@ -279,7 +279,14 @@ export function ProfileHeader({
             <div className="h-full w-full bg-gradient-cream" />
           )}
         </button>
-        <div className="pointer-events-none absolute inset-0 z-[1] bg-gradient-to-t from-background/20 to-transparent sm:from-card/40" />
+        {/*
+          修正: 以前はカバー画像全体に bg-background/20〜card/40 のグラデーションを
+          かけていたため、ダークテーマ時に --background / --card が黒に近い色だと
+          ヘッダー全体が不自然に暗く見えるバグがあった。
+          モバイルの戻る・検索・もっと見るボタンの視認性確保が目的なので、
+          固定の黒(rgba)を使い、上部のみ・薄めに限定して不要な暗さを解消。
+        */}
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-20 bg-gradient-to-b from-black/35 to-transparent sm:hidden" />
         <div className="pointer-events-none absolute inset-0 z-10 flex items-start justify-between px-3 pt-8 sm:hidden">
           <button
             type="button"

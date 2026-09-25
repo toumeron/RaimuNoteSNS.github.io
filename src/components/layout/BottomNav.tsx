@@ -115,12 +115,63 @@ function useTimelineChrome(pathname: string) {
   };
 }
 
+/**
+ * モバイルSafari(iOS)対策:
+ * どこかの入力欄にフォーカスしてソフトキーボードが開くと、
+ * position:fixedで最下部に固定しているこのナビが、
+ * ブラウザの自動スクロールと噛み合わずに画面中央あたりへ
+ * 「浮いて」表示されてしまうことがある（モバイルのみで発生）。
+ *
+ * window.visualViewport のサイズを監視し、実際に見えている高さが
+ * window.innerHeight よりも大幅に小さくなった（＝キーボードが開いた）
+ * と判定できる間は、このナビ自体を非表示にしてズレた見た目が
+ * 出ないようにする。
+ */
+function useIsMobileKeyboardOpen() {
+  const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const viewport = window.visualViewport;
+
+    const update = () => {
+      const isMobileWidth = window.innerWidth < 768;
+
+      if (!isMobileWidth || !viewport) {
+        setIsKeyboardOpen(false);
+        return;
+      }
+
+      const heightDiff = window.innerHeight - viewport.height;
+      setIsKeyboardOpen(heightDiff > 120);
+    };
+
+    update();
+
+    viewport?.addEventListener('resize', update);
+    viewport?.addEventListener('scroll', update);
+    window.addEventListener('resize', update);
+    window.addEventListener('orientationchange', update);
+
+    return () => {
+      viewport?.removeEventListener('resize', update);
+      viewport?.removeEventListener('scroll', update);
+      window.removeEventListener('resize', update);
+      window.removeEventListener('orientationchange', update);
+    };
+  }, []);
+
+  return isKeyboardOpen;
+}
+
 export function BottomNav() {
   const { user } = useAuth();
   const location = useLocation();
   const timelineChrome = useTimelineChrome(location.pathname);
   const [mounted, setMounted] = useState(false);
   const navRef = useRef<HTMLElement | null>(null);
+  const isKeyboardOpen = useIsMobileKeyboardOpen();
 
   useEffect(() => {
     setMounted(true);
@@ -166,6 +217,10 @@ export function BottomNav() {
   }, [mounted, location.pathname, showPostCommentForm]);
 
   if (!user) return null;
+
+  // モバイルでソフトキーボードが開いている間は、ナビが画面中央に
+  // ズレて表示されるバグを避けるため、ナビ自体を描画しない
+  if (isKeyboardOpen) return null;
 
   const useTimelineChromeDesign = timelineChrome.enabled;
   const isTimelineDark = timelineChrome.theme === 'dark';
@@ -219,6 +274,11 @@ export function BottomNav() {
         borderTopWidth: hideTopBorder ? 0 : undefined,
         borderTopColor: hideTopBorder ? 'transparent' : undefined,
         paddingBottom: 'max(0px, env(safe-area-inset-bottom))',
+        // HeaderのモバイルDrawer開閉に合わせてBottomNavも同じだけ追従させる。
+        // z-indexはDrawerより下、rootの通常stacking contextより上に置く。
+        transform: 'translate3d(var(--lime-mobile-drawer-shift, 0px), 0, 0)',
+        transition: 'var(--lime-mobile-drawer-transition, none)',
+        willChange: 'transform',
       }}
     >
         {showPostCommentForm && postDetailId && (

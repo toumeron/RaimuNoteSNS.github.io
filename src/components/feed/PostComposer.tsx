@@ -29,6 +29,10 @@ const HASHTAG_SEARCH_DEBOUNCE_MS = 180;
 const SUGGESTION_CACHE_LIMIT = 24;
 const QUOTED_POST_CACHE_LIMIT = 8;
 
+// テキストエリアの自動リサイズ設定
+const TEXTAREA_MIN_HEIGHT = 96; // 3行分程度の高さを最低保証
+const TEXTAREA_MAX_HEIGHT = 480; // これ以上は内部スクロールに切り替える
+
 const mentionSuggestionCache = new Map<string, any[]>();
 const hashtagSuggestionCache = new Map<string, any[]>();
 const quotedPostCache = new Map<string, PostWithAuthor>();
@@ -1103,11 +1107,34 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
     closeImageEditor();
   }, [closeImageEditor, cropImageSize.height, cropImageSize.width, cropOffset.x, cropOffset.y, cropZoom, editingImageIndex, editingImageSrc, getCropBoxSize, cropAspectId, selectedCropAspect.outputHeight, selectedCropAspect.outputWidth]);
 
+  // 文字数（内容量）に応じてテキストエリアの高さを自動調整する
+  const resizeTextarea = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+
+    el.style.height = 'auto';
+    const nextHeight = Math.min(TEXTAREA_MAX_HEIGHT, Math.max(TEXTAREA_MIN_HEIGHT, el.scrollHeight));
+    el.style.height = `${nextHeight}px`;
+    el.style.overflowY = el.scrollHeight > TEXTAREA_MAX_HEIGHT ? 'auto' : 'hidden';
+  }, []);
+
+  useEffect(() => {
+    resizeTextarea();
+  }, [content, resizeTextarea]);
+
+  useEffect(() => {
+    // 初回マウント時・ウィンドウ幅が変わったとき（折り返し行数が変わる）にも高さを合わせる
+    resizeTextarea();
+    window.addEventListener('resize', resizeTextarea);
+    return () => window.removeEventListener('resize', resizeTextarea);
+  }, [resizeTextarea]);
+
   const handleContentChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     const pos = e.target.selectionStart;
     setContent(val);
     setCursorPosition(pos);
+    resizeTextarea();
 
     const lastAtIdx = val.lastIndexOf('@', pos - 1);
     const lastHashIdx = val.lastIndexOf('#', pos - 1);
@@ -1161,6 +1188,7 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
     setMentionQuery(null);
     setMentionResults([]);
     if (textareaRef.current) textareaRef.current.focus();
+    requestAnimationFrame(resizeTextarea);
   };
 
   const selectHashtag = (tag: string) => {
@@ -1172,6 +1200,7 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
     setHashtagQuery(null);
     setHashtagResults([]);
     if (textareaRef.current) textareaRef.current.focus();
+    requestAnimationFrame(resizeTextarea);
   };
 
   const onFile = useCallback((e: ChangeEvent<HTMLInputElement>) => {
@@ -1244,6 +1273,7 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
       setPreviewOriginals([]);
       setVisibility('public'); // リセット
       cancelQuote();
+      requestAnimationFrame(resizeTextarea);
       if (onSuccess) onSuccess();
     } catch (err) {
       console.error("Submission failed:", err);
@@ -1306,10 +1336,14 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
               onChange={handleContentChange}
               onPaste={handlePaste}
               onScroll={handleScroll}
-              rows={3}
               spellCheck={false}
               className="relative z-10 resize-none border-0 bg-transparent px-0 py-2 text-[20px] leading-relaxed shadow-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:outline-none outline-none w-full text-transparent selection:bg-[#b4d7ff] selection:text-black dark:selection:bg-[#385474] dark:selection:text-white"
-              style={{ color: "transparent", caretColor: "hsl(var(--foreground))" }}
+              style={{
+                color: "transparent",
+                caretColor: "hsl(var(--foreground))",
+                minHeight: `${TEXTAREA_MIN_HEIGHT}px`,
+                maxHeight: `${TEXTAREA_MAX_HEIGHT}px`,
+              }}
             />
           </div>
 
@@ -1424,7 +1458,7 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
             </div>
           )}
 
-          <div className={cn("flex items-center justify-between border-t border-border/60 pt-3", timelineGlass && "border-border/40")}>
+          <div className="flex items-center justify-between pt-3">
             <div className="flex items-center gap-2">
               <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={onFile} />
               <Button

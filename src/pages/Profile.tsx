@@ -2243,7 +2243,7 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
   const parentContent = stripPreviewUrls(parent?.content ?? '');
   const parentDisplayName = parentAuthor?.displayName ?? parentAuthor?.display_name ?? parentAuthor?.username ?? 'ユーザー';
   const clippedParentContent = parentContent.length > 120 ? `${parentContent.slice(0, 120)}...` : parentContent;
-  const threadAvatarClassName = "h-11 w-11 border-2 border-primary/30";
+  const threadAvatarClassName = "h-11 w-11 translate-y-1";
   const replyAvatarClassName = threadAvatarClassName;
 
   // 親ポストがBluesky由来の場合、PostCard/Feedと同じ判定ロジックを使い、
@@ -2291,7 +2291,7 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
                 <AvatarFallback>{(parentAuthor?.displayName ?? parentAuthor?.display_name ?? parentAuthor?.username ?? 'U').slice(0, 1)}</AvatarFallback>
               </Avatar>
             </Link>
-            <span className="absolute bottom-1 left-1/2 top-12 w-0.5 -translate-x-1/2 rounded-full bg-border" />
+            <span className="absolute bottom-1 left-1/2 top-[52px] w-0.5 -translate-x-1/2 rounded-full bg-border" />
           </div>
 
           <div className="min-w-0 pb-3">
@@ -2379,7 +2379,7 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
                 </Avatar>
               </Link>
               {commentIndex < comments.length - 1 && (
-                <span className="absolute -bottom-2 left-1/2 top-12 w-0.5 -translate-x-1/2 rounded-full bg-border" />
+                <span className="absolute -bottom-2 left-1/2 top-[52px] w-0.5 -translate-x-1/2 rounded-full bg-border" />
               )}
             </div>
 
