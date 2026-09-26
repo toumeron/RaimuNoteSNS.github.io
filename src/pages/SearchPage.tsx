@@ -7,7 +7,7 @@ import { FollowButton } from '@/components/profile/FollowButton';
 import { supabase } from '@/lib/supabase';
 import { searchBluesky } from '@/lib/bluesky';
 import type { User, PostWithAuthor } from '@/types';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 
 const kataToHira = (s: string) =>
   s.replace(/[\u30a1-\u30f6]/g, (c) =>
@@ -48,8 +48,55 @@ const normalizeBlueskyQuery = (query: string) => query.trim().replace(/^@+/, '')
 const buildUserHaystack = (u: User): string =>
   normalize(`${u.displayName} ${u.username} @${u.username} ${u.bio || ''}`);
 
+// PC版の検索バー(サジェスト付き)で使う検索履歴。モバイルではHeader.tsx側の
+// 簡易な検索バーを使うため、履歴機能はPC版のみで有効になる。
 const HISTORY_KEY = 'search:recent';
 const HISTORY_MAX = 8;
+
+const loadHistory = (): string[] => {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.slice(0, HISTORY_MAX) : [];
+  } catch { return []; }
+};
+const saveHistory = (list: string[]) => {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, HISTORY_MAX)));
+  } catch { /* noop */ }
+};
+
+// 検索バー(検索入力欄そのもの)はHeader.tsxに移設したため、このページでは
+// URLのクエリパラメータ("q")を監視して検索を実行するだけになっている。
+// 「Blueskyの投稿を含めない」設定もHeader側の歯車アイコンに移設したため、
+// 同じlocalStorageキー/カスタムイベントを監視して値を共有する。
+const SEARCH_EXCLUDE_BLUESKY_STORAGE_KEY = 'lime_search_exclude_bluesky';
+const SEARCH_EXCLUDE_BLUESKY_CHANGED_EVENT = 'lime-search-exclude-bluesky-changed';
+const SEARCH_QUERY_CHANGED_EVENT = 'lime-search-query-changed';
+
+const readExcludeBlueskyPosts = (): boolean => {
+  try {
+    return localStorage.getItem(SEARCH_EXCLUDE_BLUESKY_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+};
+
+// 「ポスト/アカウント」タブもHeader.tsx(モバイル)に移設した。PC版はこのページの
+// TabsListを従来どおり表示するが、モバイルではHeader側のボタンから
+// このキー/イベント経由でタブを切り替える。
+type SearchPageTabValue = 'posts' | 'users';
+const SEARCH_PAGE_TAB_STORAGE_KEY = 'lime_search_page_tab';
+const SEARCH_PAGE_TAB_CHANGED_EVENT = 'lime-search-page-tab-changed';
+
+const readStoredSearchPageTab = (): SearchPageTabValue => {
+  try {
+    return localStorage.getItem(SEARCH_PAGE_TAB_STORAGE_KEY) === 'users' ? 'users' : 'posts';
+  } catch {
+    return 'posts';
+  }
+};
 
 const RADIO_FALLBACK_SCRIPT = `
 バグが発生しています
@@ -130,20 +177,6 @@ const getRadioTimeIntro = () => {
   return `現在、${period}${displayHours}時${minuteText}です。`;
 };
 
-const loadHistory = (): string[] => {
-  try {
-    const raw = localStorage.getItem(HISTORY_KEY);
-    if (!raw) return [];
-    const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? arr.slice(0, HISTORY_MAX) : [];
-  } catch { return []; }
-};
-const saveHistory = (list: string[]) => {
-  try {
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, HISTORY_MAX)));
-  } catch { /* noop */ }
-};
-
 const RowSkeleton = () => (
   <div className="flex gap-3 px-4 py-3 border-b border-black/[0.03] dark:border-white/[0.05] animate-pulse bg-transparent">
     <div className="w-10 h-10 rounded-full bg-black/5 dark:bg-white/10 shrink-0" />
@@ -169,6 +202,7 @@ type NewsItem = {
   created_at: string;
 };
 
+// PC版の検索バーのサジェスト行(検索キーワード or ユーザー)の型定義
 type SuggestionRow =
   | { type: 'search'; value: string }
   | { type: 'user'; value: string; user: User };
@@ -184,20 +218,37 @@ declare global {
 export default function SearchPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const [inputValue, setInputValue] = useState('');
+  const location = useLocation();
   const [searchQuery, setSearchQuery] = useState('');
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [searchedPosts, setSearchedPosts] = useState<PostWithAuthor[]>([]);
   const [blueskyUsers, setBlueskyUsers] = useState<User[]>([]);
+  // PC版の検索バー(サジェスト付き)用の状態。モバイルではHeader.tsx側の
+  // 簡易な検索バーを使うため、これらはsm以上(PC)でのみ表示に使われる。
+  const [inputValue, setInputValue] = useState('');
   const [blueskySuggestionUsers, setBlueskySuggestionUsers] = useState<User[]>([]);
-  const [excludeBlueskyPosts, setExcludeBlueskyPosts] = useState(false);
-  const [isSearchSettingsOpen, setIsSearchSettingsOpen] = useState(false);
-  const [isUsersLoading, setIsUsersLoading] = useState(false);
-  const [isPostsLoading, setIsPostsLoading] = useState(false);
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [history, setHistory] = useState<string[]>(() => loadHistory());
   const [activeSuggestIdx, setActiveSuggestIdx] = useState<number>(-1);
   const [isScrolled, setIsScrolled] = useState(false);
+  const [isSearchSettingsOpen, setIsSearchSettingsOpen] = useState(false);
+  const [excludeBlueskyPosts, setExcludeBlueskyPosts] = useState(() => readExcludeBlueskyPosts());
+
+  const updateExcludeBlueskyPosts = useCallback((value: boolean) => {
+    setExcludeBlueskyPosts(value);
+    try {
+      localStorage.setItem(SEARCH_EXCLUDE_BLUESKY_STORAGE_KEY, String(value));
+    } catch {
+      // noop
+    }
+    window.dispatchEvent(new CustomEvent(SEARCH_EXCLUDE_BLUESKY_CHANGED_EVENT, { detail: { value } }));
+  }, []);
+
+  // PC版は従来どおりこのページ自身のTabsListで切り替える。モバイルではHeader.tsx側の
+  // ボタンがこの値を変更する(localStorage + カスタムイベント経由)。
+  const [activeTab, setActiveTab] = useState<SearchPageTabValue>(() => readStoredSearchPageTab());
+  const [isUsersLoading, setIsUsersLoading] = useState(false);
+  const [isPostsLoading, setIsPostsLoading] = useState(false);
   const [isRadioPlaying, setIsRadioPlaying] = useState(() => !!window.__limeSearchRadioIsPlaying);
 
   const [hasMore, setHasMore] = useState(true);
@@ -213,12 +264,13 @@ export default function SearchPage() {
   const [radioNews, setRadioNews] = useState<NewsItem[]>([]);
   const [isNewsLoading, setIsNewsLoading] = useState(false);
 
-  const inputRef = useRef<HTMLInputElement>(null);
-  const suggestBoxRef = useRef<HTMLDivElement>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const lastElementRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const suggestBoxRef = useRef<HTMLDivElement>(null);
   const blueskySearchRequestRef = useRef(0);
   const appliedSearchParamRef = useRef<string | null>(null);
+  const appliedSearchStateRef = useRef<object | null>(null);
   const radioPlayingRef = useRef(false);
   const backgroundAudioRef = useRef<HTMLAudioElement | null>(null);
   const backgroundAudioUrlRef = useRef<string | null>(null);
@@ -773,6 +825,14 @@ export default function SearchPage() {
   }, []);
 
   useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  // PC版の検索バー: 入力中のBlueskyユーザーサジェストを取得する。
+  useEffect(() => {
     const query = inputValue.trim();
     if (!query || excludeBlueskyPosts) {
       setBlueskySuggestionUsers([]);
@@ -809,11 +869,25 @@ export default function SearchPage() {
     };
   }, [inputValue, excludeBlueskyPosts]);
 
+  // PC版の検索バー: スクロールに応じた背景のぼかし表示切り替え。
   useEffect(() => {
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
+    const handleScroll = () => {
+      setIsScrolled(window.scrollY > 90);
     };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  // PC版の検索バー: サジェストの外側をクリックしたら閉じる。
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (suggestBoxRef.current && !suggestBoxRef.current.contains(e.target as Node) &&
+          inputRef.current && !inputRef.current.contains(e.target as Node)) {
+        setIsInputFocused(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
 
   // ニュース取得用Effect
@@ -873,14 +947,6 @@ export default function SearchPage() {
   // CPU/メモリを無駄に消費するだけだったため削除しました。
 
   useEffect(() => {
-    const handleScroll = () => {
-      setIsScrolled(window.scrollY > 90);
-    };
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
-
-  useEffect(() => {
     let cancelled = false;
     async function fetchUsers() {
       setIsUsersLoading(true);
@@ -906,17 +972,6 @@ export default function SearchPage() {
     }
     fetchUsers();
     return () => { cancelled = true; };
-  }, []);
-
-  useEffect(() => {
-    const onDocClick = (e: MouseEvent) => {
-      if (suggestBoxRef.current && !suggestBoxRef.current.contains(e.target as Node) &&
-          inputRef.current && !inputRef.current.contains(e.target as Node)) {
-        setIsInputFocused(false);
-      }
-    };
-    document.addEventListener('mousedown', onDocClick);
-    return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
 
   // 投稿一覧を整形する際に allUsers.find() を投稿ごとに呼ぶと
@@ -1108,12 +1163,36 @@ export default function SearchPage() {
     }
   }, [usersById, excludeBlueskyPosts]);
 
+  const changeActiveTab = useCallback((value: SearchPageTabValue) => {
+    setActiveTab(value);
+    try {
+      localStorage.setItem(SEARCH_PAGE_TAB_STORAGE_KEY, value);
+    } catch {
+      // noop
+    }
+    window.dispatchEvent(new CustomEvent(SEARCH_PAGE_TAB_CHANGED_EVENT, { detail: { tab: value } }));
+  }, []);
+
+  // Header.tsx(モバイル)の「ポスト/アカウント」ボタンから変更された場合に同期する。
+  useEffect(() => {
+    const handleTabChange = (event: Event) => {
+      const detail = (event as CustomEvent<{ tab?: SearchPageTabValue }>).detail;
+      if (detail?.tab === 'posts' || detail?.tab === 'users') {
+        setActiveTab(detail.tab);
+      }
+    };
+
+    window.addEventListener(SEARCH_PAGE_TAB_CHANGED_EVENT, handleTabChange);
+    return () => window.removeEventListener(SEARCH_PAGE_TAB_CHANGED_EVENT, handleTabChange);
+  }, []);
+
   const commitSearch = useCallback(async (raw: string) => {
     const q = raw.trim();
     if (!q) return;
 
     setInputValue(q);
     setSearchQuery(q);
+    window.dispatchEvent(new CustomEvent(SEARCH_QUERY_CHANGED_EVENT, { detail: { query: q } }));
     setIsInputFocused(false);
     setActiveSuggestIdx(-1);
     setPage(0);
@@ -1129,33 +1208,6 @@ export default function SearchPage() {
     await fetchPosts(q, 0);
     inputRef.current?.blur();
   }, [fetchPosts]);
-
-  useEffect(() => {
-    const queryParam = searchParams.get('q');
-    if (queryParam && queryParam !== appliedSearchParamRef.current) {
-      appliedSearchParamRef.current = queryParam;
-      commitSearch(queryParam);
-    }
-  }, [searchParams, commitSearch]);
-
-  useEffect(() => {
-    if (isPostsLoading) return;
-    if (observerRef.current) observerRef.current.disconnect();
-
-    observerRef.current = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting && hasMore && searchQuery) {
-        const nextPage = page + 1;
-        setPage(nextPage);
-        fetchPosts(searchQuery, nextPage);
-      }
-    });
-
-    if (lastElementRef.current) {
-      observerRef.current.observe(lastElementRef.current);
-    }
-
-    return () => observerRef.current?.disconnect();
-  }, [isPostsLoading, hasMore, page, searchQuery, fetchPosts]);
 
   // サジェスト候補の計算はキー入力のたびに実行されるため、
   // normalize() をユーザー数 × 3回、キー入力のたびに再計算するのは無駄が多く、
@@ -1206,6 +1258,95 @@ export default function SearchPage() {
     const blueskySuggestions = blueskySuggestionUsers.filter((user) => !seen.has(user.id)).slice(0, 3);
     return [...localSuggestions.slice(0, 5 - blueskySuggestions.length), ...blueskySuggestions];
   }, [inputValue, allUsers, allUsersSearchIndex, blueskySuggestionUsers]);
+
+  const suggestionRows = useMemo<SuggestionRow[]>(() => {
+    const rows: SuggestionRow[] = [];
+    if (inputValue.trim()) {
+      rows.push({ type: 'search', value: inputValue.trim() });
+      for (const u of liveSuggestions) rows.push({ type: 'user', value: u.username, user: u });
+    } else {
+      for (const h of history) rows.push({ type: 'search', value: h });
+    }
+    return rows;
+  }, [inputValue, liveSuggestions, history]);
+
+  const handleSuggestionSelect = useCallback((row: SuggestionRow) => {
+    if (row.type === 'user') {
+      setIsInputFocused(false);
+      setActiveSuggestIdx(-1);
+      inputRef.current?.blur();
+      navigate(`/u/${row.user.username}`);
+      return;
+    }
+
+    commitSearch(row.value);
+  }, [commitSearch, navigate]);
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!isInputFocused) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActiveSuggestIdx((i) => Math.min(suggestionRows.length - 1, i + 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActiveSuggestIdx((i) => Math.max(-1, i - 1));
+    } else if (e.key === 'Enter' && activeSuggestIdx >= 0) {
+      e.preventDefault();
+      handleSuggestionSelect(suggestionRows[activeSuggestIdx]);
+    }
+  };
+
+  const removeHistoryItem = (item: string) => {
+    setHistory((prev) => {
+      const next = prev.filter((h) => h !== item);
+      saveHistory(next);
+      return next;
+    });
+  };
+
+  const clearHistory = () => {
+    setHistory([]);
+    saveHistory([]);
+  };
+
+  useEffect(() => {
+    const navigationState = location.state as { searchQuery?: string } | null;
+    const stateQuery = navigationState?.searchQuery?.trim() || '';
+
+    // Header から /search へ遷移した検索は URL の ?q= ではなく、
+    // React Router の navigation state で受け取る。
+    if (stateQuery && navigationState !== appliedSearchStateRef.current) {
+      appliedSearchStateRef.current = navigationState;
+      commitSearch(stateQuery);
+      return;
+    }
+
+    // 既存リンク等で ?q= が渡された場合だけ後方互換として処理する。
+    const queryParam = searchParams.get('q');
+    if (queryParam && queryParam !== appliedSearchParamRef.current) {
+      appliedSearchParamRef.current = queryParam;
+      commitSearch(queryParam);
+    }
+  }, [searchParams, location.state, commitSearch]);
+
+  useEffect(() => {
+    if (isPostsLoading) return;
+    if (observerRef.current) observerRef.current.disconnect();
+
+    observerRef.current = new IntersectionObserver(entries => {
+      if (entries[0].isIntersecting && hasMore && searchQuery) {
+        const nextPage = page + 1;
+        setPage(nextPage);
+        fetchPosts(searchQuery, nextPage);
+      }
+    });
+
+    if (lastElementRef.current) {
+      observerRef.current.observe(lastElementRef.current);
+    }
+
+    return () => observerRef.current?.disconnect();
+  }, [isPostsLoading, hasMore, page, searchQuery, fetchPosts]);
 
   const queryTokens = useMemo(() => tokenizeQuery(searchQuery), [searchQuery]);
   const searchableUsers = useMemo(() => {
@@ -1274,56 +1415,6 @@ export default function SearchPage() {
       ...matchingUsers.filter((user) => !blueskyUserIds.has(user.id)),
     ].filter((user, index, users) => users.findIndex((candidate) => candidate.id === user.id) === index);
   }, [searchQuery, queryTokens, searchableUsers, searchableUsersIndex, blueskyUsers]);
-
-  const suggestionRows = useMemo<SuggestionRow[]>(() => {
-    const rows: SuggestionRow[] = [];
-    if (inputValue.trim()) {
-      rows.push({ type: 'search', value: inputValue.trim() });
-      for (const u of liveSuggestions) rows.push({ type: 'user', value: u.username, user: u });
-    } else {
-      for (const h of history) rows.push({ type: 'search', value: h });
-    }
-    return rows;
-  }, [inputValue, liveSuggestions, history]);
-
-  const handleSuggestionSelect = useCallback((row: SuggestionRow) => {
-    if (row.type === 'user') {
-      setIsInputFocused(false);
-      setActiveSuggestIdx(-1);
-      inputRef.current?.blur();
-      navigate(`/u/${row.user.username}`);
-      return;
-    }
-
-    commitSearch(row.value);
-  }, [commitSearch, navigate]);
-
-  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (!isInputFocused) return;
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setActiveSuggestIdx((i) => Math.min(suggestionRows.length - 1, i + 1));
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setActiveSuggestIdx((i) => Math.max(-1, i - 1));
-    } else if (e.key === 'Enter' && activeSuggestIdx >= 0) {
-      e.preventDefault();
-      handleSuggestionSelect(suggestionRows[activeSuggestIdx]);
-    }
-  };
-
-  const removeHistoryItem = (item: string) => {
-    setHistory((prev) => {
-      const next = prev.filter((h) => h !== item);
-      saveHistory(next);
-      return next;
-    });
-  };
-
-  const clearHistory = () => {
-    setHistory([]);
-    saveHistory([]);
-  };
 
   const renderSearchHomeSections = () => (
     <div className="flex flex-col gap-6">
@@ -1532,8 +1623,10 @@ export default function SearchPage() {
 
   return (
     <div className="min-h-screen bg-transparent text-[rgb(15,20,25)] dark:text-white">
+      {/* PC版の検索バー(サジェスト・履歴・設定つき)。モバイルではHeader.tsx側の
+          簡易な検索バーを使うため、ここは元々の挙動のままsm以上でのみ表示する。 */}
       <div
-        className={`sticky top-0 z-50 transition-all duration-300 w-full h-16 flex items-center ${
+        className={`hidden sm:sticky sm:top-0 sm:z-50 sm:flex sticky top-0 z-50 transition-all duration-300 w-full h-16 items-center ${
           isScrolled 
             ? 'max-sm:bg-[#fbf9f2]/70 dark:max-sm:bg-[#000000]/70 max-sm:backdrop-blur-md border-b border-black/[0.03] dark:border-white/[0.05]' 
             : 'bg-transparent'
@@ -1587,15 +1680,7 @@ export default function SearchPage() {
                     <input
                       type="checkbox"
                       checked={excludeBlueskyPosts}
-                      onChange={(event) => {
-                        const next = event.target.checked;
-                        setExcludeBlueskyPosts(next);
-                        if (searchQuery) {
-                          setPage(0);
-                          setHasMore(true);
-                          void fetchPosts(searchQuery, 0, !next);
-                        }
-                      }}
+                      onChange={(event) => updateExcludeBlueskyPosts(event.target.checked)}
                       className="h-4 w-4 accent-primary"
                     />
                     <span>Blueskyの投稿を含めない</span>
@@ -1673,15 +1758,22 @@ export default function SearchPage() {
       </div>
 
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 max-sm:relative max-sm:left-0 max-sm:w-full max-sm:max-w-none max-sm:translate-x-0 max-sm:px-1">
-        <Tabs defaultValue="posts" className="w-full">
-          <TabsList className="w-full h-[53px] bg-transparent border-b border-black/[0.03] dark:border-white/[0.05] rounded-none p-0 grid grid-cols-2 relative z-20">
-            <TabsTrigger value="posts" className="relative h-full bg-transparent text-[15px] font-medium text-[rgb(83,100,113)] dark:text-gray-400 data-[state=active]:text-[rgb(15,20,25)] dark:data-[state=active]:text-white data-[state=active]:font-bold data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-black/[0.03] dark:hover:bg-white/5 transition-colors data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:w-16 data-[state=active]:after:h-1 data-[state=active]:after:rounded-full data-[state=active]:after:bg-primary">
-              ポスト
-            </TabsTrigger>
-            <TabsTrigger value="users" className="relative h-full bg-transparent text-[15px] font-medium text-[rgb(83,100,113)] dark:text-gray-400 data-[state=active]:text-[rgb(15,20,25)] dark:data-[state=active]:text-white data-[state=active]:font-bold data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-black/[0.03] dark:hover:bg-white/5 transition-colors data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:w-16 data-[state=active]:after:h-1 data-[state=active]:after:rounded-full data-[state=active]:after:bg-primary">
-              アカウント
-            </TabsTrigger>
-          </TabsList>
+        <Tabs value={activeTab} onValueChange={(value) => changeActiveTab(value as SearchPageTabValue)} className="w-full">
+          {/* モバイルではこのタブバーの代わりにHeader.tsx側の「ポスト/アカウント」ボタンを使う。
+              PC(sm以上)は従来どおりここに表示する(見た目・挙動は変更していない)。
+              TabsList自体のclassNameは元のまま変更せず、外側のプレーンなdivで
+              表示/非表示を切り替えることで、内部コンポーネントのデフォルトclassとの
+              衝突で非表示が効かなくなる問題を避けている。 */}
+          <div className="hidden sm:block">
+            <TabsList className="w-full h-[53px] bg-transparent border-b border-black/[0.03] dark:border-white/[0.05] rounded-none p-0 grid grid-cols-2 relative z-20">
+              <TabsTrigger value="posts" className="relative h-full bg-transparent text-[15px] font-medium text-[rgb(83,100,113)] dark:text-gray-400 data-[state=active]:text-[rgb(15,20,25)] dark:data-[state=active]:text-white data-[state=active]:font-bold data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-black/[0.03] dark:hover:bg-white/5 transition-colors data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:w-16 data-[state=active]:after:h-1 data-[state=active]:after:rounded-full data-[state=active]:after:bg-primary">
+                ポスト
+              </TabsTrigger>
+              <TabsTrigger value="users" className="relative h-full bg-transparent text-[15px] font-medium text-[rgb(83,100,113)] dark:text-gray-400 data-[state=active]:text-[rgb(15,20,25)] dark:data-[state=active]:text-white data-[state=active]:font-bold data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-black/[0.03] dark:hover:bg-white/5 transition-colors data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:w-16 data-[state=active]:after:h-1 data-[state=active]:after:rounded-full data-[state=active]:after:bg-primary">
+                アカウント
+              </TabsTrigger>
+            </TabsList>
+          </div>
 
           <TabsContent value="posts" className="mt-4 bg-transparent border-none outline-none">
             {!searchQuery ? homeSections :

@@ -2426,7 +2426,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
               ) : (
                 <>
                   <Users className="h-4 w-4" />
-                  <span>フォロー中のみ返信できます</span>
+                  <span>フォロー中のユーザーのみ返信できます</span>
                 </>
               )}
             </div>

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Logo } from './Logo';
@@ -14,6 +14,9 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
+import { supabase } from '@/lib/supabase';
+import { searchBluesky } from '@/lib/bluesky';
+import type { User } from '@/types';
 import {
   LogOut,
   Settings as SettingsIcon,
@@ -23,6 +26,8 @@ import {
   MessageSquare,
   Images,
   UserRound,
+  X,
+  Clock,
 } from 'lucide-react';
 
 type TimelineChromeTheme = 'light' | 'dark';
@@ -51,11 +56,83 @@ const FEED_TABS: Array<{ value: FeedTabValue; label: string }> = [
 // 下線の左右に足す余白(px)。文字幅ぴったりだと窮屈に見えるため少し広げる。
 const TAB_UNDERLINE_PADDING = 10;
 
+// ヘッダーの検索バー(旧SearchPage.tsxの検索入力欄をここに移設したもの)の
+// 「Blueskyの投稿を含めない」設定を保持するlocalStorageキー。
+// SearchPage.tsx側もこのキーとイベントを監視して、ヘッダーでの変更を反映する。
+const SEARCH_EXCLUDE_BLUESKY_STORAGE_KEY = 'lime_search_exclude_bluesky';
+const SEARCH_EXCLUDE_BLUESKY_CHANGED_EVENT = 'lime-search-exclude-bluesky-changed';
+const SEARCH_QUERY_CHANGED_EVENT = 'lime-search-query-changed';
+
+function readExcludeBlueskyPosts(): boolean {
+  if (typeof window === 'undefined') return false;
+  return localStorage.getItem(SEARCH_EXCLUDE_BLUESKY_STORAGE_KEY) === 'true';
+}
+
+// 検索ページ(モバイル)の「ポスト/アカウント」タブの選択状態。
+// タブUI自体はSearchPage.tsxからここ(Header)に移設し、SearchPage.tsx側は
+// このキー/イベントを監視して自身のTabsコンポーネントの表示を切り替えるだけにする。
+type SearchPageTabValue = 'posts' | 'users';
+const SEARCH_PAGE_TAB_STORAGE_KEY = 'lime_search_page_tab';
+const SEARCH_PAGE_TAB_CHANGED_EVENT = 'lime-search-page-tab-changed';
+
+function readStoredSearchPageTab(): SearchPageTabValue {
+  if (typeof window === 'undefined') return 'posts';
+  return localStorage.getItem(SEARCH_PAGE_TAB_STORAGE_KEY) === 'users' ? 'users' : 'posts';
+}
+
 function readStoredActiveFeedTab(): FeedTabValue {
   if (typeof window === 'undefined') return 'all';
   const stored = localStorage.getItem(ACTIVE_FEED_TAB_STORAGE_KEY);
   return stored === 'following' ? 'following' : stored === 'trending' ? 'trending' : 'all';
 }
+
+// --- 検索サジェスト(モバイル・ヘッダー検索バー用) ---------------------------------
+// SearchPage.tsx のPC版サジェスト(検索履歴 + ユーザー候補)と同等のロジックを
+// ここに移植する。PC版と同じlocalStorageキー('search:recent')を使うため、
+// PC/モバイルどちらで検索しても履歴は共有される。
+const kataToHira = (s: string) =>
+  s.replace(/[\u30a1-\u30f6]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60));
+
+const normalizeForSearch = (s: string) => {
+  if (!s) return '';
+  let n = s.normalize('NFKC').toLowerCase();
+  n = kataToHira(n);
+  return n;
+};
+
+const SEARCH_HISTORY_KEY = 'search:recent';
+const SEARCH_HISTORY_MAX = 8;
+
+function loadSearchHistory(): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(SEARCH_HISTORY_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.slice(0, SEARCH_HISTORY_MAX) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveSearchHistory(list: string[]) {
+  try {
+    localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(list.slice(0, SEARCH_HISTORY_MAX)));
+  } catch {
+    // noop
+  }
+}
+
+// Bluesky側の検索は "@handle" ではなく "handle" 形式のクエリを期待するため、
+// 先頭の "@" を取り除いてから渡す
+function normalizeBlueskySuggestQuery(query: string) {
+  return query.trim().replace(/^@+/, '');
+}
+
+type HeaderSuggestionRow =
+  | { type: 'search'; value: string }
+  | { type: 'user'; value: string; user: User };
+// ------------------------------------------------------------------------------------
 
 function normalizeAppPath(pathname: string) {
   const normalized = pathname.replace(/^\/RaimuNoteSNS\.github\.io(?=\/|$)/, '') || '/';
@@ -849,6 +926,49 @@ export const Header = () => {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   useMobileDrawerMotion(isMobileSidebarOpen, setIsMobileSidebarOpen);
 
+  // 検索バー・検索ページ用タブは「検索ページ('/search')のみ・モバイルのみ」で表示する。
+  // サジェスト用の各種effect/memoからも参照するため、コンポーネント冒頭で確定させておく。
+  const isSearchRoute = normalizeAppPath(location.pathname) === '/search';
+
+  // 検索ページで実際に検索結果を表示しているか。
+  // メインの検索ページ(未検索状態)だけスクロールでヘッダーを閉じ、
+  // 検索結果表示中はヘッダーを常に表示する。
+  const [isSearchResultsVisible, setIsSearchResultsVisible] = useState(false);
+
+  // モバイルヘッダーの検索バー(旧SearchPage.tsxの検索入力欄をここに移設したもの)。
+  const [headerSearchValue, setHeaderSearchValue] = useState('');
+  const [isHeaderSearchSettingsOpen, setIsHeaderSearchSettingsOpen] = useState(false);
+  const [excludeBlueskyPosts, setExcludeBlueskyPosts] = useState(() => readExcludeBlueskyPosts());
+  // 検索ページ(モバイル)の「ポスト/アカウント」タブ。検索ページ以外では使わない。
+  const [activeSearchPageTab, setActiveSearchPageTab] = useState<SearchPageTabValue>(() => readStoredSearchPageTab());
+
+  // --- モバイル・ヘッダー検索バーのサジェスト用 state ---
+  // SearchPage.tsx のPC版と同じ考え方:「検索履歴」+「ローカルユーザー候補」+
+  // 「Blueskyユーザー候補」をまとめてドロップダウン表示する。
+  const [headerAllUsers, setHeaderAllUsers] = useState<User[]>([]);
+  const [headerBlueskySuggestionUsers, setHeaderBlueskySuggestionUsers] = useState<User[]>([]);
+  const [headerSearchHistory, setHeaderSearchHistory] = useState<string[]>(() => loadSearchHistory());
+  const [isHeaderSearchFocused, setIsHeaderSearchFocused] = useState(false);
+  const [headerActiveSuggestIdx, setHeaderActiveSuggestIdx] = useState(-1);
+  const headerSearchInputRef = useRef<HTMLInputElement>(null);
+  const headerSuggestBoxRef = useRef<HTMLDivElement>(null);
+
+  // SearchPage.tsx のPC版検索バーやトレンドから検索したときも、
+  // モバイルヘッダーの検索欄へ同じ文字列を反映する。URLの ?q= には依存しない。
+  useEffect(() => {
+    const handleSearchQueryChanged = (event: Event) => {
+      const query = (event as CustomEvent<{ query?: string }>).detail?.query?.trim();
+      if (!query) return;
+      setHeaderSearchValue(query);
+      setIsSearchResultsVisible(true);
+      setIsHeaderSearchFocused(false);
+      setHeaderActiveSuggestIdx(-1);
+    };
+
+    window.addEventListener(SEARCH_QUERY_CHANGED_EVENT, handleSearchQueryChanged);
+    return () => window.removeEventListener(SEARCH_QUERY_CHANGED_EVENT, handleSearchQueryChanged);
+  }, []);
+
   useEffect(() => {
     const handleViewportChange = () => {
       if (window.innerWidth >= 640) {
@@ -860,6 +980,142 @@ export const Header = () => {
     return () => window.removeEventListener('resize', handleViewportChange);
   }, []);
 
+  // 検索ページ(モバイル)でサジェストに使うユーザー一覧を取得する。
+  // SearchPage.tsx側の取得ロジックと同様、必要な列だけを取得する。
+  useEffect(() => {
+    if (!isSearchRoute) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('id, username, display_name, avatar_url, cover_url, created_at, bio, is_official');
+        if (error) throw error;
+        if (cancelled) return;
+        setHeaderAllUsers((data || []).map((u: any) => ({
+          id: u.id,
+          username: u.username,
+          displayName: u.display_name || u.displayName || 'User',
+          avatarUrl: u.avatar_url || u.avatarUrl || '',
+          coverUrl: u.cover_url || '',
+          createdAt: u.created_at || '',
+          bio: u.bio || '',
+          isOfficial: !!(u.is_official || u.isOfficial),
+        })));
+      } catch (err) {
+        console.error('Failed to fetch users for header search suggestions:', err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isSearchRoute]);
+
+  // 入力中のBlueskyユーザーサジェストを取得する(検索ページ・モバイルのみ)。
+  useEffect(() => {
+    if (!isSearchRoute) {
+      setHeaderBlueskySuggestionUsers([]);
+      return;
+    }
+
+    const query = headerSearchValue.trim();
+    if (!query || excludeBlueskyPosts) {
+      setHeaderBlueskySuggestionUsers([]);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      searchBluesky(normalizeBlueskySuggestQuery(query), { includePosts: false })
+        .then((result) => {
+          if (cancelled) return;
+          setHeaderBlueskySuggestionUsers(result.users.slice(0, 3).map((u) => ({
+            id: u.id,
+            username: u.username,
+            displayName: u.displayName,
+            avatarUrl: u.avatarUrl,
+            coverUrl: u.coverUrl,
+            createdAt: u.createdAt,
+            bio: u.bio,
+            isOfficial: false,
+          })));
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            console.error('Bluesky suggestion search failed:', error);
+            setHeaderBlueskySuggestionUsers([]);
+          }
+        });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [headerSearchValue, excludeBlueskyPosts, isSearchRoute]);
+
+  // サジェストの外側をクリックしたら閉じる。
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (
+        headerSuggestBoxRef.current && !headerSuggestBoxRef.current.contains(e.target as Node) &&
+        headerSearchInputRef.current && !headerSearchInputRef.current.contains(e.target as Node)
+      ) {
+        setIsHeaderSearchFocused(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  // ローカルユーザー候補 + Blueskyユーザー候補をマージ(SearchPage.tsxのliveSuggestionsと同じロジック)。
+  const headerLiveUserSuggestions = useMemo(() => {
+    const raw = headerSearchValue.trim();
+    const normalizedRaw = normalizeForSearch(raw);
+    const queryCandidates = Array.from(
+      new Set([normalizedRaw, normalizedRaw.replace(/^@+/, '')].filter(Boolean))
+    );
+
+    if (queryCandidates.length === 0) return [];
+
+    const localSuggestions = headerAllUsers
+      .map((u) => {
+        const dn = normalizeForSearch(u.displayName);
+        const un = normalizeForSearch(u.username);
+        const handle = normalizeForSearch(`@${u.username}`);
+        const fields = [dn, un, handle];
+        let score = 0;
+
+        if (queryCandidates.some((q) => fields.includes(q))) score = 100;
+        else if (queryCandidates.some((q) => fields.some((field) => field.startsWith(q)))) score = 50;
+        else if (queryCandidates.some((q) => fields.some((field) => field.includes(q)))) score = 20;
+
+        return { user: u, score };
+      })
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5)
+      .map((x) => x.user);
+
+    const seen = new Set(localSuggestions.map((user) => user.id));
+    const blueskySuggestions = headerBlueskySuggestionUsers.filter((user) => !seen.has(user.id)).slice(0, 3);
+    return [...localSuggestions.slice(0, 5 - blueskySuggestions.length), ...blueskySuggestions];
+  }, [headerSearchValue, headerAllUsers, headerBlueskySuggestionUsers]);
+
+  // 表示するサジェスト行:入力があれば「検索する」+ユーザー候補、無ければ履歴。
+  const headerSuggestionRows = useMemo<HeaderSuggestionRow[]>(() => {
+    const rows: HeaderSuggestionRow[] = [];
+    if (headerSearchValue.trim()) {
+      rows.push({ type: 'search', value: headerSearchValue.trim() });
+      for (const u of headerLiveUserSuggestions) rows.push({ type: 'user', value: u.username, user: u });
+    } else {
+      for (const h of headerSearchHistory) rows.push({ type: 'search', value: h });
+    }
+    return rows;
+  }, [headerSearchValue, headerLiveUserSuggestions, headerSearchHistory]);
+
   const isSearchPage = normalizeAppPath(location.pathname) === '/u/LimeBiz';
   const isChatPage = normalizeAppPath(location.pathname) === '/chat';
   const hideHeaderOnMobileProfile = isGithubPagesProfilePath(location.pathname);
@@ -868,11 +1124,33 @@ export const Header = () => {
   const hidePostDetailHeaderOnMobile = isPostDetailPath(location.pathname);
   const useTimelineChromeDesign = timelineChrome.enabled;
   const isTimelineDark = timelineChrome.theme === 'dark';
-  // タブ、およびヘッダーの開閉挙動は「タイムライン(ホーム画面)のみ」。
-  // 投稿詳細やそれ以外のページでは、タブも出さず、ヘッダーは常に表示したままにする。
+  // タブはタイムライン(ホーム画面)のみ。
+  // ヘッダーのスクロール開閉は、タイムラインに加えて「検索バーが表示される
+  // モバイル検索ページ(/search)」にも同じ挙動を適用する。
+  // それ以外のページのヘッダーは常に表示したままにする。
   const showFeedTabs = isHomeTimelinePath(location.pathname);
+  // モバイル検索ページは未検索のメイン画面だけスクロールでヘッダーを閉じる。
+  // 検索結果が出た後は、結果を見ながら検索できるよう常に表示する。
+  const enableMobileHeaderScrollHide =
+    showFeedTabs || (isSearchRoute && !isSearchResultsVisible);
 
-  const isHiddenOnMobile = useMobileHeaderVisibility(showFeedTabs);
+  const isHiddenOnMobile = useMobileHeaderVisibility(enableMobileHeaderScrollHide);
+
+  // 検索ページから離れたら、次にメイン検索ページへ戻ったときは未検索状態から開始する。
+  useEffect(() => {
+    if (!isSearchRoute) {
+      setIsSearchResultsVisible(false);
+    }
+  }, [isSearchRoute]);
+
+  // モバイル検索ヘッダーがスクロールで閉じたら、サジェストも同時に閉じる。
+  // 検索結果表示中はヘッダーを閉じないので、サジェストもこの処理では閉じない。
+  // PC版や検索ページ以外のヘッダーには影響させない。
+  useEffect(() => {
+    if (!isHiddenOnMobile || !isSearchRoute || isSearchResultsVisible || window.innerWidth >= 640) return;
+    setIsHeaderSearchFocused(false);
+    setHeaderActiveSuggestIdx(-1);
+  }, [isHiddenOnMobile, isSearchRoute, isSearchResultsVisible]);
 
   // 既にアクティブなタブをもう一度クリックしたときは、
   // (Radix Tabsのvalueが変わらずonValueChangeが発火しないため)
@@ -884,6 +1162,102 @@ export const Header = () => {
 
   const handleLogoClick = () => {
     window.location.href = import.meta.env.BASE_URL;
+  };
+
+  // 検索を確定する共通処理。履歴への追加とページ遷移をまとめて行う。
+  // 検索文字列は SEARCH_QUERY_CHANGED_EVENT と React Router の navigation state
+  // で SearchPage.tsx に渡すため、URLの ?q= には依存しない。
+  const commitHeaderSearch = (raw: string) => {
+    const query = raw.trim();
+    if (!query) return;
+
+    setHeaderSearchValue(query);
+    setIsSearchResultsVisible(true);
+    setIsHeaderSearchFocused(false);
+    setHeaderActiveSuggestIdx(-1);
+    window.dispatchEvent(new CustomEvent(SEARCH_QUERY_CHANGED_EVENT, { detail: { query } }));
+
+    setHeaderSearchHistory((prev) => {
+      const next = [query, ...prev.filter((h) => h !== query)].slice(0, SEARCH_HISTORY_MAX);
+      saveSearchHistory(next);
+      return next;
+    });
+
+    navigate('/search', { state: { searchQuery: query } });
+    headerSearchInputRef.current?.blur();
+  };
+
+  const handleHeaderSearchSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    commitHeaderSearch(headerSearchValue);
+  };
+
+  // サジェスト行を選択したときの処理。ユーザー行ならプロフィールへ、
+  // 検索行(履歴 or 入力中のキーワード)なら検索を確定する。
+  const handleHeaderSuggestionSelect = (row: HeaderSuggestionRow) => {
+    if (row.type === 'user') {
+      setIsHeaderSearchFocused(false);
+      setHeaderActiveSuggestIdx(-1);
+      headerSearchInputRef.current?.blur();
+      navigate(`/u/${row.user.username}`);
+      return;
+    }
+
+    commitHeaderSearch(row.value);
+  };
+
+  const handleHeaderSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!isHeaderSearchFocused) return;
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setHeaderActiveSuggestIdx((i) => Math.min(headerSuggestionRows.length - 1, i + 1));
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setHeaderActiveSuggestIdx((i) => Math.max(-1, i - 1));
+    } else if (event.key === 'Enter' && headerActiveSuggestIdx >= 0) {
+      event.preventDefault();
+      handleHeaderSuggestionSelect(headerSuggestionRows[headerActiveSuggestIdx]);
+    }
+  };
+
+  const removeHeaderHistoryItem = (item: string) => {
+    setHeaderSearchHistory((prev) => {
+      const next = prev.filter((h) => h !== item);
+      saveSearchHistory(next);
+      return next;
+    });
+  };
+
+  const clearHeaderHistory = () => {
+    setHeaderSearchHistory([]);
+    saveSearchHistory([]);
+  };
+
+  // 検索ページ(モバイル)のポスト/アカウントタブ切り替え。SearchPage.tsx側は
+  // このイベントを監視して自身のTabsコンポーネントの表示を切り替える。
+  const changeActiveSearchPageTab = (value: SearchPageTabValue) => {
+    setActiveSearchPageTab(value);
+    try {
+      localStorage.setItem(SEARCH_PAGE_TAB_STORAGE_KEY, value);
+    } catch {
+      // noop
+    }
+    window.dispatchEvent(
+      new CustomEvent(SEARCH_PAGE_TAB_CHANGED_EVENT, { detail: { tab: value } })
+    );
+  };
+
+  // 「Blueskyの投稿を含めない」設定はlocalStorage経由でSearchPage.tsxと共有する。
+  const handleToggleExcludeBluesky = (checked: boolean) => {
+    setExcludeBlueskyPosts(checked);
+    try {
+      localStorage.setItem(SEARCH_EXCLUDE_BLUESKY_STORAGE_KEY, String(checked));
+    } catch {
+      // noop
+    }
+    window.dispatchEvent(
+      new CustomEvent(SEARCH_EXCLUDE_BLUESKY_CHANGED_EVENT, { detail: { excludeBlueskyPosts: checked } })
+    );
   };
 
   const notices = [
@@ -1043,6 +1417,218 @@ export const Header = () => {
     )
   );
 
+  // モバイルヘッダーの検索バー。画像のデザイン(ダークな角丸ピル+検索アイコン+
+  // プレースホルダー、右側に独立した設定歯車アイコン)を踏襲する。
+  // 旧SearchPage.tsxにあった検索入力欄はここに統合したため、SearchPage.tsx側の
+  // 入力欄は削除している(検索実行は/search?q=…への遷移で行う)。
+  // 入力欄の下には、PC版検索バー(SearchPage.tsx)と同じ「検索履歴 + ユーザー候補」の
+  // サジェストドロップダウンを表示する。
+  const renderMobileSearchBar = () => {
+    // 検索バーは検索ページ('/search')のモバイル表示でのみ表示する。
+    if (!isSearchRoute) return null;
+
+    return (
+      <div className="relative min-w-0 flex-1 sm:hidden">
+        <form onSubmit={handleHeaderSearchSubmit} className="flex min-w-0 flex-1 items-center gap-2">
+          <div
+            className={cn(
+              "flex h-10 min-w-0 flex-1 items-center rounded-full px-4 transition-colors",
+              isHeaderSearchFocused
+                ? "bg-white ring-2 ring-primary dark:bg-black"
+                : "bg-black/[0.06] dark:bg-white/10"
+            )}
+          >
+            <Search className={cn("h-[18px] w-[18px] shrink-0", isHeaderSearchFocused ? "text-primary" : "text-zinc-500 dark:text-zinc-400")} />
+            <input
+              ref={headerSearchInputRef}
+              value={headerSearchValue}
+              onChange={(event) => {
+                setHeaderSearchValue(event.target.value);
+                setHeaderActiveSuggestIdx(-1);
+              }}
+              onFocus={() => setIsHeaderSearchFocused(true)}
+              onKeyDown={handleHeaderSearchKeyDown}
+              placeholder="検索"
+              aria-label="検索"
+              className="h-full w-full min-w-0 bg-transparent px-3 text-[15px] text-zinc-900 outline-none placeholder:text-zinc-500 dark:text-white dark:placeholder:text-zinc-400"
+            />
+            {headerSearchValue && (
+              <button
+                type="button"
+                onClick={() => {
+                  setHeaderSearchValue('');
+                  headerSearchInputRef.current?.focus();
+                }}
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary"
+              >
+                <X className="h-3 w-3 text-white" strokeWidth={3} />
+              </button>
+            )}
+          </div>
+
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              aria-label="検索設定"
+              aria-expanded={isHeaderSearchSettingsOpen}
+              onClick={() => setIsHeaderSearchSettingsOpen((open) => !open)}
+              className="flex h-10 w-10 items-center justify-center rounded-full text-zinc-500 transition-colors hover:bg-black/[0.06] dark:text-zinc-400 dark:hover:bg-white/10"
+            >
+              <SettingsIcon className="h-5 w-5" />
+            </button>
+
+            {isHeaderSearchSettingsOpen && (
+              <>
+                <button
+                  type="button"
+                  aria-label="検索設定を閉じる"
+                  className="fixed inset-0 z-[550] cursor-default"
+                  onClick={() => setIsHeaderSearchSettingsOpen(false)}
+                />
+                <div className="absolute right-0 top-12 z-[600] w-64 rounded-2xl border border-black/5 bg-white p-3 shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:border-white/10 dark:bg-[#15202b]">
+                  <label className="flex cursor-pointer items-center gap-3 rounded-xl px-2 py-2 text-[14px] hover:bg-black/[0.03] dark:hover:bg-white/5">
+                    <input
+                      type="checkbox"
+                      checked={excludeBlueskyPosts}
+                      onChange={(event) => handleToggleExcludeBluesky(event.target.checked)}
+                      className="h-4 w-4 accent-primary"
+                    />
+                    <span>Blueskyの投稿を含めない</span>
+                  </label>
+                </div>
+              </>
+            )}
+          </div>
+        </form>
+
+        {isHeaderSearchFocused && headerSuggestionRows.length > 0 && (
+          <div
+            ref={headerSuggestBoxRef}
+            className="absolute left-0 right-12 top-12 z-[600] max-h-[60vh] overflow-y-auto rounded-2xl border border-black/5 bg-white/95 shadow-[0_8px_30px_rgba(0,0,0,0.1)] backdrop-blur-xl dark:border-white/10 dark:bg-[#15202b]/95 dark:shadow-[0_8px_30px_rgba(0,0,0,0.3)]"
+          >
+            {!headerSearchValue.trim() && headerSearchHistory.length > 0 && (
+              <div className="flex items-center justify-between px-4 py-2.5">
+                <span className="text-[15px] font-bold">最近の検索</span>
+                <button
+                  type="button"
+                  onClick={clearHeaderHistory}
+                  className="text-[13px] text-primary hover:underline"
+                >
+                  すべて消去
+                </button>
+              </div>
+            )}
+            {headerSuggestionRows.map((row, idx) => (
+              <button
+                key={idx}
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  handleHeaderSuggestionSelect(row);
+                }}
+                className={cn(
+                  "flex w-full items-center gap-3 px-4 py-3 transition-colors",
+                  idx === headerActiveSuggestIdx
+                    ? "bg-black/5 dark:bg-white/10"
+                    : "hover:bg-black/[0.03] dark:hover:bg-white/5"
+                )}
+              >
+                {row.type === 'search' ? (
+                  <>
+                    {!headerSearchValue.trim() ? (
+                      <Clock className="h-[18px] w-[18px] text-[rgb(83,100,113)] dark:text-gray-400" />
+                    ) : (
+                      <Search className="h-[18px] w-[18px] text-[rgb(83,100,113)] dark:text-gray-400" />
+                    )}
+                    <span className="ml-3 flex-1 truncate text-left text-[15px]">{row.value}</span>
+                    {!headerSearchValue.trim() && (
+                      <span
+                        role="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          removeHeaderHistoryItem(row.value);
+                        }}
+                        className="rounded-full p-1 hover:bg-black/10 dark:hover:bg-white/20"
+                      >
+                        <X className="h-4 w-4 text-[rgb(83,100,113)] dark:text-gray-400" />
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {row.user.avatarUrl ? (
+                      <img
+                        src={row.user.avatarUrl}
+                        alt={row.user.displayName}
+                        loading="lazy"
+                        className="h-10 w-10 rounded-full object-cover"
+                      />
+                    ) : (
+                      <div className="h-10 w-10 rounded-full bg-black/5 dark:bg-white/10" />
+                    )}
+                    <div className="flex min-w-0 flex-col text-left">
+                      <span className="flex min-w-0 items-center gap-1">
+                        <span className="truncate text-[15px] font-bold">{row.user.displayName}</span>
+                        {row.user.isOfficial && (
+                          <img
+                            src={`${import.meta.env.BASE_URL}verified.png`}
+                            alt="Official"
+                            className="h-4 w-4 shrink-0 translate-y-[0.5px]"
+                            loading="eager"
+                          />
+                        )}
+                      </span>
+                      <span className="truncate text-[13px] text-[rgb(83,100,113)] dark:text-gray-400">@{row.user.username}</span>
+                    </div>
+                  </>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // 検索ページ(モバイル)専用の「ポスト/アカウント」タブ。旧SearchPage.tsxにあった
+  // TabsList(Radix)をそのままここに持ってくることはできない(Tabsのコンテキストが
+  // 別のコンポーネントツリーに分かれるため)ので、見た目だけを再現したボタン行にし、
+  // 実際の値の受け渡しはlocalStorage+カスタムイベントで行う。
+  const renderMobileSearchPageTabs = () => {
+    if (!isSearchRoute) return null;
+
+    const tabButtonClass = (value: SearchPageTabValue) =>
+      cn(
+        'relative flex h-11 items-center justify-center text-[15px] transition-colors',
+        activeSearchPageTab === value
+          ? "font-bold text-[rgb(15,20,25)] after:absolute after:bottom-0 after:left-1/2 after:h-1 after:w-16 after:-translate-x-1/2 after:rounded-full after:bg-primary after:content-[''] dark:text-white"
+          : 'font-medium text-[rgb(83,100,113)] dark:text-gray-400'
+      );
+
+    return (
+      <div className="relative z-[1] sm:hidden">
+        <div className="mx-auto max-w-5xl px-2 sm:px-4">
+          <div className="grid grid-cols-2 border-b border-black/[0.03] dark:border-white/[0.05]">
+            <button
+              type="button"
+              onClick={() => changeActiveSearchPageTab('posts')}
+              className={tabButtonClass('posts')}
+            >
+              ポスト
+            </button>
+            <button
+              type="button"
+              onClick={() => changeActiveSearchPageTab('users')}
+              className={tabButtonClass('users')}
+            >
+              アカウント
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   // モバイルサイドバーには、このHeader内ですでに存在が確認できる実在ページだけを表示する。
   const mobileSidebarItems = user
@@ -1184,8 +1770,9 @@ export const Header = () => {
         isChatPage
           ? 'fixed left-0 right-0 top-0 z-[500] border-b backdrop-blur-md'
           : 'sticky top-0 z-[500] border-b backdrop-blur-md',
-        // モバイル×ホーム画面のときだけ、スクロール方向に応じてヘッダー全体を
-        // スライドして隠す。他のページ、およびPC(sm以上)では常に translate-y-0。
+        // モバイルのタイムライン、または検索バーがある検索ページのときだけ、
+        // スクロール方向に応じてヘッダー全体をスライドして隠す。
+        // 他のページ、およびPC(sm以上)では常に translate-y-0。
         'transition-transform duration-300 ease-out sm:translate-y-0',
         isHiddenOnMobile ? '-translate-y-full' : 'translate-y-0',
         useTimelineChromeDesign
@@ -1286,10 +1873,11 @@ export const Header = () => {
         1つのTabsルートの中に用途別のTabsListを複数置いて出し分ける構成。
       */}
       <Tabs value={activeFeedTab} onValueChange={(value) => changeActiveFeedTab(value as FeedTabValue)}>
-        {/* ロゴ＋アバターの行。
-            - モバイル: アバター(またはログインボタン)を左、ロゴは行全体の中央に絶対配置。
+        {/* ロゴ＋アバター＋検索バーの行。
+            - モバイル: アバター(またはログインボタン)を左、その右に検索バー(画像のデザイン)
+              +設定歯車アイコンを配置する。ロゴはモバイルでは表示しない。
             - PC(sm以上): ロゴを左端、アバターを右端、その間(中央)にタブを配置。 */}
-        <div className="relative mx-auto flex h-14 max-w-5xl items-center px-3 sm:h-16 sm:px-4">
+        <div className="relative mx-auto flex h-14 max-w-5xl items-center gap-2 px-3 sm:h-16 sm:px-4">
           <div className="sm:order-3">
             <div className="sm:hidden">
               {renderMobileAccountControl()}
@@ -1299,9 +1887,16 @@ export const Header = () => {
             </div>
           </div>
 
+          {renderMobileSearchBar()}
+
           <div
             onClick={handleLogoClick}
-            className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-pointer sm:static sm:left-auto sm:top-auto sm:order-1 sm:translate-x-0 sm:translate-y-0"
+            className={cn(
+              // モバイルでは検索ページのときだけ検索バーに置き換えるため非表示にし、
+              // それ以外のページでは元通り中央に絶対配置する。sm:以降(PC)のクラスは変更していない。
+              isSearchRoute ? 'hidden' : 'absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2',
+              'cursor-pointer sm:static sm:left-auto sm:top-auto sm:order-1 sm:block sm:translate-x-0 sm:translate-y-0'
+            )}
           >
             <Logo />
           </div>
@@ -1366,6 +1961,8 @@ export const Header = () => {
           </div>
         )}
       </Tabs>
+
+      {renderMobileSearchPageTabs()}
 
       {isSearchPage && (
         <div className="w-full overflow-hidden bg-green-600 text-white">
