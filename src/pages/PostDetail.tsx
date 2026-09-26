@@ -229,14 +229,16 @@ export default function PostDetail() {
   }, []);
 
   // 画像拡大時だけスクロールを固定する。
-  // 絵文字ピッカーで body overflow を触ると、Header / Dropdown が巻き込まれて消えることがあるため触らない。
+  // 既存の overflow を退避して、モーダルを閉じた後に元の状態へ戻す。
   useEffect(() => {
-    if (selectedImageUrl) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = 'unset';
-    }
-    return () => { document.body.style.overflow = 'unset'; };
+    if (!selectedImageUrl) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
   }, [selectedImageUrl]);
 
   // --- 「もっと見る」メニューの外側クリック・スクロール/リサイズで閉じる処理（PostCardと同様） ---
@@ -2173,40 +2175,51 @@ export default function PostDetail() {
         document.body
       )}
 
-      {/* 画像拡大オーバーレイ（モーダル） */}
-      {selectedImageUrl && data && (
-        <div 
-          className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black/95 backdrop-blur-sm animate-in fade-in duration-200"
+      {/* 画像拡大オーバーレイ（モーダル）
+          body 直下へ Portal して、親要素の transform / stacking context / z-index の影響を受けないようにする。
+          これによりモバイルの下部ナビゲーションまで確実に覆う。 */}
+      {selectedImageUrl && data && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed inset-0 z-[2147483647] flex h-[100dvh] w-screen flex-col items-center justify-center bg-black/95 backdrop-blur-sm animate-in fade-in duration-200"
+          role="dialog"
+          aria-modal="true"
+          aria-label="画像を拡大表示"
           onClick={() => setSelectedImageUrl(null)}
         >
           {/* 閉じるボタン */}
-          <button 
-            className="absolute top-5 left-5 z-[110] p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
-            onClick={() => setSelectedImageUrl(null)}
+          <button
+            type="button"
+            className="absolute left-5 top-5 z-[1] p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedImageUrl(null);
+            }}
+            aria-label="画像を閉じる"
           >
             <X className="h-6 w-6" />
           </button>
 
           {/* 画像本体 */}
           <div className="relative flex max-h-full max-w-full items-center justify-center p-4">
-            <img 
-              src={selectedImageUrl} 
-              alt="Expanded view" 
-              className="max-h-[85vh] max-w-[95vw] object-contain shadow-2xl animate-in zoom-in-95 duration-200"
-              onClick={(e) => e.stopPropagation()} 
+            <img
+              src={selectedImageUrl}
+              alt="Expanded view"
+              className="max-h-[85dvh] max-w-[95vw] object-contain shadow-2xl animate-in zoom-in-95 duration-200"
+              onClick={(e) => e.stopPropagation()}
+              draggable={false}
             />
           </div>
 
           {/* 下部アクションエリア */}
-          <div 
-            className="absolute bottom-0 left-0 right-0 flex items-center justify-center bg-gradient-to-t from-black/80 to-transparent pb-8 pt-10"
+          <div
+            className="absolute bottom-0 left-0 right-0 flex items-center justify-center bg-gradient-to-t from-black/80 to-transparent pb-[calc(2rem+env(safe-area-inset-bottom))] pt-10"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center gap-8 rounded-full bg-black/40 px-6 py-3 backdrop-blur-md border border-white/10">
               <div className="scale-125">
-                <LikeButton 
-                  postId={data.id} 
-                  liked={data.likedByMe} 
+                <LikeButton
+                  postId={data.id}
+                  liked={data.likedByMe}
                   count={data.likesCount}
                 />
               </div>
@@ -2216,7 +2229,8 @@ export default function PostDetail() {
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
       </div>
     </>

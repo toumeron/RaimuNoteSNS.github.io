@@ -844,11 +844,6 @@ export const Header = () => {
   const mobileSidebarItems = user
     ? [
         {
-          label: 'ホーム',
-          icon: UserRound,
-          onClick: () => navigate('/'),
-        },
-        {
           label: 'プロフィール',
           icon: UserRound,
           onClick: () => navigate(`/u/${user.username}`),
@@ -1097,7 +1092,11 @@ export const Header = () => {
             {showFeedTabs && (
               <TabsList className="grid w-full max-w-[260px] grid-cols-2 rounded-2xl bg-muted/50 p-1">
                 {FEED_TABS.map((tab) => (
-                  <TabsTrigger key={tab.value} value={tab.value} className="rounded-xl font-bold transition-all">
+                  <TabsTrigger
+                    key={tab.value}
+                    value={tab.value}
+                    className="rounded-xl font-bold text-muted-foreground transition-all data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-sm data-[state=inactive]:bg-transparent data-[state=inactive]:text-foreground"
+                  >
                     {tab.label}
                   </TabsTrigger>
                 ))}
