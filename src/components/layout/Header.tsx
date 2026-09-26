@@ -32,10 +32,10 @@ type TimelineChromeState = {
   hasTimelineBackground: boolean;
 };
 
-// 最新/フォロー中タブの選択状態。タブUI自体はFeed.tsxから移設してここに置く。
+// 最新/フォロー中/トレンドタブの選択状態。タブUI自体はFeed.tsxから移設してここに置く。
 // Feed.tsx側は 'lime-active-feed-tab-changed' イベントとこのlocalStorageキーを
 // 監視するだけで、実際の切り替えはこちら(Header)が起点になる。
-type FeedTabValue = 'all' | 'following';
+type FeedTabValue = 'all' | 'following' | 'trending';
 
 const ACTIVE_FEED_TAB_STORAGE_KEY = 'lime_active_feed_tab';
 const ACTIVE_FEED_TAB_CHANGED_EVENT = 'lime-active-feed-tab-changed';
@@ -45,6 +45,7 @@ const ACTIVE_FEED_TAB_CHANGED_EVENT = 'lime-active-feed-tab-changed';
 const FEED_TABS: Array<{ value: FeedTabValue; label: string }> = [
   { value: 'all', label: '最新' },
   { value: 'following', label: 'フォロー中' },
+  { value: 'trending', label: 'トレンド' },
 ];
 
 // 下線の左右に足す余白(px)。文字幅ぴったりだと窮屈に見えるため少し広げる。
@@ -52,7 +53,8 @@ const TAB_UNDERLINE_PADDING = 10;
 
 function readStoredActiveFeedTab(): FeedTabValue {
   if (typeof window === 'undefined') return 'all';
-  return localStorage.getItem(ACTIVE_FEED_TAB_STORAGE_KEY) === 'following' ? 'following' : 'all';
+  const stored = localStorage.getItem(ACTIVE_FEED_TAB_STORAGE_KEY);
+  return stored === 'following' ? 'following' : stored === 'trending' ? 'trending' : 'all';
 }
 
 function normalizeAppPath(pathname: string) {
@@ -96,7 +98,7 @@ function isTimelineVisualPath(pathname: string) {
   );
 }
 
-// 最新/フォロー中タブは「タイムライン(ホーム画面)のみ」に表示する。
+// 最新/フォロー中/トレンドタブは「タイムライン(ホーム画面)のみ」に表示する。
 // isTimelineVisualPath は投稿詳細ページ(/post/...)も含むため、
 // タブの表示条件はそれより狭い「ホーム('/')のみ」の専用判定にする。
 function isHomeTimelinePath(pathname: string) {
@@ -171,7 +173,7 @@ function useTimelineChrome(pathname: string) {
   };
 }
 
-// Feed.tsx から移設した最新/フォロー中タブの選択状態を管理するフック。
+// Feed.tsx から移設した最新/フォロー中/トレンドタブの選択状態を管理するフック。
 // 他タブ(ブラウザの別タブ)やFeed側からの変更もlocalStorage経由で拾う。
 function useActiveFeedTab() {
   const [activeFeedTab, setActiveFeedTab] = useState<FeedTabValue>(() => readStoredActiveFeedTab());
@@ -321,6 +323,7 @@ function useMobileDrawerMotion(isOpen: boolean, onOpenChange: (open: boolean) =>
     startedAtY: 0,
     startShift: 0,
     horizontal: false,
+    startedAtEdge: false,
   });
   // ドラッグ開始時点のスクロール位置。ドラッグでサイドバーを開いた場合でも
   // 閉じたときに元の位置へ戻せるよう保持しておく。
@@ -337,7 +340,8 @@ function useMobileDrawerMotion(isOpen: boolean, onOpenChange: (open: boolean) =>
 
   const getDrawerWidth = () => {
     if (typeof window === 'undefined') return 0;
-    return Math.min(Math.max(window.innerWidth * 0.425, 280), 355);
+    // サイドバー自体の表示幅を従来より広く確保する(全画面にはしない)。
+    return Math.min(Math.max(window.innerWidth * 0.78, 300), 420);
   };
 
   const getSidebarEl = () => {
@@ -366,12 +370,31 @@ function useMobileDrawerMotion(isOpen: boolean, onOpenChange: (open: boolean) =>
     const isRevealed = clamped > 0;
 
     root.style.transition = animate
-      ? 'transform 320ms cubic-bezier(0.22, 1, 0.36, 1), border-radius 320ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 320ms cubic-bezier(0.22, 1, 0.36, 1)'
+      ? 'transform 320ms cubic-bezier(0.22, 1, 0.36, 1), border-radius 320ms cubic-bezier(0.22, 1, 0.36, 1), clip-path 320ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 320ms cubic-bezier(0.22, 1, 0.36, 1)'
       : 'none';
-    root.style.transform = `translate3d(${clamped}px, 0, 0)`;
+    // Safari/WebKitでは、要素に3D変換(translate3d/translateZ)とclip-pathを
+    // 同時に指定すると、独立した合成レイヤーに昇格することでclip-pathによる
+    // クリップが実際の描画に反映されない(DevTools上はスタイルが付与されて
+    // 見えても、見た目には角丸が出ない)既知の問題がある。ここでは2D変換の
+    // translateX に変更することでこれを回避する。
+    root.style.transform = `translateX(${clamped}px)`;
     root.style.borderRadius = isRevealed ? '42px 0 0 42px' : '0';
+    // overflow: hidden + border-radius だけでは、環境によって(rootの高さの
+    // 決まり方やスクロールコンテナの構成次第で)クリップが実際の描画に反映
+    // されないことがある。clip-path はオーバーフローの挙動に関係なく
+    // 要素自身の描画を直接その形状で切り抜くため、より確実に角丸を反映できる。
+    // border-radius/overflowと併用しても副作用はないのでどちらも残す。
+    const clipShape = isRevealed
+      ? 'inset(0px 0px 0px 0px round 42px 0px 0px 42px)'
+      : 'inset(0px round 0px)';
+    root.style.setProperty('clip-path', clipShape, 'important');
+    root.style.setProperty('-webkit-clip-path', clipShape, 'important');
+    root.style.overflow = isRevealed ? 'hidden' : '';
     root.style.boxShadow = isRevealed ? '-10px 0 28px rgba(0,0,0,0.34)' : 'none';
-    root.style.willChange = isRevealed ? 'transform' : 'auto';
+    // will-change: transform も3D変換と同様に独立した合成レイヤーへの昇格を
+    // 促し、Safariでのclip-path未反映の原因になり得るため、ここでは明示的な
+    // will-changeの指定はしない(常時 auto のまま)。
+    root.style.willChange = 'auto';
     // サイドバーを開いている間はタイムライン側の縦スクロールを停止する。
     // touch-action:none はクリック/タップ自体は維持しつつ、スクロールジェスチャーだけを止める。
     root.style.touchAction = isRevealed ? 'none' : 'auto';
@@ -435,6 +458,9 @@ function useMobileDrawerMotion(isOpen: boolean, onOpenChange: (open: boolean) =>
       root.style.removeProperty('transform');
       root.style.removeProperty('transition');
       root.style.removeProperty('border-radius');
+      root.style.removeProperty('overflow');
+      root.style.removeProperty('clip-path');
+      root.style.removeProperty('-webkit-clip-path');
       root.style.removeProperty('box-shadow');
       root.style.removeProperty('will-change');
       root.style.removeProperty('touch-action');
@@ -451,6 +477,9 @@ function useMobileDrawerMotion(isOpen: boolean, onOpenChange: (open: boolean) =>
       root.style.removeProperty('transform');
       root.style.removeProperty('transition');
       root.style.removeProperty('border-radius');
+      root.style.removeProperty('overflow');
+      root.style.removeProperty('clip-path');
+      root.style.removeProperty('-webkit-clip-path');
       root.style.removeProperty('box-shadow');
       root.style.removeProperty('will-change');
       root.style.removeProperty('touch-action');
@@ -510,7 +539,33 @@ function useMobileDrawerMotion(isOpen: boolean, onOpenChange: (open: boolean) =>
         startedAtY: 0,
         startShift: 0,
         horizontal: false,
+        startedAtEdge: false,
       };
+    };
+
+    // 「画面端」とみなす範囲。この範囲から始めた場合は、従来通り
+    // 少しの移動量で反応する軽いジェスチャーとして扱う(誤操作の心配が
+    // 少ない代わりに、素早く反応してほしい場所)。
+    const EDGE_ZONE = 32;
+
+    // 対象要素(またはその祖先)が横スクロール可能なコンテナかどうかを調べる。
+    // 画像ギャラリーなど、要素自体が横スワイプを必要とするUIの内部では、
+    // ドロワー用のジェスチャーとして横方向の動きを奪わないようにするため。
+    const isInsideHorizontalScroller = (target: EventTarget | null) => {
+      if (!(target instanceof Element)) return false;
+
+      let el: Element | null = target;
+      while (el && el !== document.body) {
+        if (el instanceof HTMLElement && el.scrollWidth > el.clientWidth + 1) {
+          const style = window.getComputedStyle(el);
+          if (style.overflowX === 'auto' || style.overflowX === 'scroll') {
+            return true;
+          }
+        }
+        el = el.parentElement;
+      }
+
+      return false;
     };
 
     const handleTouchStart = (event: TouchEvent) => {
@@ -529,19 +584,26 @@ function useMobileDrawerMotion(isOpen: boolean, onOpenChange: (open: boolean) =>
         return;
       }
 
+      // 横スクロールするギャラリー等の内部からは、ドロワー用のジェスチャーとして奪わない。
+      if (isInsideHorizontalScroller(target)) {
+        resetGesture();
+        return;
+      }
+
       const touch = event.touches[0];
       const width = getDrawerWidth();
-      // 画面端からのスワイプで開く。iOS/Androidのブラウザは画面のごく端
-      // (だいたい20px前後)を「戻る」などのシステムジェスチャー用に予約して
-      // いることが多く、間口が狭いとタッチ自体がページに渡ってこない。
-      // それを避けるため間口を広めに取る。
-      const EDGE_OPEN_ZONE = 64;
-      const canOpenFromEdge = !isOpen && touch.clientX <= EDGE_OPEN_ZONE;
+
+      // スワイプで開ける範囲は画面全体に広げる。ただしそれだけだと、縦スクロール中
+      // など他の操作中に誤って開いてしまいやすくなるため、開始位置が画面端
+      // (EDGE_ZONE)かどうかを記録しておき、touchmove/touchend側の判定基準
+      // (閾値)をそれぞれで変える(端は軽く、それ以外は厳しめに)。
+      const startedAtEdge = touch.clientX <= EDGE_ZONE;
+      const canOpenFromAnywhere = !isOpen;
       // 開いている間は、サイドバー内のどこ(ボタン等を除く)からドラッグを始めても
       // 閉じられるようにする(右端の細い帯だけに限定しない)。
       const canCloseFromMain = isOpen && touch.clientX <= width;
 
-      if (!canOpenFromEdge && !canCloseFromMain) {
+      if (!canOpenFromAnywhere && !canCloseFromMain) {
         resetGesture();
         return;
       }
@@ -552,6 +614,7 @@ function useMobileDrawerMotion(isOpen: boolean, onOpenChange: (open: boolean) =>
         startedAtY: touch.clientY,
         startShift: isOpen ? width : 0,
         horizontal: false,
+        startedAtEdge,
       };
       root.style.transition = 'none';
     };
@@ -570,15 +633,25 @@ function useMobileDrawerMotion(isOpen: boolean, onOpenChange: (open: boolean) =>
         // アニメーション付きで巻き戻していたため「ワンテンポ遅れる」
         // 体感になっていた。閾値を単純な絶対値比較にし、誤判定時は
         // 何もアニメーションさせずに諦めるだけにする。
-        const DIRECTION_LOCK_THRESHOLD = 6;
+        //
+        // 画面端(またはサイドバーを閉じる操作)から始めた場合は従来通り
+        // 軽い動きで反応させる。それ以外(画面中央寄りなど)から始めた
+        // 「開く」ジェスチャーは、スワイプ範囲を画面全体に広げたことで
+        // 縦スクロール等との誤操作が増えやすいため、より大きく・より
+        // 横方向がはっきりした動きだけをドロワー操作として採用する。
+        const isLenient = gesture.startedAtEdge || isOpen;
+        const DIRECTION_LOCK_THRESHOLD = isLenient ? 6 : 18;
+        const HORIZONTAL_DOMINANCE_RATIO = isLenient ? 1 : 2.2;
+
         if (Math.abs(dx) < DIRECTION_LOCK_THRESHOLD && Math.abs(dy) < DIRECTION_LOCK_THRESHOLD) {
           return;
         }
 
-        if (Math.abs(dy) >= Math.abs(dx)) {
-          // 縦方向の動きだと判定。この時点ではまだroot側の見た目を
-          // 一切変更していないので、巻き戻すアニメーションは不要
-          // (通常の縦スクロールとして素直にブラウザへ委ねる)。
+        if (Math.abs(dy) * HORIZONTAL_DOMINANCE_RATIO >= Math.abs(dx)) {
+          // 縦方向の動き(または横方向が十分優勢でない動き)だと判定。
+          // この時点ではまだroot側の見た目を一切変更していないので、
+          // 巻き戻すアニメーションは不要(通常の縦スクロールとして
+          // 素直にブラウザへ委ねる)。
           resetGesture();
           return;
         }
@@ -616,9 +689,15 @@ function useMobileDrawerMotion(isOpen: boolean, onOpenChange: (open: boolean) =>
       }
 
       const currentShift = Math.max(0, Math.min(width, gesture.startShift + deltaX));
+
+      // 画面中央寄りから始めた「開く」ジェスチャーは、端から始めた場合より
+      // 少し厳しめの確定条件にして、誤操作による意図しない全開を防ぐ。
+      const openRatioThreshold = gesture.startedAtEdge ? 0.32 : 0.45;
+      const openFlickThreshold = gesture.startedAtEdge ? 34 : 60;
+
       const nextOpen = isOpen
         ? currentShift >= width * 0.55 && deltaX > -34
-        : currentShift >= width * 0.32 || deltaX > 34;
+        : currentShift >= width * openRatioThreshold || deltaX > openFlickThreshold;
 
       resetGesture();
       setRootVisual(nextOpen ? width : 0, true);
@@ -677,6 +756,14 @@ export const Header = () => {
   const showFeedTabs = isHomeTimelinePath(location.pathname);
 
   const isHiddenOnMobile = useMobileHeaderVisibility(showFeedTabs);
+
+  // 既にアクティブなタブをもう一度クリックしたときは、
+  // (Radix Tabsのvalueが変わらずonValueChangeが発火しないため)
+  // ここで明示的にページ最上部へスクロールする。
+  const handleFeedTabTriggerClick = (value: FeedTabValue) => {
+    if (value !== activeFeedTab) return;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   const handleLogoClick = () => {
     window.location.href = import.meta.env.BASE_URL;
@@ -908,7 +995,10 @@ export const Header = () => {
         aria-hidden={!isMobileSidebarOpen}
         data-lime-mobile-sidebar="true"
         className={cn(
-          'fixed inset-y-0 left-0 z-[100] flex w-[clamp(280px,42.5vw,355px)] flex-col border-r sm:hidden',
+          // サイドバー自体の幅を従来より広く確保する(全画面にはしない)。
+          // 角丸は本画面側(root要素、setRootVisual内のborder-radius)に
+          // 付けるものなので、ここ(サイドバー本体)には付けない。
+          'fixed inset-y-0 left-0 z-[100] flex w-[clamp(300px,78vw,420px)] flex-col border-r sm:hidden',
           sidebarDarkClasses,
           isMobileSidebarOpen
             ? 'visible pointer-events-auto'
@@ -1090,11 +1180,12 @@ export const Header = () => {
               アバターが右端に固定されるよう、枠自体は常に確保しておく)。 */}
           <div className="hidden sm:order-2 sm:flex sm:min-w-0 sm:flex-1 sm:justify-center">
             {showFeedTabs && (
-              <TabsList className="grid w-full max-w-[260px] grid-cols-2 rounded-2xl bg-muted/50 p-1">
+              <TabsList className="grid w-full max-w-[300px] grid-cols-3 rounded-2xl bg-muted/50 p-1">
                 {FEED_TABS.map((tab) => (
                   <TabsTrigger
                     key={tab.value}
                     value={tab.value}
+                    onClick={() => handleFeedTabTriggerClick(tab.value)}
                     className="rounded-xl font-bold text-muted-foreground transition-all data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-sm data-[state=inactive]:bg-transparent data-[state=inactive]:text-foreground"
                   >
                     {tab.label}
@@ -1123,7 +1214,8 @@ export const Header = () => {
                     <TabsTrigger
                       key={tab.value}
                       value={tab.value}
-                      className="feed-tabs-trigger relative h-10 min-w-[110px] flex-1 rounded-none border-0 bg-transparent px-4 text-base leading-none shadow-none outline-none transition-none duration-0 hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=inactive]:bg-transparent"
+                      onClick={() => handleFeedTabTriggerClick(tab.value)}
+                      className="feed-tabs-trigger relative h-10 min-w-[86px] flex-1 rounded-none border-0 bg-transparent px-3 text-base leading-none shadow-none outline-none transition-none duration-0 hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=inactive]:bg-transparent"
                     >
                       <span
                         ref={registerFeedTabLabelRef(tab.value)}

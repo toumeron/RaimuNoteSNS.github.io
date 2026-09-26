@@ -5,6 +5,11 @@ import { supabase } from '@/lib/supabase';
 import { getCurrentUserId } from '@/lib/currentUser';
 import { useQueryClient } from '@tanstack/react-query';
 import { useIsPWA } from '@/hooks/useIsPWA';
+import {
+  fetchBlueskyPostViewerState,
+  likeBlueskyPost,
+  unlikeBlueskyPost,
+} from '@/lib/bluesky';
 
 const formatDisplayCount = (count: number = 0) => {
   const n = Number(count) || 0; // 確実に数値に変換
@@ -261,18 +266,32 @@ const ensureTwitterLikeStyles = () => {
   document.head.appendChild(style);
 };
 
+// Bluesky投稿のいいねを扱う際に渡す情報。
+// postUri は at://did/app.bsky.feed.post/rkey 形式。
+// これが渡された場合、このボタンは Supabase の likes テーブルではなく
+// 自分のBlueskyアカウント(ログイン中のセッション)経由で
+// app.bsky.feed.like レコードの作成/削除を行う。
+// 呼び出し側は、自分のBlueskyアカウントでログインしている場合のみ
+// この prop を渡すこと(未ログイン時にこのボタンを使うとAPI呼び出しが
+// 常に失敗しトースト等も出ないため、UI自体を出し分けるのは呼び出し側の責務)。
+export interface LikeButtonBlueskyTarget {
+  postUri: string;
+}
+
 export function LikeButton({
   postId,
   liked,
   count,
   size = 'md',
   type = 'post',
+  bluesky,
 }: {
   postId: string;
   liked: boolean;
   count: number;
   size?: 'sm' | 'md';
   type?: 'post' | 'comment';
+  bluesky?: LikeButtonBlueskyTarget;
 }) {
   const queryClient = useQueryClient();
 
@@ -295,6 +314,12 @@ export function LikeButton({
   const broadcastChannelRef = useRef<any>(null);
   const hasLocalStateRef = useRef(false);
   const lastLocalActionAtRef = useRef(0);
+
+  // Bluesky投稿用: 現在の app.bsky.feed.like レコードのuriと、
+  // いいね作成に必要な対象投稿のcidをここに保持する。
+  const blueskyLikeUriRef = useRef<string | null>(null);
+  const blueskyCidRef = useRef<string | null>(null);
+  const isBluesky = Boolean(bluesky);
 
   // 最新の状態を常に保持するためのRef
   const stateRef = useRef({ liked, count: Number(count) || 0 });
@@ -324,7 +349,10 @@ export function LikeButton({
   }, []);
 
   // props の liked が false のまま来るケースに備えて、表示初期化時だけDB上の実状態を反映する。
+  // (Lime内部投稿のみ。Bluesky投稿は別のeffectで初期状態を取得する)
   useEffect(() => {
+    if (isBluesky) return;
+
     let cancelled = false;
 
     const syncInitialLiked = async () => {
@@ -356,7 +384,33 @@ export function LikeButton({
     return () => {
       cancelled = true;
     };
-  }, [postId, type]);
+  }, [postId, type, isBluesky]);
+
+  // Bluesky投稿用: 自分のBlueskyアカウントとして現在のいいね状態(と、
+  // いいね作成に必要なcid)を取得する。
+  useEffect(() => {
+    if (!bluesky) return;
+
+    let cancelled = false;
+
+    fetchBlueskyPostViewerState(bluesky.postUri).then((state) => {
+      if (cancelled) return;
+
+      blueskyLikeUriRef.current = state.likeUri;
+      blueskyCidRef.current = state.cid;
+
+      if (!hasLocalStateRef.current) {
+        const currentLiked = Boolean(state.likeUri);
+        setDisplayLiked(currentLiked);
+        stateRef.current.liked = currentLiked;
+        hasLocalStateRef.current = true;
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bluesky?.postUri]);
 
   const animateCount = useCallback((fromCount: number, toCount: number) => {
     if (countTimerRef.current !== null) {
@@ -385,6 +439,9 @@ export function LikeButton({
       lastTargetRef.current = { postId, type };
       hasLocalStateRef.current = false;
       lastLocalActionAtRef.current = 0;
+      // 投稿が切り替わったら、前の投稿のBlueskyいいねレコード情報を持ち越さない
+      blueskyLikeUriRef.current = null;
+      blueskyCidRef.current = null;
     }
 
     if (targetChanged || !hasLocalStateRef.current) {
@@ -434,7 +491,11 @@ export function LikeButton({
     return latestCount;
   }, [applyLatestCount, postId, type]);
 
+  // リアルタイム反映(Supabase Realtime)。Bluesky投稿はLimeのテーブルに
+  // 行が存在しないため、この購読自体を行わない。
   useEffect(() => {
+    if (isBluesky) return;
+
     const config = TABLE_CONFIG[type];
     const channelSuffix = `${type}-${postId}-${channelIdRef.current}`;
     const broadcastChannel = supabase
@@ -500,7 +561,55 @@ export function LikeButton({
       void supabase.removeChannel(likeRowsChannel);
       void supabase.removeChannel(countColumnChannel);
     };
-  }, [applyLatestCount, postId, syncLatestCount, type]);
+  }, [applyLatestCount, postId, syncLatestCount, type, isBluesky]);
+
+  const handleBlueskyLikeToggle = useCallback(async (willBeLiked: boolean, wasLiked: boolean, wasCount: number, nextCount: number) => {
+    if (!bluesky) return;
+
+    try {
+      if (willBeLiked) {
+        let cid = blueskyCidRef.current;
+        let existingLikeUri = blueskyLikeUriRef.current;
+
+        if (!cid) {
+          // cidが未取得の場合は直前にもう一度確認する(取得タイミングのズレ対策)
+          const state = await fetchBlueskyPostViewerState(bluesky.postUri);
+          cid = state.cid;
+          existingLikeUri = state.likeUri;
+          blueskyCidRef.current = state.cid;
+          blueskyLikeUriRef.current = state.likeUri;
+        }
+
+        if (existingLikeUri) {
+          // 取得しなおした結果、既にいいね済みだったと分かった場合はそちらに合わせる
+          return;
+        }
+
+        if (!cid) {
+          throw new Error('投稿のcidを取得できませんでした');
+        }
+
+        const uri = await likeBlueskyPost(bluesky.postUri, cid);
+        blueskyLikeUriRef.current = uri;
+      } else {
+        const likeUri = blueskyLikeUriRef.current;
+        if (!likeUri) {
+          // 解除対象のレコードが分からない場合は何もしない(既に解除済み扱い)
+          return;
+        }
+
+        await unlikeBlueskyPost(likeUri);
+        blueskyLikeUriRef.current = null;
+      }
+    } catch (err) {
+      console.error('Bluesky Like action failed:', err);
+      stateRef.current.liked = wasLiked;
+      stateRef.current.count = wasCount;
+      setDisplayLiked(wasLiked);
+      animateCount(nextCount, wasCount);
+      setIsAnimating(false);
+    }
+  }, [animateCount, bluesky]);
 
   const handleClick = useCallback(async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.preventDefault();
@@ -530,6 +639,11 @@ export function LikeButton({
         setIsAnimating(false);
         animationTimerRef.current = null;
       }, 1050);
+    }
+
+    if (bluesky) {
+      await handleBlueskyLikeToggle(willBeLiked, wasLiked, wasCount, nextCount);
+      return;
     }
 
     const userId = await getCurrentUserId();
@@ -588,7 +702,7 @@ export function LikeButton({
       animateCount(nextCount, wasCount);
       setIsAnimating(false);
     }
-  }, [animateCount, postId, queryClient, syncLatestCount, type]);
+  }, [animateCount, bluesky, handleBlueskyLikeToggle, postId, queryClient, syncLatestCount, type]);
 
   return (
     <button

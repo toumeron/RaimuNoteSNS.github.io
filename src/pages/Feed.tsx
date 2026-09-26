@@ -12,6 +12,7 @@ import { getPostById } from '@/api/posts';
 import type { PostWithAuthor } from '@/types';
 import {
   fetchBlueskyAuthorFeed,
+  fetchTrendingJapaneseBlueskyPosts,
   getConfiguredBlueskyHandles,
   mergePostsByCreatedAt,
 } from '@/lib/bluesky';
@@ -63,7 +64,9 @@ type TimelineVisualDesignCache = {
   themeSourceUrl: string | null;
 };
 
-type FeedTab = 'all' | 'following';
+// 最新/フォロー中に加えて、Blueskyの日本語トレンド投稿(いいね500以上)を
+// ランダムに表示する「トレンド」タブを追加。
+type FeedTab = 'all' | 'following' | 'trending';
 type FeedPostInsertPayload = {
   id?: string;
   parent_id?: string | null;
@@ -80,15 +83,18 @@ const MIN_VIRTUALIZED_POSTS = 12;
 // (1回10件)より遥かに速く積み上がり、スクロールするほどBluesky投稿ばかりが
 // 表示されてしまう(日付順マージの結果、Lime投稿がまだ残っていても埋もれてしまう)。
 const BLUESKY_LEAD_LIMIT = 20;
+// トレンドタブで1回に取得する件数の目安。
+const TRENDING_PAGE_LIMIT = 30;
 
-// 最新/フォロー中の選択状態はヘッダー側に移設したため、Feed側はこのキーと
+// 最新/フォロー中/トレンドの選択状態はヘッダー側に移設したため、Feed側はこのキーと
 // カスタムイベント('lime-active-feed-tab-changed')経由で状態を受け取るだけにする。
 // (Headerコンポーネント側の実装と対になっている)
 const ACTIVE_FEED_TAB_STORAGE_KEY = 'lime_active_feed_tab';
 
 function readStoredActiveFeedTab(): FeedTab {
   if (typeof window === 'undefined') return 'all';
-  return localStorage.getItem(ACTIVE_FEED_TAB_STORAGE_KEY) === 'following' ? 'following' : 'all';
+  const stored = localStorage.getItem(ACTIVE_FEED_TAB_STORAGE_KEY);
+  return stored === 'following' ? 'following' : stored === 'trending' ? 'trending' : 'all';
 }
 
 const insertPostAtLocalFeedHead = (current: PostWithAuthor[], post: PostWithAuthor) => {
@@ -211,6 +217,7 @@ export default function Feed() {
   const [realtimePostsByTab, setRealtimePostsByTab] = useState<Record<FeedTab, PostWithAuthor[]>>({
     all: [],
     following: [],
+    trending: [],
   });
   const [blueskyPosts, setBlueskyPosts] = useState<PostWithAuthor[]>([]);
   const [blueskyLoading, setBlueskyLoading] = useState(false);
@@ -220,14 +227,23 @@ export default function Feed() {
   const blueskyCursorByHandleRef = useRef<Record<string, string | null>>({});
   const blueskyHasMoreByHandleRef = useRef<Record<string, boolean>>({});
 
-  const { 
-    data, 
-    isLoading, 
-    isError, 
-    fetchNextPage, 
-    hasNextPage, 
-    isFetchingNextPage 
-  } = useFeed(activeTab);
+  // --- トレンドタブ(Bluesky・日本語・いいね500以上・ランダム表示)用の状態 ---
+  const [trendingPosts, setTrendingPosts] = useState<PostWithAuthor[]>([]);
+  const [trendingLoading, setTrendingLoading] = useState(false);
+  const [trendingHasMore, setTrendingHasMore] = useState(true);
+  const trendingLoadingRef = useRef(false);
+  const trendingRequestIdRef = useRef(0);
+  const trendingCursorRef = useRef<string | null>(null);
+  const trendingHasMoreRef = useRef(true);
+
+  const {
+    data,
+    isLoading,
+    isError,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage
+  } = useFeed(activeTab === 'following' ? 'following' : 'all');
 
   const { ref, inView } = useInView({
     rootMargin: '300px 0px 500px 0px',
@@ -235,7 +251,10 @@ export default function Feed() {
 
   const fetchedPosts = useMemo(() => data?.pages.flatMap((page) => page) ?? [], [data]);
   const limePosts = useMemo(
-    () => mergeRealtimePostsWithFetchedPosts(realtimePostsByTab[activeTab], fetchedPosts),
+    () => mergeRealtimePostsWithFetchedPosts(
+      realtimePostsByTab[activeTab === 'trending' ? 'all' : activeTab],
+      fetchedPosts
+    ),
     [activeTab, fetchedPosts, realtimePostsByTab]
   );
 
@@ -255,10 +274,13 @@ export default function Feed() {
     return blueskyPosts.slice(0, cap);
   }, [blueskyPosts, limePosts.length, hasNextPage]);
 
-  const allPosts = useMemo(
-    () => mergePostsByCreatedAt(limePosts, visibleBlueskyPosts),
-    [limePosts, visibleBlueskyPosts]
-  );
+  // トレンドタブのときはLime投稿・時系列Bluesky投稿と混ぜず、
+  // トレンド専用に取得したランダム順の投稿だけをそのまま表示する
+  // (createdAt順に並び替えてしまうと「ランダム表示」の意図が崩れるため)。
+  const allPosts = useMemo(() => {
+    if (activeTab === 'trending') return trendingPosts;
+    return mergePostsByCreatedAt(limePosts, visibleBlueskyPosts);
+  }, [activeTab, limePosts, visibleBlueskyPosts, trendingPosts]);
 
   const normalizeBlueskyPostForFeed = useCallback(
     (post: Awaited<ReturnType<typeof fetchBlueskyAuthorFeed>>['posts'][number]): PostWithAuthor => ({
@@ -381,6 +403,72 @@ export default function Feed() {
     }
   }, [normalizeBlueskyPostForFeed]);
 
+  // トレンドタブ用: Bluesky検索(日本語・いいね500以上)からランダムな投稿を取得する。
+  // reset=true で1ページ目からやり直し(タブ初回表示・引っ張って更新時)、
+  // reset=false で「もっと読み込む」として続きを取得する。
+  const loadTrendingPosts = useCallback(async (reset = false) => {
+    if (trendingLoadingRef.current) return;
+    if (!reset && !trendingHasMoreRef.current) return;
+
+    const requestId = ++trendingRequestIdRef.current;
+    trendingLoadingRef.current = true;
+    setTrendingLoading(true);
+
+    if (reset) {
+      trendingCursorRef.current = null;
+      trendingHasMoreRef.current = true;
+      setTrendingHasMore(true);
+    }
+
+    try {
+      const page = await fetchTrendingJapaneseBlueskyPosts({
+        cursor: reset ? null : trendingCursorRef.current,
+        limit: TRENDING_PAGE_LIMIT,
+      });
+
+      if (requestId !== trendingRequestIdRef.current) return;
+
+      trendingCursorRef.current = page.cursor;
+      trendingHasMoreRef.current = Boolean(page.cursor) && page.posts.length > 0;
+      setTrendingHasMore(trendingHasMoreRef.current);
+
+      const normalized = page.posts.map(normalizeBlueskyPostForFeed);
+
+      setTrendingPosts((current) => {
+        const base = reset ? [] : current;
+        const seen = new Set(base.map((post) => post.id));
+        const merged = [...base];
+
+        normalized.forEach((post) => {
+          if (seen.has(post.id)) return;
+          seen.add(post.id);
+          merged.push(post);
+        });
+
+        return merged;
+      });
+    } catch (error) {
+      console.error('Fetch trending Bluesky posts failed:', error);
+      if (reset && requestId === trendingRequestIdRef.current) {
+        setTrendingPosts([]);
+        trendingHasMoreRef.current = false;
+        setTrendingHasMore(false);
+      }
+    } finally {
+      if (requestId === trendingRequestIdRef.current) {
+        trendingLoadingRef.current = false;
+        setTrendingLoading(false);
+      }
+    }
+  }, [normalizeBlueskyPostForFeed]);
+
+  // トレンドタブへ切り替えた最初のタイミングで1回だけ読み込む。
+  useEffect(() => {
+    if (activeTab === 'trending' && trendingPosts.length === 0 && !trendingLoadingRef.current) {
+      void loadTrendingPosts(true);
+    }
+  }, [activeTab, trendingPosts.length, loadTrendingPosts]);
+
   useEffect(() => {
     const reloadConfiguredBlueskyHandles = () => {
       const nextHandles = getConfiguredBlueskyHandles();
@@ -449,7 +537,7 @@ export default function Feed() {
     };
   }, []);
 
-  const addPostToTab = useCallback((targetTab: FeedTab, post: PostWithAuthor) => {
+  const addPostToTab = useCallback((targetTab: 'all' | 'following', post: PostWithAuthor) => {
     setRealtimePostsByTab((current) => ({
       ...current,
       [targetTab]: insertPostAtLocalFeedHead(current[targetTab], post),
@@ -894,10 +982,14 @@ export default function Feed() {
       setPullDistance(58);
 
       try {
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: ['posts'] }),
-          loadBlueskyPosts(true),
-        ]);
+        if (activeTab === 'trending') {
+          await loadTrendingPosts(true);
+        } else {
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: ['posts'] }),
+            loadBlueskyPosts(true),
+          ]);
+        }
       } finally {
         setIsRefreshing(false);
         setShowRefreshDone(true);
@@ -936,7 +1028,7 @@ export default function Feed() {
       window.removeEventListener('touchend', handleTouchEnd);
       window.removeEventListener('touchcancel', handleTouchCancel);
     };
-  }, [isPWAMobile, isRefreshing, queryClient, loadBlueskyPosts]);
+  }, [isPWAMobile, isRefreshing, queryClient, loadBlueskyPosts, activeTab, loadTrendingPosts]);
 
   useEffect(() => {
     let cancelled = false;
@@ -964,6 +1056,15 @@ export default function Feed() {
   }, [showIncomingPostInAllVisibleFeeds]);
 
   useEffect(() => {
+    // トレンドタブでは、Lime本体のフィードやアカウント別Bluesky取得(loadBlueskyPosts)
+    // は使わず、代わりにトレンド専用のページング(loadTrendingPosts)だけを進める。
+    if (activeTab === 'trending') {
+      if (inView && trendingHasMore && !trendingLoading) {
+        void loadTrendingPosts(false);
+      }
+      return;
+    }
+
     if (inView && hasNextPage && !isFetchingNextPage) {
       fetchNextPage();
     }
@@ -986,6 +1087,7 @@ export default function Feed() {
       void loadBlueskyPosts(false);
     }
   }, [
+    activeTab,
     inView,
     hasNextPage,
     isFetchingNextPage,
@@ -995,6 +1097,9 @@ export default function Feed() {
     loadBlueskyPosts,
     blueskyPosts.length,
     limePosts.length,
+    trendingHasMore,
+    trendingLoading,
+    loadTrendingPosts,
   ]);
 
   useEffect(() => {
@@ -1044,33 +1149,19 @@ export default function Feed() {
     };
   }, []);
 
-  const restoreScrollPositionAfterControlInteraction = useCallback((scrollY: number) => {
-    const restore = () => {
-      if (Math.abs(window.scrollY - scrollY) > 1) {
-        document.documentElement.scrollTop = scrollY;
-        document.body.scrollTop = scrollY;
-      }
-
-    };
-
-    window.requestAnimationFrame(restore);
-    window.setTimeout(restore, 0);
-    window.setTimeout(restore, 80);
-  }, []);
-
-  // 最新/フォロー中の切り替えUIはヘッダー(Header.tsx)に移設した。
+  // 最新/フォロー中/トレンドの切り替えUIはヘッダー(Header.tsx)に移設した。
   // Header側でタブがクリックされると 'lime-active-feed-tab-changed' が
   // dispatchされるので、ここではそれを受け取ってactiveTabを更新するだけにする。
-  // タブ切り替え時にスクロール位置がガクッと動かないよう、従来の
-  // handleTabChangeと同じくスクロール位置の復元も行う。
+  // タブを切り替えたときは、そのタブの投稿を最初から見せるためページ最上部へ
+  // スクロールする(切り替え前のスクロール位置は維持しない)。
   useEffect(() => {
     const handleActiveFeedTabChanged = (event: Event) => {
       const detail = (event as CustomEvent<{ tab?: string }>).detail;
-      const nextTab: FeedTab = detail?.tab === 'following' ? 'following' : 'all';
-      const previousScrollY = window.scrollY;
+      const nextTab: FeedTab =
+        detail?.tab === 'following' ? 'following' : detail?.tab === 'trending' ? 'trending' : 'all';
 
       setActiveTab(nextTab);
-      restoreScrollPositionAfterControlInteraction(previousScrollY);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
     const handleStorage = (event: StorageEvent) => {
@@ -1085,7 +1176,7 @@ export default function Feed() {
       window.removeEventListener('lime-active-feed-tab-changed', handleActiveFeedTabChanged as EventListener);
       window.removeEventListener('storage', handleStorage);
     };
-  }, [restoreScrollPositionAfterControlInteraction]);
+  }, []);
 
   // ============================================================================
   // --- 仮想化（virtualization）用の実測高さキャッシュ ---
@@ -1257,6 +1348,27 @@ export default function Feed() {
     )),
     [activeTab, allPosts, hasTimelineBackground, virtualRange.end, virtualRange.start, registerPostElement]
   );
+
+  // 初回ローディング表示(スケルトン)を出すかどうかは、タブごとに参照する
+  // データソースが違うため個別に判定する。
+  const isInitialLoading = activeTab === 'trending'
+    ? trendingLoading && allPosts.length === 0
+    : isLoading && allPosts.length === 0;
+
+  const isBusyLoadingMore = activeTab === 'trending'
+    ? trendingLoading
+    : isFetchingNextPage || blueskyLoading;
+
+  const hasMoreToLoad = activeTab === 'trending'
+    ? trendingHasMore
+    : (hasNextPage || blueskyHasMore);
+
+  const emptyStateMessage =
+    activeTab === 'all'
+      ? 'まだ投稿がありません'
+      : activeTab === 'following'
+        ? 'フォロー中の投稿はありません'
+        : 'トレンドの投稿がまだありません';
 
   return (
     <div
@@ -1480,22 +1592,22 @@ export default function Feed() {
         ref={postListRef}
         className={hasTimelineBackground ? "relative z-[1] space-y-0 pt-2 sm:space-y-4" : "relative z-[1] space-y-4 pt-2"}
       >
-        {isLoading && allPosts.length === 0 && (
+        {isInitialLoading && (
           <div className="space-y-4">
             <PostCardSkeleton />
             <PostCardSkeleton />
           </div>
         )}
 
-        {isError && allPosts.length === 0 && (
+        {isError && activeTab !== 'trending' && allPosts.length === 0 && (
           <div className="rounded-3xl border border-destructive/20 bg-destructive/5 p-6 text-center">
             <p className="text-sm text-destructive font-bold">読み込みに失敗しました。</p>
           </div>
         )}
 
-        {!isLoading && !blueskyLoading && allPosts.length === 0 && (
+        {!isInitialLoading && !isBusyLoadingMore && allPosts.length === 0 && (
           <div className="rounded-3xl border border-dashed border-border/50 bg-card/40 p-10 text-center text-muted-foreground">
-            {activeTab === 'all' ? 'まだ投稿がありません' : 'フォロー中の投稿はありません'}
+            {emptyStateMessage}
           </div>
         )}
 
@@ -1510,12 +1622,12 @@ export default function Feed() {
         )}
 
         <div ref={ref} className="py-10 flex justify-center">
-          {isFetchingNextPage || blueskyLoading ? (
+          {isBusyLoadingMore ? (
             <div className="flex items-center gap-2 text-muted-foreground animate-pulse">
               <Loader2 className="h-5 w-5 animate-spin" />
               <span className="text-sm font-medium">読み込み中...</span>
             </div>
-          ) : hasNextPage || blueskyHasMore ? (
+          ) : hasMoreToLoad ? (
             <div className="h-10" />
           ) : allPosts.length > 0 ? (
             <p className="text-xs text-muted-foreground/60">すべての投稿を読み込みました</p>

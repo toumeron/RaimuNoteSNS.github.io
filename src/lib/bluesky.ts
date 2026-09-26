@@ -6,6 +6,21 @@ export const BSKY_PUBLIC_API = 'https://public.api.bsky.app/xrpc';
 const BSKY_SEARCH_API = 'https://api.bsky.app/xrpc';
 export const BSKY_HANDLES_STORAGE_KEY = 'lime_bluesky_author_handles';
 
+// 自分のBlueskyアカウントでログイン(アプリパスワード認証)した際のセッション情報。
+// ログイン/セッション更新/ログアウトは公式PDSエンドポイント(bsky.social)に対して行う。
+export const BSKY_SESSION_STORAGE_KEY = 'lime_bluesky_session';
+const BSKY_PDS_API = 'https://bsky.social/xrpc';
+
+// 「トレンド」タブ用の設定。
+// Blueskyの検索APIには「日本語×いいね数上位から無作為抽出する」専用APIが
+// 存在しないため、複数の頻出語(助詞など、日本語の文章であればほぼ必ず
+// 含まれる語)で app.bsky.feed.searchPosts (sort=top, lang=ja) を検索し、
+// その結果を合算した上でいいね数によるフィルタとシャッフルをかけることで
+// 疑似的な「トレンド・ランダム表示」を実現する。
+const TRENDING_SEED_QUERIES = ['の', 'は', 'た', 'です'] as const;
+const TRENDING_MIN_LIKES = 100;
+const TRENDING_MAX_AGE_DAYS = 5;
+
 export function normalizeBlueskyHandle(value: string): string {
   const trimmed = value.trim();
   const profileMatch = trimmed.match(/^https?:\/\/(?:www\.)?bsky\.app\/profile\/([^/?#]+)/i);
@@ -57,6 +72,391 @@ export function saveConfiguredBlueskyHandles(handles: string[]): string[] {
   return normalized;
 }
 
+// ------------------------------------------------------------------
+// 自分のBlueskyアカウントでのログイン(アプリパスワード認証)
+// ------------------------------------------------------------------
+
+export interface BlueskySession {
+  did: string;
+  handle: string;
+  email?: string;
+  accessJwt: string;
+  refreshJwt: string;
+}
+
+export function getStoredBlueskySession(): BlueskySession | null {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const stored = window.localStorage.getItem(BSKY_SESSION_STORAGE_KEY);
+    if (!stored) return null;
+
+    const parsed = JSON.parse(stored) as Partial<BlueskySession>;
+    if (!parsed.did || !parsed.handle || !parsed.accessJwt || !parsed.refreshJwt) return null;
+
+    return parsed as BlueskySession;
+  } catch (error) {
+    console.warn('Read Bluesky session from localStorage failed:', error);
+    return null;
+  }
+}
+
+function saveBlueskySession(session: BlueskySession | null) {
+  if (typeof window === 'undefined') return;
+
+  if (session) {
+    window.localStorage.setItem(BSKY_SESSION_STORAGE_KEY, JSON.stringify(session));
+  } else {
+    window.localStorage.removeItem(BSKY_SESSION_STORAGE_KEY);
+  }
+
+  window.dispatchEvent(
+    new CustomEvent('lime-bluesky-session-changed', {
+      detail: { session },
+    })
+  );
+}
+
+/**
+ * 自分のBlueskyアカウントでログインする。
+ * 通常のアカウントパスワードではなく、Bluesky側で発行する「アプリパスワード」を使う想定。
+ * (https://bsky.app/settings/app-passwords)
+ */
+export async function loginToBluesky(identifierRaw: string, appPassword: string): Promise<BlueskySession> {
+  const identifier = normalizeBlueskyHandle(identifierRaw) || identifierRaw.trim();
+  if (!identifier || !appPassword.trim()) {
+    throw new Error('ユーザー名とアプリパスワードを入力してください');
+  }
+
+  const response = await fetch(`${BSKY_PDS_API}/com.atproto.server.createSession`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ identifier, password: appPassword.trim() }),
+  });
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error('ユーザー名またはアプリパスワードが正しくありません');
+    }
+    throw new Error(`Blueskyログインに失敗しました (${response.status})`);
+  }
+
+  const data = (await response.json()) as {
+    did: string;
+    handle: string;
+    email?: string;
+    accessJwt: string;
+    refreshJwt: string;
+  };
+
+  const session: BlueskySession = {
+    did: data.did,
+    handle: data.handle,
+    email: data.email,
+    accessJwt: data.accessJwt,
+    refreshJwt: data.refreshJwt,
+  };
+
+  saveBlueskySession(session);
+  return session;
+}
+
+/**
+ * accessJwtが失効した場合にrefreshJwtでセッションを更新する。
+ * refreshJwt自体が失効している場合はローカルのセッションを削除してnullを返す(=ログアウト扱い)。
+ */
+export async function refreshBlueskySession(): Promise<BlueskySession | null> {
+  const current = getStoredBlueskySession();
+  if (!current) return null;
+
+  try {
+    const response = await fetch(`${BSKY_PDS_API}/com.atproto.server.refreshSession`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${current.refreshJwt}` },
+    });
+
+    if (!response.ok) {
+      saveBlueskySession(null);
+      return null;
+    }
+
+    const data = (await response.json()) as {
+      did: string;
+      handle: string;
+      accessJwt: string;
+      refreshJwt: string;
+    };
+
+    const session: BlueskySession = {
+      ...current,
+      did: data.did,
+      handle: data.handle,
+      accessJwt: data.accessJwt,
+      refreshJwt: data.refreshJwt,
+    };
+
+    saveBlueskySession(session);
+    return session;
+  } catch (error) {
+    console.error('Bluesky session refresh failed:', error);
+    return null;
+  }
+}
+
+export async function logoutFromBluesky(): Promise<void> {
+  const current = getStoredBlueskySession();
+  saveBlueskySession(null);
+
+  if (!current) return;
+
+  try {
+    await fetch(`${BSKY_PDS_API}/com.atproto.server.deleteSession`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${current.refreshJwt}` },
+    });
+  } catch (error) {
+    // サーバー側の失効通知に失敗しても、ローカルのセッションは既に削除済みなので無視する
+    console.warn('Bluesky deleteSession failed:', error);
+  }
+}
+
+/**
+ * ログイン中のBlueskyアカウントとして認証付きAPIを呼び出すための共通ヘルパー。
+ * いいね・リポスト・フォローなど、ログインが必要な機能を今後実装する際に使う想定。
+ * accessJwtが失効している場合は1回だけrefreshSessionを試みてから再実行する。
+ */
+export async function authorizedBlueskyFetch(
+  endpoint: string,
+  init: RequestInit = {}
+): Promise<Response> {
+  const session = getStoredBlueskySession();
+  if (!session) {
+    throw new Error('Blueskyにログインしていません');
+  }
+
+  const call = (accessJwt: string) =>
+    fetch(`${BSKY_PDS_API}/${endpoint}`, {
+      ...init,
+      headers: {
+        ...(init.headers || {}),
+        Authorization: `Bearer ${accessJwt}`,
+      },
+    });
+
+  let response = await call(session.accessJwt);
+  if (response.status === 401) {
+    const refreshed = await refreshBlueskySession();
+    if (!refreshed) throw new Error('Blueskyのセッションが失効しました。再度ログインしてください');
+    response = await call(refreshed.accessJwt);
+  }
+
+  return response;
+}
+
+// ------------------------------------------------------------------
+// いいね / フォロー（ログイン中の自分のBlueskyアカウントとして実行）
+// ------------------------------------------------------------------
+//
+// AT Protocolでは「いいね」「フォロー」はそれぞれ
+// app.bsky.feed.like / app.bsky.graph.follow というレコードを
+// 自分のリポジトリ(PDS)に作成すること、そのレコードを削除することで
+// 表現される。REST的な「like/unlikeエンドポイント」は存在しない。
+//
+// - いいねの作成には対象投稿の uri と cid の両方が必要（cidはレコード内容の
+//   ハッシュで、投稿本文の改変検知に使われる）。
+// - フォローの作成には対象アカウントの did のみで良い。
+// - 解除(削除)は、作成時に返ってきたレコード自身の uri (= at://did/collection/rkey)
+//   の rkey 部分を使って com.atproto.repo.deleteRecord を呼ぶ。
+// - 「自分は既にいいね/フォロー済みか」は、公開の getPostThread / getProfile を
+//   認証付きで呼んだ際に返る viewer.like / viewer.following (レコードのuri)で判定する。
+
+export type BlueskyPostViewerState = {
+  likeUri: string | null;
+  cid: string | null;
+};
+
+export type BlueskyActorViewerState = {
+  followUri: string | null;
+};
+
+/**
+ * 投稿に対する自分の「いいね」状態(と cid)を取得する。
+ * ログインしていない場合は常に未いいね扱いを返す。
+ */
+export async function fetchBlueskyPostViewerState(
+  uri: string,
+  signal?: AbortSignal
+): Promise<BlueskyPostViewerState> {
+  const session = getStoredBlueskySession();
+  if (!session) return { likeUri: null, cid: null };
+
+  try {
+    const params = new URLSearchParams({ uri, depth: '0' });
+    const response = await authorizedBlueskyFetch(
+      `app.bsky.feed.getPostThread?${params.toString()}`,
+      { method: 'GET', signal }
+    );
+
+    if (!response.ok) return { likeUri: null, cid: null };
+
+    const payload = (await response.json()) as {
+      thread?: { post?: { cid?: string; viewer?: { like?: string } } };
+    };
+
+    return {
+      likeUri: payload.thread?.post?.viewer?.like ?? null,
+      cid: payload.thread?.post?.cid ?? null,
+    };
+  } catch (error) {
+    console.error('Fetch Bluesky post viewer state failed:', error);
+    return { likeUri: null, cid: null };
+  }
+}
+
+/**
+ * 特定のBlueskyアカウントに対する自分の「フォロー」状態を取得する。
+ * ログインしていない場合は常に未フォロー扱いを返す。
+ */
+export async function fetchBlueskyActorViewerState(
+  did: string,
+  signal?: AbortSignal
+): Promise<BlueskyActorViewerState> {
+  const session = getStoredBlueskySession();
+  if (!session) return { followUri: null };
+
+  try {
+    const params = new URLSearchParams({ actor: did });
+    const response = await authorizedBlueskyFetch(
+      `app.bsky.actor.getProfile?${params.toString()}`,
+      { method: 'GET', signal }
+    );
+
+    if (!response.ok) return { followUri: null };
+
+    const payload = (await response.json()) as { viewer?: { following?: string } };
+    return { followUri: payload.viewer?.following ?? null };
+  } catch (error) {
+    console.error('Fetch Bluesky actor viewer state failed:', error);
+    return { followUri: null };
+  }
+}
+
+/**
+ * 投稿にいいねする。成功時は作成された app.bsky.feed.like レコードのuriを返す。
+ * cidが分からない場合は事前に fetchBlueskyPostViewerState で取得しておくこと。
+ */
+export async function likeBlueskyPost(uri: string, cid: string): Promise<string> {
+  const session = getStoredBlueskySession();
+  if (!session) throw new Error('Blueskyにログインしていません');
+  if (!uri) throw new Error('投稿のuriが取得できませんでした');
+  if (!cid) throw new Error('投稿のcidが取得できませんでした');
+
+  const response = await authorizedBlueskyFetch('com.atproto.repo.createRecord', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      repo: session.did,
+      collection: 'app.bsky.feed.like',
+      record: {
+        $type: 'app.bsky.feed.like',
+        subject: { uri, cid },
+        createdAt: new Date().toISOString(),
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`いいねに失敗しました (${response.status})`);
+  }
+
+  const data = (await response.json()) as { uri: string };
+  return data.uri;
+}
+
+/**
+ * いいねを解除する。likeUriは likeBlueskyPost または
+ * fetchBlueskyPostViewerState で取得した app.bsky.feed.like レコードのuri
+ * (at://did/app.bsky.feed.like/rkey 形式)。
+ */
+export async function unlikeBlueskyPost(likeUri: string): Promise<void> {
+  const session = getStoredBlueskySession();
+  if (!session) throw new Error('Blueskyにログインしていません');
+
+  const rkey = likeUri.split('/').pop();
+  if (!rkey) throw new Error('無効ないいねレコードです');
+
+  const response = await authorizedBlueskyFetch('com.atproto.repo.deleteRecord', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      repo: session.did,
+      collection: 'app.bsky.feed.like',
+      rkey,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`いいね解除に失敗しました (${response.status})`);
+  }
+}
+
+/**
+ * 指定したdidのBlueskyアカウントをフォローする。
+ * 成功時は作成された app.bsky.graph.follow レコードのuriを返す。
+ */
+export async function followBlueskyUser(did: string): Promise<string> {
+  const session = getStoredBlueskySession();
+  if (!session) throw new Error('Blueskyにログインしていません');
+  if (!did) throw new Error('フォロー対象のDIDが不明です');
+
+  const response = await authorizedBlueskyFetch('com.atproto.repo.createRecord', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      repo: session.did,
+      collection: 'app.bsky.graph.follow',
+      record: {
+        $type: 'app.bsky.graph.follow',
+        subject: did,
+        createdAt: new Date().toISOString(),
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`フォローに失敗しました (${response.status})`);
+  }
+
+  const data = (await response.json()) as { uri: string };
+  return data.uri;
+}
+
+/**
+ * フォローを解除する。followUriは followBlueskyUser または
+ * fetchBlueskyActorViewerState で取得した app.bsky.graph.follow レコードのuri。
+ */
+export async function unfollowBlueskyUser(followUri: string): Promise<void> {
+  const session = getStoredBlueskySession();
+  if (!session) throw new Error('Blueskyにログインしていません');
+
+  const rkey = followUri.split('/').pop();
+  if (!rkey) throw new Error('無効なフォローレコードです');
+
+  const response = await authorizedBlueskyFetch('com.atproto.repo.deleteRecord', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      repo: session.did,
+      collection: 'app.bsky.graph.follow',
+      rkey,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`フォロー解除に失敗しました (${response.status})`);
+  }
+}
+
 export type BlueskyMappedPost = {
   id: string;
   userId: string;
@@ -69,6 +469,9 @@ export type BlueskyMappedPost = {
   commentsCount: number;
   isBot: boolean;
   is_bot?: boolean;
+  // いいねレコード作成(app.bsky.feed.like)に必須のフィールド。
+  // getPostThread等から取得できない場合は空文字になる。
+  cid: string;
   author: {
     id: string;
     username: string;
@@ -219,7 +622,7 @@ async function fetchBlueskySearchEndpoint(
         if (signal?.aborted) throw error;
       }
     }
-    if (attempt === 0 && lastResponse && (lastResponse.status === 403 || lastResponse.status === 429 || lastResponse.status >= 500)) {
+    if (attempt === 0 && lastResponse && (lastResponse.status === 403 || lastResponse.status === 429 || lastResponse.status >= 100)) {
       await new Promise<void>((resolve) => setTimeout(resolve, 300));
     } else {
       break;
@@ -388,6 +791,7 @@ export function mapBlueskyFeedItemToPost(item: BlueskyFeedItem): BlueskyMappedPo
     likesCount: post.likeCount ?? 0,
     commentsCount: post.replyCount ?? 0,
     isBot: false,
+    cid: post.cid || '',
     author: {
       id: post.author.did,
       username: post.author.handle,
@@ -405,7 +809,7 @@ export function mapBlueskyFeedItemToPost(item: BlueskyFeedItem): BlueskyMappedPo
   };
 }
 
-const getBlueskyUriFromPostId = (postId: string) => {
+export const getBlueskyUriFromPostId = (postId: string) => {
   const decodedId = (() => {
     try {
       return decodeURIComponent(postId);
@@ -649,6 +1053,133 @@ export async function fetchBlueskyAuthorFeed(options?: {
   return {
     posts,
     cursor: payload.cursor || null,
+  };
+}
+
+// ------------------------------------------------------------------
+// トレンド(日本語×いいね数500以上×ランダム表示)
+// ------------------------------------------------------------------
+
+// 複数クエリそれぞれの検索カーソルを1つの文字列として持ち回すためのヘルパー。
+// 「もっと読み込む」のたびに各クエリのカーソルを個別に進めたいが、
+// 呼び出し側(Feed.tsx)には他のBluesky取得と同じく単一のcursor文字列として
+// 渡したいため、ここでJSON文字列にエンコード/デコードする。
+type TrendingCursorMap = Partial<Record<(typeof TRENDING_SEED_QUERIES)[number], string | null>>;
+
+function encodeTrendingCursor(map: TrendingCursorMap): string | null {
+  const hasAny = Object.values(map).some((cursor) => Boolean(cursor));
+  if (!hasAny) return null;
+  return JSON.stringify(map);
+}
+
+function decodeTrendingCursor(cursor: string | null | undefined): TrendingCursorMap {
+  if (!cursor) return {};
+  try {
+    const parsed = JSON.parse(cursor) as unknown;
+    return parsed && typeof parsed === 'object' ? (parsed as TrendingCursorMap) : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * トレンドタブ用: 日本語かつ、いいね数が TRENDING_MIN_LIKES 以上、
+ * 直近 TRENDING_MAX_AGE_DAYS 日以内に投稿された Bluesky投稿を
+ * ランダムな順番で取得する。
+ *
+ * 実装メモ: Blueskyの公開検索APIは「日本語 × 人気順 × 無作為抽出」を
+ * まとめて行うエンドポイントを提供していない。そのため、日本語の文章なら
+ * ほぼ必ず含まれる頻出語(助詞・語尾)を複数用意し、それぞれを
+ * app.bsky.feed.searchPosts に lang=ja, sort=top で投げて母集団を広げ、
+ * 合算結果からいいね数でフィルタし、最後にシャッフルすることで
+ * 「日本語のトレンド投稿がランダムに出てくる」体験を近似している。
+ */
+export async function fetchTrendingJapaneseBlueskyPosts(options?: {
+  cursor?: string | null;
+  limit?: number;
+  signal?: AbortSignal;
+}): Promise<BlueskyAuthorFeedPage> {
+  const perQueryLimit = Math.min(100, Math.max(1, options?.limit ?? 30));
+  const cursorMap = decodeTrendingCursor(options?.cursor);
+
+  // 直近 TRENDING_MAX_AGE_DAYS 日以内の投稿だけを対象にする。
+  // app.bsky.feed.searchPosts の since パラメータ(ISO日時)でAPI側にも
+  // 絞り込みをかけつつ、念のためクライアント側でも createdAt を再チェックする。
+  const sinceDate = new Date(Date.now() - TRENDING_MAX_AGE_DAYS * 24 * 60 * 60 * 1000);
+  const sinceIso = sinceDate.toISOString();
+  const sinceTime = sinceDate.getTime();
+
+  const results = await Promise.all(
+    TRENDING_SEED_QUERIES.map(async (seedQuery) => {
+      // 前回のページで「このクエリはもう次がない」と分かっている場合はスキップする
+      if (seedQuery in cursorMap && !cursorMap[seedQuery]) {
+        return { seedQuery, posts: [] as BlueskyMappedPost[], cursor: null as string | null };
+      }
+
+      const params = new URLSearchParams({
+        q: seedQuery,
+        lang: 'ja',
+        sort: 'top',
+        since: sinceIso,
+        limit: String(perQueryLimit),
+      });
+
+      const queryCursor = cursorMap[seedQuery];
+      if (queryCursor) {
+        params.set('cursor', queryCursor);
+      }
+
+      try {
+        const response = await fetchBlueskySearchEndpoint('app.bsky.feed.searchPosts', params, options?.signal);
+        if (!response.ok) {
+          return { seedQuery, posts: [] as BlueskyMappedPost[], cursor: null as string | null };
+        }
+
+        const payload = (await response.json()) as {
+          posts?: BlueskyFeedItem['post'][];
+          cursor?: string;
+        };
+
+        const posts = (payload.posts || [])
+          .map((post) => mapBlueskyFeedItemToPost({ post }))
+          .filter((post): post is BlueskyMappedPost =>
+            Boolean(post) &&
+            post.likesCount >= TRENDING_MIN_LIKES &&
+            new Date(post.createdAt).getTime() >= sinceTime,
+          );
+
+        return { seedQuery, posts, cursor: payload.cursor || null };
+      } catch (error) {
+        if (options?.signal?.aborted) throw error;
+        console.error(`Bluesky trending search failed for query "${seedQuery}":`, error);
+        return { seedQuery, posts: [] as BlueskyMappedPost[], cursor: null as string | null };
+      }
+    }),
+  );
+
+  const nextCursorMap: TrendingCursorMap = {};
+  const seenIds = new Set<string>();
+  const combinedPosts: BlueskyMappedPost[] = [];
+
+  for (const result of results) {
+    nextCursorMap[result.seedQuery] = result.cursor;
+    for (const post of result.posts) {
+      if (seenIds.has(post.id)) continue;
+      seenIds.add(post.id);
+      combinedPosts.push(post);
+    }
+  }
+
+  // 複数クエリ分をまとめてシャッフルする(Fisher-Yates)。
+  // これにより、同じクエリの結果が固まって並ぶことなくランダムに見える。
+  for (let i = combinedPosts.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [combinedPosts[i], combinedPosts[j]] = [combinedPosts[j], combinedPosts[i]];
+  }
+
+  return {
+    posts: combinedPosts,
+    cursor: encodeTrendingCursor(nextCursorMap),
   };
 }
 

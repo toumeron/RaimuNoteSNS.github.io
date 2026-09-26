@@ -38,6 +38,10 @@ import {
   getConfiguredBlueskyHandles,
   normalizeBlueskyHandle,
   saveConfiguredBlueskyHandles,
+  getStoredBlueskySession,
+  loginToBluesky,
+  logoutFromBluesky,
+  type BlueskySession,
 } from '@/lib/bluesky';
 
 const schema = z.object({
@@ -509,6 +513,14 @@ export default function Settings() {
   const [blueskyProfiles, setBlueskyProfiles] = useState<Record<string, BlueskyProfileInfo>>({});
   const [blueskyProfilesLoading, setBlueskyProfilesLoading] = useState<Record<string, boolean>>({});
 
+  // 自分のBlueskyアカウントでのログイン(アプリパスワード認証)状態
+  const [blueskySession, setBlueskySession] = useState<BlueskySession | null>(getStoredBlueskySession);
+  const [blueskyLoginHandle, setBlueskyLoginHandle] = useState('');
+  const [blueskyAppPassword, setBlueskyAppPassword] = useState('');
+  const [isBlueskyLoggingIn, setIsBlueskyLoggingIn] = useState(false);
+  const [isBlueskyLoggingOut, setIsBlueskyLoggingOut] = useState(false);
+  const [showBlueskyAppPassword, setShowBlueskyAppPassword] = useState(false);
+
   const fetchCustomEmojis = async () => {
     try {
       const { data, error } = await supabase
@@ -667,6 +679,28 @@ export default function Settings() {
 
     return () => {
       window.removeEventListener('lime-bluesky-handles-changed', handleBlueskyHandlesChanged);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
+
+  // 自分のBlueskyアカウントのログイン状態が(このタブ内・他タブ問わず)変わったら同期する
+  useEffect(() => {
+    const handleBlueskySessionChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ session: BlueskySession | null }>).detail;
+      setBlueskySession(detail?.session ?? getStoredBlueskySession());
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === 'lime_bluesky_session') {
+        setBlueskySession(getStoredBlueskySession());
+      }
+    };
+
+    window.addEventListener('lime-bluesky-session-changed', handleBlueskySessionChanged);
+    window.addEventListener('storage', handleStorage);
+
+    return () => {
+      window.removeEventListener('lime-bluesky-session-changed', handleBlueskySessionChanged);
       window.removeEventListener('storage', handleStorage);
     };
   }, []);
@@ -1005,6 +1039,41 @@ export default function Settings() {
     toast.success(`@${handle} をBluesky連携から削除しました`);
   };
 
+  const handleBlueskyLogin = async () => {
+    if (!blueskyLoginHandle.trim() || !blueskyAppPassword.trim()) {
+      toast.error('ユーザー名とアプリパスワードを入力してください');
+      return;
+    }
+
+    setIsBlueskyLoggingIn(true);
+    try {
+      const session = await loginToBluesky(blueskyLoginHandle, blueskyAppPassword);
+      setBlueskySession(session);
+      setBlueskyLoginHandle('');
+      setBlueskyAppPassword('');
+      toast.success(`@${session.handle} でBlueskyにログインしました`);
+    } catch (err: any) {
+      console.error('Bluesky Login Error:', err);
+      toast.error(err.message || 'Blueskyログインに失敗しました');
+    } finally {
+      setIsBlueskyLoggingIn(false);
+    }
+  };
+
+  const handleBlueskyLogout = async () => {
+    setIsBlueskyLoggingOut(true);
+    try {
+      await logoutFromBluesky();
+      setBlueskySession(null);
+      toast.success('Blueskyからログアウトしました');
+    } catch (err) {
+      console.error('Bluesky Logout Error:', err);
+      toast.error('ログアウトに失敗しました');
+    } finally {
+      setIsBlueskyLoggingOut(false);
+    }
+  };
+
   const handleDummyLimeProPurchase = async () => {
     if (!user?.id) return;
 
@@ -1261,6 +1330,7 @@ export default function Settings() {
           <Sparkles className="h-4 w-4 text-primary" />
           <h2 className="font-display text-base font-bold">Bluesky連携</h2>
         </div>
+
         <div className="mt-4 flex flex-col gap-2 sm:flex-row">
           <Input
             value={blueskyHandleInput}
@@ -1339,6 +1409,97 @@ export default function Settings() {
                   </div>
                 );
               })}
+            </div>
+          )}
+        </div>
+
+        <div className="mt-6 space-y-3 rounded-2xl border border-border/40 bg-background/50 p-4">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-xs font-bold text-muted-foreground">Blueskyアカウント</h3>
+            {blueskySession && (
+              <span className="rounded-full bg-primary-soft px-2.5 py-1 text-[10px] font-bold text-primary">
+                連携中
+              </span>
+            )}
+          </div>
+
+          {blueskySession ? (
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <Avatar className="h-9 w-9 border border-border/40">
+                  <AvatarFallback className="text-xs font-bold">
+                    {blueskySession.handle.slice(0, 1).toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 leading-tight">
+                  <p className="truncate text-sm font-bold">@{blueskySession.handle}</p>
+                  <p className="text-[11px] text-muted-foreground">ログイン中</p>
+                </div>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={handleBlueskyLogout}
+                disabled={isBlueskyLoggingOut}
+                className="rounded-full border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+              >
+                {isBlueskyLoggingOut ? <Loader2 className="h-4 w-4 animate-spin" /> : 'ログアウト'}
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <Input
+                value={blueskyLoginHandle}
+                onChange={(e) => setBlueskyLoginHandle(e.target.value)}
+                placeholder="ユーザー名（例: nakkar7.bsky.social）"
+                className="h-10 rounded-full bg-background"
+                autoComplete="username"
+              />
+              <div className="relative">
+                <Input
+                  type={showBlueskyAppPassword ? 'text' : 'password'}
+                  value={blueskyAppPassword}
+                  onChange={(e) => setBlueskyAppPassword(e.target.value)}
+                  placeholder="アプリパスワード（xxxx-xxxx-xxxx-xxxx）"
+                  className="h-10 rounded-full bg-background pr-16"
+                  autoComplete="current-password"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleBlueskyLogin();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowBlueskyAppPassword((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  {showBlueskyAppPassword ? '隠す' : '表示'}
+                </button>
+              </div>
+              <p className="text-[10px] leading-relaxed text-muted-foreground">
+                通常のログインパスワードではなく、Blueskyが発行する
+                <a
+                  href="https://bsky.app/settings/app-passwords"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mx-1 font-bold text-primary underline"
+                >
+                  アプリパスワード
+                </a>
+                を使用してください。
+              </p>
+              <Button
+                type="button"
+                onClick={handleBlueskyLogin}
+                disabled={isBlueskyLoggingIn}
+                className="w-full rounded-full bg-gradient-primary font-bold shadow-soft"
+              >
+                {isBlueskyLoggingIn ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Blueskyにログイン
+              </Button>
             </div>
           )}
         </div>
