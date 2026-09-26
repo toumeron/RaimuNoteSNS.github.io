@@ -22,6 +22,8 @@ import {
 } from "@/components/ui/hover-card";
 import { FollowButton } from '../profile/FollowButton';
 import { useFollowStats } from '@/hooks/useProfile';
+import { useBlueskySession } from '@/hooks/useBlueskySession';
+import { getBlueskyUriFromPostId } from '@/lib/bluesky';
 
 // --- 公開範囲 ---
 // public    = 全体公開
@@ -881,6 +883,8 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
   const blueskyProfileUrl = isBlueskyPost
     ? `https://bsky.app/profile/${post.author.username}`
     : null;
+  const blueskySession = useBlueskySession();
+  const blueskyPostUri = isBlueskyPost ? getBlueskyUriFromPostId(post.id) : null;
 
   const [showPicker, setShowPicker] = useState(false);
   const [customEmojis, setCustomEmojis] = useState<CustomEmoji[]>([]);
@@ -2091,7 +2095,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
           <AvatarFallback>{post.author.displayName.slice(0, 1)}</AvatarFallback>
         </Avatar>
 
-        {currentUserId !== post.author.id && !isBlueskyPost && (
+        {currentUserId !== post.author.id && (!isBlueskyPost || blueskySession) && (
           <div className="shrink-0 w-[85px] h-[36px]" onClick={(e) => e.stopPropagation()}>
             <div className="w-full h-full [&>*]:!w-full [&>*]:!h-full [&>*]:!min-w-0 [&>*]:!p-0 [&>*]:!flex [&>*]:!items-center [&>*]:!justify-center [&>*]:!bg-foreground [&>*]:!text-background [&>*]:!rounded-full [&>*]:!text-[14px] [&>*]:!font-bold [&>*]:!border-none [&_svg]:!hidden">
               <FollowButton userId={post.author.id} />
@@ -2591,18 +2595,27 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
             <div className={isMobile ? "mt-2 flex items-center gap-1 text-muted-foreground relative h-8" : "mt-3 flex items-center gap-1 text-muted-foreground relative h-9"}>
               <div onClick={(e) => e.stopPropagation()} className="flex items-center h-full">
                 {isBlueskyPost ? (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
-                    }}
-                    className={isMobile ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
-                  >
-                    <Heart className="h-5 w-5" />
-                    <span className={isMobile ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{formatDisplayCount(post.likesCount)}</span>
-                  </button>
+                  blueskySession && blueskyPostUri ? (
+                    <LikeButton
+                      postId={post.id}
+                      liked={post.likedByMe}
+                      count={post.likesCount}
+                      bluesky={{ postUri: blueskyPostUri }}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
+                      }}
+                      className={isMobile ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
+                    >
+                      <Heart className="h-5 w-5" />
+                      <span className={isMobile ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{formatDisplayCount(post.likesCount)}</span>
+                    </button>
+                  )
                 ) : (
                   <LikeButton
                     postId={post.id}
@@ -3025,18 +3038,27 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
             <div className="flex items-center gap-8 rounded-full bg-black/40 px-6 py-3 backdrop-blur-md border border-white/10">
               <div className="scale-125">
                 {isBlueskyPost ? (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
-                    }}
-                    className="inline-flex items-center gap-2 text-white/90 hover:text-white transition-colors"
-                  >
-                    <Heart className="h-6 w-6" />
-                    <span className="font-bold tabular-nums text-lg">{formatDisplayCount(post.likesCount)}</span>
-                  </button>
+                  blueskySession && blueskyPostUri ? (
+                    <LikeButton
+                      postId={post.id}
+                      liked={post.likedByMe}
+                      count={post.likesCount}
+                      bluesky={{ postUri: blueskyPostUri }}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
+                      }}
+                      className="inline-flex items-center gap-2 text-white/90 hover:text-white transition-colors"
+                    >
+                      <Heart className="h-6 w-6" />
+                      <span className="font-bold tabular-nums text-lg">{formatDisplayCount(post.likesCount)}</span>
+                    </button>
+                  )
                 ) : (
                   <LikeButton
                     postId={post.id}

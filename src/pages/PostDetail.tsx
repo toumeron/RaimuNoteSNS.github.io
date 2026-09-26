@@ -9,7 +9,8 @@ import { CommentList } from '@/components/post/CommentList';
 import { CommentForm } from '@/components/post/CommentForm';
 import { PostImages } from '@/components/feed/PostImages';
 import { usePost } from '@/hooks/useFeed';
-import { fetchBlueskyPostThread, type BlueskyMappedPost } from '@/lib/bluesky';
+import { fetchBlueskyPostThread, getBlueskyUriFromPostId, type BlueskyMappedPost } from '@/lib/bluesky';
+import { useBlueskySession } from '@/hooks/useBlueskySession';
 import { useQuery } from '@tanstack/react-query';
 import { formatDate, formatRelative } from '@/lib/format';
 import { getYouTubeId } from '@/lib/utils';
@@ -165,6 +166,8 @@ export default function PostDetail() {
   const isLoading = isBlueskyPost ? isBlueskyLoading : isLimeLoading;
   const isError = isBlueskyPost ? isBlueskyError || !blueskyData : isLimeError;
   const blueskyPostUrl = data ? getBlueskyPostUrl(data as unknown as { id?: string; blueskyUrl?: string; author?: { username?: string } }) : null;
+  const blueskySession = useBlueskySession();
+  const blueskyPostUri = isBlueskyPost ? getBlueskyUriFromPostId(id) : null;
   const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null); // 拡大用
   const [failedUrls, setFailedUrls] = useState<string[]>([]); // 読み込み失敗URL管理
   const navigate = useNavigate();
@@ -205,6 +208,7 @@ export default function PostDetail() {
   const shareMenuRef = useRef<HTMLDivElement>(null);
   const limeDropPanelRef = useRef<HTMLDivElement>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const moreButtonMobileRef = useRef<HTMLButtonElement>(null); // モバイル専用ヘッダーの「もっと見る」ボタン用ref
   const moreMenuRef = useRef<HTMLDivElement>(null);
   let longPressTimer: NodeJS.Timeout;
 
@@ -255,6 +259,7 @@ export default function PostDetail() {
       if (!target) return;
 
       if (moreButtonRef.current?.contains(target)) return;
+      if (moreButtonMobileRef.current?.contains(target)) return;
       if (moreMenuRef.current?.contains(target)) return;
 
       closeMenuFromOutside();
@@ -779,6 +784,29 @@ export default function PostDetail() {
   const normalizedAuthorUsername = (data?.author.username || '').trim().replace(/^@+/, '').toLowerCase();
   const canUseMembershipPosts = normalizedAuthorUsername === 'cat' || normalizedAuthorUsername === 'limenote';
 
+  // 「もっと見る」メニューの開閉。PC版の三点ボタンとモバイル専用ヘッダーの
+  // 三点ボタンの両方から呼び出せるよう、位置計算にはボタン自身(e.currentTarget)を使う。
+  const handleToggleMoreMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (showMenu) {
+      setShowMenu(false);
+      setMoreMenuPosition(null);
+      return;
+    }
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    setMoreMenuPosition({
+      top: rect.bottom + 4,
+      right: Math.max(8, window.innerWidth - rect.right),
+    });
+    setShowShareMenu(false);
+    setShareMenuPosition(null);
+    setShowPicker(false);
+    setShowMenu(true);
+  };
+
   const handleActivityClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -1221,6 +1249,26 @@ export default function PostDetail() {
             color: hsl(var(--foreground));
           }
 
+          /* --- モバイル専用の固定ヘッダー（戻る・タイトル・もっと見る） ---
+             サイドバー用の useMobileDrawerMotion が #root 要素へ常時 transform を
+             適用しているため、position: fixed のままだとその祖先が基準になってしまい
+             スクロールに追従しなくなる（transformを持つ祖先はfixedの新しい基準点になる仕様）。
+             アプリ共通のHeaderと同じ position: sticky にすることでこれを回避する。 */
+          .post-detail-mobile-topbar {
+            position: sticky;
+            top: 0;
+            z-index: 520;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: calc(44px + env(safe-area-inset-top, 0px));
+            padding-top: env(safe-area-inset-top, 0px);
+            /* ダーク/ライト両方のテーマトークンに追従させる（他の要素と同じ --background 系変数を使用） */
+            background: hsl(var(--background));
+            color: hsl(var(--foreground));
+            border-bottom: 1px solid hsl(var(--border) / 0.6);
+          }
+
           .post-detail-mobile-simple-back {
             margin: 8px 16px 6px !important;
           }
@@ -1334,6 +1382,32 @@ export default function PostDetail() {
 
       `}</style>
 
+      {/* --- モバイル専用ヘッダー（戻る・タイトル・もっと見る）。ポスト詳細のモバイル版のみ表示。 --- */}
+      {useMobileThreadLayout && (
+        <div className="post-detail-mobile-topbar">
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            aria-label="戻る"
+            className="flex h-11 w-11 shrink-0 items-center justify-center"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+          <span className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-[17px] font-bold">
+            ポスト
+          </span>
+          <button
+            ref={moreButtonMobileRef}
+            type="button"
+            onClick={handleToggleMoreMenu}
+            aria-label="その他のメニュー"
+            className="flex h-11 w-11 shrink-0 items-center justify-center"
+          >
+            <MoreHorizontal className="h-5 w-5" />
+          </button>
+        </div>
+      )}
+
       {/* --- 高度グラフィックアニメーションレイヤー --- */}
       {(activeRings.length > 0 || activeDots.length > 0) && (
         <div className="fixed inset-0 pointer-events-none z-[9999] overflow-hidden">
@@ -1390,16 +1464,15 @@ export default function PostDetail() {
         />
       )}
 
-      <button
-        type="button"
-        onClick={() => navigate(-1)}
-        className={useMobileThreadLayout
-          ? "post-detail-mobile-simple-back inline-flex items-center gap-1 text-sm font-bold text-muted-foreground transition hover:text-primary"
-          : "inline-flex items-center gap-1 text-sm font-bold text-muted-foreground transition hover:text-primary"
-        }
-      >
-        <ArrowLeft className="h-4 w-4" /> 戻る
-      </button>
+      {!useMobileThreadLayout && (
+        <button
+          type="button"
+          onClick={() => navigate(-1)}
+          className="inline-flex items-center gap-1 text-sm font-bold text-muted-foreground transition hover:text-primary"
+        >
+          <ArrowLeft className="h-4 w-4" /> 戻る
+        </button>
+      )}
 
       {isLoading && (
         <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
@@ -1473,32 +1546,16 @@ export default function PostDetail() {
               )}
 
               <div className="relative shrink-0">
-                <button
-                  ref={moreButtonRef}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-
-                    if (showMenu) {
-                      setShowMenu(false);
-                      setMoreMenuPosition(null);
-                      return;
-                    }
-
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    setMoreMenuPosition({
-                      top: rect.bottom + 4,
-                      right: Math.max(8, window.innerWidth - rect.right),
-                    });
-                    setShowShareMenu(false);
-                    setShareMenuPosition(null);
-                    setShowPicker(false);
-                    setShowMenu(true);
-                  }}
-                  className="p-1 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                >
-                  <MoreHorizontal className="h-5 w-5" />
-                </button>
+                {/* モバイル版は専用ヘッダー側の三点ボタンに置き換えるため、ここでは非表示 */}
+                {!useMobileThreadLayout && (
+                  <button
+                    ref={moreButtonRef}
+                    onClick={handleToggleMoreMenu}
+                    className="p-1 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                  >
+                    <MoreHorizontal className="h-5 w-5" />
+                  </button>
+                )}
 
                 {showMenu && typeof document !== 'undefined' && createPortal(
                   <>
@@ -1741,18 +1798,27 @@ export default function PostDetail() {
           <div className={isMobile ? "mt-3 flex items-center gap-1 relative h-9 post-detail-mobile-action-row" : "mt-3 flex items-center gap-1 border-t border-border/60 pt-3 relative h-9"}>
             <div onClick={(e) => e.stopPropagation()} className={`flex items-center h-full ${isMobile ? 'post-detail-mobile-action-hit' : ''}`}>
               {isBlueskyPost ? (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
-                  }}
-                  className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"
-                >
-                  <Heart className="h-5 w-5" />
-                  <span className="font-bold tabular-nums text-sm">{formatDisplayCount(data.likesCount)}</span>
-                </button>
+                blueskySession && blueskyPostUri ? (
+                  <LikeButton
+                    postId={data.id}
+                    liked={data.likedByMe}
+                    count={data.likesCount}
+                    bluesky={{ postUri: blueskyPostUri }}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"
+                  >
+                    <Heart className="h-5 w-5" />
+                    <span className="font-bold tabular-nums text-sm">{formatDisplayCount(data.likesCount)}</span>
+                  </button>
+                )
               ) : (
                 <LikeButton 
                   postId={data.id} 
@@ -2217,11 +2283,35 @@ export default function PostDetail() {
           >
             <div className="flex items-center gap-8 rounded-full bg-black/40 px-6 py-3 backdrop-blur-md border border-white/10">
               <div className="scale-125">
-                <LikeButton
-                  postId={data.id}
-                  liked={data.likedByMe}
-                  count={data.likesCount}
-                />
+                {isBlueskyPost ? (
+                  blueskySession && blueskyPostUri ? (
+                    <LikeButton
+                      postId={data.id}
+                      liked={data.likedByMe}
+                      count={data.likesCount}
+                      bluesky={{ postUri: blueskyPostUri }}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
+                      }}
+                      className="inline-flex items-center gap-2 text-white/90 hover:text-white transition-colors"
+                    >
+                      <Heart className="h-6 w-6" />
+                      <span className="font-bold tabular-nums text-lg">{formatDisplayCount(data.likesCount)}</span>
+                    </button>
+                  )
+                ) : (
+                  <LikeButton
+                    postId={data.id}
+                    liked={data.likedByMe}
+                    count={data.likesCount}
+                  />
+                )}
               </div>
               <div className="inline-flex items-center gap-2 text-white/90">
                 <MessageCircle className="h-6 w-6" />

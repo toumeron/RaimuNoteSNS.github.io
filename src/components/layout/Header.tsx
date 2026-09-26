@@ -70,6 +70,13 @@ function isProfilePath(pathname: string) {
   return /^\/u\/[^/]+\/?$/.test(normalizeAppPath(pathname));
 }
 
+// ポスト詳細ページ(/post/:id)かどうかの判定。モバイルではこのページ専用の
+// ヘッダー(戻る・タイトル・もっと見る)をPostDetail.tsx側で表示するため、
+// アプリ共通のHeaderは重複表示を避けるためにモバイルでのみ非表示にする。
+function isPostDetailPath(pathname: string) {
+  return /^\/post\/[^/]+\/?$/.test(normalizeAppPath(pathname));
+}
+
 function getBrowserPathname() {
   if (typeof window === 'undefined') {
     return '';
@@ -315,8 +322,61 @@ function useMobileHeaderVisibility(enabled: boolean) {
 // 直接 DOM を触って追従表示させるためにこれで探す。
 const MOBILE_SIDEBAR_SELECTOR = '[data-lime-mobile-sidebar="true"]';
 
+// rootを直接transformして動かすと、環境によっては(overflow/clip-pathをrootと
+// 同じ要素に同時指定した場合の描画上の都合などで)角丸クリップが実際の描画に
+// 反映されないことがある。そこで、「動かす」要素と「角丸にクリップする」要素を
+// 分離した二重ラッパー構造にする。
+//   body > moveWrapper(transform: translateXのみ) > clipWrapper(border-radius +
+//   overflow:hiddenのみ、transformなし) > #root
+// clipWrapper自身はtransformを持たないが、transformを持つ祖先(moveWrapper)の
+// 内側にいるため、見た目上はmoveWrapperと一緒に動く。したがって角丸の位置は
+// 常に実際の露出境界(サイドバーとの境目)に追従しつつ、「transform」と
+// 「overflow/border-radius」が同一要素に同時指定される状況そのものは発生しない。
+const ROOT_MOVE_WRAPPER_ATTR = 'data-lime-root-move-wrapper';
+const ROOT_CLIP_WRAPPER_ATTR = 'data-lime-root-clip-wrapper';
+
+function ensureRootShiftWrappers(
+  root: HTMLElement
+): { moveWrapper: HTMLElement; clipWrapper: HTMLElement } | null {
+  const existingClipWrapper = root.parentElement;
+  const existingMoveWrapper = existingClipWrapper?.parentElement ?? null;
+
+  if (
+    existingClipWrapper?.getAttribute(ROOT_CLIP_WRAPPER_ATTR) === 'true' &&
+    existingMoveWrapper?.getAttribute(ROOT_MOVE_WRAPPER_ATTR) === 'true'
+  ) {
+    return { moveWrapper: existingMoveWrapper, clipWrapper: existingClipWrapper };
+  }
+
+  const parent = root.parentNode;
+  if (!parent) return null;
+
+  const moveWrapper = document.createElement('div');
+  moveWrapper.setAttribute(ROOT_MOVE_WRAPPER_ATTR, 'true');
+  // #root の "html, body, #root { height: 100% }" のような高さの連鎖を
+  // 壊さないよう、ラッパー自体は見た目に影響しないサイズ指定だけ行う。
+  moveWrapper.style.width = '100%';
+  moveWrapper.style.height = '100%';
+  moveWrapper.style.minHeight = '100%';
+
+  const clipWrapper = document.createElement('div');
+  clipWrapper.setAttribute(ROOT_CLIP_WRAPPER_ATTR, 'true');
+  clipWrapper.style.width = '100%';
+  clipWrapper.style.height = '100%';
+  clipWrapper.style.minHeight = '100%';
+
+  parent.insertBefore(moveWrapper, root);
+  moveWrapper.appendChild(clipWrapper);
+  clipWrapper.appendChild(root);
+
+  return { moveWrapper, clipWrapper };
+}
+
 function useMobileDrawerMotion(isOpen: boolean, onOpenChange: (open: boolean) => void) {
   const rootRef = useRef<HTMLElement | null>(null);
+  // 「動かす」ラッパーと「角丸にクリップする」ラッパーへの参照。
+  const moveWrapperRef = useRef<HTMLElement | null>(null);
+  const clipWrapperRef = useRef<HTMLElement | null>(null);
   const gestureRef = useRef({
     active: false,
     startedAtX: 0,
@@ -365,40 +425,54 @@ function useMobileDrawerMotion(isOpen: boolean, onOpenChange: (open: boolean) =>
     const root = rootRef.current;
     if (!(root instanceof HTMLElement)) return;
 
+    const moveWrapper = moveWrapperRef.current;
+    const clipWrapper = clipWrapperRef.current;
+
     const width = getDrawerWidth();
     const clamped = Math.max(0, Math.min(width, shift));
     const isRevealed = clamped > 0;
 
-    root.style.transition = animate
-      ? 'transform 320ms cubic-bezier(0.22, 1, 0.36, 1), border-radius 320ms cubic-bezier(0.22, 1, 0.36, 1), clip-path 320ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 320ms cubic-bezier(0.22, 1, 0.36, 1)'
-      : 'none';
-    // Safari/WebKitでは、要素に3D変換(translate3d/translateZ)とclip-pathを
-    // 同時に指定すると、独立した合成レイヤーに昇格することでclip-pathによる
-    // クリップが実際の描画に反映されない(DevTools上はスタイルが付与されて
-    // 見えても、見た目には角丸が出ない)既知の問題がある。ここでは2D変換の
-    // translateX に変更することでこれを回避する。
-    root.style.transform = `translateX(${clamped}px)`;
-    root.style.borderRadius = isRevealed ? '42px 0 0 42px' : '0';
-    // overflow: hidden + border-radius だけでは、環境によって(rootの高さの
-    // 決まり方やスクロールコンテナの構成次第で)クリップが実際の描画に反映
-    // されないことがある。clip-path はオーバーフローの挙動に関係なく
-    // 要素自身の描画を直接その形状で切り抜くため、より確実に角丸を反映できる。
-    // border-radius/overflowと併用しても副作用はないのでどちらも残す。
-    const clipShape = isRevealed
-      ? 'inset(0px 0px 0px 0px round 42px 0px 0px 42px)'
-      : 'inset(0px round 0px)';
-    root.style.setProperty('clip-path', clipShape, 'important');
-    root.style.setProperty('-webkit-clip-path', clipShape, 'important');
-    root.style.overflow = isRevealed ? 'hidden' : '';
-    root.style.boxShadow = isRevealed ? '-10px 0 28px rgba(0,0,0,0.34)' : 'none';
-    // will-change: transform も3D変換と同様に独立した合成レイヤーへの昇格を
-    // 促し、Safariでのclip-path未反映の原因になり得るため、ここでは明示的な
-    // will-changeの指定はしない(常時 auto のまま)。
-    root.style.willChange = 'auto';
-    // サイドバーを開いている間はタイムライン側の縦スクロールを停止する。
-    // touch-action:none はクリック/タップ自体は維持しつつ、スクロールジェスチャーだけを止める。
-    root.style.touchAction = isRevealed ? 'none' : 'auto';
-    root.style.overscrollBehavior = isRevealed ? 'none' : 'auto';
+    // 「動かす」のはmoveWrapper。clipWrapperはmoveWrapperの子なので、
+    // 自身はtransformを持たなくても見た目上は一緒に動く。これにより、
+    // 角丸の位置は常に実際の露出境界に追従しつつ、transformとoverflow/
+    // border-radiusが同一要素に同時指定される状況を避けられる。
+    if (moveWrapper) {
+      moveWrapper.style.transition = animate
+        ? 'transform 320ms cubic-bezier(0.22, 1, 0.36, 1)'
+        : 'none';
+      moveWrapper.style.transform = `translateX(${clamped}px)`;
+      // will-change: transform は独立した合成レイヤーへの昇格を促し、
+      // ブラウザによってはこの合成レイヤー化がクリップ表現(角丸)と
+      // 干渉することがあるため、明示的なwill-changeの指定はしない。
+      moveWrapper.style.willChange = 'auto';
+      // サイドバーを開いている間はタイムライン側の縦スクロールを停止する。
+      // touch-action:none はクリック/タップ自体は維持しつつ、スクロールジェスチャーだけを止める。
+      moveWrapper.style.touchAction = isRevealed ? 'none' : 'auto';
+      moveWrapper.style.overscrollBehavior = isRevealed ? 'none' : 'auto';
+    }
+
+    // root自身は過去のバージョンで直接スタイルを付けていたことがあるので、
+    // 念のため毎回掃除しておく(移動・クリップの責務は上の2要素に一本化する)。
+    root.style.removeProperty('transform');
+    root.style.removeProperty('transition');
+    root.style.removeProperty('will-change');
+    root.style.removeProperty('touch-action');
+    root.style.removeProperty('overscroll-behavior');
+    root.style.removeProperty('border-radius');
+    root.style.removeProperty('overflow');
+    root.style.removeProperty('clip-path');
+    root.style.removeProperty('-webkit-clip-path');
+    root.style.removeProperty('box-shadow');
+
+    // 角丸のクリップと影は、transformを持たないclipWrapper側で行う。
+    if (clipWrapper) {
+      clipWrapper.style.transition = animate
+        ? 'border-radius 320ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 320ms cubic-bezier(0.22, 1, 0.36, 1)'
+        : 'none';
+      clipWrapper.style.borderRadius = isRevealed ? '42px 0 0 42px' : '0px';
+      clipWrapper.style.overflow = isRevealed ? 'hidden' : 'visible';
+      clipWrapper.style.boxShadow = isRevealed ? '-10px 0 28px rgba(0,0,0,0.34)' : 'none';
+    }
 
     // Body直下へportalされるBottomNavも同じ距離だけ右へ追従させる。
     // root自体にz-index/isolationを付けないことで、BottomNavのクリックを遮断しない。
@@ -452,19 +526,40 @@ function useMobileDrawerMotion(isOpen: boolean, onOpenChange: (open: boolean) =>
     const previousOverflowX = html.style.overflowX;
 
     if (isMobile) {
+      const wrappers = ensureRootShiftWrappers(root);
+      moveWrapperRef.current = wrappers?.moveWrapper ?? null;
+      clipWrapperRef.current = wrappers?.clipWrapper ?? null;
       html.style.overflowX = 'hidden';
       setRootVisual(isOpen ? getDrawerWidth() : 0, true);
     } else {
       root.style.removeProperty('transform');
       root.style.removeProperty('transition');
+      root.style.removeProperty('will-change');
+      root.style.removeProperty('touch-action');
+      root.style.removeProperty('overscroll-behavior');
       root.style.removeProperty('border-radius');
       root.style.removeProperty('overflow');
       root.style.removeProperty('clip-path');
       root.style.removeProperty('-webkit-clip-path');
       root.style.removeProperty('box-shadow');
-      root.style.removeProperty('will-change');
-      root.style.removeProperty('touch-action');
-      root.style.removeProperty('overscroll-behavior');
+
+      const moveWrapper = moveWrapperRef.current;
+      if (moveWrapper) {
+        moveWrapper.style.removeProperty('transform');
+        moveWrapper.style.removeProperty('transition');
+        moveWrapper.style.removeProperty('will-change');
+        moveWrapper.style.removeProperty('touch-action');
+        moveWrapper.style.removeProperty('overscroll-behavior');
+      }
+
+      const clipWrapper = clipWrapperRef.current;
+      if (clipWrapper) {
+        clipWrapper.style.removeProperty('border-radius');
+        clipWrapper.style.removeProperty('overflow');
+        clipWrapper.style.removeProperty('box-shadow');
+        clipWrapper.style.removeProperty('transition');
+      }
+
       document.documentElement.style.removeProperty('--lime-mobile-drawer-shift');
       document.documentElement.style.removeProperty('--lime-mobile-drawer-transition');
       html.style.overflowX = previousOverflowX;
@@ -476,14 +571,31 @@ function useMobileDrawerMotion(isOpen: boolean, onOpenChange: (open: boolean) =>
       document.documentElement.style.removeProperty('--lime-mobile-drawer-transition');
       root.style.removeProperty('transform');
       root.style.removeProperty('transition');
+      root.style.removeProperty('will-change');
+      root.style.removeProperty('touch-action');
+      root.style.removeProperty('overscroll-behavior');
       root.style.removeProperty('border-radius');
       root.style.removeProperty('overflow');
       root.style.removeProperty('clip-path');
       root.style.removeProperty('-webkit-clip-path');
       root.style.removeProperty('box-shadow');
-      root.style.removeProperty('will-change');
-      root.style.removeProperty('touch-action');
-      root.style.removeProperty('overscroll-behavior');
+
+      const moveWrapper = moveWrapperRef.current;
+      if (moveWrapper) {
+        moveWrapper.style.removeProperty('transform');
+        moveWrapper.style.removeProperty('transition');
+        moveWrapper.style.removeProperty('will-change');
+        moveWrapper.style.removeProperty('touch-action');
+        moveWrapper.style.removeProperty('overscroll-behavior');
+      }
+
+      const clipWrapper = clipWrapperRef.current;
+      if (clipWrapper) {
+        clipWrapper.style.removeProperty('border-radius');
+        clipWrapper.style.removeProperty('overflow');
+        clipWrapper.style.removeProperty('box-shadow');
+        clipWrapper.style.removeProperty('transition');
+      }
     };
   }, [isOpen]);
 
@@ -616,7 +728,9 @@ function useMobileDrawerMotion(isOpen: boolean, onOpenChange: (open: boolean) =>
         horizontal: false,
         startedAtEdge,
       };
-      root.style.transition = 'none';
+      if (moveWrapperRef.current) {
+        moveWrapperRef.current.style.transition = 'none';
+      }
     };
 
     const handleTouchMove = (event: TouchEvent) => {
@@ -749,6 +863,9 @@ export const Header = () => {
   const isSearchPage = normalizeAppPath(location.pathname) === '/u/LimeBiz';
   const isChatPage = normalizeAppPath(location.pathname) === '/chat';
   const hideHeaderOnMobileProfile = isGithubPagesProfilePath(location.pathname);
+  // ポスト詳細ページはモバイルで専用ヘッダー(戻る・タイトル・もっと見る)を
+  // PostDetail.tsx側が表示するため、共通のHeaderはモバイルでのみ非表示にする。
+  const hidePostDetailHeaderOnMobile = isPostDetailPath(location.pathname);
   const useTimelineChromeDesign = timelineChrome.enabled;
   const isTimelineDark = timelineChrome.theme === 'dark';
   // タブ、およびヘッダーの開閉挙動は「タイムライン(ホーム画面)のみ」。
@@ -996,8 +1113,9 @@ export const Header = () => {
         data-lime-mobile-sidebar="true"
         className={cn(
           // サイドバー自体の幅を従来より広く確保する(全画面にはしない)。
-          // 角丸は本画面側(root要素、setRootVisual内のborder-radius)に
-          // 付けるものなので、ここ(サイドバー本体)には付けない。
+          // 角丸は本画面側(root要素をtransformを持たないラッパーで包み、
+          // ラッパーにborder-radius+overflow:hiddenを付与)に付けるものなので、
+          // ここ(サイドバー本体)には付けない。
           'fixed inset-y-0 left-0 z-[100] flex w-[clamp(300px,78vw,420px)] flex-col border-r sm:hidden',
           sidebarDarkClasses,
           isMobileSidebarOpen
@@ -1060,6 +1178,7 @@ export const Header = () => {
       <header
       data-lime-app-header="true"
       data-lime-mobile-profile-header-hidden={hideHeaderOnMobileProfile ? 'true' : undefined}
+      data-lime-mobile-post-detail-header-hidden={hidePostDetailHeaderOnMobile ? 'true' : undefined}
       data-lime-chat-header-hidden-mobile={isChatPage ? 'true' : undefined}
       className={cn(
         isChatPage
@@ -1139,6 +1258,18 @@ export const Header = () => {
           @media (max-width: 639px) {
             header[data-lime-app-header="true"][data-lime-mobile-profile-header-hidden="true"],
             html[data-lime-mobile-profile-page="true"] header[data-lime-app-header="true"] {
+              display: none !important;
+              height: 0 !important;
+              min-height: 0 !important;
+              border: 0 !important;
+              overflow: hidden !important;
+            }
+          }
+
+          /* ポスト詳細ページはモバイルのみ、PostDetail.tsx側の専用ヘッダーに
+             置き換えるため、共通のHeaderをここで非表示にする。 */
+          @media (max-width: 639px) {
+            header[data-lime-app-header="true"][data-lime-mobile-post-detail-header-hidden="true"] {
               display: none !important;
               height: 0 !important;
               min-height: 0 !important;

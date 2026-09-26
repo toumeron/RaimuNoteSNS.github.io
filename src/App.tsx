@@ -29,7 +29,7 @@ import LimeProLanding from "./pages/LimePro";
 import MediaViewer from "./pages/MediaViewer.tsx"
 
 // PostComposer 用のインポート群
-import { ImagePlus, Loader2, Send, X, AtSign, Hash, Globe, Users, PenSquare } from 'lucide-react';
+import { ImagePlus, Loader2, Send, X, AtSign, Hash, Globe, Users, PenSquare, ArrowLeft, ChevronDown } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -73,6 +73,39 @@ const useScrollDirection = () => {
   }, [lastScrollY]);
 
   return isVisible;
+};
+
+// --- モバイル幅判定フック ---
+// Tailwind の `md:` ブレークポイント(768px)と合わせている。
+// iPhoneのPWA(ホーム画面追加)やChromeのモバイルサイズ表示でも確実に検知できるよう、
+// CSSのメディアクエリ判定(matchMedia)をJS側でも持たせる。
+const MOBILE_BREAKPOINT_QUERY = '(max-width: 767px)';
+
+const useIsMobileViewport = () => {
+  const [isMobile, setIsMobile] = useState(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+    return window.matchMedia(MOBILE_BREAKPOINT_QUERY).matches;
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+
+    const mql = window.matchMedia(MOBILE_BREAKPOINT_QUERY);
+    const handleChange = (event: MediaQueryListEvent) => setIsMobile(event.matches);
+
+    setIsMobile(mql.matches);
+
+    if (typeof mql.addEventListener === 'function') {
+      mql.addEventListener('change', handleChange);
+      return () => mql.removeEventListener('change', handleChange);
+    }
+
+    // Safari 13 等の古い実装向けフォールバック
+    mql.addListener(handleChange);
+    return () => mql.removeListener(handleChange);
+  }, []);
+
+  return isMobile;
 };
 
 const ScrollToTop = () => {
@@ -818,6 +851,8 @@ interface PostComposerProps {
   onSuccess?: () => void;
   onCancel?: () => void;
   timelineGlass?: boolean;
+  // true の場合、モバイルの全画面コンポーズ用レイアウト（ヘッダー＋ポストするボタン）で描画する。
+  fullScreen?: boolean;
 }
 
 type CropOffset = { x: number; y: number };
@@ -898,7 +933,7 @@ function getCaretCoordinates(element: HTMLTextAreaElement, position: number) {
   return coordinates;
 }
 
-export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess, onCancel, timelineGlass = false }: PostComposerProps) {
+export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess, onCancel, timelineGlass = false, fullScreen = false }: PostComposerProps) {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const quoteId = searchParams.get('quote');
@@ -1997,6 +2032,431 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
 
   if (!user) return null;
 
+  // 公開範囲の選択メニュー(コンパクト版・全画面版で共有)
+  const visibilityMenu = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className={cn(
+            'h-9 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground',
+            fullScreen && 'border border-border/70 px-3 hover:bg-muted/60'
+          )}
+        >
+          {visibility === 'public' ? (
+            <>
+              <Globe className="mr-1.5 h-4 w-4" />
+              <span>全員</span>
+            </>
+          ) : (
+            <>
+              <Users className="mr-1.5 h-4 w-4 text-accent" />
+              <span className="text-accent">限定</span>
+            </>
+          )}
+          {fullScreen && <ChevronDown className="ml-1 h-3.5 w-3.5" />}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        sideOffset={8}
+        className="z-[2147483647] rounded-xl"
+        style={{ zIndex: 2147483647 }}
+      >
+        <DropdownMenuItem onClick={() => setVisibility('public')}>
+          <Globe className="mr-2 h-4 w-4" />
+          全員
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => setVisibility('following')}>
+          <Users className="mr-2 h-4 w-4" />
+          フォロー中
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
+  // 本文入力欄(下線・ハイライト付き)。コンパクト版・全画面版で共有。
+  const textareaBlock = (
+    <div className="relative w-full overflow-hidden">
+      {!content && (
+        <div className={cn(
+          "absolute inset-0 pointer-events-none px-0 py-2 leading-relaxed text-muted-foreground z-0",
+          fullScreen ? "text-[22px]" : "text-[20px]"
+        )}>
+          {quotedPost ? "コメントを添えてリポスト" : "いまどうしてる？"}
+        </div>
+      )}
+
+      <div
+        aria-hidden="true"
+        className={cn(
+          "absolute inset-0 pointer-events-none whitespace-pre-wrap break-words px-0 py-2 leading-relaxed text-foreground z-0",
+          fullScreen ? "text-[22px]" : "text-[20px]"
+        )}
+        style={{ transform: `translateY(-${scrollTop}px)` }}
+      >
+        {renderHighlightedText(content)}
+        {content.endsWith('\n') ? <br /> : null}
+      </div>
+
+      <Textarea
+        ref={textareaRef}
+        value={content}
+        onChange={handleContentChange}
+        onPaste={handlePaste}
+        onScroll={handleScroll}
+        rows={fullScreen ? 6 : 3}
+        spellCheck={false}
+        className={cn(
+          "relative z-10 resize-none border-0 bg-transparent px-0 py-2 leading-relaxed shadow-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:outline-none outline-none w-full text-transparent selection:bg-[#b4d7ff] selection:text-black dark:selection:bg-[#385474] dark:selection:text-white",
+          fullScreen ? "text-[22px]" : "text-[20px]",
+          fullScreen && "min-h-[140px]"
+        )}
+        style={{ color: "transparent", caretColor: "hsl(var(--foreground))" }}
+      />
+    </div>
+  );
+
+  // メンション候補ポップアップ(共有)
+  const mentionPopup = (mentionResults.length > 0 && mentionQuery !== null) && (
+    <div 
+      className={cn("absolute z-[2147483647] w-64 overflow-hidden rounded-xl border border-border/60 bg-popover shadow-xl backdrop-blur-md transition-all duration-150", timelineGlass && "bg-popover/85 backdrop-blur-xl")}
+      style={{ top: popupPos.top - scrollTop, left: popupPos.left, zIndex: 2147483647 }}
+    >
+      <div className="p-2 text-xs font-bold text-muted-foreground bg-muted/30 flex items-center gap-1">
+        <AtSign className="w-3 h-3" /> メンションします
+      </div>
+      {mentionResults.map((result) => (
+        <button
+          key={result.id}
+          onClick={() => selectMention(result.username)}
+          className="flex w-full items-center gap-3 p-3 text-left transition hover:bg-accent focus:bg-accent outline-none"
+        >
+          <Avatar className="h-8 w-8">
+            <AvatarImage src={result.avatar_url} />
+            <AvatarFallback>{result.username[0]}</AvatarFallback>
+          </Avatar>
+          <div className="flex flex-col">
+            <span className="text-sm font-bold truncate leading-none mb-1">
+              {result.display_name || result.username}
+            </span>
+            <span className="text-xs text-muted-foreground leading-none">
+              @{result.username}
+            </span>
+          </div>
+        </button>
+      ))}
+    </div>
+  );
+
+  // ハッシュタグ候補ポップアップ(共有)
+  const hashtagPopup = (hashtagResults.length > 0 && hashtagQuery !== null) && (
+    <div 
+      className={cn("absolute z-[2147483647] w-64 overflow-hidden rounded-xl border border-border/60 bg-popover shadow-xl backdrop-blur-md transition-all duration-150", timelineGlass && "bg-popover/85 backdrop-blur-xl")}
+      style={{ top: popupPos.top - scrollTop, left: popupPos.left, zIndex: 2147483647 }}
+    >
+      <div className="p-2 text-xs font-bold text-muted-foreground bg-muted/30 flex items-center gap-1">
+        <Hash className="w-3 h-3" /> ハッシュタグを検索
+      </div>
+      {hashtagResults.map((result, idx) => (
+        <button
+          key={idx}
+          onClick={() => selectHashtag(result.tag)}
+          className="flex w-full items-center gap-3 p-3 text-left transition hover:bg-accent focus:bg-accent outline-none"
+        >
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted">
+            <Hash className="h-4 w-4" />
+          </div>
+          <span className="text-sm font-bold truncate">#{result.tag}</span>
+        </button>
+      ))}
+    </div>
+  );
+
+  // 引用元プレビュー(共有)
+  const quotedBlock = quotedPost && (
+    <div className={cn("relative mt-2 overflow-hidden rounded-2xl border border-border/60 bg-muted/20 p-4 transition-all", timelineGlass && "bg-background/35 backdrop-blur-xl")}>
+      {!initialQuotedPost && (
+        <button
+          type="button"
+          onClick={cancelQuote}
+          className="absolute right-2 top-2 z-10 rounded-full bg-background/80 p-1 backdrop-blur hover:bg-background"
+        >
+          <X className="h-4 w-4 text-muted-foreground" />
+        </button>
+      )}
+      
+      <div className="flex items-center gap-2 mb-1.5">
+        <Avatar className="h-5 w-5">
+          <AvatarImage src={quotedPost.author.avatarUrl} />
+          <AvatarFallback>{quotedPost.author.displayName[0]}</AvatarFallback>
+        </Avatar>
+        <span className="text-sm font-bold text-foreground truncate">{quotedPost.author.displayName}</span>
+        <span className="text-xs text-muted-foreground">@{quotedPost.author.username}</span>
+        <span className="text-xs text-muted-foreground">· {formatRelative(quotedPost.createdAt)}</span>
+      </div>
+      <p className="text-[14px] text-foreground line-clamp-2 leading-snug whitespace-pre-wrap">
+        {quotedPost.content}
+      </p>
+      {quotedPost.imageUrls.length > 0 && (
+        <div className="mt-2 text-xs text-accent font-bold">
+          [画像あり]
+        </div>
+      )}
+    </div>
+  );
+
+  // 画像プレビュー一覧(共有)
+  const imagesGrid = previews.length > 0 && (
+    <div className="grid grid-cols-2 gap-2">
+      {previews.map((src, i) => (
+        <div key={src} className="relative overflow-hidden rounded-2xl border border-border/60">
+          <img src={src} alt="" className="aspect-square w-full object-cover" />
+          <button
+            type="button"
+            onClick={() => openImageEditor(i)}
+            className="absolute left-1.5 top-1.5 inline-flex items-center rounded-full bg-black/55 px-3 py-1.5 text-xs font-bold text-white shadow-sm backdrop-blur-md transition hover:bg-black/70"
+          >
+            編集
+          </button>
+          <button
+            type="button"
+            onClick={() => removePreview(i)}
+            className="absolute right-1.5 top-1.5 rounded-full bg-background/80 p-1 backdrop-blur transition hover:bg-background"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+
+  // 画像トリミングエディタ(コンパクト版・全画面版で共有)
+  const cropEditorPortal = editingImageSrc && typeof document !== 'undefined' && createPortal(
+    <div
+      className="limenote-crop-editor-overlay fixed inset-0 z-[2147483647] flex items-center justify-center bg-black/78 p-2 sm:p-3 backdrop-blur-sm"
+      onPointerDown={(event) => {
+        if (event.target === event.currentTarget) closeImageEditor();
+      }}
+    >
+      <div className="flex h-[min(92svh,760px)] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-border/60 bg-card text-card-foreground shadow-2xl">
+        <div className="flex h-16 shrink-0 items-center justify-between border-b border-border/60 px-4">
+          <button
+            type="button"
+            onClick={closeImageEditor}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            aria-label="編集を閉じる"
+          >
+            <X className="h-5 w-5" />
+          </button>
+          <div className="text-lg font-black">メディアをトリミング</div>
+          <Button type="button" size="sm" className="rounded-full px-4 font-bold" onClick={saveCroppedImage}>
+            保存
+          </Button>
+        </div>
+
+        <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-2 sm:p-4">
+          <div ref={cropStageRef} className="relative mx-auto flex h-full w-full max-w-[620px] items-center justify-center overflow-hidden bg-transparent touch-none select-none">
+            <div
+              ref={cropBoxRef}
+              className="relative z-10 cursor-grab overflow-hidden bg-transparent shadow-2xl touch-none select-none active:cursor-grabbing"
+              style={{
+                width: `${cropFrameSize.width}px`,
+                height: `${cropFrameSize.height}px`,
+                maxWidth: '100%',
+                maxHeight: '100%',
+                aspectRatio: `${selectedCropAspect.width} / ${selectedCropAspect.height}`,
+                touchAction: 'none',
+                WebkitUserSelect: 'none',
+                userSelect: 'none',
+                WebkitTouchCallout: 'none',
+              }}
+              onPointerDown={startCropGesture}
+            >
+              <div
+                className="absolute inset-0 bg-center bg-no-repeat"
+                style={{
+                  backgroundImage: `url(${editingImageSrc})`,
+                  backgroundSize: cropImageSize.width && cropImageSize.height
+                    ? (() => {
+                        const baseScale = cropAspectId === 'original'
+                          ? Math.min((cropBoxSize.width || 320) / cropImageSize.width, (cropBoxSize.height || 320) / cropImageSize.height)
+                          : Math.max((cropBoxSize.width || 320) / cropImageSize.width, (cropBoxSize.height || 320) / cropImageSize.height);
+
+                        return `${cropImageSize.width * baseScale * cropZoom}px ${cropImageSize.height * baseScale * cropZoom}px`;
+                      })()
+                    : 'contain',
+                  backgroundPosition: `calc(50% + ${cropOffset.x}px) calc(50% + ${cropOffset.y}px)`,
+                }}
+              />
+              <div className="pointer-events-none absolute inset-0 ring-2 ring-inset ring-accent" />
+            </div>
+          </div>
+        </div>
+
+        <div className="flex shrink-0 items-center gap-2 border-t border-border/60 px-3 py-3 sm:gap-3 sm:px-4">
+          <div className="flex shrink-0 items-center gap-2">
+            {CROP_ASPECT_OPTIONS.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => selectCropAspect(option.id)}
+                className={cn(
+                  'inline-flex h-9 w-9 items-center justify-center rounded-full transition',
+                  cropAspectId === option.id
+                    ? 'text-accent'
+                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                )}
+                aria-label={`${option.label}でトリミング`}
+                title={option.label}
+              >
+                {(() => {
+                  const iconSize = getCropAspectIconSize(option);
+
+                  return (
+                    <span
+                      className={cn(
+                        'block rounded-[3px] border-2',
+                        cropAspectId === option.id ? 'border-current' : 'border-current/70'
+                      )}
+                      style={{ width: `${iconSize.width}px`, height: `${iconSize.height}px` }}
+                    />
+                  );
+                })()}
+              </button>
+            ))}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => applyCropZoom(cropZoom - 0.15)}
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            aria-label="縮小"
+          >
+            −
+          </button>
+          <input
+            type="range"
+            min="1"
+            max="3"
+            step="0.01"
+            value={cropZoom}
+            onChange={handleCropZoomChange}
+            className="min-w-0 flex-1 accent-current"
+          />
+          <button
+            type="button"
+            onClick={() => applyCropZoom(cropZoom + 0.15)}
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            aria-label="拡大"
+          >
+            +
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+
+  // --- モバイル全画面レイアウト ---
+  // ダミー機能は追加していません。GIF/投票/絵文字/予約投稿/位置情報/通報などのアイコンは
+  // 本実装に存在する機能ではないため、押しても何も起きないボタンにしないよう意図的に含めていません。
+  // 画像添付・公開範囲・投稿という、実際に動く機能だけをこのレイアウトに載せています。
+  if (fullScreen) {
+    return (
+      <>
+        <div
+          className="flex h-full w-full flex-col bg-background text-foreground"
+          style={{
+            paddingTop: 'env(safe-area-inset-top, 0px)',
+            paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+          }}
+        >
+          {/* ヘッダー: 戻る + ポストするボタン */}
+          <div className="flex shrink-0 items-center justify-between border-b border-border/60 px-4 py-2.5">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="flex h-10 w-10 items-center justify-center rounded-full text-foreground transition hover:bg-muted"
+              aria-label="閉じる"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+            <Button
+              type="button"
+              onClick={submit}
+              disabled={isPending || overLimit || !content.trim()}
+              className="rounded-full bg-gradient-primary px-5 font-bold shadow-soft transition hover:shadow-pop"
+            >
+              {isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                quotedPost ? '引用ポスト' : 'ポストする'
+              )}
+            </Button>
+          </div>
+
+          {/* 本文エリア(スクロール可能) */}
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-3" ref={containerRef}>
+            <div className="relative mb-2 flex items-center gap-3">
+              <Avatar className="h-11 w-11 border-2 border-primary/30 shrink-0">
+                <AvatarImage src={user.avatarUrl} alt={user.displayName} />
+                <AvatarFallback>{user.displayName.slice(0, 1)}</AvatarFallback>
+              </Avatar>
+              {visibilityMenu}
+            </div>
+
+            {textareaBlock}
+            {mentionPopup}
+            {hashtagPopup}
+            {quotedBlock}
+            {imagesGrid}
+          </div>
+
+          {/* フッター: 返信可否の表示 + 画像添付 + 文字数 */}
+          <div className="shrink-0 px-4 py-3">
+            <div className="mb-3 flex items-center gap-1.5 text-sm font-bold text-accent">
+              {visibility === 'public' ? (
+                <>
+                  <Globe className="h-4 w-4" />
+                  <span>全員が返信できます</span>
+                </>
+              ) : (
+                <>
+                  <Users className="h-4 w-4" />
+                  <span>フォロー中のみ返信できます</span>
+                </>
+              )}
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={onFile} />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-10 w-10 rounded-full p-0 text-accent hover:bg-accent-soft hover:text-accent"
+                  onClick={() => fileRef.current?.click()}
+                  disabled={previews.length >= MAX_IMAGES}
+                  aria-label="画像を追加"
+                >
+                  <ImagePlus className="h-5 w-5" />
+                </Button>
+              </div>
+              <span className={cn('text-xs tabular-nums', overLimit ? 'font-bold text-destructive' : 'text-muted-foreground')}>
+                {remaining}
+              </span>
+            </div>
+          </div>
+        </div>
+        {cropEditorPortal}
+      </>
+    );
+  }
+
+  // --- 通常(カード)レイアウト。タイムライン内蔵コンポーザーやデスクトップのモーダルで使用 ---
   return (
     <>
       <div
@@ -2025,146 +2485,11 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
           <AvatarFallback>{user.displayName.slice(0, 1)}</AvatarFallback>
         </Avatar>
         <div className="flex-1 min-w-0 space-y-3 relative" ref={containerRef}>
-          
-          <div className="relative w-full overflow-hidden">
-            {!content && (
-              <div className="absolute inset-0 pointer-events-none px-0 py-2 text-[20px] leading-relaxed text-muted-foreground z-0">
-                {quotedPost ? "コメントを添えてリポスト" : "いまどうしてる？"}
-              </div>
-            )}
-
-            <div
-              aria-hidden="true"
-              className="absolute inset-0 pointer-events-none whitespace-pre-wrap break-words px-0 py-2 text-[20px] leading-relaxed text-foreground z-0"
-              style={{ transform: `translateY(-${scrollTop}px)` }}
-            >
-              {renderHighlightedText(content)}
-              {content.endsWith('\n') ? <br /> : null}
-            </div>
-
-            <Textarea
-              ref={textareaRef}
-              value={content}
-              onChange={handleContentChange}
-              onPaste={handlePaste}
-              onScroll={handleScroll}
-              rows={3}
-              spellCheck={false}
-              className="relative z-10 resize-none border-0 bg-transparent px-0 py-2 text-[20px] leading-relaxed shadow-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:outline-none outline-none w-full text-transparent selection:bg-[#b4d7ff] selection:text-black dark:selection:bg-[#385474] dark:selection:text-white"
-              style={{ color: "transparent", caretColor: "hsl(var(--foreground))" }}
-            />
-          </div>
-
-          {/* 候補ポップアップ */}
-          {(mentionResults.length > 0 && mentionQuery !== null) && (
-            <div 
-              className={cn("absolute z-[2147483647] w-64 overflow-hidden rounded-xl border border-border/60 bg-popover shadow-xl backdrop-blur-md transition-all duration-150", timelineGlass && "bg-popover/85 backdrop-blur-xl")}
-              style={{ top: popupPos.top - scrollTop, left: popupPos.left, zIndex: 2147483647 }}
-            >
-              <div className="p-2 text-xs font-bold text-muted-foreground bg-muted/30 flex items-center gap-1">
-                <AtSign className="w-3 h-3" /> メンションします
-              </div>
-              {mentionResults.map((result) => (
-                <button
-                  key={result.id}
-                  onClick={() => selectMention(result.username)}
-                  className="flex w-full items-center gap-3 p-3 text-left transition hover:bg-accent focus:bg-accent outline-none"
-                >
-                  <Avatar className="h-8 w-8">
-                    <AvatarImage src={result.avatar_url} />
-                    <AvatarFallback>{result.username[0]}</AvatarFallback>
-                  </Avatar>
-                  <div className="flex flex-col">
-                    <span className="text-sm font-bold truncate leading-none mb-1">
-                      {result.display_name || result.username}
-                    </span>
-                    <span className="text-xs text-muted-foreground leading-none">
-                      @{result.username}
-                    </span>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {hashtagResults.length > 0 && hashtagQuery !== null && (
-            <div 
-              className={cn("absolute z-[2147483647] w-64 overflow-hidden rounded-xl border border-border/60 bg-popover shadow-xl backdrop-blur-md transition-all duration-150", timelineGlass && "bg-popover/85 backdrop-blur-xl")}
-              style={{ top: popupPos.top - scrollTop, left: popupPos.left, zIndex: 2147483647 }}
-            >
-              <div className="p-2 text-xs font-bold text-muted-foreground bg-muted/30 flex items-center gap-1">
-                <Hash className="w-3 h-3" /> ハッシュタグを検索
-              </div>
-              {hashtagResults.map((result, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => selectHashtag(result.tag)}
-                  className="flex w-full items-center gap-3 p-3 text-left transition hover:bg-accent focus:bg-accent outline-none"
-                >
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted">
-                    <Hash className="h-4 w-4" />
-                  </div>
-                  <span className="text-sm font-bold truncate">#{result.tag}</span>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {quotedPost && (
-            <div className={cn("relative mt-2 overflow-hidden rounded-2xl border border-border/60 bg-muted/20 p-4 transition-all", timelineGlass && "bg-background/35 backdrop-blur-xl")}>
-              {!initialQuotedPost && (
-                <button
-                  type="button"
-                  onClick={cancelQuote}
-                  className="absolute right-2 top-2 z-10 rounded-full bg-background/80 p-1 backdrop-blur hover:bg-background"
-                >
-                  <X className="h-4 w-4 text-muted-foreground" />
-                </button>
-              )}
-              
-              <div className="flex items-center gap-2 mb-1.5">
-                <Avatar className="h-5 w-5">
-                  <AvatarImage src={quotedPost.author.avatarUrl} />
-                  <AvatarFallback>{quotedPost.author.displayName[0]}</AvatarFallback>
-                </Avatar>
-                <span className="text-sm font-bold text-foreground truncate">{quotedPost.author.displayName}</span>
-                <span className="text-xs text-muted-foreground">@{quotedPost.author.username}</span>
-                <span className="text-xs text-muted-foreground">· {formatRelative(quotedPost.createdAt)}</span>
-              </div>
-              <p className="text-[14px] text-foreground line-clamp-2 leading-snug whitespace-pre-wrap">
-                {quotedPost.content}
-              </p>
-              {quotedPost.imageUrls.length > 0 && (
-                <div className="mt-2 text-xs text-accent font-bold">
-                  [画像あり]
-                </div>
-              )}
-            </div>
-          )}
-
-          {previews.length > 0 && (
-            <div className="grid grid-cols-2 gap-2">
-              {previews.map((src, i) => (
-                <div key={src} className="relative overflow-hidden rounded-2xl border border-border/60">
-                  <img src={src} alt="" className="aspect-square w-full object-cover" />
-                  <button
-                    type="button"
-                    onClick={() => openImageEditor(i)}
-                    className="absolute left-1.5 top-1.5 inline-flex items-center rounded-full bg-black/55 px-3 py-1.5 text-xs font-bold text-white shadow-sm backdrop-blur-md transition hover:bg-black/70"
-                  >
-                    編集
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => removePreview(i)}
-                    className="absolute right-1.5 top-1.5 rounded-full bg-background/80 p-1 backdrop-blur transition hover:bg-background"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+          {textareaBlock}
+          {mentionPopup}
+          {hashtagPopup}
+          {quotedBlock}
+          {imagesGrid}
 
           <div className={cn("flex items-center justify-between border-t border-border/60 pt-3", timelineGlass && "border-border/40")}>
             <div className="flex items-center gap-2">
@@ -2181,44 +2506,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
                 <span className="hidden sm:inline">画像</span>
               </Button>
 
-              {/* 公開範囲選択 (追加) */}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="h-9 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
-                  >
-                    {visibility === 'public' ? (
-                      <>
-                        <Globe className="sm:mr-1.5 h-4 w-4" />
-                        <span className="hidden sm:inline">全員</span>
-                      </>
-                    ) : (
-                      <>
-                        <Users className="sm:mr-1.5 h-4 w-4 text-accent" />
-                        <span className="text-accent hidden sm:inline">限定</span>
-                      </>
-                    )}
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  align="start"
-                  sideOffset={8}
-                  className="z-[2147483647] rounded-xl"
-                  style={{ zIndex: 2147483647 }}
-                >
-                  <DropdownMenuItem onClick={() => setVisibility('public')}>
-                    <Globe className="mr-2 h-4 w-4" />
-                    全員
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setVisibility('following')}>
-                    <Users className="mr-2 h-4 w-4" />
-                    フォロー中
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              {visibilityMenu}
 
               <span className={cn('text-xs tabular-nums', overLimit ? 'font-bold text-destructive' : 'text-muted-foreground')}>
                 {remaining}
@@ -2243,136 +2531,17 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
         </div>
       </div>
       </div>
-      {editingImageSrc && typeof document !== 'undefined' && createPortal(
-        <div
-          className="limenote-crop-editor-overlay fixed inset-0 z-[2147483647] flex items-center justify-center bg-black/78 p-2 sm:p-3 backdrop-blur-sm"
-          onPointerDown={(event) => {
-            if (event.target === event.currentTarget) closeImageEditor();
-          }}
-        >
-          <div className="flex h-[min(92svh,760px)] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-border/60 bg-card text-card-foreground shadow-2xl">
-            <div className="flex h-16 shrink-0 items-center justify-between border-b border-border/60 px-4">
-              <button
-                type="button"
-                onClick={closeImageEditor}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                aria-label="編集を閉じる"
-              >
-                <X className="h-5 w-5" />
-              </button>
-              <div className="text-lg font-black">メディアをトリミング</div>
-              <Button type="button" size="sm" className="rounded-full px-4 font-bold" onClick={saveCroppedImage}>
-                保存
-              </Button>
-            </div>
-
-            <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-2 sm:p-4">
-              <div ref={cropStageRef} className="relative mx-auto flex h-full w-full max-w-[620px] items-center justify-center overflow-hidden bg-transparent touch-none select-none">
-                <div
-                  ref={cropBoxRef}
-                  className="relative z-10 cursor-grab overflow-hidden bg-transparent shadow-2xl touch-none select-none active:cursor-grabbing"
-                  style={{
-                    width: `${cropFrameSize.width}px`,
-                    height: `${cropFrameSize.height}px`,
-                    maxWidth: '100%',
-                    maxHeight: '100%',
-                    aspectRatio: `${selectedCropAspect.width} / ${selectedCropAspect.height}`,
-                    touchAction: 'none',
-                    WebkitUserSelect: 'none',
-                    userSelect: 'none',
-                    WebkitTouchCallout: 'none',
-                  }}
-                  onPointerDown={startCropGesture}
-                >
-                  <div
-                    className="absolute inset-0 bg-center bg-no-repeat"
-                    style={{
-                      backgroundImage: `url(${editingImageSrc})`,
-                      backgroundSize: cropImageSize.width && cropImageSize.height
-                        ? (() => {
-                            const baseScale = cropAspectId === 'original'
-                              ? Math.min((cropBoxSize.width || 320) / cropImageSize.width, (cropBoxSize.height || 320) / cropImageSize.height)
-                              : Math.max((cropBoxSize.width || 320) / cropImageSize.width, (cropBoxSize.height || 320) / cropImageSize.height);
-
-                            return `${cropImageSize.width * baseScale * cropZoom}px ${cropImageSize.height * baseScale * cropZoom}px`;
-                          })()
-                        : 'contain',
-                      backgroundPosition: `calc(50% + ${cropOffset.x}px) calc(50% + ${cropOffset.y}px)`,
-                    }}
-                  />
-                  <div className="pointer-events-none absolute inset-0 ring-2 ring-inset ring-accent" />
-                </div>
-              </div>
-            </div>
-
-            <div className="flex shrink-0 items-center gap-2 border-t border-border/60 px-3 py-3 sm:gap-3 sm:px-4">
-              <div className="flex shrink-0 items-center gap-2">
-                {CROP_ASPECT_OPTIONS.map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => selectCropAspect(option.id)}
-                    className={cn(
-                      'inline-flex h-9 w-9 items-center justify-center rounded-full transition',
-                      cropAspectId === option.id
-                        ? 'text-accent'
-                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                    )}
-                    aria-label={`${option.label}でトリミング`}
-                    title={option.label}
-                  >
-                    {(() => {
-                      const iconSize = getCropAspectIconSize(option);
-
-                      return (
-                        <span
-                          className={cn(
-                            'block rounded-[3px] border-2',
-                            cropAspectId === option.id ? 'border-current' : 'border-current/70'
-                          )}
-                          style={{ width: `${iconSize.width}px`, height: `${iconSize.height}px` }}
-                        />
-                      );
-                    })()}
-                  </button>
-                ))}
-              </div>
-
-              <button
-                type="button"
-                onClick={() => applyCropZoom(cropZoom - 0.15)}
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                aria-label="縮小"
-              >
-                −
-              </button>
-              <input
-                type="range"
-                min="1"
-                max="3"
-                step="0.01"
-                value={cropZoom}
-                onChange={handleCropZoomChange}
-                className="min-w-0 flex-1 accent-current"
-              />
-              <button
-                type="button"
-                onClick={() => applyCropZoom(cropZoom + 0.15)}
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                aria-label="拡大"
-              >
-                +
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+      {cropEditorPortal}
     </>
   );
 }
 
+// 新規投稿モーダル/全画面コンポーズ。
+// document.body へポータル描画することで、祖先(Provider群)のCSSに影響されず
+// 常に画面全体を基準に固定表示できるようにしている(iPhone PWAやモバイル幅Chromeでの表示崩れ対策)。
 const PostOverlay = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) => {
+  const isMobile = useIsMobileViewport();
+
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = 'hidden';
@@ -2384,10 +2553,20 @@ const PostOverlay = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
     };
   }, [isOpen]);
 
-  if (!isOpen) return null;
+  if (!isOpen || typeof document === 'undefined') return null;
 
-  return (
-    <div className="fixed inset-0 z-[9999] flex items-start justify-center bg-black/50 p-4 pt-16 sm:items-center sm:pt-4 overflow-y-auto">
+  if (isMobile) {
+    // モバイルはオーバーレイではなく全画面で表示する
+    return createPortal(
+      <div className="fixed inset-0 z-[2147483000] flex flex-col bg-background">
+        <PostComposer fullScreen onSuccess={onClose} onCancel={onClose} />
+      </div>,
+      document.body
+    );
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[2147483000] flex items-start justify-center bg-black/50 p-4 pt-16 sm:items-center sm:pt-4 overflow-y-auto">
       <div 
         className="fixed inset-0" 
         onClick={onClose} 
@@ -2395,7 +2574,38 @@ const PostOverlay = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
       <div className="relative w-full max-w-xl animate-in fade-in zoom-in-95 duration-200">
         <PostComposer onSuccess={onClose} onCancel={onClose} />
       </div>
-    </div>
+    </div>,
+    document.body
+  );
+};
+
+// 新規投稿用のフローティングボタン(FAB)。
+// document.body へポータル描画し、Providerツリー内のCSS(transform/overflowなど)の
+// 影響を受けないようにすることで、iPhoneのPWAやモバイル幅Chromeで表示されない不具合を解消する。
+// 非表示状態は scale/opacity に加えて pointer-events も切ることで、
+// 見えない状態のボタンがタップを奪ってしまう副作用も防ぐ。
+const FloatingComposeButton = ({ hidden, onOpen }: { hidden: boolean; onOpen: () => void }) => {
+  if (typeof document === 'undefined') return null;
+
+  return createPortal(
+    <button
+      type="button"
+      onClick={onOpen}
+      className={cn(
+        "fixed z-[2147483000] flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-all duration-500 hover:scale-110 active:scale-95 md:hidden",
+        hidden ? "pointer-events-none scale-0 opacity-0" : "pointer-events-auto scale-100 opacity-100"
+      )}
+      style={{
+        right: 'max(1.5rem, env(safe-area-inset-right, 0px))',
+        bottom: 'calc(6rem + env(safe-area-inset-bottom, 0px))',
+      }}
+      aria-hidden={hidden}
+      tabIndex={hidden ? -1 : 0}
+      aria-label="新規投稿"
+    >
+      <PenSquare className="h-5 w-5" />
+    </button>,
+    document.body
   );
 };
 
@@ -2449,18 +2659,7 @@ const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage |
           <Route path="*" element={<NotFound />} />
         </Routes>
 
-        <button 
-          onClick={() => setPostModalOpen(true)}
-          className={cn(
-            "fixed z-[999] flex items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-all duration-500 hover:scale-110 active:scale-95",
-            "bottom-24 right-6 h-12 w-12 md:hidden",
-            shouldHideFAB && "scale-0 opacity-0"
-          )}
-          aria-label="新規投稿"
-        >
-          
-          <PenSquare className="h-5 w-5" />
-        </button>
+        <FloatingComposeButton hidden={shouldHideFAB} onOpen={() => setPostModalOpen(true)} />
 
         <PostOverlay 
           isOpen={isPostModalOpen} 

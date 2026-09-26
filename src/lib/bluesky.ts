@@ -244,13 +244,54 @@ export async function authorizedBlueskyFetch(
     });
 
   let response = await call(session.accessJwt);
-  if (response.status === 401) {
+
+  if (await isExpiredOrInvalidTokenResponse(response)) {
     const refreshed = await refreshBlueskySession();
     if (!refreshed) throw new Error('Blueskyのセッションが失効しました。再度ログインしてください');
     response = await call(refreshed.accessJwt);
   }
 
   return response;
+}
+
+// AT ProtocolのXRPCは、アクセストークンが期限切れ/無効な場合、
+// 401ではなく 400 + {"error":"ExpiredToken"} (または "InvalidToken") を
+// 返すことがある(実際、公式PDSの挙動として確認済み)。
+// 401だけを見ていると、期限切れのたびに何もせず失敗レスポンスをそのまま
+// 返してしまい、いいね/フォロー等が常に失敗する不具合につながっていた。
+// レスポンスボディは一度しか読めないため、判定には clone() を使う。
+async function isExpiredOrInvalidTokenResponse(response: Response): Promise<boolean> {
+  if (response.status === 401) return true;
+  if (response.status !== 400) return false;
+
+  try {
+    const payload = await response.clone().json() as { error?: string };
+    return payload?.error === 'ExpiredToken' || payload?.error === 'InvalidToken';
+  } catch {
+    return false;
+  }
+}
+
+// AT Protocolでは、自分のPDS経由で app.bsky.* (AppView側)のメソッドを呼ぶ際、
+// どのAppViewに転送してほしいかを atproto-proxy ヘッダーで明示する必要がある。
+// これを付けずに呼ぶと、PDSの実装によっては 501/400 等で失敗し、
+// (エラーにならずレスポンスが単に空/失敗として返ってくることもある)、
+// 結果として「いいね済みか」「cid」が取得できずいいねができない、
+// という不具合につながる。com.atproto.repo.* (createRecord/deleteRecord)は
+// PDSがネイティブに処理するメソッドなので、このヘッダーは不要かつ付けない。
+const BSKY_APPVIEW_PROXY_DID = 'did:web:api.bsky.app#bsky_appview';
+
+async function authorizedBlueskyAppViewFetch(
+  endpoint: string,
+  init: RequestInit = {}
+): Promise<Response> {
+  return authorizedBlueskyFetch(endpoint, {
+    ...init,
+    headers: {
+      ...(init.headers || {}),
+      'atproto-proxy': BSKY_APPVIEW_PROXY_DID,
+    },
+  });
 }
 
 // ------------------------------------------------------------------
@@ -292,23 +333,48 @@ export async function fetchBlueskyPostViewerState(
 
   try {
     const params = new URLSearchParams({ uri, depth: '0' });
-    const response = await authorizedBlueskyFetch(
+    const response = await authorizedBlueskyAppViewFetch(
       `app.bsky.feed.getPostThread?${params.toString()}`,
       { method: 'GET', signal }
     );
 
+    if (response.ok) {
+      const payload = (await response.json()) as {
+        thread?: { post?: { cid?: string; viewer?: { like?: string } } };
+      };
+
+      const cid = payload.thread?.post?.cid ?? null;
+      if (cid) {
+        return {
+          likeUri: payload.thread?.post?.viewer?.like ?? null,
+          cid,
+        };
+      }
+      // cidが取れなかった場合は下の公開APIフォールバックへ続ける
+    } else {
+      console.warn('Bluesky post thread (authorized) failed:', response.status, uri);
+    }
+  } catch (error) {
+    console.error('Fetch Bluesky post viewer state (authorized) failed:', error);
+  }
+
+  // 認証付き取得(PDS経由でのAppViewプロキシ)に失敗しても、
+  // いいね自体は可能な限り行えるよう、公開APIからcidだけでも取得しておく。
+  // この場合、現在いいね済みかどうかは判定できない(likeUriはnullのまま)ため
+  // UI上は「未いいね」扱いになるが、クリックすれば新規にいいねできる。
+  try {
+    const params = new URLSearchParams({ uri, depth: '0' });
+    const response = await fetch(
+      `${BSKY_PUBLIC_API}/app.bsky.feed.getPostThread?${params.toString()}`,
+      { method: 'GET', headers: { Accept: 'application/json' }, signal }
+    );
+
     if (!response.ok) return { likeUri: null, cid: null };
 
-    const payload = (await response.json()) as {
-      thread?: { post?: { cid?: string; viewer?: { like?: string } } };
-    };
-
-    return {
-      likeUri: payload.thread?.post?.viewer?.like ?? null,
-      cid: payload.thread?.post?.cid ?? null,
-    };
+    const payload = (await response.json()) as { thread?: { post?: { cid?: string } } };
+    return { likeUri: null, cid: payload.thread?.post?.cid ?? null };
   } catch (error) {
-    console.error('Fetch Bluesky post viewer state failed:', error);
+    console.error('Fetch Bluesky post cid (public fallback) failed:', error);
     return { likeUri: null, cid: null };
   }
 }
@@ -326,12 +392,15 @@ export async function fetchBlueskyActorViewerState(
 
   try {
     const params = new URLSearchParams({ actor: did });
-    const response = await authorizedBlueskyFetch(
+    const response = await authorizedBlueskyAppViewFetch(
       `app.bsky.actor.getProfile?${params.toString()}`,
       { method: 'GET', signal }
     );
 
-    if (!response.ok) return { followUri: null };
+    if (!response.ok) {
+      console.warn('Bluesky actor profile (authorized) failed:', response.status, did);
+      return { followUri: null };
+    }
 
     const payload = (await response.json()) as { viewer?: { following?: string } };
     return { followUri: payload.viewer?.following ?? null };
