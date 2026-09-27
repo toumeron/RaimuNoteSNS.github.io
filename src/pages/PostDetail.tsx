@@ -151,6 +151,61 @@ function BlueskyReplyList({
   );
 }
 
+// タイムラインの共通ヘッダーと同じスクロール方向ベースの開閉を、
+// ポスト詳細のモバイル専用ヘッダーにだけ適用する。
+// - ページ上部から 96px 以内は常に表示
+// - それより下では、下スクロールで閉じ、上スクロールで再表示
+// - requestAnimationFrame で判定して、細かなスクロールイベントの連続更新を抑える
+const useMobilePostDetailHeaderVisibility = (enabled: boolean) => {
+  const [isHidden, setIsHidden] = useState(false);
+
+  useEffect(() => {
+    if (!enabled) {
+      setIsHidden(false);
+      return;
+    }
+
+    const HIDE_AFTER = 96;
+    const DIRECTION_THRESHOLD = 12;
+
+    let lastScrollY = window.scrollY;
+    let rafId: number | null = null;
+
+    const update = () => {
+      rafId = null;
+      const currentScrollY = window.scrollY;
+      const delta = currentScrollY - lastScrollY;
+
+      if (currentScrollY <= HIDE_AFTER) {
+        setIsHidden(false);
+      } else if (delta > DIRECTION_THRESHOLD) {
+        setIsHidden(true);
+      } else if (delta < -DIRECTION_THRESHOLD) {
+        setIsHidden(false);
+      }
+
+      lastScrollY = currentScrollY;
+    };
+
+    const handleScroll = () => {
+      if (rafId !== null) return;
+      rafId = window.requestAnimationFrame(update);
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+
+    return () => {
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+      }
+      window.removeEventListener('scroll', handleScroll);
+    };
+  }, [enabled]);
+
+  return isHidden;
+};
+
+
 export default function PostDetail() {
   const { id = '' } = useParams();
   const isBlueskyPost = isBlueskyPostLike({ id });
@@ -776,6 +831,9 @@ export default function PostDetail() {
     : data?.content;
 
   const useMobileThreadLayout = isMobile;
+  const isMobilePostDetailHeaderHidden =
+    useMobilePostDetailHeaderVisibility(useMobileThreadLayout);
+
 
   // --- 「もっと見る」メニュー用の判定（PostCardと同様のロジック） ---
   const isMyPost = !isBlueskyPost && !!data && currentUserId === (data as PostWithAuthor).userId;
@@ -1384,7 +1442,11 @@ export default function PostDetail() {
 
       {/* --- モバイル専用ヘッダー（戻る・タイトル・もっと見る）。ポスト詳細のモバイル版のみ表示。 --- */}
       {useMobileThreadLayout && (
-        <div className="post-detail-mobile-topbar">
+        <div
+          className={`post-detail-mobile-topbar transition-transform duration-300 ease-out ${
+            isMobilePostDetailHeaderHidden ? '-translate-y-full' : 'translate-y-0'
+          }`}
+        >
           <button
             type="button"
             onClick={() => navigate(-1)}

@@ -257,6 +257,7 @@ export function BottomNav() {
       {postDetailBorderStyles}
       <nav
         ref={navRef}
+        data-lime-bottom-nav-root="true"
         data-lime-post-detail-bottom-nav={hideTopBorder ? 'true' : undefined}
         className={cn(
           'fixed bottom-0 left-0 right-0 md:hidden',

@@ -862,6 +862,21 @@ function subscribeToSharedTick(listener: SharedTickListener) {
   };
 }
 
+// バグ修正: タイムラインの最新/フォロー中/トレンドタブを切り替えると、
+// Feed.tsx側で各投稿カードの key に activeTab を含めているため
+// (key={`${activeTab}-${post.id}`})、タブ切り替えのたびに PostCard が
+// 新規マウントされる。以前は isMobile の初期値が useState(false) だったため、
+// 新規マウントされる瞬間は必ず「PC版レイアウト」で最初の1フレームが描画され、
+// 直後の useEffect 内の updateMobileState() 実行でモバイル版に切り替わる
+// 二段階レンダーになっていた。これがタブ切り替え時に一瞬だけPC版のカードが
+// 見える(残像に見える)バグの直接の原因。
+// PostCardSkeleton.tsx と同じ考え方で、useState の lazy initializer と
+// useRef の初期値をマウント時点の実際の画面幅から決めることで、
+// 新規マウント時から常に正しいレイアウトで描画されるようにする。
+function getIsMobileViewport() {
+  return typeof window !== 'undefined' && window.innerWidth < 640;
+}
+
 function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuthor; timelineGlass?: boolean }) {
   const [showMenu, setShowMenu] = useState(false);
   const [moreMenuPosition, setMoreMenuPosition] = useState<{ top: number; right: number } | null>(null);
@@ -898,7 +913,10 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
   const [activeRings, setActiveRings] = useState<ReplicatedRing[]>([]);
   const [activeDots, setActiveDots] = useState<ReplicatedDot[]>([]);
 
-  const [isMobile, setIsMobile] = useState(false);
+  // 修正: useState(false) → lazy initializer に変更。
+  // マウント直後の最初の描画から実際の画面幅を反映したレイアウトになるため、
+  // 「新規マウント時に一瞬だけPC版が見えてしまう」二段階レンダーを防げる。
+  const [isMobile, setIsMobile] = useState(() => getIsMobileViewport());
   const [timelinePortalTheme, setTimelinePortalTheme] = useState<'light' | 'dark'>(() => {
     if (typeof window === 'undefined') return 'dark';
     return localStorage.getItem('lime_timeline_visual_theme') === 'light' ? 'light' : 'dark';
@@ -907,7 +925,11 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
   const [isCardActive, setIsCardActive] = useState(false);
 
   const cardRootRef = useRef<HTMLElement>(null);
-  const isMobileRef = useRef(false);
+  // isMobileRef も isMobile と同じ初期値(実測値)に揃えておく。
+  // ここが false 固定のままだと、初回の resize イベントで
+  // 「実際は変化していないのに isMobileRef と実際の値がズレて見える」
+  // 不整合の芽になるため、isMobile 側と同じ関数で初期化する。
+  const isMobileRef = useRef(getIsMobileViewport());
   const resizeRafRef = useRef<number | null>(null);
   const [profileHoverTarget, setProfileHoverTarget] = useState<ProfileHoverTarget>(null);
   const profileHoverOpenTimerRef = useRef<number | null>(null);
@@ -1023,6 +1045,11 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
   }, []);
 
   useEffect(() => {
+    // 修正: 初期値は isMobile/isMobileRef のどちらも既に実測値で
+    // 初期化済みなので、マウント直後の updateMobileState() 即時呼び出しは
+    // 不要(むしろ、初期値が既に正しいのに再度 setIsMobile を呼ぶことで
+    // 不要な再レンダーが発生する余地を作ってしまう)。resize 監視の
+    // セットアップだけを行う。
     const updateMobileState = () => {
       const nextIsMobile = window.innerWidth < 640;
       if (isMobileRef.current === nextIsMobile) return;
@@ -1040,7 +1067,6 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
       });
     };
 
-    updateMobileState();
     window.addEventListener('resize', checkMobile);
 
     return () => {

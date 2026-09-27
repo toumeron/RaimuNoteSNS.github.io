@@ -2543,22 +2543,66 @@ const PostOverlay = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
   const isMobile = useIsMobileViewport();
 
   useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
-    }
-    return () => {
-      document.body.style.overflow = '';
+    if (!isOpen || typeof document === 'undefined') return;
+
+    const html = document.documentElement;
+    const body = document.body;
+
+    const previous = {
+      htmlOverflow: html.style.overflow,
+      htmlOverscrollBehavior: html.style.overscrollBehavior,
+      bodyOverflow: body.style.overflow,
+      bodyOverscrollBehavior: body.style.overscrollBehavior,
+      bodyPosition: body.style.position,
+      bodyTop: body.style.top,
+      bodyLeft: body.style.left,
+      bodyRight: body.style.right,
+      bodyWidth: body.style.width,
     };
-  }, [isOpen]);
+
+    const lockedScrollY = window.scrollY;
+
+    if (isMobile) {
+      // iOS Safari / モバイルChromeでは body の overflow:hidden だけでは
+      // 背面ページのスクロールが残る場合があるため、ページ自体を固定する。
+      // スクロール位置を保持して閉じた後に元の位置へ正確に戻す。
+      html.style.overflow = 'hidden';
+      html.style.overscrollBehavior = 'none';
+      body.style.overflow = 'hidden';
+      body.style.overscrollBehavior = 'none';
+      body.style.position = 'fixed';
+      body.style.top = `-${scrollY}px`;
+      body.style.left = '0';
+      body.style.right = '0';
+      body.style.width = '100%';
+    } else {
+      // デスクトップの既存モーダル挙動はそのまま維持する。
+      body.style.overflow = 'hidden';
+    }
+
+    return () => {
+      html.style.overflow = previous.htmlOverflow;
+      html.style.overscrollBehavior = previous.htmlOverscrollBehavior;
+      body.style.overflow = previous.bodyOverflow;
+      body.style.overscrollBehavior = previous.bodyOverscrollBehavior;
+      body.style.position = previous.bodyPosition;
+      body.style.top = previous.bodyTop;
+      body.style.left = previous.bodyLeft;
+      body.style.right = previous.bodyRight;
+      body.style.width = previous.bodyWidth;
+
+      if (isMobile) {
+        window.scrollTo(0, lockedScrollY);
+      }
+    };
+  }, [isOpen, isMobile]);
 
   if (!isOpen || typeof document === 'undefined') return null;
 
   if (isMobile) {
     // モバイルはオーバーレイではなく全画面で表示する
     return createPortal(
-      <div className="fixed inset-0 z-[2147483000] flex flex-col bg-background">
+      <div className="fixed inset-0 z-[2147483000] flex h-[100dvh] max-h-[100dvh] flex-col overflow-hidden overscroll-none bg-background">
         <PostComposer fullScreen onSuccess={onClose} onCancel={onClose} />
       </div>,
       document.body

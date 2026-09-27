@@ -2560,12 +2560,10 @@ const PROFILE_PAGE_STYLES = `
             font-weight: 500;
           }
 
-          .profile-tabs-trigger[data-state='active'] .profile-tabs-underline {
-            display: block;
-          }
-
-          .profile-tabs-trigger[data-state='inactive'] .profile-tabs-underline {
-            display: none;
+          /* ヘッダーのタブと同じく、アクティブ下線は1本だけ使って
+             left のCSS transitionでタブ間を滑らかに移動させる。 */
+          .profile-tabs-underline {
+            transition: left 300ms cubic-bezier(0.22, 1, 0.36, 1);
           }
 
           @keyframes misskeyRingExpand {
@@ -3325,6 +3323,14 @@ export default function Profile() {
           />
 
           <TabsList className="relative z-20 grid h-full w-full grid-cols-4 rounded-none bg-transparent p-0 shadow-none sm:hidden">
+            <span
+              aria-hidden="true"
+              className="profile-tabs-underline pointer-events-none absolute bottom-2 left-0 z-[2] h-[4px] w-16 -translate-x-1/2 rounded-full bg-pink-500 sm:w-10"
+              style={{
+                left: `${((Math.max(0, profileTabs.findIndex((tab) => tab.value === activeTab)) + 0.5) / profileTabs.length) * 100}%`,
+              }}
+            />
+
             {profileTabs.map((tab) => (
               <TabsTrigger
                 key={tab.value}
@@ -3334,8 +3340,6 @@ export default function Profile() {
                 <span className="whitespace-nowrap">
                   {tab.label}
                 </span>
-
-                <span className="profile-tabs-underline absolute bottom-2 left-1/2 h-[4px] w-16 -translate-x-1/2 rounded-full bg-pink-500 sm:w-10" />
               </TabsTrigger>
             ))}
           </TabsList>

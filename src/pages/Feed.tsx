@@ -1,5 +1,5 @@
 import { RefreshCw, Sparkles, Loader2 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { useQueryClient } from '@tanstack/react-query';
 import { PostComposer } from '@/components/feed/PostComposer';
@@ -67,6 +67,12 @@ type TimelineVisualDesignCache = {
 // 最新/フォロー中に加えて、Blueskyの日本語トレンド投稿(いいね500以上)を
 // ランダムに表示する「トレンド」タブを追加。
 type FeedTab = 'all' | 'following' | 'trending';
+
+const FEED_TAB_ORDER: FeedTab[] = ['all', 'following', 'trending'];
+
+// 投稿の入口アニメーションは、ブラウザを再読み込みした直後の最初の表示だけ実行する。
+// SPA内のタブ切り替え・再訪では再実行しない。モジュール再評価はハードリロードで起こる。
+let feedInitialFloatAnimationHasPlayed = false;
 type FeedPostInsertPayload = {
   id?: string;
   parent_id?: string | null;
@@ -200,6 +206,24 @@ export default function Feed() {
 
   const feedRootRef = useRef<HTMLDivElement>(null);
   const postListRef = useRef<HTMLDivElement>(null);
+
+  // タブ切り替え時のフィード本体アニメーションは横方向だけに限定する。
+  // タブごとにスクロール位置が異なっていても、縦方向(transformY)は一切動かさず、
+  // 新しいフィードだけを左右からスライドさせる。
+  const previousFeedTabForAnimationRef = useRef<FeedTab>(activeTab);
+  const feedTabAnimationFrameRef = useRef<number | null>(null);
+  const feedTabAnimationTimerRef = useRef<number | null>(null);
+  const feedTabAnimationContentRef = useRef<HTMLDivElement | null>(null);
+
+  // タブごとのスクロール位置はこのFeedコンポーネントが生きている間だけ保持する。
+  // localStorageには保存しないため、ページを再読み込みするとリセットされる。
+  const feedTabScrollPositionsRef = useRef<Partial<Record<FeedTab, number>>>({});
+  const activeFeedTabForScrollRef = useRef<FeedTab>(activeTab);
+  const pendingFeedTabScrollRestoreRef = useRef<number | null>(null);
+  const initialFeedTabRef = useRef<FeedTab>(activeTab);
+  const [shouldPlayInitialFloatAnimation, setShouldPlayInitialFloatAnimation] = useState(
+    () => !feedInitialFloatAnimationHasPlayed
+  );
   const touchStartYRef = useRef(0);
   const isPullingRef = useRef(false);
   const pullDistanceRef = useRef(0);
@@ -802,6 +826,26 @@ export default function Feed() {
 
 
   useEffect(() => {
+    return () => {
+      const postList = postListRef.current;
+      if (postList instanceof HTMLDivElement) {
+        postList.style.removeProperty('transition');
+        postList.style.removeProperty('transform');
+      }
+
+      if (feedTabAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(feedTabAnimationFrameRef.current);
+        feedTabAnimationFrameRef.current = null;
+      }
+
+      if (feedTabAnimationTimerRef.current !== null) {
+        window.clearTimeout(feedTabAnimationTimerRef.current);
+        feedTabAnimationTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     const hasBackground = Boolean(timelineBackgroundUrl);
     const payload = {
       theme: timelineTheme,
@@ -1102,6 +1146,171 @@ export default function Feed() {
     loadTrendingPosts,
   ]);
 
+  useLayoutEffect(() => {
+    const postContent = feedTabAnimationContentRef.current;
+    const previousTab = previousFeedTabForAnimationRef.current;
+
+    if (!(postContent instanceof HTMLDivElement)) return;
+
+    // View Transitionを使うモバイルでは、JSのtransformを重ねない。
+    // 二重アニメーションによるブレ・残像を防ぎ、フィードはView Transition側だけで滑らせる。
+    const isMobileViewport =
+      window.matchMedia?.('(max-width: 639px)').matches ?? window.innerWidth < 640;
+    if (isMobileViewport) {
+      previousFeedTabForAnimationRef.current = activeTab;
+      postContent.style.removeProperty('transition');
+      postContent.style.removeProperty('transform');
+      postContent.style.removeProperty('will-change');
+      if (feedTabAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(feedTabAnimationFrameRef.current);
+        feedTabAnimationFrameRef.current = null;
+      }
+      if (feedTabAnimationTimerRef.current !== null) {
+        window.clearTimeout(feedTabAnimationTimerRef.current);
+        feedTabAnimationTimerRef.current = null;
+      }
+      return;
+    }
+
+    // 初回マウントではタブ切替アニメーションを実行しない。
+    if (previousTab === activeTab) return;
+
+    const previousIndex = FEED_TAB_ORDER.indexOf(previousTab);
+    const nextIndex = FEED_TAB_ORDER.indexOf(activeTab);
+    const startX = nextIndex > previousIndex ? 24 : -24;
+
+    previousFeedTabForAnimationRef.current = activeTab;
+
+    if (feedTabAnimationFrameRef.current !== null) {
+      window.cancelAnimationFrame(feedTabAnimationFrameRef.current);
+      feedTabAnimationFrameRef.current = null;
+    }
+    if (feedTabAnimationTimerRef.current !== null) {
+      window.clearTimeout(feedTabAnimationTimerRef.current);
+      feedTabAnimationTimerRef.current = null;
+    }
+
+    // PC版の既存挙動はそのまま維持する。
+    postContent.style.transition = 'none';
+    postContent.style.transform = `translate3d(${startX}px, 0, 0)`;
+    postContent.style.willChange = 'transform';
+
+    feedTabAnimationFrameRef.current = window.requestAnimationFrame(() => {
+      feedTabAnimationFrameRef.current = window.requestAnimationFrame(() => {
+        feedTabAnimationFrameRef.current = null;
+        postContent.style.transition = 'transform 420ms cubic-bezier(0.22, 1, 0.36, 1)';
+        postContent.style.transform = 'translate3d(0, 0, 0)';
+
+        feedTabAnimationTimerRef.current = window.setTimeout(() => {
+          feedTabAnimationTimerRef.current = null;
+          postContent.style.removeProperty('transition');
+          postContent.style.removeProperty('transform');
+          postContent.style.removeProperty('will-change');
+        }, 440);
+      });
+    });
+
+    return () => {
+      if (feedTabAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(feedTabAnimationFrameRef.current);
+        feedTabAnimationFrameRef.current = null;
+      }
+    };
+  }, [activeTab]);
+
+  useEffect(() => {
+    return () => {
+      if (feedTabAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(feedTabAnimationFrameRef.current);
+        feedTabAnimationFrameRef.current = null;
+      }
+      if (feedTabAnimationTimerRef.current !== null) {
+        window.clearTimeout(feedTabAnimationTimerRef.current);
+        feedTabAnimationTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  // 現在のタブのスクロール位置を常時記憶する。タブ切替後のscrollToもauto復元なので、
+  // このscrollイベントで記憶位置が混ざっても、activeFeedTabForScrollRefが正しいタブを指す。
+  useEffect(() => {
+    activeFeedTabForScrollRef.current = activeTab;
+
+    const rememberScrollPosition = () => {
+      feedTabScrollPositionsRef.current[activeFeedTabForScrollRef.current] = window.scrollY;
+    };
+
+    rememberScrollPosition();
+    window.addEventListener('scroll', rememberScrollPosition, { passive: true });
+
+    return () => {
+      window.removeEventListener('scroll', rememberScrollPosition);
+    };
+  }, [activeTab]);
+
+  // バグ修正: タブ切替(モバイルのView Transition)はHeader側のflushSync内で
+  // 先にactiveTabだけを更新し、実際のwindow.scrollToはその後に実行される。
+  // そのため、このコンポーネントが新しいタブとして再描画される最初のフレームでは
+  // virtualViewport.scrollYがまだ古いタブのスクロール位置のままになっている。
+  // 仮想化(virtualRange)の計算はこのscrollYを使って「今どの投稿を描画するか」を
+  // 決めているため、古いスクロール位置のまま新しいタブの投稿数に対して範囲計算を
+  // してしまうと、範囲がずれて投稿が一時的に描画されず、タブ切替アニメーションの
+  // 最中に投稿が消えたように見えるバグの原因になっていた。
+  // ここでは実際のscrollTo実行を待たず、Header側が計算済みの復元先スクロール位置
+  // (pendingFeedTabScrollRestoreRef)を先読みしてvirtualViewportへ同期させることで、
+  // 新しいタブの内容が最初のフレームから正しい範囲で描画されるようにする。
+  const previousVirtualizedTabRef = useRef<FeedTab>(activeTab);
+
+  useLayoutEffect(() => {
+    if (previousVirtualizedTabRef.current === activeTab) return;
+    previousVirtualizedTabRef.current = activeTab;
+
+    if (typeof window === 'undefined') return;
+
+    const listTop = postListRef.current
+      ? postListRef.current.getBoundingClientRect().top + window.scrollY
+      : 0;
+    const predictedScrollY = pendingFeedTabScrollRestoreRef.current ?? window.scrollY;
+
+    setVirtualViewport({
+      scrollY: predictedScrollY,
+      height: window.innerHeight,
+      listTop,
+    });
+  }, [activeTab]);
+
+  // 初回ローディング表示(スケルトン)を出すかどうかは、タブごとに参照する
+  // データソースが違うため個別に判定する。
+  const isInitialLoading = activeTab === 'trending'
+    ? trendingLoading && allPosts.length === 0
+    : isLoading && allPosts.length === 0;
+
+  // 初回表示の「ふわっと浮かび上がる」アニメーションは、再読み込み後の最初のフィード表示だけに限定。
+  // タブを切り替えた後のフィードには animate-float-up を付けない。
+  useEffect(() => {
+    if (feedInitialFloatAnimationHasPlayed || !shouldPlayInitialFloatAnimation) return;
+
+    // 初回ロード中に別タブへ切り替えた場合は、その切り替えを境に初回演出を消費済みにする。
+    if (activeTab !== initialFeedTabRef.current) {
+      feedInitialFloatAnimationHasPlayed = true;
+      setShouldPlayInitialFloatAnimation(false);
+      return;
+    }
+
+    if (isInitialLoading || allPosts.length === 0) return;
+
+    // CSSアニメーションが開始できる時間を確保してからフラグを消す。
+    // これ以降のタブ切り替え・再訪・追加読み込みではanimate-float-upを付けない。
+    const timer = window.setTimeout(() => {
+      feedInitialFloatAnimationHasPlayed = true;
+      setShouldPlayInitialFloatAnimation(false);
+    }, 800);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [activeTab, allPosts.length, isInitialLoading, shouldPlayInitialFloatAnimation]);
+
   useEffect(() => {
     let frame: number | null = null;
 
@@ -1151,22 +1360,46 @@ export default function Feed() {
 
   // 最新/フォロー中/トレンドの切り替えUIはヘッダー(Header.tsx)に移設した。
   // Header側でタブがクリックされると 'lime-active-feed-tab-changed' が
-  // dispatchされるので、ここではそれを受け取ってactiveTabを更新するだけにする。
-  // タブを切り替えたときは、そのタブの投稿を最初から見せるためページ最上部へ
-  // スクロールする(切り替え前のスクロール位置は維持しない)。
+  // dispatchされるので、ここではタブごとのスクロール位置を記憶・復元しながらactiveTabを更新する。
+  // 別タブへの切り替えでページ最上部へ強制移動はしない。
   useEffect(() => {
+    const restorePendingScrollPosition = () => {
+      const target = pendingFeedTabScrollRestoreRef.current;
+      if (target === null) return;
+      window.scrollTo({ top: target, behavior: 'auto' });
+    };
+
     const handleActiveFeedTabChanged = (event: Event) => {
       const detail = (event as CustomEvent<{ tab?: string }>).detail;
       const nextTab: FeedTab =
         detail?.tab === 'following' ? 'following' : detail?.tab === 'trending' ? 'trending' : 'all';
+      const previousTab = activeFeedTabForScrollRef.current;
+
+      // 切り替え前のタブの位置を確定保存。
+      feedTabScrollPositionsRef.current[previousTab] = window.scrollY;
+      activeFeedTabForScrollRef.current = nextTab;
+
+      // 未訪問タブはトップから、訪問済みタブは最後に見ていた位置から復帰する。
+      const savedPosition = feedTabScrollPositionsRef.current[nextTab];
+      pendingFeedTabScrollRestoreRef.current = savedPosition ?? 0;
+      if (savedPosition === undefined) {
+        feedTabScrollPositionsRef.current[nextTab] = 0;
+      }
 
       setActiveTab(nextTab);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
     const handleStorage = (event: StorageEvent) => {
       if (event.key !== ACTIVE_FEED_TAB_STORAGE_KEY) return;
-      setActiveTab(readStoredActiveFeedTab());
+      const nextTab = readStoredActiveFeedTab();
+      const previousTab = activeFeedTabForScrollRef.current;
+      feedTabScrollPositionsRef.current[previousTab] = window.scrollY;
+      activeFeedTabForScrollRef.current = nextTab;
+      pendingFeedTabScrollRestoreRef.current = feedTabScrollPositionsRef.current[nextTab] ?? 0;
+      if (feedTabScrollPositionsRef.current[nextTab] === undefined) {
+        feedTabScrollPositionsRef.current[nextTab] = 0;
+      }
+      setActiveTab(nextTab);
     };
 
     window.addEventListener('lime-active-feed-tab-changed', handleActiveFeedTabChanged as EventListener);
@@ -1177,6 +1410,43 @@ export default function Feed() {
       window.removeEventListener('storage', handleStorage);
     };
   }, []);
+
+  // タブ内容のDOMが更新されたあと、記憶位置を2フレームかけて復元する。
+  // behavior:'auto' のため、縦方向のスクロールアニメーションは発生せず、
+  // 横方向のタブ切替アニメーションだけが見える。
+  useEffect(() => {
+    const target = pendingFeedTabScrollRestoreRef.current;
+    if (target === null) return;
+
+    const isMobileViewport =
+      window.matchMedia?.('(max-width: 639px)').matches ?? window.innerWidth < 640;
+
+    // モバイルのView Transition経路ではHeader側ですでに新スナップショット前に
+    // 正しい位置へ同期復元しているため、ここで追加の2フレーム復元を重ねない。
+    if (isMobileViewport) {
+      pendingFeedTabScrollRestoreRef.current = null;
+      return;
+    }
+
+    let frame1: number | null = null;
+    let frame2: number | null = null;
+
+    frame1 = window.requestAnimationFrame(() => {
+      frame1 = null;
+      window.scrollTo({ top: target, behavior: 'auto' });
+
+      frame2 = window.requestAnimationFrame(() => {
+        frame2 = null;
+        window.scrollTo({ top: target, behavior: 'auto' });
+        pendingFeedTabScrollRestoreRef.current = null;
+      });
+    });
+
+    return () => {
+      if (frame1 !== null) window.cancelAnimationFrame(frame1);
+      if (frame2 !== null) window.cancelAnimationFrame(frame2);
+    };
+  }, [activeTab, allPosts.length]);
 
   // ============================================================================
   // --- 仮想化（virtualization）用の実測高さキャッシュ ---
@@ -1340,20 +1610,23 @@ export default function Feed() {
     () => allPosts.slice(virtualRange.start, virtualRange.end).map((post) => (
       <div
         key={`${activeTab}-${post.id}`}
-        className="animate-float-up"
+        className={shouldPlayInitialFloatAnimation ? 'animate-float-up' : ''}
         ref={(element) => registerPostElement(post.id, element)}
       >
         <PostCard post={post} timelineGlass={hasTimelineBackground} />
       </div>
     )),
-    [activeTab, allPosts, hasTimelineBackground, virtualRange.end, virtualRange.start, registerPostElement]
+    [
+      activeTab,
+      allPosts,
+      hasTimelineBackground,
+      shouldPlayInitialFloatAnimation,
+      virtualRange.end,
+      virtualRange.start,
+      registerPostElement,
+    ]
   );
 
-  // 初回ローディング表示(スケルトン)を出すかどうかは、タブごとに参照する
-  // データソースが違うため個別に判定する。
-  const isInitialLoading = activeTab === 'trending'
-    ? trendingLoading && allPosts.length === 0
-    : isLoading && allPosts.length === 0;
 
   const isBusyLoadingMore = activeTab === 'trending'
     ? trendingLoading
@@ -1589,8 +1862,12 @@ export default function Feed() {
       </div>
 
       <div
-        ref={postListRef}
+        ref={(element) => {
+          postListRef.current = element;
+          feedTabAnimationContentRef.current = element;
+        }}
         className={hasTimelineBackground ? "relative z-[1] space-y-0 pt-2 sm:space-y-4" : "relative z-[1] space-y-4 pt-2"}
+        style={{ viewTransitionName: 'lime-feed-tab-content' }}
       >
         {isInitialLoading && (
           <div className="space-y-4">

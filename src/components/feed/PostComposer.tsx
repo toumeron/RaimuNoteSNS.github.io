@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type PointerEvent as ReactPointerEvent, type UIEvent as ReactUIEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { ImagePlus, Loader2, Send, X, AtSign, Hash, Globe, Users, Crown } from 'lucide-react'; // Globe, Users, Crownを追加
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -1308,10 +1308,17 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
       )}
     >
       <div className="flex gap-3">
-        <Avatar className="h-11 w-11 border-2 border-primary/30 shrink-0">
-          <AvatarImage src={user.avatarUrl} alt={user.displayName} />
-          <AvatarFallback>{user.displayName.slice(0, 1)}</AvatarFallback>
-        </Avatar>
+        <Link
+          to={`/u/${encodeURIComponent(user.username)}`}
+          aria-label={`${user.displayName}のプロフィールを開く`}
+          title={`${user.displayName}のプロフィール`}
+          className="shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+        >
+          <Avatar className="h-11 w-11 border-2 border-primary/30 shrink-0 cursor-pointer">
+            <AvatarImage src={user.avatarUrl} alt={user.displayName} />
+            <AvatarFallback>{user.displayName.slice(0, 1)}</AvatarFallback>
+          </Avatar>
+        </Link>
         <div className="flex-1 min-w-0 space-y-3 relative" ref={containerRef}>
           
           <div className="relative w-full overflow-hidden">

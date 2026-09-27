@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal, flushSync } from 'react-dom';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Logo } from './Logo';
 import { Button } from '@/components/ui/button';
@@ -52,6 +52,16 @@ const FEED_TABS: Array<{ value: FeedTabValue; label: string }> = [
   { value: 'following', label: 'フォロー中' },
   { value: 'trending', label: 'トレンド' },
 ];
+
+
+type FeedTabViewTransition = {
+  finished: Promise<void>;
+  skipTransition?: () => void;
+};
+
+type FeedTabViewTransitionDocument = Document & {
+  startViewTransition?: (updateCallback: () => void | Promise<void>) => FeedTabViewTransition;
+};
 
 // 下線の左右に足す余白(px)。文字幅ぴったりだと窮屈に見えるため少し広げる。
 const TAB_UNDERLINE_PADDING = 10;
@@ -286,9 +296,377 @@ function useActiveFeedTab() {
   return { activeFeedTab, changeActiveFeedTab };
 }
 
+// タブごとのスクロール位置を、このHeaderが生きている間だけメモリ上で保持する。
+// localStorageは使わないため、ページを再読み込みするとリセットされる。
+// タブを切り替えたときは、戻ってきたタブの最後の位置をそのまま復元し、
+// 初めて開くタブだけは先頭(0px)から開始する。
+function useFeedTabScrollMemory(
+  activeFeedTab: FeedTabValue,
+  changeActiveFeedTab: (value: FeedTabValue) => void,
+) {
+  const positionsRef = useRef<Partial<Record<FeedTabValue, number>>>({});
+  const activeTabRef = useRef(activeFeedTab);
+  const restoreVersionRef = useRef(0);
+
+  activeTabRef.current = activeFeedTab;
+
+  useEffect(() => {
+    // 現在開いているタブの初期位置を記録する。
+    if (positionsRef.current[activeFeedTab] === undefined) {
+      positionsRef.current[activeFeedTab] = window.scrollY;
+    }
+  }, [activeFeedTab]);
+
+  useEffect(() => {
+    const rememberScrollPosition = () => {
+      positionsRef.current[activeTabRef.current] = window.scrollY;
+    };
+
+    window.addEventListener('scroll', rememberScrollPosition, { passive: true });
+    rememberScrollPosition();
+
+    return () => {
+      window.removeEventListener('scroll', rememberScrollPosition);
+    };
+  }, []);
+
+  useEffect(() => {
+    const savedPosition = positionsRef.current[activeFeedTab];
+    if (savedPosition === undefined) return;
+
+    const version = ++restoreVersionRef.current;
+    let frame1: number | null = null;
+    let frame2: number | null = null;
+
+    // Feed側のタブ内容更新を1フレーム待ってから復元する。
+    // 2フレーム目でもう一度適用し、表示内容の更新とスクロール復元の順序差を吸収する。
+    frame1 = window.requestAnimationFrame(() => {
+      frame1 = null;
+      if (version !== restoreVersionRef.current) return;
+
+      frame2 = window.requestAnimationFrame(() => {
+        frame2 = null;
+        if (version !== restoreVersionRef.current) return;
+        window.scrollTo({ top: savedPosition, behavior: 'auto' });
+      });
+    });
+
+    return () => {
+      if (frame1 !== null) window.cancelAnimationFrame(frame1);
+      if (frame2 !== null) window.cancelAnimationFrame(frame2);
+    };
+  }, [activeFeedTab]);
+
+  const changeActiveFeedTabWithScrollMemory = useCallback(
+    (value: FeedTabValue) => {
+      if (value === activeTabRef.current) return;
+
+      // 切り替え前の位置を確定保存。
+      positionsRef.current[activeTabRef.current] = window.scrollY;
+
+      // まだ一度も開いていないタブはトップから開始。位置0も記憶しておく。
+      const hasVisitedTab = positionsRef.current[value] !== undefined;
+      if (!hasVisitedTab) {
+        positionsRef.current[value] = 0;
+      }
+
+      if (typeof document !== 'undefined') {
+        const root = document.documentElement;
+
+        // 入口の「ふわっと浮かび上がる」アニメーションは、ページを再読み込みした
+        // 直後の最初のタブ表示だけ許可する。いったん別タブへ切り替えた後は、
+        // その後どのタブへ戻っても入口アニメーションを再発火させない。
+        // この属性はメモリ上だけで、再読み込み時にDOMごと消える。
+        root.setAttribute('data-lime-feed-tab-switched', 'true');
+        root.dispatchEvent(
+          new CustomEvent('lime-feed-tab-change-animation', {
+            detail: { tab: value, returning: hasVisitedTab },
+          })
+        );
+      }
+
+      changeActiveFeedTab(value);
+      return positionsRef.current[value] ?? 0;
+    },
+    [changeActiveFeedTab],
+  );
+
+  return { changeActiveFeedTabWithScrollMemory };
+}
+
+// モバイルのタイムラインを左右にスワイプしたとき、Twitter/Xのように
+// 「最新 → フォロー中 → トレンド」を前後へ切り替える。
+// 縦スクロール・ボタン操作・横スクロール対応UIとは競合しないよう、
+// 横方向が十分優勢になったときだけジェスチャーを確定する。
+function useMobileFeedTabSwipe(
+  enabled: boolean,
+  disabled: boolean,
+  activeFeedTab: FeedTabValue,
+  changeActiveFeedTab: (value: FeedTabValue) => void,
+) {
+  const gestureRef = useRef({
+    active: false,
+    horizontal: false,
+    startedAtX: 0,
+    startedAtY: 0,
+  });
+
+  useEffect(() => {
+    if (typeof document === 'undefined' || !enabled || disabled) return;
+
+    const resetGesture = () => {
+      gestureRef.current = {
+        active: false,
+        horizontal: false,
+        startedAtX: 0,
+        startedAtY: 0,
+      };
+    };
+
+    const isInteractiveTarget = (target: EventTarget | null) => {
+      if (!(target instanceof Element)) return false;
+      return Boolean(
+        target.closest(
+          'button, a, input, textarea, select, option, [role="button"], [data-radix-collection-item], [data-lime-mobile-sidebar="true"]'
+        )
+      );
+    };
+
+    const isInsideHorizontalScroller = (target: EventTarget | null) => {
+      if (!(target instanceof Element)) return false;
+
+      let el: Element | null = target;
+      while (el && el !== document.body) {
+        if (el instanceof HTMLElement && el.scrollWidth > el.clientWidth + 1) {
+          const style = window.getComputedStyle(el);
+          if (style.overflowX === 'auto' || style.overflowX === 'scroll') return true;
+        }
+        el = el.parentElement;
+      }
+      return false;
+    };
+
+    const handleTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 1 || isInteractiveTarget(event.target)) {
+        resetGesture();
+        return;
+      }
+
+      if (isInsideHorizontalScroller(event.target)) {
+        resetGesture();
+        return;
+      }
+
+      const touch = event.touches[0];
+      const FEED_EDGE_ZONE = 32;
+      // 画面端からのスワイプはサイドバー用に予約する。
+      if (touch.clientX <= FEED_EDGE_ZONE) {
+        resetGesture();
+        return;
+      }
+
+      gestureRef.current = {
+        active: true,
+        horizontal: false,
+        startedAtX: touch.clientX,
+        startedAtY: touch.clientY,
+      };
+    };
+
+    const handleTouchMove = (event: TouchEvent) => {
+      const gesture = gestureRef.current;
+      if (!gesture.active || event.touches.length !== 1) return;
+
+      const touch = event.touches[0];
+      const dx = touch.clientX - gesture.startedAtX;
+      const dy = touch.clientY - gesture.startedAtY;
+
+      if (!gesture.horizontal) {
+        const directionThreshold = 12;
+        const horizontalDominanceRatio = 1.35;
+
+        if (Math.abs(dx) < directionThreshold && Math.abs(dy) < directionThreshold) return;
+
+        if (Math.abs(dy) * horizontalDominanceRatio >= Math.abs(dx)) {
+          resetGesture();
+          return;
+        }
+
+        gesture.horizontal = true;
+      }
+
+      // 水平スワイプ中はブラウザの横方向スクロール/戻るジェスチャーを止める。
+      if (event.cancelable) event.preventDefault();
+    };
+
+    const handleTouchEnd = (event: TouchEvent) => {
+      const gesture = gestureRef.current;
+      if (!gesture.active || !gesture.horizontal || event.changedTouches.length !== 1) {
+        resetGesture();
+        return;
+      }
+
+      const touch = event.changedTouches[0];
+      const dx = touch.clientX - gesture.startedAtX;
+      const dy = touch.clientY - gesture.startedAtY;
+      const SWIPE_THRESHOLD = 56;
+
+      resetGesture();
+
+      if (Math.abs(dx) < SWIPE_THRESHOLD || Math.abs(dx) <= Math.abs(dy) * 1.25) return;
+
+      const currentIndex = FEED_TABS.findIndex((tab) => tab.value === activeFeedTab);
+      if (currentIndex < 0) return;
+
+      // 左スワイプ → 次のタブ、右スワイプ → 前のタブ。
+      const nextIndex = dx < 0 ? currentIndex + 1 : currentIndex - 1;
+      if (nextIndex < 0 || nextIndex >= FEED_TABS.length) return;
+
+      changeActiveFeedTab(FEED_TABS[nextIndex].value);
+    };
+
+    const handleTouchCancel = () => resetGesture();
+
+    document.addEventListener('touchstart', handleTouchStart, { passive: true, capture: true });
+    document.addEventListener('touchmove', handleTouchMove, { passive: false, capture: true });
+    document.addEventListener('touchend', handleTouchEnd, { passive: true, capture: true });
+    document.addEventListener('touchcancel', handleTouchCancel, { passive: true, capture: true });
+
+    return () => {
+      document.removeEventListener('touchstart', handleTouchStart, true);
+      document.removeEventListener('touchmove', handleTouchMove, true);
+      document.removeEventListener('touchend', handleTouchEnd, true);
+      document.removeEventListener('touchcancel', handleTouchCancel, true);
+    };
+  }, [enabled, disabled]);
+}
+
 // タブ文字列の実測幅(px)を計測し、下線の幅を文字数に応じて伸縮させるためのフック。
 // ref経由でDOM上のラベル<span>の offsetWidth を読み取るだけなので、フォントや
 // 文字種(かな/カナ/英数字混在)が変わっても実際の見た目通りの幅になる。
+// Macのトラックパッド等の横スクロール(wheel)でも、モバイルのタッチスワイプと同じように
+// タイムラインのタブを切り替える。Safari/Chromeではトラックパッドの2本指横スクロールが
+// WheelEvent の deltaX として届くため、それを「1ジェスチャー=1タブ切り替え」にまとめる。
+function useFeedTabWheelSwipe(
+  enabled: boolean,
+  disabled: boolean,
+  activeFeedTab: FeedTabValue,
+  changeActiveFeedTab: (value: FeedTabValue) => void,
+) {
+  const wheelRef = useRef({
+    accumulatedX: 0,
+    triggered: false,
+    resetTimer: null as number | null,
+    lastDirection: 0,
+  });
+  const activeFeedTabRef = useRef(activeFeedTab);
+  const changeActiveFeedTabRef = useRef(changeActiveFeedTab);
+  activeFeedTabRef.current = activeFeedTab;
+  changeActiveFeedTabRef.current = changeActiveFeedTab;
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !enabled || disabled) return;
+
+    const resetGesture = () => {
+      const state = wheelRef.current;
+      state.accumulatedX = 0;
+      state.triggered = false;
+      state.lastDirection = 0;
+      if (state.resetTimer !== null) {
+        window.clearTimeout(state.resetTimer);
+        state.resetTimer = null;
+      }
+    };
+
+    const isInteractiveTarget = (target: EventTarget | null) => {
+      if (!(target instanceof Element)) return false;
+      return Boolean(
+        target.closest(
+          'button, a, input, textarea, select, option, [role="button"], [data-radix-collection-item], [data-lime-mobile-sidebar="true"]'
+        )
+      );
+    };
+
+    const isInsideHorizontalScroller = (target: EventTarget | null) => {
+      if (!(target instanceof Element)) return false;
+
+      let el: Element | null = target;
+      while (el && el !== document.body) {
+        if (el instanceof HTMLElement && el.scrollWidth > el.clientWidth + 1) {
+          const style = window.getComputedStyle(el);
+          if (style.overflowX === 'auto' || style.overflowX === 'scroll') return true;
+        }
+        el = el.parentElement;
+      }
+      return false;
+    };
+
+    const normalizeDeltaX = (event: WheelEvent) => {
+      if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) return event.deltaX * 16;
+      if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) return event.deltaX * window.innerWidth;
+      return event.deltaX;
+    };
+
+    const handleWheel = (event: WheelEvent) => {
+      if (disabled || !enabled) return;
+      if (isInteractiveTarget(event.target)) return;
+      if (isInsideHorizontalScroller(event.target)) return;
+
+      const deltaX = normalizeDeltaX(event);
+      const deltaY = event.deltaY;
+      const absX = Math.abs(deltaX);
+      const absY = Math.abs(deltaY);
+
+      // Macトラックパッドの横フリックを検出。通常の縦スクロールや、
+      // ほぼ同量の斜めスクロールでは反応させない。
+      if (absX < 4 || absX <= absY * 1.25) return;
+
+      const direction = deltaX < 0 ? -1 : 1;
+      const state = wheelRef.current;
+
+      // 同じジェスチャー中に発生する大量の慣性スクロール(deltaX)で、
+      // タブが連続して複数枚切り替わらないよう1回だけ確定する。
+      if (state.lastDirection !== 0 && state.lastDirection !== direction) {
+        state.accumulatedX = 0;
+        state.triggered = false;
+      }
+      state.lastDirection = direction;
+      state.accumulatedX += deltaX;
+
+      if (state.resetTimer !== null) window.clearTimeout(state.resetTimer);
+      state.resetTimer = window.setTimeout(resetGesture, 180);
+
+      const WHEEL_SWIPE_THRESHOLD = 72;
+      if (state.triggered || Math.abs(state.accumulatedX) < WHEEL_SWIPE_THRESHOLD) return;
+
+      state.triggered = true;
+
+      const currentIndex = FEED_TABS.findIndex((tab) => tab.value === activeFeedTabRef.current);
+      if (currentIndex < 0) return;
+
+      const nextIndex = direction > 0 ? currentIndex + 1 : currentIndex - 1;
+      if (nextIndex < 0 || nextIndex >= FEED_TABS.length) return;
+
+      // Macトラックパッドの自然な横スワイプ方向に合わせて反転。
+      // 左スワイプ → 次のタブ、右スワイプ → 前のタブ。
+      // 横方向のページスクロールはタブ切り替えとして消費する。
+      if (event.cancelable) event.preventDefault();
+      changeActiveFeedTabRef.current(FEED_TABS[nextIndex].value);
+    };
+
+    window.addEventListener('wheel', handleWheel, { passive: false, capture: true });
+
+    return () => {
+      window.removeEventListener('wheel', handleWheel, true);
+      const state = wheelRef.current;
+      if (state.resetTimer !== null) {
+        window.clearTimeout(state.resetTimer);
+        state.resetTimer = null;
+      }
+    };
+  }, [enabled, disabled, activeFeedTab, changeActiveFeedTab]);
+}
+
 function useFeedTabUnderlineWidths() {
   const labelRefs = useRef<Partial<Record<FeedTabValue, HTMLSpanElement | null>>>({});
   const [widths, setWidths] = useState<Partial<Record<FeedTabValue, number>>>({});
@@ -344,11 +722,11 @@ function useFeedTabUnderlineWidths() {
 //   逆に上スクロールしたら再表示する。
 // この「遊び」を持たせることで、少しスクロールしただけで即座に閉じてしまう
 // (＝早すぎる開閉)のを防いでいる。
-function useMobileHeaderVisibility(enabled: boolean) {
+function useMobileHeaderVisibility(enabled: boolean, disabled: boolean = false) {
   const [isHidden, setIsHidden] = useState(false);
 
   useEffect(() => {
-    if (!enabled) {
+    if (!enabled || disabled) {
       setIsHidden(false);
       return;
     }
@@ -388,7 +766,7 @@ function useMobileHeaderVisibility(enabled: boolean) {
       }
       window.removeEventListener('scroll', handleScroll);
     };
-  }, [enabled]);
+  }, [enabled, disabled]);
 
   return isHidden;
 }
@@ -449,7 +827,11 @@ function ensureRootShiftWrappers(
   return { moveWrapper, clipWrapper };
 }
 
-function useMobileDrawerMotion(isOpen: boolean, onOpenChange: (open: boolean) => void) {
+function useMobileDrawerMotion(
+  isOpen: boolean,
+  onOpenChange: (open: boolean) => void,
+  isFeedTimeline: boolean,
+) {
   const rootRef = useRef<HTMLElement | null>(null);
   // 「動かす」ラッパーと「角丸にクリップする」ラッパーへの参照。
   const moveWrapperRef = useRef<HTMLElement | null>(null);
@@ -547,7 +929,11 @@ function useMobileDrawerMotion(isOpen: boolean, onOpenChange: (open: boolean) =>
         ? 'border-radius 320ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 320ms cubic-bezier(0.22, 1, 0.36, 1)'
         : 'none';
       clipWrapper.style.borderRadius = isRevealed ? '42px 0 0 42px' : '0px';
-      clipWrapper.style.overflow = isRevealed ? 'hidden' : 'visible';
+      // overflow:hidden にすると、スクロール位置が下にあるとき
+      // sticky のヘッダーまで祖先要素のクリップ領域に閉じ込められて
+      // タイムラインのタブが画面外へ消える。境界の横あふれは html の
+      // overflow-x:hidden で抑え、ここでは overflow を visible のままにする。
+      clipWrapper.style.overflow = 'visible';
       clipWrapper.style.boxShadow = isRevealed ? '-10px 0 28px rgba(0,0,0,0.34)' : 'none';
     }
 
@@ -676,41 +1062,31 @@ function useMobileDrawerMotion(isOpen: boolean, onOpenChange: (open: boolean) =>
     };
   }, [isOpen]);
 
-  // サイドバーが開いている間、背後のページ(タイムライン等)がスクロールできて
-  // しまう問題への対策。root要素への touch-action:none だけでは、ネストした
-  // スクロールコンテナやブラウザ差でスクロールを止めきれないことがあるため、
-  // body を position:fixed で固定する定番の手法で確実にロックする。
-  // fixed にする直前のスクロール位置を保存し、閉じるときにその位置へ戻すことで
-  // 「閉じたら先頭に戻ってしまう」という副作用も防ぐ。
+  // サイドバーが開いている間、背後のタイムラインを指で縦スクロールできないようにする。
+  // body を position:fixed にすると、現在の scrollY が body の top に吸収されて
+  // sticky ヘッダーまで通常のスクロール位置に戻ってしまい、下までスクロールした状態で
+  // サイドバーを開いた瞬間に「最新/フォロー中/トレンド」タブが消える原因になる。
+  // そこで body のスクロール座標はそのまま維持し、メイン領域への touchmove だけを
+  // preventDefault してロックする。サイドバー内部の nav は通常通りスクロール可能にする。
   useEffect(() => {
     if (typeof document === 'undefined') return;
     if (!window.matchMedia('(max-width: 639px)').matches) return;
+    if (!isOpen) return;
 
-    const body = document.body;
+    const handleTouchMove = (event: TouchEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(MOBILE_SIDEBAR_SELECTOR)) {
+        return;
+      }
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+    };
 
-    if (isOpen) {
-      scrollLockYRef.current = window.scrollY;
-      body.style.position = 'fixed';
-      body.style.top = `-${scrollLockYRef.current}px`;
-      body.style.left = '0';
-      body.style.right = '0';
-      body.style.width = '100%';
-    } else {
-      const y = scrollLockYRef.current;
-      body.style.position = '';
-      body.style.top = '';
-      body.style.left = '';
-      body.style.right = '';
-      body.style.width = '';
-      window.scrollTo(0, y);
-    }
+    document.addEventListener('touchmove', handleTouchMove, { passive: false, capture: true });
 
     return () => {
-      body.style.position = '';
-      body.style.top = '';
-      body.style.left = '';
-      body.style.right = '';
-      body.style.width = '';
+      document.removeEventListener('touchmove', handleTouchMove, true);
     };
   }, [isOpen]);
 
@@ -782,11 +1158,18 @@ function useMobileDrawerMotion(isOpen: boolean, onOpenChange: (open: boolean) =>
       const touch = event.touches[0];
       const width = getDrawerWidth();
 
+      // タイムラインでは、Twitter/X風の左右スワイプをタブ切り替えに使う。
+      // 画面端からのスワイプだけは引き続きサイドバーを開く操作として許可する。
+      const startedAtEdge = touch.clientX <= EDGE_ZONE;
+      if (isFeedTimeline && !startedAtEdge && !isOpen) {
+        resetGesture();
+        return;
+      }
+
       // スワイプで開ける範囲は画面全体に広げる。ただしそれだけだと、縦スクロール中
       // など他の操作中に誤って開いてしまいやすくなるため、開始位置が画面端
       // (EDGE_ZONE)かどうかを記録しておき、touchmove/touchend側の判定基準
       // (閾値)をそれぞれで変える(端は軽く、それ以外は厳しめに)。
-      const startedAtEdge = touch.clientX <= EDGE_ZONE;
       const canOpenFromAnywhere = !isOpen;
       // 開いている間は、サイドバー内のどこ(ボタン等を除く)からドラッグを始めても
       // 閉じられるようにする(右端の細い帯だけに限定しない)。
@@ -913,7 +1296,7 @@ function useMobileDrawerMotion(isOpen: boolean, onOpenChange: (open: boolean) =>
       document.removeEventListener('touchend', handleTouchEnd, true);
       document.removeEventListener('touchcancel', handleTouchCancel, true);
     };
-  }, [isOpen, onOpenChange]);
+  }, [isOpen, onOpenChange, isFeedTimeline]);
 }
 
 export const Header = () => {
@@ -922,9 +1305,207 @@ export const Header = () => {
   const location = useLocation();
   const timelineChrome = useTimelineChrome(location.pathname);
   const { activeFeedTab, changeActiveFeedTab } = useActiveFeedTab();
+  const { changeActiveFeedTabWithScrollMemory } = useFeedTabScrollMemory(
+    activeFeedTab,
+    changeActiveFeedTab,
+  );
   const { registerLabelRef: registerFeedTabLabelRef, widths: feedTabUnderlineWidths } = useFeedTabUnderlineWidths();
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  useMobileDrawerMotion(isMobileSidebarOpen, setIsMobileSidebarOpen);
+  const [isFeedTabChanging, setIsFeedTabChanging] = useState(false);
+  const feedTabChangingTimerRef = useRef<number | null>(null);
+  const feedTabViewTransitionRef = useRef<FeedTabViewTransition | null>(null);
+  // タブ切替アニメーション(View Transition)の実行中に、ページ全体(root)の
+  // 古い/新しいスナップショットの縦幅が食い違うと、アニメーション中に画面上部が
+  // 真っ白に見えたり一部の要素が欠けて見えたりする原因になる(投稿数の違いで
+  // タブごとにページの高さが変わるため)。これを避けるため、アニメーションが
+  // 終わるまでの間だけ document の高さを一時的に固定しておくための状態。
+  const maxDocumentHeightRef = useRef(0);
+  const heightLockRef = useRef<{ previousMinHeight: string; version: number } | null>(null);
+  const heightLockVersionRef = useRef(0);
+  const feedTabClickRef = useRef<{ value: FeedTabValue | null; switchedOnFirstClick: boolean; at: number }>({
+    value: null,
+    switchedOnFirstClick: false,
+    at: 0,
+  });
+  const isHomeTimeline = isHomeTimelinePath(location.pathname);
+
+  // documentの高さを一時的に固定/解除するためのヘルパー。
+  // ロック中に別のロックが開始された場合、古い方の解除が新しい方の固定値を
+  // 誤って巻き戻さないよう、バージョン番号で「自分が最後に張ったロックか」を確認する。
+  const lockDocumentHeightForTransition = () => {
+    if (typeof document === 'undefined') return null;
+
+    const root = document.documentElement;
+    maxDocumentHeightRef.current = Math.max(maxDocumentHeightRef.current, root.scrollHeight);
+    const version = ++heightLockVersionRef.current;
+
+    if (!heightLockRef.current) {
+      heightLockRef.current = { previousMinHeight: root.style.minHeight, version };
+    } else {
+      heightLockRef.current.version = version;
+    }
+
+    root.style.minHeight = `${maxDocumentHeightRef.current}px`;
+    return version;
+  };
+
+  const unlockDocumentHeightForTransition = (version: number | null) => {
+    if (typeof document === 'undefined' || version === null) return;
+    // 既により新しいロックが開始されている場合は、古い方の解除で
+    // 新しいロックの固定値を誤って巻き戻してしまわないよう何もしない。
+    if (!heightLockRef.current || heightLockRef.current.version !== version) return;
+
+    document.documentElement.style.minHeight = heightLockRef.current.previousMinHeight;
+    heightLockRef.current = null;
+    maxDocumentHeightRef.current = Math.max(
+      maxDocumentHeightRef.current,
+      document.documentElement.scrollHeight
+    );
+  };
+
+  // タブ切り替え中はモバイルのヘッダーを開いたままにして、sticky + backdrop-filter と
+  // View Transition のスナップショット合成が競合しないようにする。
+  const changeFeedTabWithAnimation = useCallback((value: FeedTabValue) => {
+    if (value === activeFeedTab) return;
+
+    const isMobileViewport =
+      typeof window !== 'undefined' &&
+      (window.matchMedia?.('(max-width: 639px)').matches ?? window.innerWidth < 640);
+    const reducedMotion =
+      typeof window !== 'undefined' &&
+      (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false);
+    const viewTransitionDocument =
+      typeof document !== 'undefined' ? (document as FeedTabViewTransitionDocument) : null;
+
+    // PC版は既存のstate/scroll-memory経路だけを通す。今回のリッチな遷移はモバイル限定。
+    if (!isMobileViewport || reducedMotion || !viewTransitionDocument?.startViewTransition) {
+      changeActiveFeedTabWithScrollMemory(value);
+      return;
+    }
+
+    setIsFeedTabChanging(true);
+    if (feedTabChangingTimerRef.current !== null) {
+      window.clearTimeout(feedTabChangingTimerRef.current);
+    }
+
+    // 遷移中(古い⇄新しいスナップショットの撮影の間)にページの高さが
+    // 変わってしまうと、View Transition が生成する古い/新しいスナップ
+    // ショットの縦幅が食い違い、アニメーション中に画面上部が真っ白に
+    // なったり一部の要素が欠けて見えたりするバグの原因になっていた。
+    // これを避けるため、アニメーションが終わるまでの間だけ document の
+    // 高さを「これまでに観測した最大の高さ」で一時的に固定しておく。
+    const heightLockVersion = lockDocumentHeightForTransition();
+
+    const finishHeaderLock = () => {
+      if (feedTabChangingTimerRef.current !== null) {
+        window.clearTimeout(feedTabChangingTimerRef.current);
+        feedTabChangingTimerRef.current = null;
+      }
+      setIsFeedTabChanging(false);
+      unlockDocumentHeightForTransition(heightLockVersion);
+    };
+
+    const previousIndex = FEED_TABS.findIndex((tab) => tab.value === activeFeedTab);
+    const nextIndex = FEED_TABS.findIndex((tab) => tab.value === value);
+    const direction = nextIndex > previousIndex ? 'forward' : 'backward';
+    const root = document.documentElement;
+
+    // 既存の初回演出抑止フラグは維持する。ただしページ全体をアニメーション対象にはしない。
+    root.setAttribute('data-lime-feed-tab-direction', direction);
+
+    const previousTransition = feedTabViewTransitionRef.current;
+    if (previousTransition) {
+      previousTransition.skipTransition?.();
+      feedTabViewTransitionRef.current = null;
+    }
+
+    let targetScrollTop = 0;
+    const applyTabChange = () => {
+      // Reactの新DOMと、切り替え先タブの保存スクロール位置を同じ同期更新にする。
+      // これで新しいスナップショットが縦方向へアニメーションせず、横方向だけが動く。
+      flushSync(() => {
+        targetScrollTop = changeActiveFeedTabWithScrollMemory(value) ?? 0;
+      });
+      window.scrollTo({ top: targetScrollTop, behavior: 'auto' });
+    };
+
+    try {
+      const transition = viewTransitionDocument.startViewTransition(applyTabChange);
+      feedTabViewTransitionRef.current = transition;
+
+      feedTabChangingTimerRef.current = window.setTimeout(() => {
+        feedTabChangingTimerRef.current = null;
+        finishHeaderLock();
+      }, 380);
+
+      void transition.finished.finally(() => {
+        if (feedTabViewTransitionRef.current === transition) {
+          feedTabViewTransitionRef.current = null;
+          root.removeAttribute('data-lime-feed-tab-direction');
+          finishHeaderLock();
+        }
+      });
+    } catch {
+      // API実行失敗時もタブ切替自体は失わせない。
+      root.removeAttribute('data-lime-feed-tab-direction');
+      applyTabChange();
+      finishHeaderLock();
+    }
+  }, [activeFeedTab, changeActiveFeedTabWithScrollMemory]);
+
+  useEffect(() => {
+    return () => {
+      feedTabViewTransitionRef.current?.skipTransition?.();
+      feedTabViewTransitionRef.current = null;
+      if (feedTabChangingTimerRef.current !== null) {
+        window.clearTimeout(feedTabChangingTimerRef.current);
+        feedTabChangingTimerRef.current = null;
+      }
+      if (typeof document !== 'undefined') {
+        document.documentElement.removeAttribute('data-lime-feed-tab-direction');
+        if (heightLockRef.current) {
+          document.documentElement.style.minHeight = heightLockRef.current.previousMinHeight;
+          heightLockRef.current = null;
+        }
+      }
+    };
+  }, []);
+
+  useMobileDrawerMotion(isMobileSidebarOpen, setIsMobileSidebarOpen, isHomeTimeline);
+  useMobileFeedTabSwipe(
+    isHomeTimeline,
+    isMobileSidebarOpen,
+    activeFeedTab,
+    changeFeedTabWithAnimation,
+  );
+  useFeedTabWheelSwipe(
+    isHomeTimeline,
+    isMobileSidebarOpen,
+    activeFeedTab,
+    changeFeedTabWithAnimation,
+  );
+
+  // タブ切替アニメーション用に、これまでに観測したdocumentの最大の高さを
+  // 継続的に記録しておく(lockDocumentHeightForTransitionで使用する)。
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+
+    const trackDocumentHeight = () => {
+      maxDocumentHeightRef.current = Math.max(
+        maxDocumentHeightRef.current,
+        document.documentElement.scrollHeight
+      );
+    };
+
+    trackDocumentHeight();
+    window.addEventListener('resize', trackDocumentHeight);
+    window.addEventListener('scroll', trackDocumentHeight, { passive: true });
+
+    return () => {
+      window.removeEventListener('resize', trackDocumentHeight);
+      window.removeEventListener('scroll', trackDocumentHeight);
+    };
+  }, []);
 
   // 検索バー・検索ページ用タブは「検索ページ('/search')のみ・モバイルのみ」で表示する。
   // サジェスト用の各種effect/memoからも参照するため、コンポーネント冒頭で確定させておく。
@@ -1128,13 +1709,18 @@ export const Header = () => {
   // ヘッダーのスクロール開閉は、タイムラインに加えて「検索バーが表示される
   // モバイル検索ページ(/search)」にも同じ挙動を適用する。
   // それ以外のページのヘッダーは常に表示したままにする。
-  const showFeedTabs = isHomeTimelinePath(location.pathname);
+  const showFeedTabs = isHomeTimeline;
   // モバイル検索ページは未検索のメイン画面だけスクロールでヘッダーを閉じる。
   // 検索結果が出た後は、結果を見ながら検索できるよう常に表示する。
   const enableMobileHeaderScrollHide =
     showFeedTabs || (isSearchRoute && !isSearchResultsVisible);
 
-  const isHiddenOnMobile = useMobileHeaderVisibility(enableMobileHeaderScrollHide);
+  const isHiddenOnMobile = useMobileHeaderVisibility(enableMobileHeaderScrollHide, isFeedTabChanging);
+  // サイドバーを開いている間はヘッダー(タイムライン/検索のタブを含む)を
+  // 必ず表示する。スクロール中にヘッダーが既に非表示状態だと、そのまま
+  // サイドバーを開いた瞬間にタブまで一緒に translateY(-100%) へ移動して
+  // 「全てのタブが消えた」ように見えるため。
+  const shouldHideMobileHeader = isHiddenOnMobile && !isMobileSidebarOpen;
 
   // 検索ページから離れたら、次にメイン検索ページへ戻ったときは未検索状態から開始する。
   useEffect(() => {
@@ -1152,11 +1738,44 @@ export const Header = () => {
     setHeaderActiveSuggestIdx(-1);
   }, [isHiddenOnMobile, isSearchRoute, isSearchResultsVisible]);
 
-  // 既にアクティブなタブをもう一度クリックしたときは、
-  // (Radix Tabsのvalueが変わらずonValueChangeが発火しないため)
-  // ここで明示的にページ最上部へスクロールする。
-  const handleFeedTabTriggerClick = (value: FeedTabValue) => {
-    if (value !== activeFeedTab) return;
+  // 通常クリックではスクロール位置を変更しない。
+  // ダブルクリック判定用に「1回目のクリックでタブが切り替わったか」だけを記録する。
+  const handleFeedTabClick = (value: FeedTabValue) => {
+    const now = Date.now();
+    const previous = feedTabClickRef.current;
+    const isSecondClick = previous.value === value && now - previous.at <= 500;
+
+    if (!isSecondClick) {
+      feedTabClickRef.current = {
+        value,
+        switchedOnFirstClick: value !== activeFeedTab,
+        at: now,
+      };
+      return;
+    }
+
+    // 2回目のクリックでは、1回目のクリック時点の「切り替え有無」を維持する。
+    feedTabClickRef.current = {
+      value,
+      switchedOnFirstClick: previous.switchedOnFirstClick,
+      at: now,
+    };
+  };
+
+  // 「タブを切り替えた直後の2回クリック」ではなく、
+  // すでにそのタブが表示されている状態でダブルクリックしたときだけトップへ戻す。
+  const handleFeedTabDoubleClick = (value: FeedTabValue) => {
+    const now = Date.now();
+    const clickState = feedTabClickRef.current;
+    const isValidDoubleClick =
+      clickState.value === value &&
+      !clickState.switchedOnFirstClick &&
+      now - clickState.at <= 500 &&
+      value === activeFeedTab;
+
+    feedTabClickRef.current = { value: null, switchedOnFirstClick: false, at: 0 };
+
+    if (!isValidDoubleClick) return;
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -1303,8 +1922,8 @@ export const Header = () => {
   }, [hideHeaderOnMobileProfile]);
 
   // Escapeキーでモバイルサイドバーを閉じる。
-  // ページの縦スクロール位置の固定/復元は useMobileDrawerMotion 内の
-  // body position:fixed ロックが一元的に担当するため、ここでは行わない。
+  // ページの縦スクロールロックは useMobileDrawerMotion 内で touchmove を
+  // preventDefault する方式に一元化しているため、ここでは行わない。
   useEffect(() => {
     if (!isMobileSidebarOpen) return;
 
@@ -1600,16 +2219,27 @@ export const Header = () => {
 
     const tabButtonClass = (value: SearchPageTabValue) =>
       cn(
-        'relative flex h-11 items-center justify-center text-[15px] transition-colors',
+        'relative z-[1] flex h-11 items-center justify-center text-[15px] transition-colors duration-200',
         activeSearchPageTab === value
-          ? "font-bold text-[rgb(15,20,25)] after:absolute after:bottom-0 after:left-1/2 after:h-1 after:w-16 after:-translate-x-1/2 after:rounded-full after:bg-primary after:content-[''] dark:text-white"
+          ? 'font-bold text-[rgb(15,20,25)] dark:text-white'
           : 'font-medium text-[rgb(83,100,113)] dark:text-gray-400'
       );
 
     return (
       <div className="relative z-[1] sm:hidden">
         <div className="mx-auto max-w-5xl px-2 sm:px-4">
-          <div className="grid grid-cols-2 border-b border-black/[0.03] dark:border-white/[0.05]">
+          <div className="relative grid grid-cols-2 border-b border-black/[0.03] dark:border-white/[0.05]">
+            {/* 検索ページのタブもタイムラインと同じく、
+                アクティブインジケーターを1本だけ使って左右へ滑らかに移動させる。
+                選択ロジックは変更せず、見た目のアニメーションだけを追加する。 */}
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute bottom-0 left-0 z-[2] h-1 w-16 rounded-full bg-primary will-change-[left,transform] transition-[left,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+              style={{
+                left: activeSearchPageTab === 'posts' ? '25%' : '75%',
+                transform: 'translateX(-50%)',
+              }}
+            />
             <button
               type="button"
               onClick={() => changeActiveSearchPageTab('posts')}
@@ -1774,7 +2404,7 @@ export const Header = () => {
         // スクロール方向に応じてヘッダー全体をスライドして隠す。
         // 他のページ、およびPC(sm以上)では常に translate-y-0。
         'transition-transform duration-300 ease-out sm:translate-y-0',
-        isHiddenOnMobile ? '-translate-y-full' : 'translate-y-0',
+        shouldHideMobileHeader ? '-translate-y-full' : 'translate-y-0',
         useTimelineChromeDesign
           ? isTimelineDark
             ? 'border-white/[0.06] bg-[#090b10]/78 text-white supports-[backdrop-filter]:bg-[#090b10]/70 backdrop-blur-2xl'
@@ -1808,18 +2438,186 @@ export const Header = () => {
             font-weight: 450;
           }
 
-          .feed-tabs-trigger[data-state='active'] .feed-tabs-underline {
-            display: block;
+          /* アクティブ下線はTabsList内の単一インジケーターを使用し、
+             left/width のCSS transitionで左右へ滑らかにスライドさせる。 */
+
+          /*
+             モバイルのタブ切り替えだけをView Transitionで演出する。
+             root全体はアニメーションさせず、フィード本文だけを名前付きレイヤーにする。
+             これによりstickyヘッダー/backdrop-filterが残像・透明化の原因になるのを避ける。
+             opacityは使わず、旧フィードと新フィードを左右へ同時にスライドさせる。
+          */
+          @keyframes lime-feed-tab-old-forward {
+            from { transform: translateX(0); }
+            to { transform: translateX(-100%); }
           }
 
-          .feed-tabs-trigger[data-state='inactive'] .feed-tabs-underline {
-            display: none;
+          @keyframes lime-feed-tab-new-forward {
+            from { transform: translateX(100%); }
+            to { transform: translateX(0); }
           }
 
-          /* 下線の幅はJSでラベルの実測幅+パディングを計算してインラインstyleで
-             指定するため、幅の変化を滑らかに見せるためのtransitionのみここで定義する。 */
-          .feed-tabs-underline {
-            transition: width 200ms ease-out;
+          @keyframes lime-feed-tab-old-backward {
+            from { transform: translateX(0); }
+            to { transform: translateX(100%); }
+          }
+
+          @keyframes lime-feed-tab-new-backward {
+            from { transform: translateX(-100%); }
+            to { transform: translateX(0); }
+          }
+
+          @media (max-width: 639px) {
+            /*
+              バグ修正: 以前はここで ::view-transition-*(root) を
+              display:none / opacity:0 / visibility:hidden で完全に非表示にしていた。
+              root は「lime-feed-tab-content」以外の全て(ヘッダー・タブ下線・
+              投稿フォーム・背景など)を含むレイヤーなので、これを丸ごと隠すと
+              アニメーション中(数百ms)その領域に何も描画されなくなり、
+              「画面上部が白くなる」「一部の要素が消える」バグの直接の原因になっていた。
+              ここでは root を非表示にはせず、アニメーションだけを止めて
+              静止した背景としてそのまま描画させ続ける(見た目上は何も変化しない
+              要素なので、アニメーションを止めても違和感は出ない)。
+              あわせて mix-blend-mode を normal に固定し、UA既定の
+              plus-lighter ブレンドによる白飛び・色の重なりも防ぐ。
+            */
+            /*
+              重要: ::view-transition-group(root) の animation は無効化しない。
+              root グループの位置・サイズはこのアニメーション経由でのみ確定するため、
+              ここを animation:none にすると新旧スナップショットの位置がずれ、
+              ヘッダー/ナビなどが二重に透けて重なる「ゴースト」表示になってしまう
+              (実際にこの症状が発生したため、groupのanimationは触らない方針に修正)。
+              クロスフェード(白飛び・重なりの見た目)だけを old/new 側で止める。
+
+              さらに、JS側(changeFeedTabWithAnimation内)で遷移中だけ
+              documentの高さを固定し、タブごとの投稿数の違いでroot(ページ全体)の
+              古い/新しいスナップショットの縦幅が食い違わないようにしている。
+              これにより上のgroupアニメーション自体もほぼ変化なし(no-op)になり、
+              サイズの食い違いによる「上部が真っ白になる」「一部の要素が消える」
+              という見た目のバグを避けられる。object-fit: cover は、それでも
+              万一サイズがズレた場合の保険として設定している。
+            */
+            ::view-transition-image-pair(root) {
+              isolation: auto;
+            }
+
+            ::view-transition-old(root),
+            ::view-transition-new(root) {
+              animation-duration: 1ms !important;
+              -webkit-animation-duration: 1ms !important;
+              animation-delay: 0s !important;
+              mix-blend-mode: normal !important;
+              opacity: 1 !important;
+              object-fit: cover !important;
+            }
+
+            /*
+              追加バグ修正(本題): 「上半分が真っ白になる/一部の要素が消える」の
+              直接の原因は、position:sticky なヘッダー(タブ・アバター・検索欄を含む)と
+              position:fixed な BottomNav(createPortalでdocument.body直下に配置)が、
+              どちらも専用の view-transition-name を持たず「root」グループへ
+              無名のまま巻き込まれていたことにある。
+              position:fixed/sticky な要素が無名でrootキャプチャに混ざると、
+              スクロール位置のわずかなズレやキャプチャ矩形の計算誤差によって、
+              遷移中に元の位置からズレて描画されたり、一瞬だけ透明(=背景が
+              透けて白い)になったりしやすい。これはブラウザのView Transitions
+              実装でよく知られる既知の挙動で、「position:fixed/sticky な要素には
+              専用のview-transition-nameを与えてrootから独立させる」のが定石の対処法。
+
+              ヘッダーとBottomNavにそれぞれ専用の名前を与え、rootと全く同じ
+              「フェードもリサイズもさせず一瞬で入れ替える」扱いにする。
+              (BottomNav側の対応するCSS属性は BottomNav.tsx で付与している)
+            */
+            header[data-lime-app-header="true"] {
+              view-transition-name: lime-app-header;
+            }
+
+            nav[data-lime-bottom-nav-root="true"] {
+              view-transition-name: lime-bottom-nav;
+            }
+
+            ::view-transition-image-pair(lime-app-header),
+            ::view-transition-image-pair(lime-bottom-nav) {
+              isolation: auto;
+            }
+
+            ::view-transition-old(lime-app-header),
+            ::view-transition-new(lime-app-header),
+            ::view-transition-old(lime-bottom-nav),
+            ::view-transition-new(lime-bottom-nav) {
+              animation-duration: 1ms !important;
+              -webkit-animation-duration: 1ms !important;
+              animation-delay: 0s !important;
+              mix-blend-mode: normal !important;
+              opacity: 1 !important;
+              object-fit: cover !important;
+            }
+
+            /*
+              バグ修正: ヘッダーは backdrop-blur + 半透明背景のため、old/newの
+              スナップショットを同じ位置へ重ねて表示すると、下線(タブの
+              アクティブインジケーター)の位置が異なるoldがnewの透け感を
+              通してうっすら透けて見え、「残像」のように見えてしまっていた。
+              フェードさせていない以上oldを表示しておく意味はないため、
+              oldは完全に非表示にしてnewだけを描画する
+              (遷移時間は実質1msなので、見た目上のちらつきは発生しない)。
+            */
+            ::view-transition-old(lime-app-header),
+            ::view-transition-old(lime-bottom-nav) {
+              display: none !important;
+            }
+
+            ::view-transition-group(lime-feed-tab-content) {
+              animation: none !important;
+              -webkit-animation: none !important;
+              isolation: isolate;
+            }
+
+            ::view-transition-image-pair(lime-feed-tab-content) {
+              overflow: hidden;
+              isolation: isolate;
+            }
+
+            ::view-transition-old(lime-feed-tab-content),
+            ::view-transition-new(lime-feed-tab-content) {
+              animation-duration: 360ms !important;
+              animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1) !important;
+              animation-fill-mode: both !important;
+              opacity: 1 !important;
+              mix-blend-mode: normal !important;
+              backface-visibility: hidden;
+              -webkit-backface-visibility: hidden;
+            }
+
+            html[data-lime-feed-tab-direction='forward']::view-transition-old(lime-feed-tab-content) {
+              animation-name: lime-feed-tab-old-forward !important;
+            }
+
+            html[data-lime-feed-tab-direction='forward']::view-transition-new(lime-feed-tab-content) {
+              animation-name: lime-feed-tab-new-forward !important;
+            }
+
+            html[data-lime-feed-tab-direction='backward']::view-transition-old(lime-feed-tab-content) {
+              animation-name: lime-feed-tab-old-backward !important;
+            }
+
+            html[data-lime-feed-tab-direction='backward']::view-transition-new(lime-feed-tab-content) {
+              animation-name: lime-feed-tab-new-backward !important;
+            }
+          }
+
+          /* タイムライン本文の「ふわっと浮かび上がる」入口アニメーションは、
+             ページを再読み込みした直後の最初のタブ表示だけ許可する。
+             一度でも別タブへ切り替えた後は、再訪を含めて入口アニメーションを発火させない。
+             タブ下線のスライドアニメーションはこの抑止対象に含めない。 */
+          html[data-lime-feed-tab-switched='true'] #root .animate-in,
+          html[data-lime-feed-tab-switched='true'] #root [class*='fade-in'] {
+            animation: none !important;
+            -webkit-animation: none !important;
+            animation-delay: 0s !important;
+            -webkit-animation-delay: 0s !important;
+            opacity: 1 !important;
+            visibility: visible !important;
           }
 
           /* モバイルでは横方向のタッチを常にページ側(JS)で扱えるようにし、
@@ -1872,7 +2670,7 @@ export const Header = () => {
         (アイコン行の下・別行)の2つのTabsListで共有する。Profile.tsxと同じく、
         1つのTabsルートの中に用途別のTabsListを複数置いて出し分ける構成。
       */}
-      <Tabs value={activeFeedTab} onValueChange={(value) => changeActiveFeedTab(value as FeedTabValue)}>
+      <Tabs value={activeFeedTab} onValueChange={(value) => changeFeedTabWithAnimation(value as FeedTabValue)}>
         {/* ロゴ＋アバター＋検索バーの行。
             - モバイル: アバター(またはログインボタン)を左、その右に検索バー(画像のデザイン)
               +設定歯車アイコンを配置する。ロゴはモバイルでは表示しない。
@@ -1911,7 +2709,8 @@ export const Header = () => {
                   <TabsTrigger
                     key={tab.value}
                     value={tab.value}
-                    onClick={() => handleFeedTabTriggerClick(tab.value)}
+                    onClick={() => handleFeedTabClick(tab.value)}
+                    onDoubleClick={() => handleFeedTabDoubleClick(tab.value)}
                     className="rounded-xl font-bold text-muted-foreground transition-all data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-sm data-[state=inactive]:bg-transparent data-[state=inactive]:text-foreground"
                   >
                     {tab.label}
@@ -1929,33 +2728,43 @@ export const Header = () => {
         {showFeedTabs && (
           <div className="relative z-[1] sm:hidden">
             <div className="mx-auto max-w-5xl px-2 sm:px-4">
-              <TabsList className="flex h-10 w-full items-stretch justify-center gap-0 rounded-none bg-transparent p-0 shadow-none">
-                {FEED_TABS.map((tab) => {
-                  const measuredWidth = feedTabUnderlineWidths[tab.value];
-                  const underlineWidth = measuredWidth
-                    ? measuredWidth + TAB_UNDERLINE_PADDING * 2
-                    : undefined;
+              <TabsList className="relative flex h-10 w-full items-stretch justify-center gap-0 rounded-none bg-transparent p-0 shadow-none">
+                {(() => {
+                  const activeIndex = FEED_TABS.findIndex((tab) => tab.value === activeFeedTab);
+                  const activeMeasuredWidth = feedTabUnderlineWidths[activeFeedTab];
+                  const activeUnderlineWidth = activeMeasuredWidth
+                    ? activeMeasuredWidth + TAB_UNDERLINE_PADDING * 2
+                    : 64;
+                  const activeCenterPercent = ((Math.max(0, activeIndex) + 0.5) / FEED_TABS.length) * 100;
 
                   return (
-                    <TabsTrigger
-                      key={tab.value}
-                      value={tab.value}
-                      onClick={() => handleFeedTabTriggerClick(tab.value)}
-                      className="feed-tabs-trigger relative h-10 min-w-[86px] flex-1 rounded-none border-0 bg-transparent px-3 text-base leading-none shadow-none outline-none transition-none duration-0 hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=inactive]:bg-transparent"
-                    >
-                      <span
-                        ref={registerFeedTabLabelRef(tab.value)}
-                        className="whitespace-nowrap"
-                      >
-                        {tab.label}
-                      </span>
-                      <span
-                        className="feed-tabs-underline absolute bottom-0 left-1/2 h-[3px] w-16 -translate-x-1/2 rounded-full bg-pink-500"
-                        style={underlineWidth ? { width: `${underlineWidth}px` } : undefined}
-                      />
-                    </TabsTrigger>
+                    <span
+                      aria-hidden="true"
+                      className="pointer-events-none absolute bottom-0 left-0 h-[3px] -translate-x-1/2 rounded-full bg-pink-500 will-change-[left,width] transition-[left,width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+                      style={{
+                        left: `${activeCenterPercent}%`,
+                        width: `${activeUnderlineWidth}px`,
+                      }}
+                    />
                   );
-                })}
+                })()}
+
+                {FEED_TABS.map((tab) => (
+                  <TabsTrigger
+                    key={tab.value}
+                    value={tab.value}
+                    onClick={() => handleFeedTabClick(tab.value)}
+                    onDoubleClick={() => handleFeedTabDoubleClick(tab.value)}
+                    className="feed-tabs-trigger relative h-10 min-w-[86px] flex-1 rounded-none border-0 bg-transparent px-3 text-base leading-none shadow-none outline-none transition-colors duration-150 hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=inactive]:bg-transparent"
+                  >
+                    <span
+                      ref={registerFeedTabLabelRef(tab.value)}
+                      className="whitespace-nowrap"
+                    >
+                      {tab.label}
+                    </span>
+                  </TabsTrigger>
+                ))}
               </TabsList>
             </div>
           </div>
