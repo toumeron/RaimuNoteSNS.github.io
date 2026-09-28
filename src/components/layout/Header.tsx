@@ -78,16 +78,34 @@ function readExcludeBlueskyPosts(): boolean {
   return localStorage.getItem(SEARCH_EXCLUDE_BLUESKY_STORAGE_KEY) === 'true';
 }
 
-// 検索ページ(モバイル)の「ポスト/アカウント」タブの選択状態。
+// 検索ページ(モバイル)の「話題/最新/ユーザー/メディア」タブの選択状態。
+// SearchPage.tsx の SEARCH_TABS / SearchTab と同じ値・同じ並び順にしている。
 // タブUI自体はSearchPage.tsxからここ(Header)に移設し、SearchPage.tsx側は
 // このキー/イベントを監視して自身のTabsコンポーネントの表示を切り替えるだけにする。
-type SearchPageTabValue = 'posts' | 'users';
+type SearchPageTabValue = 'top' | 'latest' | 'users' | 'media';
+const SEARCH_PAGE_TABS: Array<{ value: SearchPageTabValue; label: string }> = [
+  { value: 'top', label: '話題' },
+  { value: 'latest', label: '最新' },
+  { value: 'users', label: 'ユーザー' },
+  { value: 'media', label: 'メディア' },
+];
 const SEARCH_PAGE_TAB_STORAGE_KEY = 'lime_search_page_tab';
 const SEARCH_PAGE_TAB_CHANGED_EVENT = 'lime-search-page-tab-changed';
 
+// SearchPage.tsx の normalizeStoredSearchTab と同じ読み替え(旧バージョンの 'posts' は '最新' 扱い)。
+function normalizeSearchPageTab(value: string | null | undefined): SearchPageTabValue {
+  if (value === 'top' || value === 'latest' || value === 'users' || value === 'media') return value;
+  if (value === 'posts') return 'latest';
+  return 'top';
+}
+
 function readStoredSearchPageTab(): SearchPageTabValue {
-  if (typeof window === 'undefined') return 'posts';
-  return localStorage.getItem(SEARCH_PAGE_TAB_STORAGE_KEY) === 'users' ? 'users' : 'posts';
+  if (typeof window === 'undefined') return 'top';
+  try {
+    return normalizeSearchPageTab(localStorage.getItem(SEARCH_PAGE_TAB_STORAGE_KEY));
+  } catch {
+    return 'top';
+  }
 }
 
 function readStoredActiveFeedTab(): FeedTabValue {
@@ -137,6 +155,58 @@ function saveSearchHistory(list: string[]) {
 // 先頭の "@" を取り除いてから渡す
 function normalizeBlueskySuggestQuery(query: string) {
   return query.trim().replace(/^@+/, '');
+}
+
+// 検索コマンド(from: / -単語 / OR / "フレーズ" / since: など)を除いた「検索語」だけを取り出す。
+// SearchPage.tsx の getSearchFreeText(parseSearchQuery)と同じ結果になるようにしてあり、
+// モバイルのサジェスト(ユーザー候補・Blueskyユーザー候補)がコマンド入りの入力でも
+// PC版と同じように動くようにするためのもの。
+const SEARCH_COMMAND_KEYS = new Set([
+  'from', 'to', 'since', 'after', 'until', 'before',
+  'min_faves', 'min_likes', 'min_retweets', 'min_reposts',
+  'max_faves', 'max_likes', 'filter', 'has', 'source',
+]);
+
+function getSuggestFreeText(raw: string): string {
+  const tokens = raw.trim().match(/-?"[^"]*"?|[^\s\u3000]+/g) ?? [];
+
+  if (tokens.length === 1 && /^@[^\s:"]+$/.test(tokens[0])) return tokens[0];
+
+  const words: string[] = [];
+  const fromNames: string[] = [];
+
+  for (const token of tokens) {
+    if (token === 'OR') continue;
+
+    const neg = token.length > 1 && token.startsWith('-');
+    const body = neg ? token.slice(1) : token;
+
+    if (body.startsWith('"')) {
+      const phrase = body.replace(/^"/, '').replace(/"$/, '').trim();
+      if (phrase && !neg) words.push(phrase);
+      continue;
+    }
+
+    const m = body.match(/^([A-Za-z_]+):(.*)$/);
+    if (m && SEARCH_COMMAND_KEYS.has(m[1].toLowerCase())) {
+      const key = m[1].toLowerCase();
+      const value = m[2].trim();
+      if (!value) continue;
+      if (key === 'to') {
+        const name = value.replace(/^@+/, '');
+        if (name && !neg) words.push(`@${name}`);
+      } else if (key === 'from' && !neg) {
+        const name = value.replace(/^@+/, '');
+        if (name) fromNames.push(name);
+      }
+      continue;
+    }
+
+    if (neg) continue;
+    words.push(body);
+  }
+
+  return [...words, ...fromNames].join(' ').trim();
 }
 
 type HeaderSuggestionRow =
@@ -1520,7 +1590,7 @@ export const Header = () => {
   const [headerSearchValue, setHeaderSearchValue] = useState('');
   const [isHeaderSearchSettingsOpen, setIsHeaderSearchSettingsOpen] = useState(false);
   const [excludeBlueskyPosts, setExcludeBlueskyPosts] = useState(() => readExcludeBlueskyPosts());
-  // 検索ページ(モバイル)の「ポスト/アカウント」タブ。検索ページ以外では使わない。
+  // 検索ページ(モバイル)の「話題/最新/ユーザー/メディア」タブ。検索ページ以外では使わない。
   const [activeSearchPageTab, setActiveSearchPageTab] = useState<SearchPageTabValue>(() => readStoredSearchPageTab());
 
   // --- モバイル・ヘッダー検索バーのサジェスト用 state ---
@@ -1536,10 +1606,22 @@ export const Header = () => {
 
   // SearchPage.tsx のPC版検索バーやトレンドから検索したときも、
   // モバイルヘッダーの検索欄へ同じ文字列を反映する。URLの ?q= には依存しない。
+  // 検索条件チップの×で検索語が空になったとき(query が空文字)は、
+  // ヘッダーの検索欄もクリアして未検索状態に戻す。
   useEffect(() => {
     const handleSearchQueryChanged = (event: Event) => {
-      const query = (event as CustomEvent<{ query?: string }>).detail?.query?.trim();
-      if (!query) return;
+      const rawQuery = (event as CustomEvent<{ query?: string }>).detail?.query;
+      if (typeof rawQuery !== 'string') return;
+
+      const query = rawQuery.trim();
+      if (!query) {
+        setHeaderSearchValue('');
+        setIsSearchResultsVisible(false);
+        setIsHeaderSearchFocused(false);
+        setHeaderActiveSuggestIdx(-1);
+        return;
+      }
+
       setHeaderSearchValue(query);
       setIsSearchResultsVisible(true);
       setIsHeaderSearchFocused(false);
@@ -1548,6 +1630,18 @@ export const Header = () => {
 
     window.addEventListener(SEARCH_QUERY_CHANGED_EVENT, handleSearchQueryChanged);
     return () => window.removeEventListener(SEARCH_QUERY_CHANGED_EVENT, handleSearchQueryChanged);
+  }, []);
+
+  // SearchPage.tsx側(PC版タブなど)でタブが変更された場合も、ヘッダーの表示を同期する。
+  useEffect(() => {
+    const handleSearchPageTabChanged = (event: Event) => {
+      const tab = (event as CustomEvent<{ tab?: string }>).detail?.tab;
+      if (!tab) return;
+      setActiveSearchPageTab(normalizeSearchPageTab(tab));
+    };
+
+    window.addEventListener(SEARCH_PAGE_TAB_CHANGED_EVENT, handleSearchPageTabChanged);
+    return () => window.removeEventListener(SEARCH_PAGE_TAB_CHANGED_EVENT, handleSearchPageTabChanged);
   }, []);
 
   useEffect(() => {
@@ -1595,13 +1689,14 @@ export const Header = () => {
   }, [isSearchRoute]);
 
   // 入力中のBlueskyユーザーサジェストを取得する(検索ページ・モバイルのみ)。
+  // 検索コマンド(from: など)は除き、検索語だけを渡す(PC版と同じ)。
   useEffect(() => {
     if (!isSearchRoute) {
       setHeaderBlueskySuggestionUsers([]);
       return;
     }
 
-    const query = headerSearchValue.trim();
+    const query = getSuggestFreeText(headerSearchValue).trim();
     if (!query || excludeBlueskyPosts) {
       setHeaderBlueskySuggestionUsers([]);
       return;
@@ -1652,8 +1747,9 @@ export const Header = () => {
   }, []);
 
   // ローカルユーザー候補 + Blueskyユーザー候補をマージ(SearchPage.tsxのliveSuggestionsと同じロジック)。
+  // "from:xxx" などの検索コマンドは除き、検索語だけでユーザー候補を出す。
   const headerLiveUserSuggestions = useMemo(() => {
-    const raw = headerSearchValue.trim();
+    const raw = getSuggestFreeText(headerSearchValue).trim();
     const normalizedRaw = normalizeForSearch(raw);
     const queryCandidates = Array.from(
       new Set([normalizedRaw, normalizedRaw.replace(/^@+/, '')].filter(Boolean))
@@ -1786,6 +1882,8 @@ export const Header = () => {
   // 検索を確定する共通処理。履歴への追加とページ遷移をまとめて行う。
   // 検索文字列は SEARCH_QUERY_CHANGED_EVENT と React Router の navigation state
   // で SearchPage.tsx に渡すため、URLの ?q= には依存しない。
+  // 検索コマンド(from: / "フレーズ" / OR / -除外 / since: など)を含む文字列も
+  // そのまま渡し、解釈は SearchPage.tsx 側の parseSearchQuery が行う。
   const commitHeaderSearch = (raw: string) => {
     const query = raw.trim();
     if (!query) return;
@@ -1834,8 +1932,11 @@ export const Header = () => {
       event.preventDefault();
       setHeaderActiveSuggestIdx((i) => Math.max(-1, i - 1));
     } else if (event.key === 'Enter' && headerActiveSuggestIdx >= 0) {
+      // 候補が減った直後などで範囲外になっていても落ちないようにする。
+      const row = headerSuggestionRows[headerActiveSuggestIdx];
+      if (!row) return;
       event.preventDefault();
-      handleHeaderSuggestionSelect(headerSuggestionRows[headerActiveSuggestIdx]);
+      handleHeaderSuggestionSelect(row);
     }
   };
 
@@ -1852,7 +1953,7 @@ export const Header = () => {
     saveSearchHistory([]);
   };
 
-  // 検索ページ(モバイル)のポスト/アカウントタブ切り替え。SearchPage.tsx側は
+  // 検索ページ(モバイル)の話題/最新/ユーザー/メディアタブ切り替え。SearchPage.tsx側は
   // このイベントを監視して自身のTabsコンポーネントの表示を切り替える。
   const changeActiveSearchPageTab = (value: SearchPageTabValue) => {
     setActiveSearchPageTab(value);
@@ -2210,10 +2311,11 @@ export const Header = () => {
     );
   };
 
-  // 検索ページ(モバイル)専用の「ポスト/アカウント」タブ。旧SearchPage.tsxにあった
+  // 検索ページ(モバイル)専用の「話題/最新/ユーザー/メディア」タブ。旧SearchPage.tsxにあった
   // TabsList(Radix)をそのままここに持ってくることはできない(Tabsのコンテキストが
   // 別のコンポーネントツリーに分かれるため)ので、見た目だけを再現したボタン行にし、
   // 実際の値の受け渡しはlocalStorage+カスタムイベントで行う。
+  // 並び順・ラベルはPC版(SearchPage.tsxのSEARCH_TABS)と同じ4タブ。
   const renderMobileSearchPageTabs = () => {
     if (!isSearchRoute) return null;
 
@@ -2225,35 +2327,36 @@ export const Header = () => {
           : 'font-medium text-[rgb(83,100,113)] dark:text-gray-400'
       );
 
+    const activeSearchPageTabIndex = Math.max(
+      0,
+      SEARCH_PAGE_TABS.findIndex((tab) => tab.value === activeSearchPageTab)
+    );
+
     return (
       <div className="relative z-[1] sm:hidden">
         <div className="mx-auto max-w-5xl px-2 sm:px-4">
-          <div className="relative grid grid-cols-2 border-b border-black/[0.03] dark:border-white/[0.05]">
+          <div className="relative grid grid-cols-4 border-b border-black/[0.03] dark:border-white/[0.05]">
             {/* 検索ページのタブもタイムラインと同じく、
                 アクティブインジケーターを1本だけ使って左右へ滑らかに移動させる。
                 選択ロジックは変更せず、見た目のアニメーションだけを追加する。 */}
             <span
               aria-hidden="true"
-              className="pointer-events-none absolute bottom-0 left-0 z-[2] h-1 w-16 rounded-full bg-primary will-change-[left,transform] transition-[left,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+              className="pointer-events-none absolute bottom-0 left-0 z-[2] h-1 w-12 rounded-full bg-primary will-change-[left,transform] transition-[left,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
               style={{
-                left: activeSearchPageTab === 'posts' ? '25%' : '75%',
+                left: `${((activeSearchPageTabIndex + 0.5) / SEARCH_PAGE_TABS.length) * 100}%`,
                 transform: 'translateX(-50%)',
               }}
             />
-            <button
-              type="button"
-              onClick={() => changeActiveSearchPageTab('posts')}
-              className={tabButtonClass('posts')}
-            >
-              ポスト
-            </button>
-            <button
-              type="button"
-              onClick={() => changeActiveSearchPageTab('users')}
-              className={tabButtonClass('users')}
-            >
-              アカウント
-            </button>
+            {SEARCH_PAGE_TABS.map((tab) => (
+              <button
+                key={tab.value}
+                type="button"
+                onClick={() => changeActiveSearchPageTab(tab.value)}
+                className={tabButtonClass(tab.value)}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
         </div>
       </div>

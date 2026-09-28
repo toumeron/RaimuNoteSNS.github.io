@@ -150,18 +150,15 @@ async function savePushSubscription(currentUserId: string) {
       return false;
     }
 
-    const { error } = await supabase
-      .from('push_subscriptions')
-      .upsert({
-        user_id: currentUserId,
-        endpoint: subscription.endpoint,
-        p256dh,
-        auth,
-        user_agent: navigator.userAgent,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'endpoint' })
-      .select('endpoint')
-      .maybeSingle();
+    // 同じブラウザ(endpoint)で別アカウントにログインし直した場合、既存行が別ユーザーのものだと
+    // RLSでupsertが弾かれる(42501)。そのため、endpointを現在のユーザーに付け替えて保存する
+    // SECURITY DEFINER のDB関数(supabase_fix_push_subscriptions.sql)経由で保存する。
+    const { error } = await supabase.rpc('save_push_subscription', {
+      p_endpoint: subscription.endpoint,
+      p_p256dh: p256dh,
+      p_auth: auth,
+      p_user_agent: navigator.userAgent,
+    });
 
     if (error) {
       console.error('Save push subscription failed:', error);
@@ -175,7 +172,8 @@ async function savePushSubscription(currentUserId: string) {
   }
 }
 
-async function requestPermissionAndSubscribe(currentUserId: string) {
+// プロフィールのベルボタン(usePostNotifications.ts)からも使うため export している。
+export async function requestPermissionAndSubscribe(currentUserId: string) {
   if (!isPushSupported()) return false;
 
   try {
@@ -339,12 +337,17 @@ export function useOSNotification(currentUserId: string | null) {
           const { actor_name, actor_avatar_url, content_preview, post_id, type } = payload.new;
 
           const actorName = actor_name || 'ユーザー';
+          // 種類ごとの文言。new_post はプロフィールのベルボタンで購読したユーザーの新規投稿。
           const title = type === 'mention'
             ? `${actorName}さんからのメンション`
-            : `${actorName}さんからの通知`;
+            : type === 'new_post'
+              ? `${actorName}さんが投稿しました`
+              : `${actorName}さんからの通知`;
           const message = content_preview || (type === 'mention'
             ? 'ポストであなたをメンションしました'
-            : '新しい通知があります');
+            : type === 'new_post'
+              ? '新しいポストを投稿しました'
+              : '新しい通知があります');
           const iconUrl = actor_avatar_url || `${import.meta.env.BASE_URL}favicon.ico`;
 
           toast(title, {

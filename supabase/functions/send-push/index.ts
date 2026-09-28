@@ -144,6 +144,11 @@ const getNotificationTitle = (record: NotificationRecord) => {
     return `${actorName}さんからのメンション`;
   }
 
+  // プロフィールのベルボタンで購読したユーザーの新規投稿
+  if (record.type === 'new_post') {
+    return `${actorName}さんが投稿しました`;
+  }
+
   return `${actorName}さんからの通知`;
 };
 
@@ -152,6 +157,10 @@ const getNotificationBody = (record: NotificationRecord) => {
 
   if (record.type === 'mention') {
     return 'ポストであなたをメンションしました';
+  }
+
+  if (record.type === 'new_post') {
+    return '新しいポストを投稿しました';
   }
 
   return '新しい通知があります';

@@ -57,7 +57,11 @@ const Notifications = () => {
             <Card className="p-4 hover:bg-accent/50 transition-colors cursor-pointer">
               <div className="flex gap-3">
                 <div className="mt-1">
-                  <AtSign className="w-5 h-5 text-primary" />
+                  {n.type === "new_post" ? (
+                    <Bell className="w-5 h-5 text-primary" />
+                  ) : (
+                    <AtSign className="w-5 h-5 text-primary" />
+                  )}
                 </div>
                 <Avatar className="w-10 h-10">
                   <AvatarImage src={n.actor_avatar_url} />
@@ -65,7 +69,8 @@ const Notifications = () => {
                 </Avatar>
                 <div className="flex-1">
                   <p className="text-sm">
-                    <span className="font-bold">{n.actor_name}</span> さんがあなたをメンションしました
+                    <span className="font-bold">{n.actor_name}</span>{" "}
+                    {n.type === "new_post" ? "さんが新しく投稿しました" : "さんがあなたをメンションしました"}
                   </p>
                   {n.content_preview && (
                     <p className="text-sm text-muted-foreground mt-1 line-clamp-2 italic">

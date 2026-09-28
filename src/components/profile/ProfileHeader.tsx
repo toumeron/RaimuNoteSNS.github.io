@@ -11,12 +11,44 @@ import { FollowButton } from './FollowButton';
 import { useFollowStats } from '@/hooks/useProfile';
 import { useAuth } from '@/hooks/useAuth';
 import { useJoinMembership, useLeaveMembership, useMembershipStatus } from '@/hooks/useMembership';
+import { usePostNotificationSubscription } from '@/hooks/usePostNotifications';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { toast } from 'sonner';
 import type { User } from '@/types';
 import { getConfiguredBlueskyHandles, normalizeBlueskyHandle, saveConfiguredBlueskyHandles } from '@/lib/bluesky';
+
+// --- 通知ボタン用アイコン（X/Twitter の「ポストの通知」アイコンと同じ24x24パス） ---
+// currentColor なのでライト/ダーク両テーマで text-foreground に追従。背景は透明。
+// ※ shadcn の Button は子 svg を [&_svg]:size-4 で縮めるため、サイズは inline style で指定する。
+const BELL_ICON_SIZE = 20;
+const bellIconStyle = { width: BELL_ICON_SIZE, height: BELL_ICON_SIZE, flexShrink: 0 } as const;
+
+// ベル本体（右上を開けた形）。プラス/チェック共通。
+const BELL_BODY_PATH =
+  'M21.14 18h-4.241c-.464 2.281-2.482 4-4.899 4s-4.435-1.719-4.899-4H2.87L4 9.05C4.51 5.02 7.93 2 12 2v2C8.94 4 6.36 6.27 5.98 9.3L5.13 16h13.73l-.38-3h2.02l.64 5zm-6.323 0H9.183c.412 1.164 1.51 2 2.817 2s2.405-.836 2.817-2z';
+
+function BellPlusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style={bellIconStyle}>
+      {/* ベル＋プラス（Xの公式アイコンのパスそのまま） */}
+      <path d="M22 5v2h-3v3h-2V7h-3V5h3V2h2v3h3zm-.86 13h-4.241c-.464 2.281-2.482 4-4.899 4s-4.435-1.719-4.899-4H2.87L4 9.05C4.51 5.02 7.93 2 12 2v2C8.94 4 6.36 6.27 5.98 9.3L5.13 16h13.73l-.38-3h2.02l.64 5zm-6.323 0H9.183c.412 1.164 1.51 2 2.817 2s2.405-.836 2.817-2z" />
+    </svg>
+  );
+}
+
+function BellCheckIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style={bellIconStyle}>
+      <path d={BELL_BODY_PATH} />
+      {/* チェック（プラスと同じ太さ 2 の線） */}
+      <path d="M15.2 5.6l2.4 2.4 4.2-4.6" fill="none" stroke="currentColor" strokeWidth={2} />
+    </svg>
+  );
+}
+
 function normalizeAppPath(pathname: string) {
   const normalized = pathname.replace(/^\/RaimuNoteSNS\.github\.io(?=\/|$)/, '') || '/';
   return normalized === '' ? '/' : normalized;
@@ -61,6 +93,13 @@ export function ProfileHeader({
   const { data: isMember } = useMembershipStatus(showSubscriptionButton ? user.id : undefined);
   const joinMembership = useJoinMembership(user.id);
   const leaveMembership = useLeaveMembership(user.id);
+  // 「新しい投稿を通知する」ベルボタン（自分自身・Blueskyプロフィールでは表示しない）
+  const showPostNotificationButton = !isMe && !isBlueskyProfile;
+  const {
+    enabled: isPostNotificationEnabled,
+    isPending: isPostNotificationPending,
+    toggle: togglePostNotification,
+  } = usePostNotificationSubscription(showPostNotificationButton ? user.id : undefined);
   const [isSubscriptionOpen, setIsSubscriptionOpen] = useState(false);
   const [isAvatarOpen, setIsAvatarOpen] = useState(false);
   const [isCoverOpen, setIsCoverOpen] = useState(false);
@@ -157,6 +196,39 @@ export function ProfileHeader({
         : [...configured, handle],
     );
     setIsBlueskyAdded(saved.includes(handle));
+  };
+  // --- ベルボタン: 新しい投稿の通知をON/OFFする ---
+  // iOSでは通知許可のダイアログをタップ直後に出す必要があるため、onClickから直接呼ぶ。
+  const handleTogglePostNotification = async () => {
+    const result = await togglePostNotification();
+
+    // tsconfig の strict 設定に関係なく型が絞り込まれるよう、ok の真偽ではなく 'reason' の有無で判定する
+    if (!('reason' in result)) {
+      toast(
+        result.enabled
+          ? `${user.displayName}さんの新しい投稿を通知します`
+          : `${user.displayName}さんの投稿通知をオフにしました`,
+      );
+      return;
+    }
+
+    switch (result.reason) {
+      case 'login':
+        toast('ログインが必要です');
+        break;
+      case 'unsupported':
+        toast('この端末・ブラウザでは通知を利用できません。Safariの共有メニューからホーム画面に追加し、LimeNoteアプリをインストールしてください！');
+        break;
+      case 'denied':
+        toast('通知がブロックされています。端末設定でLimeNoteの通知を許可してください。');
+        break;
+      case 'push-failed':
+        toast('通知の設定に失敗しました。もう一度お試しください。');
+        break;
+      default:
+        toast('投稿通知の切り替えに失敗しました。もう一度お試しください。');
+        break;
+    }
   };
   // 数値をフォーマットする関数
   const formatDisplayCount = (count: number) => {
@@ -359,6 +431,24 @@ export function ProfileHeader({
                 }`}
               >
                 {isMember ? '登録済み' : 'メンバー'}
+              </Button>
+            )}
+            {showPostNotificationButton && (
+              // FollowButton と同じ高さ(40px)・枠線色・文字色・フォーカス表現に揃えている。背景は透明。
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={handleTogglePostNotification}
+                disabled={isPostNotificationPending}
+                aria-pressed={isPostNotificationEnabled}
+                aria-label={isPostNotificationEnabled ? '新しい投稿の通知をオフにする' : '新しい投稿を通知する'}
+                className="mr-2 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-solid border-[#d9d9d9] bg-transparent p-0 text-[#111111] shadow-none transition-all duration-150 hover:bg-black/5 hover:text-[#111111] focus-visible:ring-2 focus-visible:ring-black/20 active:brightness-90 disabled:pointer-events-none disabled:opacity-60 dark:border-[#555555] dark:text-white dark:hover:bg-white/10 dark:hover:text-white dark:focus-visible:ring-white/20"
+              >
+                {isPostNotificationEnabled ? (
+                  <BellCheckIcon />
+                ) : (
+                  <BellPlusIcon />
+                )}
               </Button>
             )}
             {isBlueskyProfile ? (

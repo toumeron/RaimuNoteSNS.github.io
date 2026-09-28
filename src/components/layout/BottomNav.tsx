@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { Home, User as UserIcon, Settings as SettingsIcon, Search, MessageSquare } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
@@ -12,6 +12,16 @@ type TimelineChromeState = {
   theme: TimelineChromeTheme;
   hasTimelineBackground: boolean;
 };
+
+// 検索ボタンをダブルタップ/ダブルクリックしたときに、検索ページ(SearchPage.tsx)へ
+// 「検索前のトップ画面へ戻る」ことを伝えるイベント。SearchPage.tsx側でこれを監視して
+// 検索語・入力欄をリセットする。
+const SEARCH_HOME_REQUESTED_EVENT = 'lime-search-home-requested';
+// Header.tsx(モバイルの検索バー)側と共通のイベント。query が空文字のとき、
+// Headerは検索欄をクリアして未検索状態に戻す。
+const SEARCH_QUERY_CHANGED_EVENT = 'lime-search-query-changed';
+// ダブルタップとみなす最大間隔(ms)。
+const SEARCH_DOUBLE_TAP_INTERVAL_MS = 350;
 
 function normalizeAppPath(pathname: string) {
   const normalized = pathname.replace(/^\/RaimuNoteSNS\.github\.io(?=\/|$)/, '') || '/';
@@ -168,10 +178,13 @@ function useIsMobileKeyboardOpen() {
 export function BottomNav() {
   const { user } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const timelineChrome = useTimelineChrome(location.pathname);
   const [mounted, setMounted] = useState(false);
   const navRef = useRef<HTMLElement | null>(null);
   const isKeyboardOpen = useIsMobileKeyboardOpen();
+  // 検索ボタンを最後にタップした時刻。ダブルタップ/ダブルクリック判定用。
+  const lastSearchTapAtRef = useRef(0);
 
   useEffect(() => {
     setMounted(true);
@@ -179,6 +192,34 @@ export function BottomNav() {
 
   const postDetailId = getPostDetailId(location.pathname);
   const showPostCommentForm = Boolean(postDetailId);
+
+  // 検索ボタンのダブルタップ/ダブルクリック: 検索トップ(検索前のメイン画面)へ戻す。
+  // 1回目のタップは通常どおり NavLink による /search への遷移に任せる。
+  // 350ms以内の2回目のタップで、検索語・入力欄・ヘッダーの検索欄をリセットする。
+  const handleSearchNavClick = useCallback(() => {
+    const now = Date.now();
+    const isDoubleTap = now - lastSearchTapAtRef.current <= SEARCH_DOUBLE_TAP_INTERVAL_MS;
+
+    if (!isDoubleTap) {
+      lastSearchTapAtRef.current = now;
+      return;
+    }
+
+    // 3回連続タップで意図せず再発火しないよう、判定をリセットする。
+    lastSearchTapAtRef.current = 0;
+
+    // SearchPage.tsx: 検索語・入力欄をリセットして検索前の画面へ戻す。
+    window.dispatchEvent(new CustomEvent(SEARCH_HOME_REQUESTED_EVENT));
+    // Header.tsx: 検索欄のクリアと、未検索状態(ヘッダーのスクロール開閉が有効な状態)への復帰。
+    window.dispatchEvent(new CustomEvent(SEARCH_QUERY_CHANGED_EVENT, { detail: { query: '' } }));
+
+    window.scrollTo({ top: 0, behavior: 'auto' });
+
+    // 検索結果の ?q= が残らないよう、履歴を置き換えて /search へ移動する。
+    // resetSearchHome は SearchPage.tsx が navigation state 経由でも「検索トップへ戻る」ことを
+    // 検知できるようにするための目印(イベントが届かなかった場合の保険)。毎回異なる値にする。
+    navigate('/search', { replace: true, state: { resetSearchHome: Date.now() } });
+  }, [navigate]);
 
   useEffect(() => {
     if (!mounted || typeof window === 'undefined') return;
@@ -226,9 +267,15 @@ export function BottomNav() {
   const isTimelineDark = timelineChrome.theme === 'dark';
   const hideTopBorder = isBottomNavTopBorderHiddenPath(location.pathname);
 
-  const items = [
+  const items: Array<{
+    to: string;
+    icon: typeof Home;
+    label: string;
+    end?: boolean;
+    onClick?: () => void;
+  }> = [
     { to: '/', icon: Home, label: 'ホーム', end: true },
-    { to: '/search', icon: Search, label: '検索' },
+    { to: '/search', icon: Search, label: '検索', onClick: handleSearchNavClick },
     { to: `/u/${user.username}`, icon: UserIcon, label: 'プロフ' },
     { to: '/chat', icon: MessageSquare, label: 'チャット' },
     { to: '/settings', icon: SettingsIcon, label: '設定' },
@@ -308,6 +355,7 @@ export function BottomNav() {
             <NavLink
               to={it.to}
               end={it.end}
+              onClick={it.onClick}
               className={({ isActive }) =>
                 cn(
                   'flex flex-col items-center gap-1 py-2.5 text-[10px] font-bold transition',
