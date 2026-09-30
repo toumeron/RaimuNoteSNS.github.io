@@ -2598,7 +2598,6 @@ function AssistantsView({
             <h1 className="text-[28px] font-bold tracking-tight">
               フレンド
             </h1>
-            <p className="mt-1.5 text-sm text-[#69707a] dark:text-[#a8b0ba]">話したい相手を選ぶと、友だちや先輩と話すように会話できます。電話もかけられます。アイコンは自分の画像に変更できます。</p>
           </div>
           <button
             type="button"
