@@ -187,21 +187,26 @@ function BlueskyFollowButton({ did }: { did: string }) {
   );
 }
 
-/** Lime内部ユーザー同士の通常のフォローボタン(従来通り) */
+/** Lime内部ユーザー同士の通常のフォローボタン */
 function LimeFollowButton({ userId }: { userId: string }) {
-  const { data } = useFollowStats(userId);
+  const { data, isLoading } = useFollowStats(userId);
   const { mutate, isPending } = useToggleFollow(userId);
   const followed = data?.followedByMe ?? false;
+  // フォロー状態の初回取得が終わるまでは followedByMe が不明なため、
+  // 「フォロー」を一瞬表示してしまわないよう、スピナー表示にして操作も無効にする。
+  const isStatusLoading = isLoading && data === undefined;
+  const isBusy = isPending || isStatusLoading;
 
   return (
     <Button
       type="button"
       onClick={() => mutate()}
-      disabled={isPending}
-      aria-busy={isPending}
-      className={followButtonClassName(followed)}
+      disabled={isBusy}
+      aria-busy={isBusy}
+      // 読み込み中は黒い「フォロー」ボタンではなく、枠線のみの中立的な見た目にする
+      className={followButtonClassName(followed || isStatusLoading)}
     >
-      <FollowButtonLabel isPending={isPending} followed={followed} />
+      <FollowButtonLabel isPending={isBusy} followed={followed} />
     </Button>
   );
 }

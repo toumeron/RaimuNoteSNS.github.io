@@ -341,7 +341,7 @@ export function useOSNotification(currentUserId: string | null) {
           const title = type === 'mention'
             ? `${actorName}さんからのメンション`
             : type === 'new_post'
-              ? `${actorName}さんが投稿しました`
+              ? `${actorName}`
               : `${actorName}さんからの通知`;
           const message = content_preview || (type === 'mention'
             ? 'ポストであなたをメンションしました'

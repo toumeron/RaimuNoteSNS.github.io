@@ -85,6 +85,9 @@ export function ProfileHeader({
   const { user: me } = useAuth();
   const { data: stats } = useFollowStats(user.id);
   const isMe = me?.id === user.id;
+  // 自分がこのユーザーをフォローしているか（通知ベルボタンの表示条件に使用）
+  // FollowButton と同じく useFollowStats の followedByMe を参照する。
+  const isFollowing = stats?.followedByMe ?? false;
   const navigate = useNavigate();
   const location = useLocation();
   const liftCoverToMobileTop = isGithubPagesProfilePath(location.pathname);
@@ -93,8 +96,8 @@ export function ProfileHeader({
   const { data: isMember } = useMembershipStatus(showSubscriptionButton ? user.id : undefined);
   const joinMembership = useJoinMembership(user.id);
   const leaveMembership = useLeaveMembership(user.id);
-  // 「新しい投稿を通知する」ベルボタン（自分自身・Blueskyプロフィールでは表示しない）
-  const showPostNotificationButton = !isMe && !isBlueskyProfile;
+  // 「新しい投稿を通知する」ベルボタン（自分自身・Blueskyプロフィールでは表示しない。フォロー中のときのみ表示）
+  const showPostNotificationButton = !isMe && !isBlueskyProfile && isFollowing;
   const {
     enabled: isPostNotificationEnabled,
     isPending: isPostNotificationPending,
@@ -435,6 +438,7 @@ export function ProfileHeader({
             )}
             {showPostNotificationButton && (
               // FollowButton と同じ高さ(40px)・枠線色・文字色・フォーカス表現に揃えている。背景は透明。
+              // フォロー中のときのみ表示される。
               <Button
                 type="button"
                 variant="ghost"
