@@ -1,3 +1,4 @@
+import { DesktopAccountFooter } from './DesktopAccountFooter';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
@@ -28,6 +29,7 @@ import {
   UserRound,
   X,
   Clock,
+  Home,
 } from 'lucide-react';
 
 type TimelineChromeTheme = 'light' | 'dark';
@@ -1391,7 +1393,10 @@ function useMobileDrawerMotion(
   }, [isOpen, onOpenChange, openFromBody]);
 }
 
-export const Header = () => {
+export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }: {
+  desktopLayout?: boolean;
+  desktopSidebarContainer?: HTMLElement | null;
+} = {}) => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -2395,33 +2400,40 @@ export const Header = () => {
   // モバイルサイドバーには、このHeader内ですでに存在が確認できる実在ページだけを表示する。
   const mobileSidebarItems = user
     ? [
+        ...(desktopLayout ? [{ label: 'ホーム', path: '/', icon: Home, onClick: () => navigate('/') }] : []),
         {
           label: 'プロフィール',
+          path: `/u/${user.username}`,
           icon: UserRound,
           onClick: () => navigate(`/u/${user.username}`),
         },
         {
           label: '検索',
+          path: '/search',
           icon: Search,
           onClick: () => navigate('/search'),
         },
         {
           label: '通知',
+          path: '/notifications',
           icon: Bell,
           onClick: () => navigate('/notifications'),
         },
         {
           label: 'LimeAI',
+          path: '/chat',
           icon: MessageSquare,
           onClick: () => navigate('/chat'),
         },
         {
           label: 'フォト',
+          path: '/media',
           icon: Images,
           onClick: () => navigate('/media'),
         },
         {
           label: '設定',
+          path: '/settings',
           icon: SettingsIcon,
           onClick: () => navigate('/settings'),
         },
@@ -2429,7 +2441,7 @@ export const Header = () => {
     : [];
 
   const renderMobileSidebar = () => {
-    if (!user || typeof document === 'undefined') return null;
+    if (!user || typeof document === 'undefined' || (desktopLayout && !desktopSidebarContainer)) return null;
 
     const sidebarDarkClasses = useTimelineChromeDesign
       ? isTimelineDark
@@ -2473,7 +2485,8 @@ export const Header = () => {
           />
         )}
         <aside
-          aria-hidden={!isMobileSidebarOpen}
+          aria-hidden={desktopLayout ? false : !isMobileSidebarOpen}
+          data-lime-desktop-sidebar={desktopLayout || undefined}
           data-lime-mobile-sidebar="true"
           className={cn(
             // サイドバー自体の幅を従来より広く確保する(全画面にはしない)。
@@ -2486,10 +2499,11 @@ export const Header = () => {
               ? 'visible pointer-events-auto'
               : 'invisible pointer-events-none'
           )}
-          style={{ visibility: isMobileSidebarOpen ? 'visible' : 'hidden' }}
+          style={{ visibility: desktopLayout || isMobileSidebarOpen ? 'visible' : 'hidden' }}
         >
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <div className="shrink-0 px-[clamp(24px,8vw,68px)] pt-[max(18px,env(safe-area-inset-top))]">
+            {desktopLayout && <div data-lime-sidebar-logo className="shrink-0"><Logo size="md" /></div>}
+            <div data-lime-sidebar-profile className="shrink-0 px-[clamp(24px,8vw,68px)] pt-[max(18px,env(safe-area-inset-top))]">
               <div className="flex items-start gap-4">
                 <Avatar className="h-12 w-12 shrink-0 border-0">
                   <AvatarImage src={user.avatarUrl} alt={user.displayName} />
@@ -2510,9 +2524,16 @@ export const Header = () => {
               <div className="space-y-1">
                 {mobileSidebarItems.map((item) => {
                   const Icon = item.icon;
+                  const isCurrent = desktopLayout && (item.path === '/'
+                    ? location.pathname === '/'
+                    : item.path.startsWith('/u/') ? location.pathname.startsWith('/u/')
+                    : location.pathname === item.path || location.pathname.startsWith(`${item.path}/`));
                   return (
                     <button
                       key={item.label}
+                      aria-label={desktopLayout ? item.label : undefined}
+                      title={desktopLayout ? item.label : undefined}
+                      aria-current={isCurrent ? 'page' : undefined}
                       type="button"
                       onClick={item.onClick}
                       className={cn("flex w-full items-center gap-6 rounded-xl py-3 text-left transition-colors", sidebarHover)}
@@ -2529,10 +2550,11 @@ export const Header = () => {
               <div className={cn("my-6 border-t", useTimelineChromeDesign ? (isTimelineDark ? "border-white/[0.08]" : "border-black/[0.08]") : "border-black/[0.08] dark:border-white/[0.08]")} />
 
             </nav>
+            {desktopLayout && <DesktopAccountFooter />}
           </div>
         </aside>
       </>,
-      document.body
+      desktopLayout ? desktopSidebarContainer! : document.body
     );
   };
 
@@ -2759,8 +2781,8 @@ export const Header = () => {
              ページを再読み込みした直後の最初のタブ表示だけ許可する。
              一度でも別タブへ切り替えた後は、再訪を含めて入口アニメーションを発火させない。
              タブ下線のスライドアニメーションはこの抑止対象に含めない。 */
-          html[data-lime-feed-tab-switched='true'] #root .animate-in,
-          html[data-lime-feed-tab-switched='true'] #root [class*='fade-in'] {
+          html[data-lime-feed-tab-switched='true'] #root .animate-in${desktopLayout ? ':not([data-lime-profile-hover-card])' : ''},
+          html[data-lime-feed-tab-switched='true'] #root [class*='fade-in']${desktopLayout ? ':not([data-lime-profile-hover-card])' : ''} {
             animation: none !important;
             -webkit-animation: none !important;
             animation-delay: 0s !important;
@@ -2824,7 +2846,7 @@ export const Header = () => {
             - モバイル: アバター(またはログインボタン)を左、その右に検索バー(画像のデザイン)
               +設定歯車アイコンを配置する。ロゴはモバイルでは表示しない。
             - PC(sm以上): ロゴを左端、アバターを右端、その間(中央)にタブを配置。 */}
-        <div className="relative mx-auto flex h-14 max-w-5xl items-center gap-2 px-3 sm:h-16 sm:px-4">
+        <div data-lime-header-row className="relative mx-auto flex h-14 max-w-5xl items-center gap-2 px-3 sm:h-16 sm:px-4">
           <div className="sm:order-3">
             <div className="sm:hidden">
               {renderMobileAccountControl()}
@@ -2851,7 +2873,7 @@ export const Header = () => {
           {/* ロゴとアバターの間を埋める領域。PCではここが常にflex-1で、
               ホーム画面のときだけ中身としてタブを表示する(タブが無いページでも
               アバターが右端に固定されるよう、枠自体は常に確保しておく)。 */}
-          <div className="hidden sm:order-2 sm:flex sm:min-w-0 sm:flex-1 sm:justify-center">
+          <div data-lime-desktop-feed-tabs className="hidden sm:order-2 sm:flex sm:min-w-0 sm:flex-1 sm:justify-center">
             {showFeedTabs && (
               <TabsList className="grid w-full max-w-[300px] grid-cols-3 rounded-2xl bg-muted/50 p-1">
                 {FEED_TABS.map((tab) => (
@@ -2875,7 +2897,7 @@ export const Header = () => {
             下線の幅は各ラベル<span>の実測幅(offsetWidth)を元に、文字数(と実際の
             グリフ幅)に応じて動的に伸縮させる。 */}
         {showFeedTabs && (
-          <div className="relative z-[1] sm:hidden">
+          <div data-lime-feed-tab-row className="relative z-[1] sm:hidden">
             <div className="mx-auto max-w-5xl px-2 sm:px-4">
               <TabsList className="relative flex h-10 w-full items-stretch justify-center gap-0 rounded-none bg-transparent p-0 shadow-none">
                 {(() => {

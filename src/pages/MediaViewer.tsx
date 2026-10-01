@@ -1358,7 +1358,7 @@ export default function MediaViewer() {
 
   if (isInitialLoading) {
     return (
-      <div className="fixed inset-x-0 top-16 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[20] flex items-center justify-center bg-background text-foreground md:bottom-0 dark:bg-black dark:text-white">
+      <div data-lime-media-viewport className="fixed inset-x-0 top-16 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[20] flex items-center justify-center bg-background text-foreground md:bottom-0 dark:bg-black dark:text-white">
         <div className="flex items-center gap-2 text-sm text-muted-foreground dark:text-white/70">
           <Loader2 className="h-5 w-5 animate-spin" />
           <span>読み込み中...</span>
@@ -1369,7 +1369,7 @@ export default function MediaViewer() {
 
   if (isError && mediaItems.length === 0) {
     return (
-      <div className="fixed inset-x-0 top-16 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[20] flex items-center justify-center bg-background px-6 text-center text-foreground md:bottom-0">
+      <div data-lime-media-viewport className="fixed inset-x-0 top-16 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[20] flex items-center justify-center bg-background px-6 text-center text-foreground md:bottom-0">
         <div>
           <UserCircle className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
           <h1 className="text-lg font-bold">メディア投稿の取得に失敗しました</h1>
@@ -1383,7 +1383,7 @@ export default function MediaViewer() {
 
   if (mediaItems.length === 0 && (hasNextPage || isFetchingNextPage)) {
     return (
-      <div className="fixed inset-x-0 top-16 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[20] flex items-center justify-center bg-background text-foreground md:bottom-0 dark:bg-black dark:text-white">
+      <div data-lime-media-viewport className="fixed inset-x-0 top-16 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[20] flex items-center justify-center bg-background text-foreground md:bottom-0 dark:bg-black dark:text-white">
         <div className="flex items-center gap-2 text-sm text-muted-foreground dark:text-white/70">
           <Loader2 className="h-5 w-5 animate-spin" />
           <span>メディアを探しています...</span>
@@ -1394,7 +1394,7 @@ export default function MediaViewer() {
 
   if (mediaItems.length === 0) {
     return (
-      <div className="fixed inset-x-0 top-16 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[20] flex items-center justify-center bg-background px-6 text-center text-foreground md:bottom-0">
+      <div data-lime-media-viewport className="fixed inset-x-0 top-16 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[20] flex items-center justify-center bg-background px-6 text-center text-foreground md:bottom-0">
         <div>
           <ImageIcon className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
           <h1 className="text-lg font-bold">メディア投稿がありません</h1>
@@ -1543,7 +1543,7 @@ export default function MediaViewer() {
         </div>
       )}
 
-      <div className="fixed inset-x-0 top-16 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[20] bg-transparent text-foreground md:bottom-0 md:grid md:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px] dark:text-white">
+      <div data-lime-media-viewport className="fixed inset-x-0 top-16 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-[20] bg-transparent text-foreground md:bottom-0 md:grid md:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px] dark:text-white">
       <main
         ref={scrollRootRef}
         onScroll={handleViewerScroll}

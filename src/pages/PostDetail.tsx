@@ -1,3 +1,4 @@
+import { useDesktopLayout } from '@/components/layout/DesktopLayoutContext';
 import { useState, useEffect, useRef, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate, useParams } from 'react-router-dom';
@@ -250,6 +251,7 @@ export default function PostDetail() {
   const [moreMenuPosition, setMoreMenuPosition] = useState<{ top: number; right: number } | null>(null);
   
   // スマホ・PC判定用
+  const desktopLayout = useDesktopLayout();
   const [isMobile, setIsMobile] = useState(false);
   const [singleImageNaturalSize, setSingleImageNaturalSize] = useState<{ width: number; height: number } | null>(null);
 
@@ -276,6 +278,8 @@ export default function PostDetail() {
     }
     return count.toLocaleString();
   };
+
+  const useMobilePresentation = isMobile || desktopLayout;
 
   // 初期画面幅の判定とリスナー設定
   useEffect(() => {
@@ -775,14 +779,14 @@ export default function PostDetail() {
     const naturalHeight = Math.max(1, singleImageNaturalSize.height);
     const ratio = naturalWidth / naturalHeight;
 
-    const maxTimelineImageHeight = isMobile ? 300 : 480;
-    const minimumReadableWidth = isMobile ? 88 : 110;
+    const maxTimelineImageHeight = useMobilePresentation ? 300 : 480;
+    const minimumReadableWidth = useMobilePresentation ? 88 : 110;
     const heightLimitedWidth = Math.max(
       minimumReadableWidth,
       Math.round(maxTimelineImageHeight * ratio)
     );
-    const shouldLimitByHeight = ratio < (isMobile ? 1.64 : 1.72);
-    const shouldAvoidUpscale = naturalWidth <= (isMobile ? 360 : 520);
+    const shouldLimitByHeight = ratio < (useMobilePresentation ? 1.64 : 1.72);
+    const shouldAvoidUpscale = naturalWidth <= (useMobilePresentation ? 360 : 520);
     const shouldNarrowUltraWide = ratio >= 2.35;
 
     if (shouldLimitByHeight) {
@@ -805,7 +809,7 @@ export default function PostDetail() {
 
     if (shouldNarrowUltraWide) {
       return {
-        width: isMobile ? '100%' : 'min(100%, 560px)',
+        width: useMobilePresentation ? '100%' : 'min(100%, 560px)',
         maxWidth: '100%',
       };
     }
@@ -830,9 +834,9 @@ export default function PostDetail() {
         .trim()
     : data?.content;
 
-  const useMobileThreadLayout = isMobile;
+  const useMobileThreadLayout = useMobilePresentation;
   const isMobilePostDetailHeaderHidden =
-    useMobilePostDetailHeaderVisibility(useMobileThreadLayout);
+    useMobilePostDetailHeaderVisibility(isMobile);
 
 
   // --- 「もっと見る」メニュー用の判定（PostCardと同様のロジック） ---
@@ -1562,7 +1566,7 @@ export default function PostDetail() {
       )}
 
       {data && (
-        <article className={useMobileThreadLayout
+        <article data-lime-post-detail-card className={useMobileThreadLayout
           ? "post-detail-mobile-article relative"
           : "rounded-3xl border border-border/60 bg-card p-6 shadow-soft relative"
         }>
@@ -1857,8 +1861,8 @@ export default function PostDetail() {
             )}
           </p>
 
-          <div className={isMobile ? "mt-3 flex items-center gap-1 relative h-9 post-detail-mobile-action-row" : "mt-3 flex items-center gap-1 border-t border-border/60 pt-3 relative h-9"}>
-            <div onClick={(e) => e.stopPropagation()} className={`flex items-center h-full ${isMobile ? 'post-detail-mobile-action-hit' : ''}`}>
+          <div className={useMobilePresentation ? "mt-3 flex items-center gap-1 relative h-9 post-detail-mobile-action-row" : "mt-3 flex items-center gap-1 border-t border-border/60 pt-3 relative h-9"}>
+            <div onClick={(e) => e.stopPropagation()} className={`flex items-center h-full ${useMobilePresentation ? 'post-detail-mobile-action-hit' : ''}`}>
               {isBlueskyPost ? (
                 blueskySession && blueskyPostUri ? (
                   <LikeButton
@@ -1893,13 +1897,13 @@ export default function PostDetail() {
               <button
                 type="button"
                 onClick={(e) => e.stopPropagation()}
-                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm text-muted-foreground transition-colors hover:text-accent ${isMobile ? 'post-detail-mobile-reply-count' : ''}`}
+                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm text-muted-foreground transition-colors hover:text-accent ${useMobilePresentation ? 'post-detail-mobile-reply-count' : ''}`}
               >
                 <MessageCircle className="h-5 w-5" />
                 <span className="font-bold tabular-nums">{formatDisplayCount(data.commentsCount)}</span>
               </button>
             ) : (
-              <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm text-muted-foreground ${isMobile ? 'post-detail-mobile-reply-count' : ''}`}>
+              <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm text-muted-foreground ${useMobilePresentation ? 'post-detail-mobile-reply-count' : ''}`}>
                 <MessageCircle className="h-5 w-5" />
                 <span className="font-bold tabular-nums">{formatDisplayCount(data.commentsCount)}</span>
               </span>
@@ -1916,7 +1920,7 @@ export default function PostDetail() {
                   }
                   setShowPicker(!showPicker);
                 }}
-                className={`inline-flex items-center justify-center p-1.5 rounded-full transition-colors hover:text-accent h-8 w-8 origin-center ${isMobile ? 'post-detail-mobile-plus-button' : ''} ${
+                className={`inline-flex items-center justify-center p-1.5 rounded-full transition-colors hover:text-accent h-8 w-8 origin-center ${useMobilePresentation ? 'post-detail-mobile-plus-button' : ''} ${
                   showPicker ? 'text-accent bg-accent/10' : 'text-muted-foreground'
                 }`}
               >
@@ -2112,7 +2116,7 @@ export default function PostDetail() {
                 ref={shareButtonRef}
                 onClick={handleShareButtonClick}
                 aria-label="ポストを共有"
-                className={`inline-flex items-center justify-center p-1.5 rounded-full transition-colors hover:text-accent h-8 w-8 origin-center ${isMobile ? 'post-detail-mobile-share-button' : ''} ${
+                className={`inline-flex items-center justify-center p-1.5 rounded-full transition-colors hover:text-accent h-8 w-8 origin-center ${useMobilePresentation ? 'post-detail-mobile-share-button' : ''} ${
                   showShareMenu ? 'text-accent bg-accent/10' : 'text-muted-foreground'
                 }`}
               >
@@ -2180,9 +2184,9 @@ export default function PostDetail() {
 
       {data && (
         <>
-          {!isBlueskyPost && !useMobileThreadLayout && (
+          {!isBlueskyPost && (!useMobileThreadLayout || desktopLayout) && (
             <div>
-              <CommentForm postId={data.id} variant="default" />
+              <CommentForm postId={data.id} variant={desktopLayout ? "desktopReply" : "default"} />
             </div>
           )}
           <div className={useMobileThreadLayout ? "post-detail-mobile-comments-shell" : ""}>

@@ -1645,6 +1645,7 @@ export default function Feed() {
 
   return (
     <div
+      data-lime-feed-root
       ref={feedRootRef}
       className={`space-y-5 ${
         hasTimelineBackground
@@ -1802,7 +1803,7 @@ export default function Feed() {
       {/* 
         コンテナの gap はPC表示時に影響を与えないよう sm:gap-0 にリセットしています。
       */}
-      <div className="relative z-[1] flex flex-col sm:flex-row sm:items-center sm:justify-between sm:gap-0 px-1">
+      <div data-lime-feed-intro className="relative z-[1] flex flex-col sm:flex-row sm:items-center sm:justify-between sm:gap-0 px-1">
         
         {/* 
           PC表示（sm以上）のときは横並びになり余白は不要なため、
@@ -1844,7 +1845,7 @@ export default function Feed() {
             {/* スマホ専用の LimeNoteBeta ボックス */}
             <span className="ribbon-tag sm:hidden">
               <Sparkles className="h-3 w-3" />
-              LimeNote 2.6.1
+              LimeNote 2.7.0
             </span>
           </div>
 
@@ -1853,7 +1854,7 @@ export default function Feed() {
         {/* PC専用の LimeNoteBeta ボックス */}
         <span className="ribbon-tag hidden sm:inline-flex">
           <Sparkles className="h-3 w-3" />
-          LimeNote 2.6.1
+          LimeNote 2.7.0
         </span>
       </div>
 
@@ -1862,6 +1863,7 @@ export default function Feed() {
       </div>
 
       <div
+        data-lime-feed-posts
         ref={(element) => {
           postListRef.current = element;
           feedTabAnimationContentRef.current = element;

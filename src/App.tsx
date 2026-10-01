@@ -111,7 +111,8 @@ const useIsMobileViewport = () => {
 const ScrollToTop = () => {
   const { pathname } = useLocation();
   useEffect(() => {
-    window.scrollTo(350, 350);
+    if (window.matchMedia('(min-width: 768px)').matches) window.scrollTo(0, 0);
+    else window.scrollTo(350, 350);
   }, [pathname]);
   return null;
 };

@@ -1,3 +1,5 @@
+import { useDesktopLayout } from '@/components/layout/DesktopLayoutContext';
+import { TrendSection } from '@/components/search/TrendSection';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -2329,6 +2331,7 @@ type SuggestionRow =
   | { type: 'user'; value: string; user: User };
 
 export default function SearchPage() {
+  const desktopLayout = useDesktopLayout();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const location = useLocation();
@@ -2818,42 +2821,7 @@ export default function SearchPage() {
         </div>
       </div>
 
-      {/* トレンドセクション */}
-      <div className="px-4">
-        <div className="bg-black/[0.02] dark:bg-white/[0.03] rounded-2xl border border-black/[0.03] dark:border-white/[0.05] overflow-hidden">
-          <div className="px-4 py-3 border-b border-black/[0.03] dark:border-white/[0.05] flex items-center gap-2">
-            <TrendingUp className="w-5 h-5 text-primary" />
-            <h2 className="font-extrabold text-xl">トレンド</h2>
-          </div>
-
-          {isTrendsLoading ? (
-            <div className="p-8 flex justify-center">
-              <Loader2 className="w-6 h-6 animate-spin text-primary" />
-            </div>
-          ) : (
-            <div className="flex flex-col">
-              {trends.length > 0 ? (
-                trends.map((trend, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => commitSearch(trend.title)}
-                    className="px-4 py-3 text-left hover:bg-black/[0.03] dark:hover:bg-white/[0.05] transition-colors border-b last:border-none border-black/[0.03] dark:border-white/[0.05] flex flex-col gap-0.5"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-[13px] text-[rgb(83,100,113)] dark:text-gray-400">{idx + 1} · トレンド</span>
-                    </div>
-                    <div className="font-bold text-[15px]">{trend.title}</div>
-                  </button>
-                ))
-              ) : (
-                <div className="px-4 py-8 text-center text-[rgb(83,100,113)] dark:text-gray-400 text-[14px]">
-                  現在、トレンドを取得できません
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
+      <TrendSection items={trends} loading={isTrendsLoading} onSelect={commitSearch} />
 
       {/* おすすめユーザーセクション */}
       <div className="px-4">
@@ -2965,11 +2933,9 @@ export default function SearchPage() {
     </div>
   );
 
-  return (
-    <div className="min-h-screen bg-transparent text-[rgb(15,20,25)] dark:text-white">
-      {/* PC版の検索バー(サジェスト・履歴・詳細検索つき)。モバイルではHeader.tsx側の
-          検索バーを使うため、ここはsm以上でのみ表示する。 */}
+  const searchBar = (
       <div
+        data-lime-search-bar
         className={`hidden sm:sticky sm:top-0 sm:z-50 sm:flex sticky top-0 z-50 transition-all duration-300 w-full h-16 items-center ${
           isScrolled
             ? 'max-sm:bg-[#fbf9f2]/70 dark:max-sm:bg-[#000000]/70 max-sm:backdrop-blur-md border-b border-black/[0.03] dark:border-white/[0.05]'
@@ -3099,15 +3065,9 @@ export default function SearchPage() {
           </form>
         </div>
       </div>
-
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 max-sm:relative max-sm:left-0 max-sm:w-full max-sm:max-w-none max-sm:translate-x-0 max-sm:gap-0 max-sm:px-1">
-        {/* モバイルではこのタブバーの代わりにHeader.tsx側のタブボタンを使う。
-            結果の中身は <SearchResults> が activeTab を見て切り替える(タブごとの
-            読み込み済み結果は保持され、切り替えても再取得しない)。
-            修正: モバイルでは中身が空のTabsがflexの子要素として残り、gap-6の余白だけが
-            タブと検索結果の間に入っていたため、モバイルでは要素ごと非表示にして
-            余白の原因を取り除いた。 */}
-        <Tabs value={activeTab} onValueChange={(value) => changeActiveTab(value as SearchTab)} className="w-full max-sm:hidden">
+  );
+  const searchTabs = (
+        <Tabs value={activeTab} onValueChange={(value) => changeActiveTab(value as SearchTab)} className="w-full max-sm:hidden" data-lime-search-tabs>
           <div className="hidden sm:block">
             <TabsList className="w-full h-[53px] bg-transparent border-b border-black/[0.03] dark:border-white/[0.05] rounded-none p-0 grid grid-cols-4 relative z-20">
               {SEARCH_TABS.map((tab) => (
@@ -3118,6 +3078,24 @@ export default function SearchPage() {
             </TabsList>
           </div>
         </Tabs>
+  );
+
+  return (
+    <div className="min-h-screen bg-transparent text-[rgb(15,20,25)] dark:text-white">
+      {/* PC版の検索バー(サジェスト・履歴・詳細検索つき)。モバイルではHeader.tsx側の
+          検索バーを使うため、ここはsm以上でのみ表示する。 */}
+      {desktopLayout ? (
+        <div data-lime-search-header className="lime-desktop-search-header">{searchBar}{searchTabs}</div>
+      ) : searchBar}
+
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 max-sm:relative max-sm:left-0 max-sm:w-full max-sm:max-w-none max-sm:translate-x-0 max-sm:gap-0 max-sm:px-1">
+        {/* モバイルではこのタブバーの代わりにHeader.tsx側のタブボタンを使う。
+            結果の中身は <SearchResults> が activeTab を見て切り替える(タブごとの
+            読み込み済み結果は保持され、切り替えても再取得しない)。
+            修正: モバイルでは中身が空のTabsがflexの子要素として残り、gap-6の余白だけが
+            タブと検索結果の間に入っていたため、モバイルでは要素ごと非表示にして
+            余白の原因を取り除いた。 */}
+        {!desktopLayout && searchTabs}
 
         <div className="-mt-2 bg-transparent max-sm:mt-3">
           {!searchQuery ? (

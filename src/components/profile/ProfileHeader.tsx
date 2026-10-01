@@ -334,6 +334,7 @@ export function ProfileHeader({
         }
       `}</style>
       <section
+        data-lime-profile-header
         data-lime-mobile-profile-cover-top={liftCoverToMobileTop ? 'true' : undefined}
         className={`relative left-1/2 ${liftCoverToMobileTop ? 'profile-header-mobile-cover-to-top -mt-0' : '-mt-0'} w-screen -translate-x-1/2 overflow-hidden bg-transparent text-foreground sm:left-auto sm:mt-0 sm:w-auto sm:translate-x-0 sm:rounded-3xl sm:border sm:border-border/60 sm:bg-card sm:shadow-soft`}
       >
@@ -361,8 +362,8 @@ export function ProfileHeader({
           モバイルの戻る・検索・もっと見るボタンの視認性確保が目的なので、
           固定の黒(rgba)を使い、上部のみ・薄めに限定して不要な暗さを解消。
         */}
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-20 bg-gradient-to-b from-black/35 to-transparent sm:hidden" />
-        <div className="pointer-events-none absolute inset-0 z-10 flex items-start justify-between px-3 pt-8 sm:hidden">
+        <div data-lime-profile-cover-shade className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-20 bg-gradient-to-b from-black/35 to-transparent sm:hidden" />
+        <div data-lime-profile-cover-controls className="pointer-events-none absolute inset-0 z-10 flex items-start justify-between px-3 pt-8 sm:hidden">
           <button
             type="button"
             onClick={() => navigate(-1)}

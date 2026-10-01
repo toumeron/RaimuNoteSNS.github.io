@@ -1,14 +1,25 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Outlet, Navigate, useLocation } from 'react-router-dom';
 import { Header } from './Header';
 import { BottomNav } from './BottomNav';
 import { useAuth } from '@/hooks/useAuth';
 import { CallSessionProvider } from '@/components/chat/CallSessionProvider';
+import { DesktopTimelineSidebar } from './DesktopSidebar';
+import './desktop-layout.css';
+import { DesktopLayoutContext } from './DesktopLayoutContext';
 import { Skeleton } from '@/components/ui/skeleton';
 
 export function AppLayout() {
   const { user, loading } = useAuth();
   const location = useLocation();
+  const [desktopSidebarContainer, setDesktopSidebarContainer] = useState<HTMLDivElement | null>(null);
+  const [isDesktop, setIsDesktop] = useState(() => window.matchMedia('(min-width: 768px)').matches);
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 768px)');
+    const update = () => setIsDesktop(media.matches);
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
 
   // ルーティング（パス）が変更されるたびに、強制的にページトップへスクロールする
   useEffect(() => {
@@ -37,6 +48,31 @@ export function AppLayout() {
     mainClassName = 'w-full max-w-none px-0 py-0';
   } else if (isPostDetailPage) {
     mainClassName = 'mx-auto max-w-2xl px-4 pb-6 pt-0';
+  }
+
+  if (isDesktop) {
+    const isWorkspacePage = location.pathname === '/chat' || location.pathname.startsWith('/media');
+    const hideHeader = location.pathname.startsWith('/u/') || ['/search', '/notifications', '/settings', '/chat'].includes(location.pathname) || location.pathname.startsWith('/media') || isPostDetailPage;
+    const showRightSidebar = !['/chat', '/settings'].includes(location.pathname);
+    const isEdgePage = isWorkspacePage || location.pathname === '/' || location.pathname.startsWith('/u/') || isPostDetailPage;
+    return (
+      <CallSessionProvider>
+        <DesktopLayoutContext.Provider value={true}>
+        <div className="lime-app-shell" data-lime-page={location.pathname}
+          data-lime-workspace={location.pathname === '/chat' || undefined}
+          data-lime-hide-header={hideHeader || undefined}
+          data-lime-edge={isEdgePage || undefined}
+          data-lime-timeline={location.pathname === '/' || undefined}>
+          <div className="lime-desktop-menu" ref={setDesktopSidebarContainer} />
+          <div className="lime-desktop-column">
+            <Header desktopLayout desktopSidebarContainer={desktopSidebarContainer} />
+            <main className="lime-desktop-main"><Outlet /></main>
+          </div>
+          {showRightSidebar && <DesktopTimelineSidebar />}
+        </div>
+        </DesktopLayoutContext.Provider>
+      </CallSessionProvider>
+    );
   }
 
   return (

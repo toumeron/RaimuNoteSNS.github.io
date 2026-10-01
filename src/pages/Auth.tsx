@@ -21,6 +21,7 @@ function AuthForm({ mode }: { mode: Mode }) {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [isAgreed, setIsAgreed] = useState(false);
@@ -34,6 +35,11 @@ function AuthForm({ mode }: { mode: Mode }) {
       setErrors(fe);
       return;
     }
+    if (mode === 'signup' && (!inviteCode || inviteCode.length > 128)) {
+      setErrors({ inviteCode: '招待コードを入力してください（128文字以内）' });
+      return;
+    }
+    if (mode === 'signup' && !isAgreed) return;
     setErrors({});
     setBusy(true);
 
@@ -44,8 +50,13 @@ function AuthForm({ mode }: { mode: Mode }) {
         toast.success('おかえりなさい');
         navigate('/');
       } else {
-        const { data, error } = await supabase.auth.signUp({ email, password });
-        if (error) throw error;
+        const { data, error } = await supabase.auth.signUp({
+          email, password, options: { data: { invite_code: inviteCode } },
+        });
+        if (error) {
+          throw new Error('登録できませんでした。招待コード・メールアドレス・パスワードを確認してください。');
+        }
+        setInviteCode('');
 
         if (data.user) {
           const base = email.split('@')[0].replace(/[^a-z0-9_]/gi, '_').toLowerCase();
@@ -99,6 +110,24 @@ function AuthForm({ mode }: { mode: Mode }) {
         />
         {errors.password && <p className="text-xs text-destructive">{errors.password}</p>}
       </div>
+
+      {mode === 'signup' && (
+        <div className="space-y-1.5">
+          <Label htmlFor="signup-invite-code">招待コード</Label>
+          <Input
+            id="signup-invite-code"
+            type="password"
+            autoComplete="off"
+            required
+            maxLength={128}
+            value={inviteCode}
+            onChange={(e) => setInviteCode(e.target.value)}
+            placeholder="招待コードを入力..."
+            className="rounded-full bg-background text-foreground"
+          />
+          {errors.inviteCode && <p className="text-xs text-destructive">{errors.inviteCode}</p>}
+        </div>
+      )}
 
       {mode === 'signup' && (
         <div className="flex items-center gap-2 py-1">

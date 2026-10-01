@@ -9,7 +9,7 @@ import { toast } from 'sonner';
 
 const MAX = 280;
 
-type CommentFormVariant = 'default' | 'mobileDock' | 'bottomNav';
+type CommentFormVariant = 'default' | 'mobileDock' | 'bottomNav' | 'desktopReply';
 
 export function CommentForm({
   postId,
@@ -41,6 +41,7 @@ export function CommentForm({
 
   const isMobileDock = variant === 'mobileDock';
   const isBottomNav = variant === 'bottomNav';
+  const isDesktopReply = variant === 'desktopReply';
   return (
     <>
       <style>{`
@@ -139,12 +140,12 @@ export function CommentForm({
       <div
         className={`flex items-center gap-3 rounded-3xl border border-border/60 bg-card p-3 shadow-soft ${
           isMobileDock ? 'comment-form-mobile-dock' : ''
-        } ${isBottomNav ? 'comment-form-bottom-nav' : ''}`}
+        } ${isBottomNav ? 'comment-form-bottom-nav' : ''} ${isDesktopReply ? 'comment-form-desktop-reply' : ''}`}
       >
         <Avatar
           className={`h-9 w-9 border border-primary/30 ${
             isMobileDock ? 'comment-form-mobile-dock-avatar' : ''
-          } ${isBottomNav ? 'comment-form-bottom-nav-avatar' : ''}`}
+          } ${isBottomNav ? 'comment-form-bottom-nav-avatar' : ''} ${isDesktopReply ? 'comment-form-desktop-reply-avatar' : ''}`}
         >
           <AvatarImage src={user.avatarUrl} alt={user.displayName} />
           <AvatarFallback>{user.displayName.slice(0, 1)}</AvatarFallback>
@@ -158,7 +159,7 @@ export function CommentForm({
           }}
           className={`flex-1 rounded-full border-0 bg-secondary/60 focus-visible:ring-1 focus-visible:ring-primary/40 ${
             isMobileDock ? 'comment-form-mobile-dock-input' : ''
-          } ${isBottomNav ? 'comment-form-bottom-nav-input' : ''}`}
+          } ${isBottomNav ? 'comment-form-bottom-nav-input' : ''} ${isDesktopReply ? 'comment-form-desktop-reply-input' : ''}`}
         />
         <Button
           onClick={submit}
@@ -166,10 +167,10 @@ export function CommentForm({
           size="icon"
           className={`h-9 w-9 shrink-0 rounded-full bg-gradient-primary shadow-soft ${
             isMobileDock ? 'comment-form-mobile-dock-submit' : ''
-          } ${isBottomNav ? 'comment-form-bottom-nav-submit' : ''}`}
+          } ${isBottomNav ? 'comment-form-bottom-nav-submit' : ''} ${isDesktopReply ? 'comment-form-desktop-reply-submit' : ''}`}
           aria-label="コメントを送信"
         >
-          {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+          {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : isDesktopReply ? '返信' : <Send className="h-4 w-4" />}
         </Button>
       </div>
     </>

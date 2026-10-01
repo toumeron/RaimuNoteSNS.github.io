@@ -3244,7 +3244,7 @@ export default function Profile() {
           <Skeleton className="h-10 w-1/4 rounded-xl" />
         </div>
 
-        <div className="space-y-0 sm:space-y-4">
+        <div data-lime-profile-posts className="space-y-0 sm:space-y-4">
           <PostCardSkeleton />
           <PostCardSkeleton />
         </div>
@@ -3313,6 +3313,7 @@ export default function Profile() {
         <div ref={tabsSentinelRef} className="h-0" />
 
         <div
+          data-lime-profile-tabs-header
           className={[
             'relative sticky top-0 z-50 flex h-16 w-full isolate items-center overflow-visible bg-transparent sm:transition-all sm:duration-300',
             isScrolled
@@ -3321,6 +3322,7 @@ export default function Profile() {
           ].join(' ')}
         >
           <div
+            data-lime-profile-tabs-backdrop
             className={[
               'pointer-events-none absolute inset-y-0 left-1/2 z-0 w-screen -translate-x-1/2 transform-gpu sm:hidden',
               isScrolled
@@ -3330,6 +3332,7 @@ export default function Profile() {
           />
 
           <div
+            data-lime-profile-tabs-divider
             className={[
               'pointer-events-none absolute h-px sm:hidden',
               'left-1/2 z-10 w-screen -translate-x-1/2',
@@ -3339,7 +3342,7 @@ export default function Profile() {
             ].join(' ')}
           />
 
-          <TabsList className="relative z-20 grid h-full w-full grid-cols-4 rounded-none bg-transparent p-0 shadow-none sm:hidden">
+          <TabsList data-lime-profile-mobile-tabs className="relative z-20 grid h-full w-full grid-cols-4 rounded-none bg-transparent p-0 shadow-none sm:hidden">
             <span
               aria-hidden="true"
               className="profile-tabs-underline pointer-events-none absolute bottom-2 left-0 z-[2] h-[4px] w-16 -translate-x-1/2 rounded-full bg-pink-500 sm:w-10"
@@ -3361,7 +3364,7 @@ export default function Profile() {
             ))}
           </TabsList>
 
-          <TabsList className="hidden w-full grid-cols-4 rounded-2xl bg-muted/50 p-1 sm:grid">
+          <TabsList data-lime-profile-desktop-tabs className="hidden w-full grid-cols-4 rounded-2xl bg-muted/50 p-1 sm:grid">
             {profileTabs.map((tab) => (
               <TabsTrigger
                 key={`desktop-${tab.value}`}
@@ -3374,7 +3377,7 @@ export default function Profile() {
           </TabsList>
         </div>
 
-        <div className="space-y-0 sm:space-y-4">
+        <div data-lime-profile-posts className="space-y-0 sm:space-y-4">
           {profilePostsLoading && (
             <>
               <PostCardSkeleton />

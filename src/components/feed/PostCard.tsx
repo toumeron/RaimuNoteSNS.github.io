@@ -1,3 +1,4 @@
+import { useDesktopLayout } from '@/components/layout/DesktopLayoutContext';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
@@ -916,7 +917,9 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
   // 修正: useState(false) → lazy initializer に変更。
   // マウント直後の最初の描画から実際の画面幅を反映したレイアウトになるため、
   // 「新規マウント時に一瞬だけPC版が見えてしまう」二段階レンダーを防げる。
+  const desktopLayout = useDesktopLayout();
   const [isMobile, setIsMobile] = useState(() => getIsMobileViewport());
+  const useMobilePresentation = isMobile || desktopLayout;
   const [timelinePortalTheme, setTimelinePortalTheme] = useState<'light' | 'dark'>(() => {
     if (typeof window === 'undefined') return 'dark';
     return localStorage.getItem('lime_timeline_visual_theme') === 'light' ? 'light' : 'dark';
@@ -1579,14 +1582,14 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
     const naturalHeight = Math.max(1, singleImageNaturalSize.height);
     const ratio = naturalWidth / naturalHeight;
 
-    const maxTimelineImageHeight = isMobile ? 300 : 480;
-    const minimumReadableWidth = isMobile ? 88 : 110;
+    const maxTimelineImageHeight = useMobilePresentation ? 300 : 480;
+    const minimumReadableWidth = useMobilePresentation ? 88 : 110;
     const heightLimitedWidth = Math.max(
       minimumReadableWidth,
       Math.round(maxTimelineImageHeight * ratio)
     );
-    const shouldLimitByHeight = ratio < (isMobile ? 1.64 : 1.72);
-    const shouldAvoidUpscale = naturalWidth <= (isMobile ? 360 : 520);
+    const shouldLimitByHeight = ratio < (useMobilePresentation ? 1.64 : 1.72);
+    const shouldAvoidUpscale = naturalWidth <= (useMobilePresentation ? 360 : 520);
     const shouldNarrowUltraWide = ratio >= 2.35;
 
     if (shouldLimitByHeight) {
@@ -1609,7 +1612,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
 
     if (shouldNarrowUltraWide) {
       return {
-        width: isMobile ? '100%' : 'min(100%, 560px)',
+        width: useMobilePresentation ? '100%' : 'min(100%, 560px)',
         maxWidth: '100%',
       };
     }
@@ -1618,7 +1621,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
       width: '100%',
       maxWidth: '100%',
     };
-  }, [singleImageNaturalSize, isMobile]);
+  }, [singleImageNaturalSize, useMobilePresentation]);
 
   const renderContentWithLinks = (text: string) => {
     if (!text) return null;
@@ -2108,6 +2111,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
 
   const ProfileHoverContent = () => (
     <HoverCardContent
+      data-lime-profile-hover-card="true"
       side="bottom"
       align="start"
       className="w-[280px] rounded-[20px] border border-border/60 bg-card p-4 shadow-xl animate-in fade-in zoom-in duration-200 overflow-hidden"
@@ -2210,15 +2214,16 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
       )}
 
       <article
+        data-lime-post-card
         ref={cardRootRef}
         onClickCapture={handleCardClickCapture}
         onClick={handleCardClick}
         className={
           timelineGlass
-            ? isMobile
+            ? useMobilePresentation
               ? "timeline-mobile-readable px-5 py-4 cursor-pointer"
               : "timeline-glass-card rounded-3xl p-5 transition relative cursor-pointer"
-            : isMobile
+            : useMobilePresentation
               ? "relative mx-auto w-full max-w-[600px] px-0 py-3 cursor-pointer"
               : "rounded-3xl border border-border/60 bg-card p-5 shadow-soft transition hover:shadow-card-soft relative cursor-pointer"
         }
@@ -2263,7 +2268,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                       onClick={handleAuthorNavigate}
                     >
                       <div className="inline-flex w-fit max-w-full items-center gap-0.5">
-                        <span className={isMobile ? "truncate text-[16px]" : "truncate text-base"}>
+                        <span className={useMobilePresentation ? "truncate text-[16px]" : "truncate text-base"}>
                           {post.author.displayName}
                         </span>
                         {post.author.isOfficial && (
@@ -2280,24 +2285,24 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                   <ProfileHoverContent />
                 </HoverCard>
 
-                <span className={isMobile ? "truncate text-[16px] text-muted-foreground ml-1 opacity-80 shrink" : "truncate text-base text-muted-foreground ml-1 opacity-80 shrink"}>
+                <span className={useMobilePresentation ? "truncate text-[16px] text-muted-foreground ml-1 opacity-80 shrink" : "truncate text-base text-muted-foreground ml-1 opacity-80 shrink"}>
                   @{post.author.username}
                 </span>
 
                 <span className="text-muted-foreground mx-1 shrink-0">·</span>
-                <span className={isMobile ? "text-[16px] text-muted-foreground whitespace-nowrap shrink-0" : "text-sm text-muted-foreground whitespace-nowrap shrink-0"}>
+                <span className={useMobilePresentation ? "text-[16px] text-muted-foreground whitespace-nowrap shrink-0" : "text-sm text-muted-foreground whitespace-nowrap shrink-0"}>
                   {formatRelative(post.createdAt)}
                 </span>
               </div>
 
               <div className="flex items-center shrink-0 ml-2">
                 {currentVisibility === 'following' && (
-                  <span className={isMobile ? "text-[13px] font-bold text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-md whitespace-nowrap mr-1" : "text-[14px] font-bold text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-md whitespace-nowrap mr-1"}>
+                  <span className={useMobilePresentation ? "text-[13px] font-bold text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-md whitespace-nowrap mr-1" : "text-[14px] font-bold text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-md whitespace-nowrap mr-1"}>
                     限定
                   </span>
                 )}
                 {currentVisibility === 'members' && (
-                  <span className={isMobile ? "text-[13px] font-bold text-violet-600 dark:text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded-md whitespace-nowrap mr-1" : "text-[14px] font-bold text-violet-600 dark:text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded-md whitespace-nowrap mr-1"}>
+                  <span className={useMobilePresentation ? "text-[13px] font-bold text-violet-600 dark:text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded-md whitespace-nowrap mr-1" : "text-[14px] font-bold text-violet-600 dark:text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded-md whitespace-nowrap mr-1"}>
                     メンバー限定
                   </span>
                 )}
@@ -2454,7 +2459,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                 ) : (
                   <>
                     {displayContent && (
-                      <p className={isMobile ? "whitespace-pre-wrap break-words text-[16px] leading-normal text-foreground mt-1" : "whitespace-pre-wrap break-words text-base leading-relaxed text-foreground mt-1"}>
+                      <p className={useMobilePresentation ? "whitespace-pre-wrap break-words text-[16px] leading-normal text-foreground mt-1" : "whitespace-pre-wrap break-words text-base leading-relaxed text-foreground mt-1"}>
                         {renderContentWithMentions(displayContent)}
                       </p>
                     )}
@@ -2474,14 +2479,14 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
               {canViewMembersOnlyPost && ((post as any).is_bot || post.isBot) && (
                 <div className="flex items-center gap-1 mt-1.5 text-muted-foreground/70">
                   <Sparkles className="h-3.5 w-3.5" />
-                  <span className={isMobile ? "text-[13px] font-medium" : "text-[15px] font-medium"}>AIで生成</span>
+                  <span className={useMobilePresentation ? "text-[13px] font-medium" : "text-[15px] font-medium"}>AIで生成</span>
                 </div>
               )}
 
               {isBlueskyPost && (
                 <div className="flex items-center gap-1 mt-1.5 text-muted-foreground/70">
                   <Globe className="h-3.5 w-3.5" />
-                  <span className={isMobile ? "text-[13px] font-medium" : "text-[15px] font-medium"}>Bluesky</span>
+                  <span className={useMobilePresentation ? "text-[13px] font-medium" : "text-[15px] font-medium"}>Bluesky</span>
                 </div>
               )}
 
@@ -2504,6 +2509,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                   <button
                     type="button"
                     className="block max-w-full cursor-zoom-in overflow-hidden rounded-2xl border border-border/50 bg-black/[0.025] text-left shadow-none dark:bg-white/[0.035]"
+                    data-lime-single-post-image
                     style={singleImageFrameStyle}
                     onClick={(e) => handleImageClick(e, singleImageUrl)}
                     aria-label="画像を拡大表示"
@@ -2618,7 +2624,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
               </div>
             )}
 
-            <div className={isMobile ? "mt-2 flex items-center gap-1 text-muted-foreground relative h-8" : "mt-3 flex items-center gap-1 text-muted-foreground relative h-9"}>
+            <div className={useMobilePresentation ? "mt-2 flex items-center gap-1 text-muted-foreground relative h-8" : "mt-3 flex items-center gap-1 text-muted-foreground relative h-9"}>
               <div onClick={(e) => e.stopPropagation()} className="flex items-center h-full">
                 {isBlueskyPost ? (
                   blueskySession && blueskyPostUri ? (
@@ -2636,10 +2642,10 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                         e.stopPropagation();
                         if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
                       }}
-                      className={isMobile ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
+                      className={useMobilePresentation ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
                     >
                       <Heart className="h-5 w-5" />
-                      <span className={isMobile ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{formatDisplayCount(post.likesCount)}</span>
+                      <span className={useMobilePresentation ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{formatDisplayCount(post.likesCount)}</span>
                     </button>
                   )
                 ) : (
@@ -2657,19 +2663,19 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                     e.stopPropagation();
                     navigate(`/post/${encodeURIComponent(post.id)}`);
                   }}
-                  className={isMobile ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
+                  className={useMobilePresentation ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
                 >
                   <MessageCircle className="h-5 w-5" />
-                  <span className={isMobile ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{formatDisplayCount(post.commentsCount)}</span>
+                  <span className={useMobilePresentation ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{formatDisplayCount(post.commentsCount)}</span>
                 </button>
               ) : (
                 <Link
                   to={`/post/${post.id}`}
                   onClick={(e) => e.stopPropagation()}
-                  className={isMobile ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
+                  className={useMobilePresentation ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
                 >
                   <MessageCircle className="h-5 w-5" />
-                  <span className={isMobile ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{formatDisplayCount(post.commentsCount)}</span>
+                  <span className={useMobilePresentation ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{formatDisplayCount(post.commentsCount)}</span>
                 </Link>
               )}
 
@@ -2691,7 +2697,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                     setShowPicker(!showPicker);
                   }}
                   className={
-                    isMobile
+                    useMobilePresentation
                       ? `inline-flex items-center justify-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full origin-center ${
                           showPicker ? 'text-accent bg-accent/10' : 'text-muted-foreground'
                         }`
@@ -2864,7 +2870,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
                   onClick={handleShareButtonClick}
                   aria-label="ポストを共有"
                   className={
-                    isMobile
+                    useMobilePresentation
                       ? `inline-flex items-center justify-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full origin-center ${
                           showShareMenu ? 'text-accent bg-accent/10' : 'text-muted-foreground'
                         }`

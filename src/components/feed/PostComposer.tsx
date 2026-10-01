@@ -1301,6 +1301,7 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
   return (
     <>
       <div
+        data-lime-post-composer
         className={cn(
         "rounded-3xl bg-card p-5 shadow-soft transition-all duration-300",
         timelineGlass &&
