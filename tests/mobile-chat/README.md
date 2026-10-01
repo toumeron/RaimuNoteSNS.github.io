@@ -10,7 +10,8 @@
 
 フロントエンドの更新と併せて `supabase functions deploy transcribe-call` を実行する。
 既存のchat-gemmaと同じ `GROQ_API_KEY`、Supabaseの組み込み環境変数を使用する。
-この関数はブラウザのSpeechRecognitionが未提供・利用不可の場合に呼ばれる。
+この関数はiOS/iPadOSのホーム画面PWAでは最初から使い、その他の環境ではブラウザのSpeechRecognitionが未提供・利用不可の場合に呼ばれる。APIが存在することだけではiOS版PWAでの動作を判定しない。
+公開確認には関数一覧と `transcribe-call` のOPTIONS応答を使用する。OPTIONSが404の場合は未公開なので、フロントエンドの更新だけでは復旧しない。OPTIONSは200、認証なしPOSTは401が正常。
 ログイン済みユーザーのみ利用可能。録音は1発話ごと（無音1秒または最大20秒）に区切り、文字起こしに必要な音声をGroqへ送る。アプリのDB・Storageに音声は保存しない。
 通話終了、ミュート、発話処理の中断時にマイク、AudioContext、クライアントの通信を停止する。
 

@@ -9,6 +9,7 @@ import { useTheme } from 'next-themes'
 import type { VRM } from '@pixiv/three-vrm'
 import type * as THREE from 'three'
 import { classifyAvatarMorph } from '@/lib/avatarMorphs'
+import { measureAvatarLuminance, nextAvatarExposure, avatarBackgroundLightness, animateAvatarLight } from '@/lib/avatarLighting'
 import { BUILTIN_MODELS, MODEL_ACCEPT, MODEL_FORMAT_LABEL, isSupportedModelFile, inferModelFormat, unzipModelArchive, pickArchiveModel, createArchiveResolver, zipMime, type ModelFormat, type ModelSource, type ZipEntry } from '@/lib/avatarModels'
 import { supabase } from '@/lib/supabase'
 import { createPost } from '@/api/posts'
@@ -70,6 +71,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { toast } from 'sonner'
 import { CallRecorder } from '@/lib/callRecorder'
+import { preferRecordedCallSpeech, requestCallTranscription } from '@/lib/callTranscription'
 import { Speaker, ttsSupported, unlockAiAudio, CALM_FEMALE_VOICE_ID, CALM_FEMALE_VOICE_NAME } from '@/lib/aiSpeech'
 import { useCallSession } from '@/components/chat/CallSessionProvider'
 import { microphoneErrorMessage, requestMicrophonePermission } from '@/lib/microphone'
@@ -171,7 +173,7 @@ const PRESETS: Preset[] = [
     gender: "female",
     description: "かわいいイラストレーター〜！",
     starter: "こんにちは",
-    greeting: "にゃ〜ん",
+    greeting: "猫です。",
     systemPrompt:
       "あなたの名前は「なか」でファンへの丁寧なお礼を中心に穏やかで親しみやすいトーンで投稿し、仕事熱心でファンを大切にしつつ控えめに日常を過ごす優しい性格のイラストレーター。",
   },
@@ -183,7 +185,7 @@ const PRESETS: Preset[] = [
     gender: "female",
     description: "猫ちゃん",
     starter: "こんにちは",
-    greeting: "にゃ〜ん",
+    greeting: "猫です。",
     systemPrompt:
       "あなたの名前は「たんたんめん」でお寿司ともふもふを愛し、引きこもり気味の自由気ままでユーモラスな内向的性格のイラストレーター。",
   },
@@ -1179,19 +1181,12 @@ export const CHAT_EXT_STYLES = `
 
 /* ---------- ボイスモード ---------- */
 .vpop-root .voice-bg {
+  --voice-backdrop-lightness: 33.5%;
   background:
-    radial-gradient(1200px 700px at 20% 10%, rgba(255,190,220,.55), transparent 60%),
-    radial-gradient(900px 700px at 85% 20%, rgba(150,200,255,.55), transparent 60%),
-    radial-gradient(900px 800px at 50% 110%, rgba(190,160,255,.5), transparent 60%),
-    linear-gradient(180deg, #fdf3fa 0%, #eef3ff 60%, #f3ecff 100%);
+    radial-gradient(ellipse at 50% 40%, hsl(230 14% var(--voice-backdrop-lightness)), transparent 75%),
+    linear-gradient(160deg, hsl(270 12% var(--voice-backdrop-lightness)), hsl(220 14% var(--voice-backdrop-lightness)));
 }
-.vpop-root .voice-bg.night {
-  background:
-    radial-gradient(1000px 700px at 15% 5%, rgba(255,120,190,.28), transparent 60%),
-    radial-gradient(900px 700px at 90% 15%, rgba(80,140,255,.3), transparent 60%),
-    radial-gradient(900px 800px at 50% 110%, rgba(140,90,255,.35), transparent 60%),
-    linear-gradient(180deg, #14101f 0%, #10162b 60%, #1a1233 100%);
-}
+.vpop-root .voice-bg.night { --voice-backdrop-lightness: 11%; }
 .vpop-root .glass {
   background: rgba(255,255,255,.6);
   backdrop-filter: blur(18px) saturate(1.4); -webkit-backdrop-filter: blur(18px) saturate(1.4);
@@ -2625,7 +2620,7 @@ function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStagePr
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.92;
+    renderer.toneMappingExposure = 0.85;
     el.appendChild(renderer.domElement);
     renderer.domElement.style.cssText = "width:100%;height:100%;display:block;touch-action:none;cursor:grab";
 
@@ -2636,79 +2631,55 @@ function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStagePr
     const keyLight = new THREE.DirectionalLight(0xffffff, Math.PI * 0.95);
     keyLight.position.set(0.7, 1.4, 1.6);
     scene.add(keyLight);
-    const rim = new THREE.DirectionalLight(0xbcd4ff, Math.PI * 0.25);
+    const rim = new THREE.DirectionalLight(0xbcd4ff, Math.PI * 0.35);
     rim.position.set(-1.4, 1.2, -1.2);
     scene.add(rim);
     const amb = new THREE.AmbientLight(0xffffff, 0.55);
     scene.add(amb);
 
-    // MMD/VRMモデルの材質の明るさに合わせて、3Dステージの背景光(キー/リム/環境光)を
-    // 自動調整する。明るいモデルほど照明を下げ、暗いモデルは少し持ち上げることで、
-    // 「白飛びして眩しい」状態を避けながら陰影を残す。
-    const AUTO_LIGHT = {
-      enabled: true,
-      targetLuminance: 0.42,
-      minScale: 0.34,
-      maxScale: 1.18,
-      smoothing: 4.5,
+    // Sample the final rendered model, including its textures and toon/emissive shading.
+    // Background and UI are deliberately excluded from metering.
+    const meter = document.createElement("canvas");
+    meter.width = meter.height = 80;
+    const meterContext = meter.getContext("2d", { willReadFrequently: true });
+    let nightRef = night;
+    let lastMeterTime = 0;
+    let backgroundLightness = avatarBackgroundLightness(null, night);
+    let latestLuminance: ReturnType<typeof measureAvatarLuminance> = null;
+    const backdrop = el.closest<HTMLElement>(".voice-bg");
+    let exposureTarget = renderer.toneMappingExposure;
+    let fillTarget = 0.7;
+    let backgroundTarget = backgroundLightness;
+    const applyBackground = () => {
+      backdrop?.style.setProperty("--voice-backdrop-lightness", `${(backgroundLightness * 100).toFixed(3)}%`);
     };
-    let autoLightScale = 1;
-    let autoLightTarget = 1;
-    let nightRef = false;
-
-    const srgbToLinear = (v: number) => {
-      const x = THREE.MathUtils.clamp(v, 0, 1);
-      return x <= 0.04045 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+    const animateLighting = (dt: number) => {
+      // Metering only changes targets. Every visible change happens gradually per frame.
+      renderer.toneMappingExposure = animateAvatarLight(renderer.toneMappingExposure, exposureTarget, dt, true);
+      amb.intensity = damp(amb.intensity, fillTarget, 1.2, dt);
+      backgroundLightness = animateAvatarLight(backgroundLightness, backgroundTarget, dt);
+      applyBackground();
     };
-
-    const materialLuminance = (material: any) => {
-      let r = 0.7;
-      let g = 0.7;
-      let b = 0.7;
-      if (material?.color) {
-        r = material.color.r;
-        g = material.color.g;
-        b = material.color.b;
-      }
-      const base = 0.2126 * srgbToLinear(r) + 0.7152 * srgbToLinear(g) + 0.0722 * srgbToLinear(b);
-      const emissive = material?.emissive
-        ? 0.2126 * material.emissive.r + 0.7152 * material.emissive.g + 0.0722 * material.emissive.b
-        : 0;
-      const ei = Number.isFinite(material?.emissiveIntensity) ? material.emissiveIntensity : 1;
-      return THREE.MathUtils.clamp(base + emissive * ei * 0.35, 0.03, 1.8);
+    const meterLighting = (now: number) => {
+      if (!meterContext || now - lastMeterTime < 400 || (!vrm && !root)) return;
+      lastMeterTime = now;
+      meterContext.clearRect(0, 0, 80, 80);
+      meterContext.drawImage(renderer.domElement, 0, 0, 80, 80);
+      const measured = measureAvatarLuminance(meterContext.getImageData(0, 0, 80, 80).data);
+      if (!measured) return;
+      // Filter blink/gesture/camera noise before it reaches the exposure controller.
+      latestLuminance = latestLuminance ? {
+        median: latestLuminance.median + (measured.median - latestLuminance.median) * 0.4,
+        upper: latestLuminance.upper + (measured.upper - latestLuminance.upper) * 0.4,
+        highlight: latestLuminance.highlight + (measured.highlight - latestLuminance.highlight) * 0.4,
+        clipped: latestLuminance.clipped + (measured.clipped - latestLuminance.clipped) * 0.4,
+      } : measured;
+      exposureTarget = nextAvatarExposure(renderer.toneMappingExposure, latestLuminance);
+      // Continuous fill avoids toggling between two light intensities near a threshold.
+      fillTarget = 0.7 + THREE.MathUtils.clamp((0.32 - latestLuminance.median) / 0.32, 0, 1) * 0.4;
+      backgroundTarget = avatarBackgroundLightness(latestLuminance, nightRef);
     };
-
-    const updateAutoLightFromObject = (object: THREE.Object3D) => {
-      if (!AUTO_LIGHT.enabled) return;
-      let sum = 0;
-      let weight = 0;
-      object.traverse((o: any) => {
-        if (!o?.isMesh || !o.material) return;
-        const materials = Array.isArray(o.material) ? o.material : [o.material];
-        for (const mat of materials) {
-          if (!mat) continue;
-          const opacity = Number.isFinite(mat.opacity) ? THREE.MathUtils.clamp(mat.opacity, 0.2, 1) : 1;
-          const w = Math.max(0.1, (o.geometry?.attributes?.position?.count || 1) / 1000) * opacity;
-          sum += materialLuminance(mat) * w;
-          weight += w;
-        }
-      });
-      const luminance = weight > 0 ? sum / weight : 0.7;
-      // 高輝度モデルほど scale を小さくする。暗すぎるモデルは1.0超まで少し補正。
-      autoLightTarget = THREE.MathUtils.clamp(
-        AUTO_LIGHT.targetLuminance / Math.max(0.08, luminance),
-        AUTO_LIGHT.minScale,
-        AUTO_LIGHT.maxScale,
-      );
-    };
-
-    const applyAutoLight = () => {
-      const nightMul = nightRef ? 0.62 : 1;
-      const s = autoLightScale * nightMul;
-      keyLight.intensity = Math.PI * 0.95 * s;
-      rim.intensity = Math.PI * 0.25 * s;
-      amb.intensity = 0.55 * s;
-    };
+    applyBackground();
     const lookTarget = new THREE.Object3D();
     scene.add(lookTarget);
 
@@ -2864,7 +2835,27 @@ function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStagePr
       const controller = new AbortController();
       activeLoad = controller;
       const current = () => token === loadToken && !disposed;
-      const report = (s: StageStatus) => { if (current()) statusRef.current(s); };
+      const report = (s: StageStatus) => {
+        if (!current()) return;
+        if (s.state === "ready") {
+          exposureTarget = 0.85;
+          fillTarget = 0.7;
+          latestLuminance = null;
+          lastMeterTime = 0;
+          // Imported unlit materials must also participate in automatic exposure.
+          (vrm?.scene ?? root)?.traverse((object) => {
+            const mesh = object as THREE.Mesh;
+            if (!mesh.isMesh) return;
+            for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+              if (material && !material.toneMapped) {
+                material.toneMapped = true;
+                material.needsUpdate = true;
+              }
+            }
+          });
+        }
+        statusRef.current(s);
+      };
       report({ state: "loading", progress: 0 });
       const ownedUrls: string[] = [];
       let pendingObject: THREE.Object3D | null = null;
@@ -2957,7 +2948,6 @@ function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStagePr
           mmdRuntime = loadedMmd;
           pendingMmd = null;
           root = mesh;
-          updateAutoLightFromObject(mesh);
           mmdController = new libs.mmdAvatar.MmdAvatarController(loadedMmd);
           const names = Object.keys(mesh.morphTargetDictionary ?? {});
 
@@ -3051,7 +3041,6 @@ function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStagePr
           scene.add(loaded.scene);
           vrm = loaded;
           pendingObject = null;
-          updateAutoLightFromObject(loaded.scene);
           loaded.lookAt && (loaded.lookAt.target = lookTarget);
           loaded.scene.updateMatrixWorld(true);
           flip = detectFlip(loaded);
@@ -3089,7 +3078,6 @@ function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStagePr
           root = normalized.stage;
           scene.add(root);
           pendingObject = null;
-          updateAutoLightFromObject(obj);
           genericClips = gltf.animations || [];
           if (genericClips.length) {
             mixer = new THREE.AnimationMixer(obj);
@@ -3149,11 +3137,9 @@ function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStagePr
         view.zoom = 1;
         computeGoal();
       },
-      setNight: (n) => {
-        nightRef = n;
-        keyLight.color.set(n ? 0xdfe6ff : 0xffffff);
-        rim.color.set(n ? 0xff9ad0 : 0xbcd4ff);
-        applyAutoLight();
+      setNight: (value) => {
+        nightRef = value;
+        backgroundTarget = avatarBackgroundLightness(latestLuminance, nightRef);
       },
     };
 
@@ -3216,10 +3202,6 @@ function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStagePr
     /* ---- per-frame update ---- */
     const update = (dt: number) => {
       t += dt;
-      if (AUTO_LIGHT.enabled) {
-        autoLightScale = damp(autoLightScale, autoLightTarget, AUTO_LIGHT.smoothing, dt);
-        applyAutoLight();
-      }
       const now = performance.now();
       const s = bus.lip.sample(now);
       const speaking = bus.speaking && bus.lip.active;
@@ -3449,7 +3431,9 @@ function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStagePr
       const dt = Math.min((ts - lastTs) / 1000, 0.05);
       lastTs = ts;
       update(dt);
+      animateLighting(dt);
       renderer.render(scene, cam);
+      meterLighting(ts);
     });
 
     return () => {
@@ -3468,6 +3452,7 @@ function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStagePr
       disposeModel();
       renderer.dispose();
       renderer.domElement.remove();
+      backdrop?.style.removeProperty("--voice-backdrop-lightness");
       api.current = null;
     };
   }, []);
@@ -3655,6 +3640,7 @@ export function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
       delete p.pitch;
       // Browser voice URIs are incompatible with Fish Audio reference IDs.
       if (typeof p.voiceURI !== "string" || !/^[a-f0-9]{32}$/i.test(p.voiceURI)) p.voiceURI = CALM_FEMALE_VOICE_ID;
+      delete p.lightingByModel;
       setPrefs({ ...DEFAULT_PREFS, ...p });
     } catch {
       /* ignore */
@@ -3984,11 +3970,10 @@ export function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
     <div className={`voice-bg absolute inset-0 z-[60] overflow-hidden ${night ? "night" : ""} ${fg}`} role="dialog" aria-label="ボイスモード">
       {/* decorative */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className={`absolute left-1/2 top-[52%] h-[70vmin] w-[70vmin] -translate-x-1/2 -translate-y-1/2 rounded-full blur-2xl ${night ? "bg-violet-500/20" : "bg-white/60"}`} />
         {[...Array(14)].map((_, i) => (
           <span
             key={i}
-            className={`absolute rounded-full ${night ? "bg-pink-200/60" : "bg-white/90"}`}
+            className={`absolute rounded-full ${night ? "bg-pink-200/20" : "bg-white/20"}`}
             style={{
               left: `${(i * 37 + 7) % 100}%`,
               top: `${(i * 53 + 11) % 90}%`,
@@ -4076,7 +4061,7 @@ export function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
 
       {/* settings panel */}
       {panel && (
-        <div className="glass absolute inset-x-3 bottom-3 top-[68px] z-20 overflow-y-auto rounded-3xl p-4 shadow-2xl sm:inset-x-auto sm:bottom-4 sm:right-4 sm:w-[360px]">
+        <div className="glass absolute inset-x-3 bottom-3 z-20 max-h-[48%] overflow-y-auto rounded-3xl p-4 shadow-2xl sm:inset-x-auto sm:bottom-4 sm:right-4 sm:top-[68px] sm:max-h-none sm:w-[360px]">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-base font-bold">設定</h2>
             <button type="button" onClick={() => setPanel(false)} aria-label="閉じる" className="opacity-60 hover:opacity-100">
@@ -4750,20 +4735,14 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
   const recorder = useRef(new CallRecorder(async (audio, lang, signal) => {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) throw new Error('ログインし直してから発信してください。')
-    const form = new FormData()
-    form.append('audio', audio, audio.type.includes('mp4') ? 'call.m4a' : 'call.webm')
-    form.append('language', lang.split('-')[0])
-    const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/transcribe-call`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${session.access_token}`, apikey: import.meta.env.VITE_SUPABASE_ANON_KEY },
-      body: form,
-      signal,
+    return requestCallTranscription({
+      url: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/transcribe-call`,
+      apiKey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+      accessToken: session.access_token,
+      audio, lang, signal,
     })
-    const result = await response.json()
-    if (!response.ok) throw new Error(result.error || '音声認識に失敗しました。')
-    return result.text || ''
   }))
-  const useRecordedSpeech = useRef(!sttSupported())
+  const useRecordedSpeech = useRef(preferRecordedCallSpeech() || !sttSupported())
   const ring = useRef(new RingTone())
   const abortAI = useRef<AbortController | null>(null)
   const aliveRef = useRef(true)
@@ -5275,6 +5254,51 @@ export const VPOP_STYLES = `
 .vpop-root button { transition: transform .16s cubic-bezier(.2,.8,.3,1.2), background-color .2s, color .2s, box-shadow .2s, border-color .2s; }
 .vpop-root button:hover { transform: translateY(-1px); }
 .vpop-root button:active { transform: scale(.94); }
+
+/* Keep mobile contents at their full width; slide the panel without reflowing them. */
+.vpop-root .chat-sidebar {
+  position: absolute;
+  z-index: 50;
+  width: 100%;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  transform: translateX(-100%);
+  visibility: hidden;
+  pointer-events: none;
+  transition: transform 240ms cubic-bezier(.22,1,.36,1), visibility 0s linear 240ms;
+}
+.vpop-root .chat-sidebar[data-open="true"] {
+  transform: translateX(0);
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+.vpop-root .chat-sidebar-backdrop {
+  position: absolute;
+  z-index: 40;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 240ms ease, visibility 0s linear 240ms;
+}
+.vpop-root .chat-sidebar-backdrop[data-open="true"] {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+@media (min-width: 768px) {
+  .vpop-root .chat-sidebar {
+    position: relative;
+    z-index: 1;
+    width: 0;
+    border-right-width: 0;
+    transform: none;
+    transition: width 240ms cubic-bezier(.22,1,.36,1), visibility 0s linear 240ms;
+  }
+  .vpop-root .chat-sidebar[data-open="true"] { width: 16rem; border-right-width: 1px; }
+}
 
 .vpop-root .custom-scrollbar::-webkit-scrollbar { width: 8px; }
 .vpop-root .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(120,135,150,.28); border-radius: 9999px; }
@@ -6305,6 +6329,8 @@ export default function ChatPage() {
   const [dismissedPostPreviewId, setDismissedPostPreviewId] = useState<string | null>(null)
   
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+  const sidebarRef = useRef<HTMLDivElement>(null)
+  const sidebarOpenerRef = useRef<HTMLButtonElement>(null)
   const [selectedModel, setSelectedModel] = useState<'fast' | 'advanced'>('fast')
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false)
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null)
@@ -6507,10 +6533,20 @@ export default function ChatPage() {
   }, [])
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.innerWidth >= 768) {
-      setIsSidebarOpen(true)
-    }
+    const desktop = window.matchMedia('(min-width: 768px)')
+    setIsSidebarOpen(desktop.matches)
+    const onChange = (event: MediaQueryListEvent) => setIsSidebarOpen(event.matches)
+    desktop.addEventListener('change', onChange)
+    return () => desktop.removeEventListener('change', onChange)
   }, [])
+
+  useEffect(() => {
+    const sidebar = sidebarRef.current
+    if (!sidebar) return
+    if (!isSidebarOpen && sidebar.contains(document.activeElement)) sidebarOpenerRef.current?.focus()
+    // The closing panel remains painted until its slide finishes, but cannot receive input.
+    sidebar.inert = !isSidebarOpen
+  }, [isSidebarOpen])
 
   // ユーザーごとの設定(パーソナライズ / メモリ / ピン留め / アイコン)を読み込む
   useEffect(() => {
@@ -7463,11 +7499,7 @@ export default function ChatPage() {
 
 
       {/* サイドバー */}
-      <div className={`${
-        isSidebarOpen 
-          ? 'w-full md:w-64 opacity-100 visible duration-250 ease-[cubic-bezier(0.25,1,0.5,1)]' 
-          : 'w-0 opacity-0 invisible duration-300 ease-[cubic-bezier(0.3,0,0,1)]'
-      } shrink-0 bg-white/95 dark:bg-[#12161b] flex flex-col h-full border-r border-[#dfe3e8] dark:border-[#252b33] transition-all overflow-hidden absolute md:relative z-50 md:z-auto`}>
+      <div ref={sidebarRef} id="chat-sidebar" data-open={isSidebarOpen} aria-hidden={!isSidebarOpen} className="chat-sidebar shrink-0 bg-white/95 dark:bg-[#12161b] flex flex-col h-full border-r border-[#dfe3e8] dark:border-[#252b33] overflow-hidden absolute md:relative z-50 md:z-auto">
         <div className="w-full md:w-64 flex flex-col h-full shrink-0">
           <div className="p-3.5 flex items-center justify-between gap-2">
             <button
@@ -7480,6 +7512,8 @@ export default function ChatPage() {
             </button>
 
             <button
+              type="button"
+              aria-label="サイドバーを閉じる"
               onClick={() => setIsSidebarOpen(false)}
               className="md:hidden p-2.5 rounded-2xl hover:bg-[#e2e6ea]/55 dark:hover:bg-[#1c2128] text-[#69707a] dark:text-[#a8b0ba] hover:text-[#333a42] dark:hover:text-[#e4e7ea] transition shrink-0"
             >
@@ -7487,6 +7521,8 @@ export default function ChatPage() {
             </button>
 
             <button
+              type="button"
+              aria-label="サイドバーを閉じる"
               onClick={() => setIsSidebarOpen(false)}
               className="hidden md:block p-2.5 rounded-2xl hover:bg-[#e2e6ea]/55 dark:hover:bg-[#1c2128] text-[#69707a] dark:text-[#a8b0ba] hover:text-[#333a42] dark:hover:text-[#e4e7ea] transition shrink-0"
             >
@@ -7646,12 +7682,12 @@ export default function ChatPage() {
         </div>
       </div>
 
-      {isSidebarOpen && (
-        <div 
-          className="fixed inset-0 top-0 bottom-[60px] md:bottom-0 bg-black/20 dark:bg-black/40 z-40 md:hidden"
-          onClick={() => setIsSidebarOpen(false)}
-        />
-      )}
+      <div
+        aria-hidden="true"
+        data-open={isSidebarOpen}
+        className="chat-sidebar-backdrop absolute inset-0 bg-black/20 dark:bg-black/40 z-40 md:hidden"
+        onClick={() => setIsSidebarOpen(false)}
+      />
 
       {/* メインエリア */}
       <div className="flex flex-col flex-1 h-full bg-transparent relative min-w-0 w-full">
@@ -7661,7 +7697,10 @@ export default function ChatPage() {
           
           {!isSidebarOpen && (
             <button
+              ref={sidebarOpenerRef}
               aria-label="チャットメニューを開く"
+              aria-controls="chat-sidebar"
+              aria-expanded={isSidebarOpen}
               onClick={() => setIsSidebarOpen(true)}
               className="p-2 md:p-2.5 mr-1 md:mr-2 rounded-2xl hover:bg-[#e2e6ea]/55 dark:hover:bg-[#1c2128] text-[#69707a] dark:text-[#a8b0ba] hover:text-[#333a42] dark:hover:text-[#e4e7ea] transition"
             >

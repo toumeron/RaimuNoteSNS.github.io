@@ -3124,6 +3124,23 @@ export default function Profile() {
     };
   }, [selectedMedia, selectedThreadImage]);
 
+  // 画像拡大表示中は Escape キーで閉じられるようにする
+  useEffect(() => {
+    if (!selectedMedia && !selectedThreadImage) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setSelectedMedia(null);
+      setSelectedThreadImage(null);
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedMedia, selectedThreadImage]);
+
   // normalizeAuthor / normalizePost / uniquePostsById / groupReactionPosts は
   // props や state に依存しない純粋関数のため、ファイル先頭のモジュール
   // スコープへ移動済み（レンダーの度に関数を再生成しないための軽量化）。
@@ -3469,25 +3486,41 @@ export default function Profile() {
         </div>
       </Tabs>
 
-      {/* メディア拡大オーバーレイ */}
-      {selectedMedia && (
+      {/* メディア拡大オーバーレイ。
+          以前はページのDOMツリー内にそのまま描画していたため、親要素の
+          transform / animation / filter などの影響で position: fixed が
+          画面基準にならず、画面の一部しか覆えない・画像が見切れる・
+          下のタブバーが前面に出る、といった表示崩れが起きていた。
+          スレッド画像の拡大表示と同様に document.body 直下へ Portal で描画し、
+          100vh ではなく dvh を使ってモバイルのアドレスバー変動にも追従させる。 */}
+      {selectedMedia && typeof document !== 'undefined' && createPortal(
         <div
-          className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-black/95 backdrop-blur-sm animate-in fade-in duration-200"
+          className="fixed inset-0 flex flex-col items-center justify-center bg-black/95 backdrop-blur-sm animate-in fade-in duration-200"
           style={{
             position: 'fixed',
             top: 0,
             left: 0,
+            right: 0,
+            bottom: 0,
             width: '100vw',
-            height: '100vh',
+            height: '100dvh',
             margin: 0,
             padding: 0,
+            zIndex: 2147483647,
+            overflow: 'hidden',
+            touchAction: 'none',
           }}
           onClick={() => setSelectedMedia(null)}
         >
           <button
             type="button"
-            className="absolute left-5 top-5 z-[10000] rounded-full bg-white/10 p-2 text-white transition-colors hover:bg-white/20"
-            onClick={() => setSelectedMedia(null)}
+            className="absolute left-5 z-10 rounded-full bg-white/10 p-2 text-white transition-colors hover:bg-white/20"
+            style={{ top: 'calc(1.25rem + env(safe-area-inset-top))' }}
+            onClick={(event) => {
+              event.stopPropagation();
+              setSelectedMedia(null);
+            }}
+            aria-label="閉じる"
           >
             <X className="h-6 w-6" />
           </button>
@@ -3496,14 +3529,15 @@ export default function Profile() {
             <img
               src={selectedMedia.url}
               alt="Expanded view"
-              className="max-h-[92vh] max-w-[95vw] object-contain shadow-2xl animate-in zoom-in-95 duration-200"
+              className="max-h-[78dvh] max-w-[95vw] object-contain shadow-2xl animate-in zoom-in-95 duration-200"
               decoding="async"
               onClick={(e) => e.stopPropagation()}
             />
           </div>
 
           <div
-            className="absolute bottom-0 left-0 right-0 flex items-center justify-center bg-gradient-to-t from-black/90 to-transparent pb-10 pt-20"
+            className="absolute bottom-0 left-0 right-0 flex items-center justify-center bg-gradient-to-t from-black/90 to-transparent pt-20"
+            style={{ paddingBottom: 'calc(2.5rem + env(safe-area-inset-bottom))' }}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center gap-8 rounded-full border border-white/10 bg-black/60 px-8 py-4 shadow-xl backdrop-blur-md">
@@ -3518,8 +3552,9 @@ export default function Profile() {
               <button
                 type="button"
                 onClick={() => {
+                  const targetPostId = selectedMedia.post.id;
                   setSelectedMedia(null);
-                  navigate(`/post/${selectedMedia.post.id}`);
+                  navigate(getAppPostPath(targetPostId));
                 }}
                 className="inline-flex items-center gap-2 text-white/90 transition-colors hover:text-white"
               >
@@ -3531,19 +3566,30 @@ export default function Profile() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {selectedThreadImage && typeof document !== 'undefined' && createPortal(
         <div
           className="fixed inset-0 flex flex-col items-center justify-center bg-black/95 backdrop-blur-sm animate-in fade-in duration-200"
-          style={{ zIndex: 2147483647 }}
+          style={{
+            zIndex: 2147483647,
+            height: '100dvh',
+            overflow: 'hidden',
+            touchAction: 'none',
+          }}
           onClick={() => setSelectedThreadImage(null)}
         >
           <button
             type="button"
-            className="absolute top-5 left-5 z-10 p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
-            onClick={() => setSelectedThreadImage(null)}
+            className="absolute left-5 z-10 p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
+            style={{ top: 'calc(1.25rem + env(safe-area-inset-top))' }}
+            onClick={(event) => {
+              event.stopPropagation();
+              setSelectedThreadImage(null);
+            }}
+            aria-label="閉じる"
           >
             <X className="h-6 w-6" />
           </button>
@@ -3552,7 +3598,7 @@ export default function Profile() {
             <img
               src={selectedThreadImage.url}
               alt="Expanded view"
-              className="max-h-[85vh] max-w-[95vw] object-contain shadow-2xl animate-in zoom-in-95 duration-200"
+              className="max-h-[78dvh] max-w-[95vw] object-contain shadow-2xl animate-in zoom-in-95 duration-200"
               decoding="async"
               onClick={(event) => event.stopPropagation()}
               onError={() => handleThreadImageError(selectedThreadImage.url)}
@@ -3560,7 +3606,8 @@ export default function Profile() {
           </div>
 
           <div
-            className="absolute bottom-0 left-0 right-0 flex items-center justify-center bg-gradient-to-t from-black/80 to-transparent pb-8 pt-10"
+            className="absolute bottom-0 left-0 right-0 flex items-center justify-center bg-gradient-to-t from-black/80 to-transparent pt-10"
+            style={{ paddingBottom: 'calc(2rem + env(safe-area-inset-bottom))' }}
             onClick={(event) => event.stopPropagation()}
           >
             <div className="flex items-center gap-8 rounded-full bg-black/40 px-6 py-3 backdrop-blur-md border border-white/10">
@@ -3584,7 +3631,7 @@ export default function Profile() {
                 onClick={() => {
                   const postId = selectedThreadImage.postId;
                   setSelectedThreadImage(null);
-                  navigate(`/post/${postId}`);
+                  navigate(getAppPostPath(postId));
                 }}
                 className="inline-flex items-center gap-2 text-white/90 hover:text-white transition-colors"
               >

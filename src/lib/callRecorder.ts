@@ -66,7 +66,11 @@ export class CallRecorder {
           if (cancelled) return;
           if (voicedMs < 250) { handlers.onEnd(); return; }
           try {
-            const text = await this.transcribe(new Blob(chunks, { type: recorder!.mimeType }), lang, controller.signal);
+            // Some Safari versions leave recorder.mimeType empty, while chunks carry it.
+            const type = recorder!.mimeType || chunks.find(chunk => chunk.type)?.type || mimeType || 'audio/mp4';
+            const audio = new Blob(chunks, { type });
+            if (!audio.size) throw new Error('録音データを取得できませんでした。マイクをオンにして再試行してください。');
+            const text = await this.transcribe(audio, lang, controller.signal);
             if (cancelled) return;
             if (text.trim()) handlers.onFinal(text.trim());
             else handlers.onEnd();

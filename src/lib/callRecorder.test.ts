@@ -4,9 +4,11 @@ import { CallRecorder } from './callRecorder';
 let amplitude = 0;
 let stopTrack: ReturnType<typeof vi.fn>;
 let closeContext: ReturnType<typeof vi.fn>;
+let recordedType = 'audio/webm';
+let chunkType = 'audio/webm';
 class Recorder {
   static isTypeSupported = () => true;
-  mimeType = 'audio/webm';
+  mimeType = recordedType;
   state = 'inactive';
   ondataavailable: ((event: { data: Blob }) => void) | null = null;
   onstop: (() => void) | null = null;
@@ -14,13 +16,14 @@ class Recorder {
   start() { this.state = 'recording'; }
   stop() {
     this.state = 'inactive';
-    this.ondataavailable?.({ data: new Blob(['audio']) });
+    this.ondataavailable?.({ data: new Blob(['audio'], { type: chunkType }) });
     void this.onstop?.();
   }
 }
 beforeEach(() => {
   vi.useFakeTimers();
   amplitude = 0;
+  recordedType = chunkType = 'audio/webm';
   stopTrack = vi.fn();
   closeContext = vi.fn().mockResolvedValue(undefined);
   vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop: stopTrack }] }) } });
@@ -35,6 +38,23 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 const handlers = () => ({ onFinal: vi.fn(), onEnd: vi.fn(), onError: vi.fn() });
 describe('recorded call speech', () => {
+  it('uses the Safari chunk MIME type when recorder.mimeType is empty', async () => {
+    recordedType = '';
+    chunkType = 'audio/mp4';
+    const transcribe = vi.fn().mockResolvedValue('iOSの音声');
+    const listener = new CallRecorder(transcribe);
+    const h = handlers();
+    listener.start('ja-JP', h);
+    await vi.advanceTimersByTimeAsync(0);
+    amplitude = 0.1;
+    await vi.advanceTimersByTimeAsync(500);
+    amplitude = 0;
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(transcribe.mock.calls[0][0].type).toBe('audio/mp4');
+    expect(h.onFinal).toHaveBeenCalledWith('iOSの音声');
+    expect(h.onError).not.toHaveBeenCalled();
+    listener.abort();
+  });
   it('transcribes a spoken turn after a pause and releases audio resources', async () => {
     const transcribe = vi.fn().mockResolvedValue('こんにちは');
     const listener = new CallRecorder(transcribe);
