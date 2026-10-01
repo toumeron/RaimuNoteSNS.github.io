@@ -1,0 +1,33 @@
+
+> vite_react_shadcn_ts@0.0.0 test:avatars
+> playwright test
+
+
+Running 22 tests using 1 worker
+
+(node:64090) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓   1 tests/avatar/avatars.spec.ts:53:1 › production voice settings: all built-ins, supported gestures, save and reopen (4.6s)
+  ✓   2 tests/avatar/avatars.spec.ts:74:3 › vrm1-sample.vrm: expressions, mouth, gestures, cameras, drag and dark lighting (22.8s)
+  ✓   3 tests/avatar/avatars.spec.ts:74:3 › vrm0-girl.vrm: expressions, mouth, gestures, cameras, drag and dark lighting (22.8s)
+  ✓   4 tests/avatar/avatars.spec.ts:74:3 › robot-expressive.glb: expressions, mouth, gestures, cameras, drag and dark lighting (18.4s)
+  ✓   5 tests/avatar/avatars.spec.ts:140:3 › loader: embedded.gltf (804ms)
+  ✓   6 tests/avatar/avatars.spec.ts:140:3 › loader: gltf-package.zip (842ms)
+  ✓   7 tests/avatar/avatars.spec.ts:140:3 › loader: triangle.fbx (795ms)
+  ✓   8 tests/avatar/avatars.spec.ts:140:3 › loader: triangle.obj (802ms)
+  ✓   9 tests/avatar/avatars.spec.ts:140:3 › loader: obj-package.zip (827ms)
+  ✓  10 tests/avatar/avatars.spec.ts:140:3 › loader: avatar.pmx (3.2s)
+  ✓  11 tests/avatar/avatars.spec.ts:140:3 › loader: avatar.pmd (3.2s)
+  ✓  12 tests/avatar/avatars.spec.ts:140:3 › loader: mmd-package.zip (3.3s)
+  ✓  13 tests/avatar/avatars.spec.ts:162:3 › failure recovery: broken.glb (427ms)
+  ✓  14 tests/avatar/avatars.spec.ts:162:3 › failure recovery: broken.zip (386ms)
+  ✓  15 tests/avatar/avatars.spec.ts:162:3 › failure recovery: no-model.zip (386ms)
+  ✓  16 tests/avatar/avatars.spec.ts:162:3 › failure recovery: missing.gltf (401ms)
+  ✓  17 tests/avatar/avatars.spec.ts:172:1 › rapid switching: latest model wins and repeated switches do not accumulate GPU resources (4.0s)
+  ✓  18 tests/avatar/avatars.spec.ts:198:1 › mobile settings, custom upload, persisted restore, delete and close/reopen (1.7s)
+  ✓  19 tests/avatar/avatars.spec.ts:217:1 › full AI chat route opens the production voice overlay (isolated auth/API fixtures) (2.5s)
+  ✓  20 tests/avatar/avatars.spec.ts:246:1 › native speech synthesis starts lip sync and closes the mouth at the end (volume zero) (8.8s)
+  ✓  21 tests/avatar/mmd.spec.ts:11:3 › real MMD sample: Japanese bones, twist bones, fingers, IK and 30 morphs › idle, wave, cheer, bow and nod: wrist position, fingers, transitions, return and repeated playback (24.8s)
+  ✓  22 tests/avatar/mmd.spec.ts:66:3 › real MMD sample: Japanese bones, twist bones, fingers, IK and 30 morphs › all emotions with real phonemes/blinking: no wink stacking, bounded face weights, mouth closes (20.1s)
+
+  22 passed (2.4m)

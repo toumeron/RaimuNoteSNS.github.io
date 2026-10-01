@@ -3,6 +3,7 @@ import { Outlet, Navigate, useLocation } from 'react-router-dom';
 import { Header } from './Header';
 import { BottomNav } from './BottomNav';
 import { useAuth } from '@/hooks/useAuth';
+import { CallSessionProvider } from '@/components/chat/CallSessionProvider';
 import { Skeleton } from '@/components/ui/skeleton';
 
 export function AppLayout() {
@@ -40,18 +41,20 @@ export function AppLayout() {
 
   return (
     // LimeProページの場合はボトムナビゲーション用の余白(pb-20)を削除する
-    <div className={`min-h-screen ${isLimeProPage ? 'pb-0' : 'pb-20 md:pb-0'}`}>
+    <CallSessionProvider>
+      <div className={`min-h-screen ${isLimeProPage ? 'pb-0' : 'pb-20 md:pb-0'}`}>
       
-      {/* LimeProページ以外でのみヘッダーを表示する */}
-      {!isLimeProPage && <Header />}
+        {/* LimeProページ以外でのみヘッダーを表示する */}
+        {!isLimeProPage && <Header />}
       
-      <main className={mainClassName}>
-        <Outlet />
-      </main>
+        <main className={mainClassName}>
+          <Outlet />
+        </main>
       
-      {/* LimeProページ以外でのみボトムナビゲーションを表示する */}
-      {!isLimeProPage && <BottomNav />}
+        {/* LimeProページ以外でのみボトムナビゲーションを表示する */}
+        {!isLimeProPage && <BottomNav />}
       
-    </div>
+      </div>
+    </CallSessionProvider>
   );
 }

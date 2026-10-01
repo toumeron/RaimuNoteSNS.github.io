@@ -8,6 +8,8 @@ import remarkMath from 'remark-math'
 import { useTheme } from 'next-themes'
 import type { VRM } from '@pixiv/three-vrm'
 import type * as THREE from 'three'
+import { classifyAvatarMorph } from '@/lib/avatarMorphs'
+import { BUILTIN_MODELS, MODEL_ACCEPT, MODEL_FORMAT_LABEL, isSupportedModelFile, inferModelFormat, unzipModelArchive, pickArchiveModel, createArchiveResolver, zipMime, type ModelFormat, type ModelSource, type ZipEntry } from '@/lib/avatarModels'
 import { supabase } from '@/lib/supabase'
 import { createPost } from '@/api/posts'
 import { formatRelative } from '@/lib/format'
@@ -67,6 +69,10 @@ import {
 } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { toast } from 'sonner'
+import { CallRecorder } from '@/lib/callRecorder'
+import { Speaker, ttsSupported, unlockAiAudio, CALM_FEMALE_VOICE_ID, CALM_FEMALE_VOICE_NAME } from '@/lib/aiSpeech'
+import { useCallSession } from '@/components/chat/CallSessionProvider'
+import { microphoneErrorMessage, requestMicrophonePermission } from '@/lib/microphone'
 
 /* ==================================================================
    LimeAI 拡張: 型定義・モード定義
@@ -616,36 +622,7 @@ async function fileToAttachment(file: File): Promise<Attachment> {
    LimeAI 拡張: 音声合成 / 音声認識
    ================================================================== */
 
-/* Web Speech API helpers: speech synthesis (TTS), recognition (STT) and mic level meter. */
-
-type VoiceOpts = {
-  voiceURI?: string;
-  lang: string;
-  rate: number;
-  pitch: number;
-  volume: number;
-};
-
-function ttsSupported() {
-  return typeof window !== "undefined" && "speechSynthesis" in window;
-}
-
-function getVoices(): Promise<SpeechSynthesisVoice[]> {
-  return new Promise((resolve) => {
-    if (!ttsSupported()) return resolve([]);
-    const v = speechSynthesis.getVoices();
-    if (v.length) return resolve(v);
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      done = true;
-      speechSynthesis.removeEventListener("voiceschanged", finish);
-      resolve(speechSynthesis.getVoices());
-    };
-    speechSynthesis.addEventListener("voiceschanged", finish);
-    setTimeout(finish, 1500);
-  });
-}
+/* AI speech playback and browser speech recognition helpers. */
 
 /** Strip markdown / code so that text is pleasant to read aloud. */
 function stripMarkdown(md: string): string {
@@ -663,120 +640,6 @@ function stripMarkdown(md: string): string {
     .replace(/https?:\/\/\S+/g, "リンク")
     .replace(/\n{2,}/g, "\n")
     .trim();
-}
-
-/** Split text into sentence-sized chunks (Chrome cuts long utterances). */
-function splitForSpeech(text: string, max = 80): string[] {
-  const out: string[] = [];
-  const sentences = text.match(/[^。！？!?\n．.]+[。！？!?．.]*\s*|\n+/g) || [text];
-  let cur = "";
-  const push = () => {
-    if (cur.trim()) out.push(cur);
-    cur = "";
-  };
-  for (const s of sentences) {
-    if (/^\n+$/.test(s)) {
-      cur += s;
-      push();
-      continue;
-    }
-    if (s.length > max) {
-      push();
-      const parts = s.match(new RegExp(`[\\s\\S]{1,${max}}(?:[、,，\\s]|$)|[\\s\\S]{1,${max}}`, "g")) || [s];
-      out.push(...parts.filter((p) => p.trim()));
-      continue;
-    }
-    if ((cur + s).length > max) push();
-    cur += s;
-  }
-  push();
-  return out;
-}
-
-type SpeakHooks = {
-  onChunkStart?: (chunk: string, offset: number) => void;
-  onBoundary?: (charIndex: number) => void;
-  onEnd?: () => void;
-  onError?: (message: string) => void;
-};
-
-class Speaker {
-  private token = 0;
-  private _speaking = false;
-  get speaking() {
-    return this._speaking;
-  }
-
-  speak(text: string, opts: VoiceOpts, hooks: SpeakHooks = {}) {
-    if (!ttsSupported()) {
-      hooks.onError?.("このブラウザは音声合成(Web Speech API)に対応していません");
-      return;
-    }
-    this.cancel();
-    const token = ++this.token;
-    const chunks = splitForSpeech(text);
-    if (!chunks.length) {
-      hooks.onEnd?.();
-      return;
-    }
-    const offsets: number[] = [];
-    let cursor = 0;
-    for (const c of chunks) {
-      const idx = text.indexOf(c, cursor);
-      offsets.push(idx >= 0 ? idx : cursor);
-      cursor = (idx >= 0 ? idx : cursor) + c.length;
-    }
-    const voices = speechSynthesis.getVoices();
-    const voice = opts.voiceURI ? voices.find((v) => v.voiceURI === opts.voiceURI) : undefined;
-    this._speaking = true;
-
-    const finish = () => {
-      if (token !== this.token) return;
-      this._speaking = false;
-      hooks.onEnd?.();
-    };
-    const next = (i: number) => {
-      if (token !== this.token) return;
-      if (i >= chunks.length) return finish();
-      const u = new SpeechSynthesisUtterance(chunks[i]);
-      u.lang = voice?.lang || opts.lang;
-      if (voice) u.voice = voice;
-      u.rate = opts.rate;
-      u.pitch = opts.pitch;
-      u.volume = opts.volume;
-      let started = false;
-      u.onstart = () => {
-        started = true;
-        if (token === this.token) hooks.onChunkStart?.(chunks[i], offsets[i]);
-      };
-      u.onboundary = (e) => {
-        if (token === this.token) hooks.onBoundary?.(offsets[i] + e.charIndex);
-      };
-      u.onend = () => next(i + 1);
-      u.onerror = (e) => {
-        if (token !== this.token) return;
-        if (e.error === "canceled" || e.error === "interrupted") return;
-        this._speaking = false;
-        hooks.onError?.(`音声合成エラー: ${e.error}`);
-      };
-      speechSynthesis.speak(u);
-      // Some engines never fire events when no voice is available – guard against silent hang.
-      setTimeout(() => {
-        if (token === this.token && !started && !speechSynthesis.speaking && !speechSynthesis.pending) {
-          this._speaking = false;
-          hooks.onError?.("音声を再生できませんでした。ブラウザに音声(TTS)が入っているか確認してください");
-        }
-      }, 4000);
-    };
-    // cancel() right before speak() is flaky in Chrome; wait a tick.
-    setTimeout(() => next(0), 60);
-  }
-
-  cancel() {
-    this.token++;
-    this._speaking = false;
-    if (ttsSupported()) speechSynthesis.cancel();
-  }
 }
 
 /* ---------------- recognition ---------------- */
@@ -908,8 +771,8 @@ async function startMeter(onLevel: (v: number) => void): Promise<() => void> {
    LimeAI 拡張: リップシンク・感情推定
    ================================================================== */
 
-/* Lip sync driver for speechSynthesis (which exposes no audio stream).
- * We estimate the currently pronounced character from timing, re-synchronised on `boundary` events,
+/* Lip sync driver for AI audio.
+ * We estimate the currently pronounced character from timing, re-synchronised with playback progress,
  * map kana -> vowel visemes and shape the mouth opening as a syllable envelope. */
 
 type Vowel = "aa" | "ih" | "ou" | "ee" | "oh";
@@ -937,7 +800,7 @@ function toHiragana(ch: string) {
 
 type Sample = { vowel: Vowel; open: number; pause: boolean };
 
-class LipSync {
+export class LipSync {
   private text = "";
   private baseIndex = 0;
   private baseTime = 0;
@@ -1020,144 +883,6 @@ function detectEmotion(text: string): Emotion {
    LimeAI 拡張: アバターバス
    ================================================================== */
 
-type ModelFormat = "vrm" | "glb" | "mmd";
-
-type ModelSource =
-  | { kind: "url"; url: string; name: string; format?: ModelFormat }
-  | { kind: "blob"; blob: Blob; name: string; format?: ModelFormat };
-
-
-/** MMD(PMX/PMD) の ZIP 配布物をブラウザ内でそのまま展開する小型 ZIP リーダー。
- * 外部サーバーへアップロードせず、圧縮方式は store / deflate をサポートする。
- */
-type ZipEntry = { name: string; data: Uint8Array; compression: number };
-
-function decodeZipName(bytes: Uint8Array, utf8Flag: boolean) {
-  if (utf8Flag) return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-  const utf8 = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-  if (!utf8.includes("�")) return utf8;
-  try { return new TextDecoder("shift_jis").decode(bytes); } catch { return utf8; }
-}
-
-function zipPath(name: string) {
-  const out: string[] = [];
-  for (const part of name.replace(/\\/g, "/").split("/")) {
-    if (!part || part === ".") continue;
-    if (part === "..") out.pop();
-    else out.push(part);
-  }
-  return out.join("/");
-}
-
-function zipMime(name: string) {
-  const ext = name.toLowerCase().split(".").pop() || "";
-  return ({
-    png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif",
-    bmp: "image/bmp", tga: "image/x-targa", vpd: "text/plain",
-  } as Record<string, string>)[ext] || "application/octet-stream";
-}
-
-async function unzipForMmd(file: Blob): Promise<ZipEntry[]> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const minEocd = 22;
-  const start = Math.max(0, bytes.length - minEocd - 0xffff);
-  let eocd = -1;
-  for (let i = bytes.length - minEocd; i >= start; i--) {
-    if (i >= 0 && dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
-  }
-  if (eocd < 0) throw new Error("ZIPの終端情報を読み取れませんでした");
-
-  const count = dv.getUint16(eocd + 10, true);
-  const centralSize = dv.getUint32(eocd + 12, true);
-  const centralOffset = dv.getUint32(eocd + 16, true);
-  if (centralOffset + centralSize > bytes.length) throw new Error("ZIPの中央ディレクトリが壊れています");
-  if (count > 800) throw new Error("ZIP内のファイル数が多すぎます (800ファイルまで)");
-
-  const entries: ZipEntry[] = [];
-  let pos = centralOffset;
-  let totalUncompressed = 0;
-  const MAX_EXTRACTED = 450 * 1024 * 1024;
-
-  for (let i = 0; i < count; i++) {
-    if (dv.getUint32(pos, true) !== 0x02014b50) throw new Error("ZIPのエントリを読み取れませんでした");
-    const flags = dv.getUint16(pos + 8, true);
-    const compression = dv.getUint16(pos + 10, true);
-    const compressedSize = dv.getUint32(pos + 20, true);
-    const uncompressedSize = dv.getUint32(pos + 24, true);
-    const nameLen = dv.getUint16(pos + 28, true);
-    const extraLen = dv.getUint16(pos + 30, true);
-    const commentLen = dv.getUint16(pos + 32, true);
-    const localOffset = dv.getUint32(pos + 42, true);
-    const nameBytes = bytes.slice(pos + 46, pos + 46 + nameLen);
-    const name = zipPath(decodeZipName(nameBytes, (flags & 0x800) !== 0));
-    pos += 46 + nameLen + extraLen + commentLen;
-    if (!name || name.endsWith("/")) continue;
-
-    totalUncompressed += uncompressedSize;
-    if (totalUncompressed > MAX_EXTRACTED) throw new Error("ZIP展開後のサイズが大きすぎます (450MBまで)");
-    if (localOffset + 30 > bytes.length || dv.getUint32(localOffset, true) !== 0x04034b50) throw new Error("ZIPのローカルヘッダーが壊れています");
-    const localNameLen = dv.getUint16(localOffset + 26, true);
-    const localExtraLen = dv.getUint16(localOffset + 28, true);
-    const dataStart = localOffset + 30 + localNameLen + localExtraLen;
-    const dataEnd = dataStart + compressedSize;
-    if (dataEnd > bytes.length) throw new Error(`ZIP内のファイルが壊れています: ${name}`);
-    const compressed = bytes.slice(dataStart, dataEnd);
-
-    let data: Uint8Array;
-    if (compression === 0) {
-      data = compressed;
-    } else if (compression === 8) {
-      if (typeof DecompressionStream === "undefined") throw new Error("このブラウザはZIP展開に対応していません。Chrome / Edge / Safariの最新版をお使いください");
-      const compressedBuffer = new Uint8Array(compressed.byteLength);
-      compressedBuffer.set(compressed);
-      const stream = new Blob([compressedBuffer.buffer]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
-      data = new Uint8Array(await new Response(stream).arrayBuffer());
-    } else {
-      throw new Error(`未対応のZIP圧縮方式です (${compression}: ${name})`);
-    }
-    if (uncompressedSize && data.length !== uncompressedSize) throw new Error(`ZIP展開サイズが一致しません: ${name}`);
-    entries.push({ name, data, compression });
-  }
-
-  if (!entries.some((e) => /\.(pmx|pmd)$/i.test(e.name))) throw new Error("ZIP内にPMX / PMDモデルが見つかりませんでした");
-  return entries;
-}
-
-function pickMmdModel(entries: ZipEntry[]) {
-  const models = entries.filter((e) => /\.(pmx|pmd)$/i.test(e.name));
-  models.sort((a, b) => {
-    const rank = (e: ZipEntry) => (e.name.toLowerCase().endsWith(".pmx") ? 1000 : 0) - e.name.split("/").length * 10 + e.data.length / 1e7;
-    return rank(b) - rank(a);
-  });
-  return models[0];
-}
-
-function inferModelFormat(name: string): ModelFormat {
-  if (/\.(pmx|pmd|zip)$/i.test(name)) return "mmd";
-  return /\.vrm$/i.test(name) ? "vrm" : "glb";
-}
-
-function mmdVowelOf(name: string): Vowel | null {
-  const n = name.trim().toLowerCase();
-  if (/^(あ|a|aa|ah|mouth[_ -]?open|口開|口開き|openmouth)(\d+)?$/.test(n)) return "aa";
-  if (/^(い|i|ih)(\d+)?$/.test(n)) return "ih";
-  if (/^(う|u|ou)(\d+)?$/.test(n)) return "ou";
-  if (/^(え|e|ee)(\d+)?$/.test(n)) return "ee";
-  if (/^(お|o|oh)(\d+)?$/.test(n)) return "oh";
-  return null;
-}
-
-function mmdEmotionOf(name: string): Emotion | null {
-  const n = name.trim().toLowerCase();
-  if (/(笑顔|笑い|にこ|smile|happy|joy)/.test(n)) return "happy";
-  if (/(悲|泣|涙|sad|sorrow)/.test(n)) return "sad";
-  if (/(怒|険|angry|anger)/.test(n)) return "angry";
-  if (/(驚|びっくり|surprise|shock)/.test(n)) return "surprised";
-  if (/(照れ|安心|ほっ|relax|calm)/.test(n)) return "relaxed";
-  return null;
-}
-
 type GestureName = "wave" | "nod" | "bow" | "cheer";
 type CameraPreset = "bust" | "face" | "full";
 
@@ -1175,7 +900,7 @@ type AvatarBus = {
 };
 
 type ModelInfo = {
-  kind: "vrm" | "glb" | "mmd";
+  kind: "vrm" | "glb" | "gltf" | "fbx" | "obj" | "mmd";
   name: string;
   vrmVersion?: string;
   expressions: string[];
@@ -1185,6 +910,8 @@ type ModelInfo = {
   format?: string;
   modelFile?: string;
   packageFiles?: number;
+  animations?: string[];
+  gestures?: GestureName[];
 };
 
 type StageStatus =
@@ -1192,7 +919,7 @@ type StageStatus =
   | { state: "ready"; info: ModelInfo }
   | { state: "error"; message: string };
 
-function createBus(lip: LipSync): AvatarBus {
+export function createBus(lip: LipSync): AvatarBus {
   return { lip, speaking: false, listening: false, thinking: false, micLevel: 0, emotion: "neutral", gesture: null, gestureSeq: 0 };
 }
 
@@ -1227,8 +954,11 @@ function tx<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T
       new Promise<T>((resolve, reject) => {
         const t = db.transaction(STORE, mode);
         const r = fn(t.objectStore(STORE));
-        r.onsuccess = () => resolve(r.result);
-        r.onerror = () => reject(r.error);
+        let result: T;
+        r.onsuccess = () => { result = r.result; };
+        t.oncomplete = () => { db.close(); resolve(result); };
+        t.onabort = () => { db.close(); reject(t.error || r.error || new Error("モデル保存を完了できませんでした")); };
+        t.onerror = () => { db.close(); reject(t.error || r.error); };
       }),
   );
 }
@@ -1356,7 +1086,7 @@ function runCode(kind: "js" | "py", code: string, onLine: (l: RunLine) => void, 
  * ChatPage に統合した機能(Markdown / コードブロック / プレビューパネル / ボイスモード)用のスタイル。
  * ChatPage の VPOP_STYLES と同じ .vpop-root 配下にスコープしており、--nr-* トークン(ライト/ダーク対応)を使います。
  */
-const CHAT_EXT_STYLES = `
+export const CHAT_EXT_STYLES = `
 .vpop-root {
   --chat-mono: 'JetBrains Mono', 'Roboto Mono', 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
 }
@@ -1440,7 +1170,7 @@ const CHAT_EXT_STYLES = `
 @keyframes chatRing { 0% { transform: scale(.9); opacity: .55; } 100% { transform: scale(1.7); opacity: 0; } }
 
 /* ---------- ルート直下の要素の配置 (.vpop-root > * の position:relative を上書き) ---------- */
-.vpop-root > .chat-overlay { position: absolute; inset: 0; z-index: 60; }
+.vpop-root > .chat-overlay, .vpop-root > .voice-bg { position: absolute; inset: 0; z-index: 60; }
 .vpop-root > .chat-artifact-full { position: absolute; inset: 0; z-index: 55; }
 .vpop-root > .chat-artifact-panel { position: relative; }
 @media (max-width: 1023px) {
@@ -2800,9 +2530,18 @@ function AssistantsView({
    ================================================================== */
 
 /** three.js 関連は重いので、ボイスモードで3D表示が必要になった時に動的に読み込む */
-type MMDResultLike = { mesh: THREE.SkinnedMesh };
+type MMDResultLike = {
+  mesh: THREE.SkinnedMesh;
+  pmx?: import("@/lib/mmdAvatar").MmdRuntime["pmx"];
+  ikSolver?: import("@/lib/mmdAvatar").MmdRuntime["ikSolver"];
+  /** @moeru/three-mmd の MMD ランタイム更新。IK / grants / optional physics を適用する。 */
+  update?: (deltaTime: number) => void;
+  beforeUpdate?: () => void;
+  dispose?: () => void;
+  setScalar?: (scale: number) => void;
+};
 
-type MMDLoaderLike = new () => {
+type MMDLoaderLike = new (manager?: THREE.LoadingManager) => {
   manager: THREE.LoadingManager;
   loadAsync(
     url: string,
@@ -2812,10 +2551,17 @@ type MMDLoaderLike = new () => {
 
 type StageLibs = {
   THREE: typeof import("three");
+  runtime: typeof import("@/lib/avatarRuntime");
+  mmdAvatar: typeof import("@/lib/mmdAvatar");
   VRMLoaderPlugin: typeof import("@pixiv/three-vrm").VRMLoaderPlugin;
   VRMUtils: typeof import("@pixiv/three-vrm").VRMUtils;
   GLTFLoader: typeof import("three/examples/jsm/loaders/GLTFLoader.js").GLTFLoader;
   MMDLoader: MMDLoaderLike;
+  FBXLoader: typeof import("three/examples/jsm/loaders/FBXLoader.js").FBXLoader;
+  OBJLoader: typeof import("three/examples/jsm/loaders/OBJLoader.js").OBJLoader;
+  MTLLoader: typeof import("three/examples/jsm/loaders/MTLLoader.js").MTLLoader;
+  DRACOLoader: typeof import("three/examples/jsm/loaders/DRACOLoader.js").DRACOLoader;
+  MeshoptDecoder: typeof import("three/examples/jsm/libs/meshopt_decoder.module.js").MeshoptDecoder;
 };
 
 type VrmStageProps = {
@@ -2836,6 +2582,8 @@ type Pose = {
 };
 
 type BoneName = Parameters<VRM["humanoid"]["getNormalizedBoneNode"]>[0];
+
+const GENERIC_GESTURE_CLIPS: Record<GestureName, RegExp> = { wave: /(^|[|:_.\s-])wave$/i, nod: /(^|[|:_.\s-])(yes|nod)$/i, bow: /(^|[|:_.\s-])bow$/i, cheer: /(^|[|:_.\s-])(jump|cheer|thumbsup)$/i };
 
 const GESTURE_DUR = { wave: 2.7, nod: 1.1, bow: 2.1, cheer: 2.5 } as const;
 
@@ -2862,7 +2610,8 @@ const FINGER_JOINT_MUL = { Proximal: 1, Intermediate: 1.25, Distal: 0.8 } as con
 const damp = (a: number, b: number, k: number, dt: number) => a + (b - a) * (1 - Math.exp(-k * dt));
 
 function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStageProps & { libs: StageLibs }) {
-  const { THREE, VRMLoaderPlugin, VRMUtils, GLTFLoader, MMDLoader } = libs;
+  const { THREE, VRMLoaderPlugin, VRMUtils, GLTFLoader, MMDLoader, FBXLoader, OBJLoader, MTLLoader, DRACOLoader, MeshoptDecoder } = libs;
+  const { disposeAvatarObject, normalizeAvatarObject, selectIdleClip } = libs.runtime;
   const mount = useRef<HTMLDivElement>(null);
   const api = useRef<{ load: (s: ModelSource) => void; setCamera: (c: CameraPreset) => void; setNight: (n: boolean) => void } | null>(null);
   const statusRef = useRef(onStatus);
@@ -2966,19 +2715,23 @@ function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStagePr
     /* ---- state ---- */
     let vrm: VRM | null = null;
     let root: THREE.Object3D | null = null; // generic glb root
-    let frame = { center: new THREE.Vector3(0, 0.9, 0), height: 1.55, headY: 1.35 };
+    let frame = { width: 1, depth: 0.3, headHeight: 0.3, faceWidth: 0.65, center: new THREE.Vector3(0, 0.9, 0), height: 1.55, headY: 1.35 };
     let preset: CameraPreset = "bust";
     const camGoal = { pos: new THREE.Vector3(), target: new THREE.Vector3() };
     const view = { yaw: 0, pitch: 0, zoom: 1 };
     const pointer = { x: 0, y: 0 };
-    let glbMorph: { mesh: THREE.Mesh; idx: number }[] = [];
-    let glbBlink: { mesh: THREE.Mesh; idx: number }[] = [];
+    let glbMorph: { mesh: THREE.Mesh; idx: number; base: number; vowel: Vowel | null; emotion: Exclude<Emotion, "neutral"> | null; blink: boolean }[] = [];
     let mmdMesh: THREE.SkinnedMesh | null = null;
-    let mmdMorph: { mesh: THREE.SkinnedMesh; idx: number; vowel: Vowel }[] = [];
-    let mmdBlink: { mesh: THREE.SkinnedMesh; idx: number }[] = [];
-    let mmdEmotion: { mesh: THREE.SkinnedMesh; idx: number; emotion: Emotion }[] = [];
-    let mmdObjectUrls: string[] = [];
-    let glbBaseY = 0;
+    let mmdRuntime: MMDResultLike | null = null;
+    let mmdController: InstanceType<StageLibs["mmdAvatar"]["MmdAvatarController"]> | null = null;
+    let mixer: THREE.AnimationMixer | null = null;
+    let idleAction: THREE.AnimationAction | null = null;
+    let clipAction: THREE.AnimationAction | null = null;
+    let genericClips: THREE.AnimationClip[] = [];
+    let lastClipGesture = 0;
+    let activeLoad: AbortController | null = null;
+    const draco = new DRACOLoader();
+    draco.setDecoderPath(`${import.meta.env.BASE_URL}decoders/draco/`);
     let loadToken = 0;
     let disposed = false;
 
@@ -3012,21 +2765,22 @@ function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStagePr
       const tanH = Math.tan(THREE.MathUtils.degToRad(cam.fov / 2));
       let visible: number, cy: number, minWidth: number;
       if (preset === "face") {
-        visible = 0.34 * H;
+        visible = Math.max(0.34 * H, frame.headHeight * 1.3);
         cy = frame.headY + 0.015;
-        minWidth = 0.42 * H;
+        minWidth = frame.faceWidth;
       } else if (preset === "full") {
-        visible = 1.2 * H;
-        cy = frame.center.y + 0.02 * H;
-        minWidth = 0.95 * H;
+        // Keep raised hands and jump gestures inside the full-body frame.
+        visible = 1.6 * H;
+        cy = frame.center.y + 0.15 * H;
+        minWidth = Math.max(0.95 * H, frame.width * 1.15);
       } else {
-        visible = 0.68 * H;
+        visible = Math.max(0.68 * H, frame.headHeight + 0.45 * H);
         cy = frame.headY - 0.2 * H + 0.03;
         minWidth = 0.62 * H;
       }
       const distH = visible / 2 / tanH;
       const distW = minWidth / 2 / (tanH * aspect);
-      const dist = Math.max(distH, distW) * view.zoom;
+      const dist = (Math.max(distH, distW) + frame.depth / 2) * view.zoom;
       const cp = Math.cos(view.pitch);
       camGoal.target.set(frame.center.x, cy, frame.center.z);
       camGoal.pos.set(
@@ -3054,29 +2808,36 @@ function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStagePr
     const disposeModel = () => {
       if (vrm) {
         scene.remove(vrm.scene);
-        VRMUtils.deepDispose(vrm.scene);
+        disposeAvatarObject(vrm.scene);
         vrm = null;
       }
+      mmdRuntime?.dispose?.();
+      if (mixer) {
+        mixer.stopAllAction();
+        if (root) mixer.uncacheRoot(mixer.getRoot());
+        mixer = null;
+      }
+      idleAction = null;
+      clipAction = null;
+      genericClips = [];
       if (root) {
         scene.remove(root);
-        root.traverse((o) => {
-          const m = o as THREE.Mesh;
-          if (m.isMesh) {
-            m.geometry?.dispose();
-            const mats = Array.isArray(m.material) ? m.material : [m.material];
-            mats.forEach((mat) => mat?.dispose?.());
-          }
-        });
+        disposeAvatarObject(root);
         root = null;
       }
       glbMorph = [];
-      glbBlink = [];
       mmdMesh = null;
-      mmdMorph = [];
-      mmdBlink = [];
-      mmdEmotion = [];
-      for (const u of mmdObjectUrls) URL.revokeObjectURL(u);
-      mmdObjectUrls = [];
+      mmdRuntime = null;
+      mmdController = null;
+      gesture = null;
+      pendingGesture = null;
+      lastGestureId = bus.gesture?.id ?? 0;
+      lastClipGesture = lastGestureId;
+      for (const v of STAGE_VOWELS) mouth[v] = 0;
+      for (const e of EXPRESSIONS) emo[e] = 0;
+      blink = 0;
+      blinkPhase = -1;
+      blinkAt = 2;
       flip = 1;
     };
 
@@ -3099,89 +2860,88 @@ function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStagePr
 
     const load = async (src: ModelSource) => {
       const token = ++loadToken;
-      statusRef.current({ state: "loading", progress: 0 });
-      const rawUrl = src.kind === "url" ? src.url : URL.createObjectURL(src.blob);
+      activeLoad?.abort();
+      const controller = new AbortController();
+      activeLoad = controller;
+      const current = () => token === loadToken && !disposed;
+      const report = (s: StageStatus) => { if (current()) statusRef.current(s); };
+      report({ state: "loading", progress: 0 });
+      const ownedUrls: string[] = [];
+      let pendingObject: THREE.Object3D | null = null;
+      let pendingMmd: MMDResultLike | null = null;
+      const objectUrl = (blob: Blob) => {
+        const url = URL.createObjectURL(blob);
+        ownedUrls.push(url);
+        return url;
+      };
       try {
-        const sourceFormat = src.format ?? inferModelFormat(src.name);
+        let sourceFormat = src.format ?? inferModelFormat(src.name);
+        let sourceName = src.name;
+        let sourceUrl = src.kind === "url" ? src.url : objectUrl(src.blob);
+        let resourcePath = src.kind === "url" ? new URL(".", new URL(src.url, window.location.href)).href : "";
+        let entries: ZipEntry[] = [];
+        const manager = new THREE.LoadingManager();
+        let resourceError: string | null = null;
+        manager.onError = (url) => { resourceError = `モデルの参照ファイルを読み込めませんでした: ${url}`; };
+        const archive = /\.zip$/i.test(src.name) || sourceFormat === "archive";
+        if (archive) {
+          const blob = src.kind === "blob" ? src.blob : await fetch(src.url, { signal: controller.signal }).then((r) => {
+            if (!r.ok) throw new Error(`ZIPの取得に失敗しました (${r.status})`);
+            return r.blob();
+          });
+          entries = await unzipModelArchive(blob);
+          if (!current()) return;
+          const selected = pickArchiveModel(entries);
+          if (!selected) throw new Error(`ZIP内に対応モデルが見つかりませんでした (${MODEL_FORMAT_LABEL})`);
+          sourceName = selected.name;
+          sourceFormat = inferModelFormat(sourceName);
+          const urls = new Map(entries.map((entry) => [entry.name.toLowerCase(), objectUrl(new Blob([new Uint8Array(entry.data).buffer], { type: zipMime(entry.name) }))]));
+          sourceUrl = new URL(sourceName, "https://limeai.local/package/").href;
+          resourcePath = new URL(".", sourceUrl).href;
+          manager.setURLModifier(createArchiveResolver(entries, urls, sourceName));
+        } else if (src.kind === "blob") {
+          // A standalone file must embed its resources. A ZIP supplies relative textures/buffers.
+          manager.setURLModifier((url) => {
+            if (/^(blob:|data:)/i.test(url)) return url;
+            throw new Error("外部のテクスチャやbin/mtlを参照しています。モデルと参照ファイルをZIPにまとめて読み込んでください");
+          });
+        }
+        const waitForResources = () => new Promise<void>((resolve) => {
+          manager.onLoad = resolve;
+          manager.itemStart("limeai-complete");
+          manager.itemEnd("limeai-complete");
+        });
+        const progress = (e: ProgressEvent<EventTarget>) => {
+          if (e.total) report({ state: "loading", progress: 0.15 + Math.min(0.8, e.loaded / e.total * 0.8) });
+        };
 
         if (sourceFormat === "mmd") {
-          disposeModel();
-          const sourceBlob: Blob = src.kind === "blob"
-            ? src.blob
-            : await fetch(src.url).then(async (r) => {
-                if (!r.ok) throw new Error(`MMDモデルを取得できませんでした (${r.status})`);
-                return await r.blob();
-              });
-          const archive = src.name.toLowerCase().endsWith(".zip");
-          const entries: ZipEntry[] = archive
-            ? await unzipForMmd(sourceBlob)
-            : [{ name: src.name, data: new Uint8Array(await sourceBlob.arrayBuffer()), compression: 0 }];
-          if (token !== loadToken || disposed) return;
-
-          const selected = pickMmdModel(entries);
-          if (!selected) throw new Error("PMX / PMDモデルが見つかりませんでした");
-          const selectedExt = selected.name.toLowerCase().endsWith(".pmx") ? "pmx" : "pmd";
-
-          const byPath = new Map<string, string>();
-          const byBase = new Map<string, string[]>();
-          const modelDir = selected.name.includes("/") ? selected.name.slice(0, selected.name.lastIndexOf("/")) : "";
-          for (const entry of entries) {
-            const entryBuffer = new Uint8Array(entry.data.byteLength);
-            entryBuffer.set(entry.data);
-            const objectUrl = URL.createObjectURL(new Blob([entryBuffer.buffer], { type: zipMime(entry.name) }));
-            mmdObjectUrls.push(objectUrl);
-            const normalized = zipPath(entry.name).toLowerCase();
-            byPath.set(normalized, objectUrl);
-            const base = normalized.split("/").pop() || normalized;
-            byBase.set(base, [...(byBase.get(base) || []), objectUrl]);
-          }
-
-          // MMDLoaderは拡張子をURLから判定するため、ローカルZIP内のPMX/PMDを
-          // 「仮想URL」に見せ、MMDLoader自身が保持しているLoadingManagerで
-          // 実体のBlob URLへリダイレクトする。
-          const requestedModelUrl = `https://limeai.local/mmd/${selected.name}`;
-          if (!byPath.has(zipPath(selected.name).toLowerCase())) throw new Error("MMDモデル本体を展開できませんでした");
-
-          const configureMmdLoader = (loader: { manager: THREE.LoadingManager }) => {
-            loader.manager.setURLModifier((requested) => {
-              let decoded = requested;
-              try { decoded = decodeURIComponent(requested); } catch { /* keep raw */ }
-              decoded = decoded.replace(/\\/g, "/").split("#")[0].split("?")[0].toLowerCase();
-
-              const exact = [...byPath.entries()]
-                .filter(([path]) => decoded === path || decoded.endsWith("/" + path))
-                .sort((a, b) => b[0].length - a[0].length)[0];
-              if (exact) return exact[1];
-
-              const requestPath = decoded.split("/").pop() || decoded;
-              const resolvedRelative = zipPath([modelDir, requestPath].filter(Boolean).join("/")).toLowerCase();
-              if (byPath.has(resolvedRelative)) return byPath.get(resolvedRelative)!;
-
-              const candidates = byBase.get(requestPath);
-              if (candidates?.length === 1) return candidates[0];
-              if (candidates?.length) {
-                const matching = [...byPath.entries()].find(([path]) => path.endsWith("/" + requestPath));
-                return matching?.[1] || candidates[0];
-              }
-
-              return requested;
+          // MMDLoader determines its parser from the extension, so preserve it in a virtual URL.
+          if (!archive && src.kind === "blob") {
+            const virtualUrl = `https://limeai.local/package/${encodeURIComponent(src.name)}`;
+            const actualUrl = sourceUrl;
+            manager.setURLModifier((url) => {
+              if (url === virtualUrl || /^(blob:|data:)/i.test(url)) return url === virtualUrl ? actualUrl : url;
+              throw new Error("PMX / PMDのテクスチャもZIPに含めて読み込んでください");
             });
-          };
-
-          statusRef.current({ state: "loading", progress: 0.35 });
-          const mmdLoader = new MMDLoader();
-          configureMmdLoader(mmdLoader);
-          const loadedMmd = await mmdLoader.loadAsync(requestedModelUrl, (e) => {
-            if (e.total) statusRef.current({ state: "loading", progress: 0.35 + Math.min(0.64, (e.loaded / e.total) * 0.64) });
-          });
+            sourceUrl = virtualUrl;
+          }
+          const loadedMmd = await new MMDLoader(manager).loadAsync(sourceUrl, progress);
+          pendingMmd = loadedMmd;
           const mesh = loadedMmd.mesh;
-          if (token !== loadToken || disposed) return;
-
-          // 体格をVRM/GLBと同じ表示スケールへ正規化する。
+          pendingObject = mesh;
+          await waitForResources();
+          if (!current()) return;
+          if (resourceError) throw new Error(resourceError);
+          disposeModel();
+          // MMDは「メッシュ全体の回転」で身振りを作るのではなく、
+          // PMX/PMDのボーンを動かす必要がある。さらに @moeru/three-mmd は
+          // update() 内で IK / grants / optional physics を処理するため、毎フレーム必ず通す。
           const box0 = new THREE.Box3().setFromObject(mesh);
           const size0 = box0.getSize(new THREE.Vector3());
           const scale = 1.55 / (size0.y || 1);
-          mesh.scale.multiplyScalar(scale);
+          if (loadedMmd.setScalar) loadedMmd.setScalar(scale);
+          else mesh.scale.multiplyScalar(scale);
           mesh.updateMatrixWorld(true);
           const box = new THREE.Box3().setFromObject(mesh);
           const center = box.getCenter(new THREE.Vector3());
@@ -3191,48 +2951,97 @@ function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStagePr
           mesh.updateMatrixWorld(true);
           mesh.traverse((o) => (o.frustumCulled = false));
           scene.add(mesh);
+          pendingObject = null;
+
           mmdMesh = mesh;
+          mmdRuntime = loadedMmd;
+          pendingMmd = null;
           root = mesh;
           updateAutoLightFromObject(mesh);
-          glbBaseY = mesh.position.y;
+          mmdController = new libs.mmdAvatar.MmdAvatarController(loadedMmd);
+          const names = Object.keys(mesh.morphTargetDictionary ?? {});
 
-          const names: string[] = [];
-          const dict = (mesh.morphTargetDictionary ?? {}) as Record<string, number>;
-          for (const [name, idx] of Object.entries(dict)) {
-            names.push(name);
-            const vowel = mmdVowelOf(name);
-            if (vowel) mmdMorph.push({ mesh, idx, vowel });
-            if (/(まばたき|瞬き|blink|eye.?close|closeeye)/i.test(name)) mmdBlink.push({ mesh, idx });
-            const emotion = mmdEmotionOf(name);
-            if (emotion) mmdEmotion.push({ mesh, idx, emotion });
-          }
+          // PMX/PMDモデルごとに骨名が違うので、見つかった骨だけ使う。
+          // 初期姿勢を保存し、毎フレームそこから再構成することで、物理/IKとの累積ドリフトを防ぐ。
+          frame = {
+            width: size0.x * scale,
+            depth: size0.z * scale,
+            headHeight: 0.3,
+            faceWidth: 0.65,
+            center: new THREE.Vector3(0, 0.78, 0),
+            height: 1.55,
+            headY: 1.4,
+          };
 
-          frame = { center: new THREE.Vector3(0, 0.78, 0), height: 1.55, headY: 1.4 };
           const info: ModelInfo = {
             kind: "mmd",
             name: src.name,
             expressions: names.slice(0, 60),
-            lipSync: mmdMorph.length > 0,
-            format: selectedExt.toUpperCase(),
-            modelFile: selected.name,
+            lipSync: mmdController.lipSync,
+            format: sourceName.toLowerCase().endsWith(".pmx") ? "PMX" : "PMD",
+            modelFile: sourceName,
             packageFiles: entries.length,
+            gestures: mmdController.gestures,
           };
           computeGoal();
           camLook.copy(camGoal.target);
           cam.position.copy(camGoal.pos);
-          statusRef.current({ state: "ready", info });
+          report({ state: "ready", info });
           return;
         }
 
-        const loader = new GLTFLoader();
-        loader.register((p) => new VRMLoaderPlugin(p));
-        const gltf = await loader.loadAsync(rawUrl, (e) => {
-          if (e.total) statusRef.current({ state: "loading", progress: e.loaded / e.total });
-        });
-        if (token !== loadToken || disposed) return;
+        let gltf: { scene: THREE.Object3D; userData: Record<string, unknown>; animations: THREE.AnimationClip[] };
+        if (sourceFormat === "fbx") {
+          const object = await new FBXLoader(manager).loadAsync(sourceUrl, progress);
+          gltf = { scene: object, userData: {}, animations: object.animations };
+        } else if (sourceFormat === "obj") {
+          const loader = new OBJLoader(manager);
+          if (archive) {
+            const response = await fetch(manager.resolveURL(sourceUrl), { signal: controller.signal });
+            const objText = await response.text();
+            const mtls = [...objText.matchAll(/^mtllib\s+(.+)$/gm)].map((m) => m[1].trim());
+            if (mtls.length > 1) throw new Error("OBJは1つのMTLファイルにまとめてください");
+            if (mtls[0]) {
+              const mtlUrl = new URL(mtls[0], resourcePath).href;
+              const materials = await new MTLLoader(manager).setResourcePath(new URL(".", mtlUrl).href).loadAsync(mtlUrl);
+              materials.preload();
+              loader.setMaterials(materials);
+            }
+            gltf = { scene: loader.parse(objText), userData: {}, animations: [] };
+          } else {
+            const response = await fetch(sourceUrl, { signal: controller.signal });
+            if (!response.ok) throw new Error(`OBJの取得に失敗しました (${response.status})`);
+            const text = await response.text();
+            if (src.kind === "blob" && /^mtllib\s+/m.test(text)) throw new Error("OBJとMTL・テクスチャをZIPにまとめて読み込んでください");
+            gltf = { scene: loader.parse(text), userData: {}, animations: [] };
+          }
+        } else {
+          const loader = new GLTFLoader(manager);
+          loader.crossOrigin = "anonymous";
+          loader.setDRACOLoader(draco);
+          loader.setMeshoptDecoder(MeshoptDecoder);
+          loader.register((p) => new VRMLoaderPlugin(p));
+          const response = await fetch(archive ? manager.resolveURL(sourceUrl) : sourceUrl, { signal: controller.signal });
+          if (!response.ok) throw new Error(`モデル取得に失敗しました (${response.status})`);
+          const bytes = await response.arrayBuffer();
+          const head = new TextDecoder().decode(new Uint8Array(bytes).slice(0, 256)).trimStart().toLowerCase();
+          if (response.headers.get("content-type")?.includes("text/html") || head.startsWith("<!doctype html") || head.startsWith("<html")) {
+            throw new Error("モデルURLがHTMLを返しています。モデルファイルの配置を確認してください");
+          }
+          if (!current()) return;
+          report({ state: "loading", progress: 0.15 });
+          gltf = await loader.parseAsync(bytes, resourcePath);
+        }
+        pendingObject = gltf.scene;
+        if (!current()) return;
+        // Texture loads in OBJ/FBX may finish after the model itself.
+        await waitForResources();
+        if (!current()) return;
+        if (resourceError) throw new Error(resourceError);
         disposeModel();
 
-        const loaded: VRM | undefined = gltf.userData.vrm;
+        const loaded = gltf.userData.vrm as VRM | undefined;
+        if (sourceFormat === "vrm" && !loaded) throw new Error("VRMの人型情報がありません。有効なVRMファイルを選んでください");
         let info: ModelInfo;
         if (loaded) {
           VRMUtils.removeUnnecessaryVertices(gltf.scene);
@@ -3241,6 +3050,7 @@ function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStagePr
           loaded.scene.traverse((o) => (o.frustumCulled = false));
           scene.add(loaded.scene);
           vrm = loaded;
+          pendingObject = null;
           updateAutoLightFromObject(loaded.scene);
           loaded.lookAt && (loaded.lookAt.target = lookTarget);
           loaded.scene.updateMatrixWorld(true);
@@ -3250,6 +3060,10 @@ function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStagePr
           const hp = new THREE.Vector3();
           (head || loaded.scene).getWorldPosition(hp);
           frame = {
+            width: box.max.x - box.min.x,
+            depth: box.max.z - box.min.z,
+            headHeight: Math.max(box.max.y - hp.y, (box.max.y - box.min.y) * 0.2),
+            faceWidth: (box.max.y - box.min.y) * 0.42,
             center: new THREE.Vector3((box.min.x + box.max.x) / 2, (box.min.y + box.max.y) / 2, 0),
             height: box.max.y - box.min.y,
             headY: head ? hp.y + 0.06 : box.max.y - 0.12,
@@ -3265,25 +3079,24 @@ function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStagePr
             lipSync: STAGE_VOWELS.some((v) => names.includes(v)),
             title: meta.name || meta.title,
             author: meta.authors?.join(", ") || meta.author,
+            gestures: ["wave", "nod", "bow", "cheer"],
           };
         } else {
           const obj = gltf.scene;
-          const box0 = new THREE.Box3().setFromObject(obj);
-          const size0 = box0.getSize(new THREE.Vector3());
-          const s = 1.55 / (size0.y || 1);
-          obj.scale.multiplyScalar(s);
-          obj.updateMatrixWorld(true);
-          const box = new THREE.Box3().setFromObject(obj);
-          const c = box.getCenter(new THREE.Vector3());
-          obj.position.x -= c.x;
-          obj.position.z -= c.z;
-          obj.position.y -= box.min.y;
-          obj.updateMatrixWorld(true);
+          const normalized = normalizeAvatarObject(obj);
+          pendingObject = normalized.stage;
           obj.traverse((o) => (o.frustumCulled = false));
-          scene.add(obj);
-          root = obj;
+          root = normalized.stage;
+          scene.add(root);
+          pendingObject = null;
           updateAutoLightFromObject(obj);
-          glbBaseY = obj.position.y;
+          genericClips = gltf.animations || [];
+          if (genericClips.length) {
+            mixer = new THREE.AnimationMixer(obj);
+            const idle = selectIdleClip(genericClips);
+            idleAction = idle ? mixer.clipAction(idle) : null;
+            idleAction?.play();
+          }
           let headY = 0;
           let found = false;
           obj.traverse((o) => {
@@ -3294,30 +3107,36 @@ function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStagePr
               found = true;
             }
           });
-          frame = { center: new THREE.Vector3(0, 0.78, 0), height: 1.55, headY: found ? headY + 0.05 : 1.4 };
+          // A head bone can be at the chin (not the center), especially on large robot heads.
+          // Fit the head's vertical extent instead of assuming human proportions.
+          const headHeight = THREE.MathUtils.clamp(normalized.box.max.y - (found ? headY : 1.2), 0.31, 1.0);
+          frame = { width: normalized.size.x, depth: normalized.size.z, headHeight, faceWidth: normalized.size.x * 1.05, center: normalized.box.getCenter(new THREE.Vector3()), height: 1.55, headY: normalized.box.max.y - headHeight / 2 };
           const names: string[] = [];
           obj.traverse((o) => {
             const m = o as THREE.Mesh;
             const dict = m.morphTargetDictionary as Record<string, number> | undefined;
             if (!m.isMesh || !dict) return;
             for (const [k, idx] of Object.entries(dict)) {
-              const lk = k.toLowerCase();
               names.push(k);
-              if (/^(aa|a|あ|mouth_?open|jaw_?open|viseme_aa|mth_a|fcl_mth_a|vrc\.v_aa|mouthopen)$/.test(lk)) glbMorph.push({ mesh: m, idx });
-              if (/(blink|eyes?_?closed|fcl_eye_close$|eye_?close)/.test(lk)) glbBlink.push({ mesh: m, idx });
+              const classification = classifyAvatarMorph(k);
+              if (classification.vowel || classification.emotion || classification.blink) {
+                glbMorph.push({ mesh: m, idx, base: m.morphTargetInfluences?.[idx] || 0, ...classification });
+              }
             }
           });
-          info = { kind: "glb", name: src.name, expressions: names.slice(0, 40), lipSync: glbMorph.length > 0 };
+          info = { kind: sourceFormat as ModelInfo["kind"], format: sourceFormat.toUpperCase(), name: src.name, modelFile: archive ? sourceName : undefined, packageFiles: archive ? entries.length : undefined, expressions: names.slice(0, 40), lipSync: glbMorph.some((m) => m.vowel !== null), animations: genericClips.map((c) => c.name), gestures: (Object.keys(GENERIC_GESTURE_CLIPS) as GestureName[]).filter((g) => genericClips.some((c) => GENERIC_GESTURE_CLIPS[g].test(c.name))) };
         }
         computeGoal();
         camLook.copy(camGoal.target);
         cam.position.copy(camGoal.pos);
-        statusRef.current({ state: "ready", info });
+        report({ state: "ready", info });
       } catch (e) {
         if (token !== loadToken || disposed) return;
-        statusRef.current({ state: "error", message: e instanceof Error ? e.message : String(e) });
+        report({ state: "error", message: e instanceof Error ? e.message : String(e) });
       } finally {
-        if (src.kind === "blob") URL.revokeObjectURL(rawUrl);
+        pendingMmd?.dispose?.();
+        if (pendingObject) disposeAvatarObject(pendingObject);
+        ownedUrls.forEach((url) => URL.revokeObjectURL(url));
       }
     };
 
@@ -3376,6 +3195,7 @@ function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStagePr
       }
       if (moved < 6) triggerGesture(bus, Math.random() < 0.5 ? "wave" : "nod");
     };
+    const onCancel = () => { dragging = false; cv.style.cursor = "grab"; };
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       view.zoom = THREE.MathUtils.clamp(view.zoom * (1 + e.deltaY * 0.001), 0.45, 1.8);
@@ -3384,6 +3204,7 @@ function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStagePr
     cv.addEventListener("pointerdown", onDown);
     cv.addEventListener("pointermove", onMove);
     cv.addEventListener("pointerup", onUp);
+    cv.addEventListener("pointercancel", onCancel);
     cv.addEventListener("wheel", onWheel, { passive: false });
     const onWinMove = (e: PointerEvent) => {
       if (dragging) return;
@@ -3568,37 +3389,48 @@ function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStagePr
         // eye look target follows the pointer
         lookTarget.position.set(pointer.x * 0.8, frame.headY + pointer.y * 0.5, 2.0);
         vrm.update(dt);
-      } else if (mmdMesh) {
-        const amp = Math.min(1, openness);
-        for (const m of mmdMorph) {
-          const target = speaking && !s.pause && s.vowel === m.vowel ? amp : 0;
-          if (m.mesh.morphTargetInfluences) m.mesh.morphTargetInfluences[m.idx] = target;
-        }
-        for (const m of mmdBlink) if (m.mesh.morphTargetInfluences) m.mesh.morphTargetInfluences[m.idx] = blink;
-        for (const m of mmdEmotion) if (m.mesh.morphTargetInfluences) m.mesh.morphTargetInfluences[m.idx] = emo[m.emotion] * emoScale;
-
-        // MMDはVRMの正規化ボーンを持たないため、通話中の自然な首振り・呼吸・ジェスチャーは
-        // モデル全体に軽く加える。元のPMX/PMD骨格や物理設定を直接壊さない。
-        mmdMesh.position.y = glbBaseY + Math.sin(t * 1.5) * 0.006 + amp * 0.01;
-        mmdMesh.rotation.y = Math.sin(t * 0.5) * 0.12 + pointer.x * 0.25;
-        mmdMesh.rotation.z = Math.sin(t * 0.7) * 0.01;
-        if (gname === "nod") mmdMesh.rotation.x = Math.sin(gp * Math.PI * 2) * 0.06 * genv;
-        else if (gname === "wave") mmdMesh.rotation.z += Math.sin(gt * 11) * 0.05 * genv;
-        else if (gname === "bow") mmdMesh.rotation.x = 0.3 * Math.sin(Math.PI * gp);
-        else if (gname === "cheer") mmdMesh.position.y += Math.abs(Math.sin(gt * 7)) * 0.05 * genv;
-        else mmdMesh.rotation.x = 0;
+      } else if (mmdMesh && mmdController) {
+        listenNod = damp(listenNod, bus.listening ? 1 : 0, 5, dt);
+        const mmdFrame = {
+          time: t, dt, speaking: speakAmt, listening: listenNod,
+          lookX: -pointer.y * 0.12, lookY: pointer.x * 0.24,
+          gesture: gname, progress: gp, envelope: genv, gestureTime: gt,
+          mouth, emotions: emo, blink,
+        };
+        mmdRuntime?.beforeUpdate?.();
+        mmdController.pose(mmdFrame);
+        mmdController.expressions(mmdFrame);
+        mmdRuntime?.update?.(dt);
       } else if (root) {
-        const amp = Math.min(1, openness);
-        root.position.y = glbBaseY + Math.sin(t * 1.5) * 0.006 + amp * 0.01;
-        root.rotation.y = Math.sin(t * 0.5) * 0.12 + pointer.x * 0.25;
-        root.rotation.z = Math.sin(t * 0.7) * 0.01;
-        if (gname === "nod") root.rotation.x = Math.sin(gp * Math.PI * 2) * 0.06 * genv;
-        else if (gname === "wave") root.rotation.z += Math.sin(gt * 11) * 0.05 * genv;
-        else if (gname === "bow") root.rotation.x = 0.3 * Math.sin(Math.PI * gp);
-        else if (gname === "cheer") root.position.y += Math.abs(Math.sin(gt * 7)) * 0.05 * genv;
-        else root.rotation.x = 0;
-        for (const m of glbMorph) if (m.mesh.morphTargetInfluences) m.mesh.morphTargetInfluences[m.idx] = amp;
-        for (const m of glbBlink) if (m.mesh.morphTargetInfluences) m.mesh.morphTargetInfluences[m.idx] = blink;
+        // Imported models keep their authored position/rotation. Play only recognized clips.
+        if (mixer) {
+          if (bus.gesture && bus.gesture.id !== lastClipGesture) {
+            lastClipGesture = bus.gesture.id;
+            const clip = genericClips.find((c) => GENERIC_GESTURE_CLIPS[bus.gesture!.name].test(c.name));
+            if (clip) {
+              clipAction?.stop();
+              clipAction = mixer.clipAction(clip);
+              clipAction.reset().setLoop(THREE.LoopOnce, 1);
+              clipAction.clampWhenFinished = false;
+              clipAction.play();
+              idleAction?.stop();
+            }
+          }
+          mixer.update(dt);
+          if (clipAction && !clipAction.isRunning()) {
+            clipAction = null;
+            idleAction?.reset().play();
+          }
+        }
+        for (const m of glbMorph) {
+          if (!m.mesh.morphTargetInfluences) continue;
+          m.mesh.morphTargetInfluences[m.idx] = THREE.MathUtils.clamp(Math.max(
+            m.base,
+            m.vowel ? mouth[m.vowel] : 0,
+            m.emotion ? emo[m.emotion] * emoScale : 0,
+            m.blink ? blink : 0,
+          ), 0, 1);
+        }
       }
 
       // camera easing
@@ -3623,11 +3455,14 @@ function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStagePr
     return () => {
       disposed = true;
       loadToken++;
+      activeLoad?.abort();
+      draco.dispose();
       renderer.setAnimationLoop(null);
       ro.disconnect();
       cv.removeEventListener("pointerdown", onDown);
       cv.removeEventListener("pointermove", onMove);
       cv.removeEventListener("pointerup", onUp);
+      cv.removeEventListener("pointercancel", onCancel);
       cv.removeEventListener("wheel", onWheel);
       window.removeEventListener("pointermove", onWinMove);
       disposeModel();
@@ -3650,7 +3485,7 @@ function VrmStageCore({ source, bus, camera, night, onStatus, libs }: VrmStagePr
   return <div ref={mount} className="absolute inset-0" />;
 }
 
-function VrmStage(props: VrmStageProps) {
+export function VrmStage(props: VrmStageProps) {
   const [libs, setLibs] = useState<StageLibs | null>(null);
   const statusRef = useRef(props.onStatus);
   statusRef.current = props.onStatus;
@@ -3664,15 +3499,23 @@ function VrmStage(props: VrmStageProps) {
       // MMDLoader は three の一部バージョンで型宣言が提供されないため、
       // 実行時 import は維持しつつローカルの最小型で受ける。
       import("@moeru/three-mmd"),
+      import("three/examples/jsm/loaders/FBXLoader.js"),
+      import("three/examples/jsm/loaders/OBJLoader.js"),
+      import("three/examples/jsm/loaders/MTLLoader.js"),
+      import("three/examples/jsm/loaders/DRACOLoader.js"),
+      import("three/examples/jsm/libs/meshopt_decoder.module.js"),
+      import("@/lib/avatarRuntime"),
+      import("@/lib/mmdAvatar"),
     ])
-      .then(([THREE, vrm, gltf, mmd]) => {
+      .then(([THREE, vrm, gltf, mmd, fbx, obj, mtl, draco, meshopt, runtime, mmdAvatar]) => {
         if (cancelled) return;
         setLibs({
-          THREE,
+          THREE, runtime, mmdAvatar,
           VRMLoaderPlugin: vrm.VRMLoaderPlugin,
           VRMUtils: vrm.VRMUtils,
           GLTFLoader: gltf.GLTFLoader,
           MMDLoader: mmd.MMDLoader as unknown as MMDLoaderLike,
+          FBXLoader: fbx.FBXLoader, OBJLoader: obj.OBJLoader, MTLLoader: mtl.MTLLoader, DRACOLoader: draco.DRACOLoader, MeshoptDecoder: meshopt.MeshoptDecoder,
         });
       })
       .catch((e) => {
@@ -3691,13 +3534,11 @@ function VrmStage(props: VrmStageProps) {
    LimeAI 拡張: ボイスモード
    ================================================================== */
 
-const DEFAULT_MODEL = { id: "default", name: "アリア (VRoid サンプル / CC0)", url: `${import.meta.env.BASE_URL}models/aria.vrm` };
 
 type Prefs = {
   voiceURI: string;
   lang: "auto" | "ja-JP" | "en-US" | "zh-CN" | "ko-KR";
   rate: number;
-  pitch: number;
   volume: number;
   emotion: "auto" | Emotion;
   camera: CameraPreset;
@@ -3705,10 +3546,9 @@ type Prefs = {
 };
 
 const DEFAULT_PREFS: Prefs = {
-  voiceURI: "",
+  voiceURI: CALM_FEMALE_VOICE_ID,
   lang: "auto",
   rate: 1,
-  pitch: 1.15,
   volume: 1,
   emotion: "auto",
   camera: "bust",
@@ -3747,19 +3587,8 @@ function detectTtsLang(text: string): string {
   return /[a-z]/i.test(text) ? "en-US" : "ja-JP";
 }
 
-function pickVoice(voices: SpeechSynthesisVoice[], lang: string, preferred: string) {
-  const prefix = lang.split("-")[0].toLowerCase();
-  const pref = voices.find((v) => v.voiceURI === preferred);
-  if (pref && pref.lang.toLowerCase().startsWith(prefix)) return pref;
-  const cands = voices.filter((v) => v.lang.toLowerCase().replace("_", "-").startsWith(prefix));
-  const score = (v: SpeechSynthesisVoice) =>
-    (/(nanami|haruka|ayumi|kyoko|o-ren|google 日本語|sayaka|female|xiaoxiao|yuna|aria|jenny|samantha)/i.test(v.name) ? 2 : 0) +
-    (/(natural|online|neural)/i.test(v.name) ? 1 : 0);
-  return cands.sort((a, b) => score(b) - score(a))[0];
-}
-
 const MIC_ERRORS: Record<string, string> = {
-  "not-allowed": "マイクの使用が許可されていません。ブラウザのアドレスバーの設定から許可してください。",
+  "not-allowed": "マイクの使用が許可されていません。端末の設定でこのPWAまたはブラウザのマイク許可を確認し、「マイクをオン」で再試行してください。",
   "service-not-allowed": "このブラウザでは音声認識サービスが許可されていません。",
   "audio-capture": "マイクが見つかりません。接続を確認してください。",
   network: "音声認識サーバーに接続できません。ネットワークを確認してください (ChromeやEdgeの音声認識はオンライン接続が必要です)。",
@@ -3774,7 +3603,7 @@ type VoiceModeProps = {
   onAsk: (text: string, signal: AbortSignal) => Promise<string>;
 };
 
-function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
+export function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
   const { resolvedTheme } = useTheme();
   const night = resolvedTheme === "dark";
   const [prefs, setPrefs] = useState<Prefs>(DEFAULT_PREFS);
@@ -3782,7 +3611,6 @@ function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
   prefsRef.current = prefs;
   const [loadedPrefs, setLoadedPrefs] = useState(false);
 
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [customs, setCustoms] = useState<StoredModel[]>([]);
   const [status, setStatus] = useState<StageStatus>({ state: "loading", progress: 0 });
   const [info, setInfo] = useState<ModelInfo | null>(null);
@@ -3824,12 +3652,14 @@ function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
       delete p.night;
       // 旧バージョンの「そのまま読み上げる」モード設定は廃止(常にAIの返答を読み上げる)
       delete p.aiMode;
+      delete p.pitch;
+      // Browser voice URIs are incompatible with Fish Audio reference IDs.
+      if (typeof p.voiceURI !== "string" || !/^[a-f0-9]{32}$/i.test(p.voiceURI)) p.voiceURI = CALM_FEMALE_VOICE_ID;
       setPrefs({ ...DEFAULT_PREFS, ...p });
     } catch {
       /* ignore */
     }
     setLoadedPrefs(true);
-    getVoices().then(setVoices);
     listModels()
       .then((m) => setCustoms(m.sort((a, b) => a.createdAt - b.createdAt)))
       .catch(() => {});
@@ -3887,29 +3717,34 @@ function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
 
   /* ---------- model source ---------- */
   const source: ModelSource = useMemo(() => {
-    if (prefs.modelId !== "default") {
-      const m = customs.find((c) => c.id === prefs.modelId);
-      if (m) return { kind: "blob", blob: m.blob, name: m.name, format: m.format ?? inferModelFormat(m.name) };
-    }
-    return { kind: "url", url: DEFAULT_MODEL.url, name: DEFAULT_MODEL.name, format: "vrm" };
-  }, [prefs.modelId, customs.length]);
+    const builtin = BUILTIN_MODELS.find((m) => m.id === prefs.modelId);
+    if (builtin) return { kind: "url", url: `${import.meta.env.BASE_URL}models/${builtin.file}`, name: builtin.name, format: builtin.format };
+    const custom = customs.find((c) => c.id === prefs.modelId);
+    if (custom) return { kind: "blob", blob: custom.blob, name: custom.name, format: custom.format ?? inferModelFormat(custom.name) };
+    const fallback = BUILTIN_MODELS[0];
+    return { kind: "url", url: `${import.meta.env.BASE_URL}models/${fallback.file}`, name: fallback.name, format: fallback.format };
+  }, [prefs.modelId, customs]);
 
   const onStatus = useCallback((s: StageStatus) => {
     setStatus(s);
-    if (s.state === "ready") setInfo(s.info);
+    setInfo(s.state === "ready" ? s.info : null);
   }, []);
 
   const uploadModel = async (file: File) => {
     setUploadErr("");
-    if (!/\.(vrm|glb|pmx|pmd|zip)$/i.test(file.name)) {
-      setUploadErr("VRM / GLB / PMX / PMD / MMD ZIP に対応しています");
+    if (!isSupportedModelFile(file.name)) {
+      setUploadErr(`${MODEL_FORMAT_LABEL} に対応しています`);
+      return;
+    }
+    if (!file.size) {
+      setUploadErr("空のファイルは読み込めません");
       return;
     }
     if (file.size > 120 * 1024 * 1024) {
       setUploadErr("ファイルサイズが大きすぎます (120MBまで)");
       return;
     }
-    const m: StoredModel = { id: `m_${Date.now().toString(36)}`, name: file.name, blob: file, format: inferModelFormat(file.name), createdAt: Date.now() };
+    const m: StoredModel = { id: `m_${crypto.randomUUID()}`, name: file.name, blob: file, format: inferModelFormat(file.name), createdAt: Date.now() };
     try {
       await putModel(m);
     } catch {
@@ -3952,7 +3787,7 @@ function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
   /** AIの返答テキスト(またはテスト文・履歴の再生)を3Dキャラクターが声に出して話す */
   const speak = useCallback(
     (raw: string) => {
-      const t = raw.replace(/[ \t]+\n/g, "\n").trim();
+      const t = stripMarkdown(raw).replace(/[ \t]+\n/g, "\n").trim();
       if (!t) return;
       const p = prefsRef.current;
       listener.current.abort();
@@ -3960,13 +3795,12 @@ function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
       setError("");
       if (neutralTimer.current) clearTimeout(neutralTimer.current);
       const lang = p.lang === "auto" ? detectTtsLang(t) : p.lang;
-      const voice = pickVoice(voices.length ? voices : ttsSupported() ? speechSynthesis.getVoices() : [], lang, p.voiceURI);
       const b = bus.current;
       b.emotion = p.emotion === "auto" ? detectEmotion(t) : p.emotion;
       b.thinking = false;
       b.listening = false;
-      b.lip.begin(t, p.rate);
-      b.speaking = true;
+      b.lip.end();
+      b.speaking = false;
       if (/(こんにちは|こんばんは|おはよう|はじめまして|初めまして|やあ|hello|hi\b|hey)/i.test(t)) fireGesture("wave");
       else if (/(ありがとう|ごめん|すみません|申し訳|お願いします|thank|sorry)/i.test(t)) fireGesture("bow");
       else if (/(おめでとう|やった|最高|わーい|congrat)/i.test(t)) fireGesture("cheer");
@@ -3977,10 +3811,11 @@ function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
       setHistory((h) => [{ id: ++historyId.current, text: t }, ...h].slice(0, 30));
       speaker.current.speak(
         t,
-        { voiceURI: voice?.voiceURI, lang, rate: p.rate, pitch: p.pitch, volume: p.volume },
+        { voiceURI: p.voiceURI, lang, rate: p.rate, volume: p.volume },
         {
-          onChunkStart: (_c, off) => b.lip.chunk(off),
+          onChunkStart: (_c, off) => { b.lip.begin(t, p.rate); b.lip.chunk(off); b.speaking = true; },
           onBoundary: (i) => b.lip.boundary(i),
+          onChunkEnd: () => { b.speaking = false; b.lip.end(); },
           onEnd: finishSpeaking,
           onError: (m) => {
             setError(m);
@@ -3989,7 +3824,7 @@ function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
         },
       );
     },
-    [voices, finishSpeaking],
+    [finishSpeaking],
   );
 
   /** ユーザーの発話をAIへ送り、返ってきた返答をキャラクターが話す */
@@ -4120,17 +3955,6 @@ function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
     setText("");
     handleUserText(t);
   };
-
-  const selectedVoice = useMemo(() => {
-    const lang = prefs.lang === "auto" ? "ja-JP" : prefs.lang;
-    return pickVoice(voices, lang, prefs.voiceURI);
-  }, [voices, prefs.lang, prefs.voiceURI]);
-
-  const voicesForLang = useMemo(() => {
-    const pf = (prefs.lang === "auto" ? "ja" : prefs.lang.split("-")[0]).toLowerCase();
-    const list = voices.filter((v) => v.lang.toLowerCase().startsWith(pf));
-    return list.length ? list : voices;
-  }, [voices, prefs.lang]);
 
   /** 設定画面の「テスト再生」: 声の確認用にサンプル文を話させる(AIへは送らない) */
   const testVoice = () => {
@@ -4263,7 +4087,7 @@ function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
           <section className="mb-5">
             <div className={`mb-2 text-xs font-semibold ${label}`}>キャラクター (3Dモデル)</div>
             <div className="space-y-1.5">
-              {[{ id: "default", name: DEFAULT_MODEL.name }, ...customs].map((m) => (
+              {[...BUILTIN_MODELS, ...customs].map((m) => (
                 <div
                   key={m.id}
                   className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm ${prefs.modelId === m.id ? on : off}`}
@@ -4272,7 +4096,7 @@ function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
                     {prefs.modelId === m.id ? <Check size={14} /> : <Sparkles size={14} className="opacity-50" />}
                     <span className="truncate">{m.name}</span>
                   </button>
-                  {m.id !== "default" && (
+                  {!BUILTIN_MODELS.some((builtin) => builtin.id === m.id) && (
                     <button type="button" aria-label="削除" onClick={() => removeModel(m.id)} className="opacity-50 hover:text-red-500 hover:opacity-100">
                       <Trash2 size={14} />
                     </button>
@@ -4283,7 +4107,7 @@ function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
             <input
               ref={fileInput}
               type="file"
-              accept=".vrm,.glb,.pmx,.pmd,.zip"
+              accept={MODEL_ACCEPT}
               hidden
               onChange={(e) => {
                 const f = e.target.files?.[0];
@@ -4305,9 +4129,9 @@ function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
                 onClick={() => fileInput.current?.click()}
                 className="flex w-full items-center justify-center gap-2 py-2.5 text-sm font-medium text-pink-500 hover:bg-pink-500/10"
               >
-                <Upload size={15} /> VRM / GLB / MMD ZIP を読み込む
+                <Upload size={15} /> 3Dモデル / ZIP を読み込む
               </button>
-              <div className="pb-2 text-center text-[10px] opacity-55"></div>
+              <div className="px-3 pb-2 text-center text-[10px] leading-relaxed opacity-55">{MODEL_FORMAT_LABEL}（120MBまで) </div>
             </div>
             {uploadErr && <p className="mt-1.5 text-xs text-red-500">{uploadErr}</p>}
             {info && (
@@ -4325,22 +4149,22 @@ function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
                 </button>
               ))}
             </div>
-            <select
-              value={selectedVoice?.voiceURI || ""}
-              onChange={(e) => update({ voiceURI: e.target.value })}
-              className={`h-10 w-full rounded-xl border px-3 text-sm outline-none ${night ? "border-white/10 bg-white/10" : "border-black/10 bg-white/70"}`}
-            >
-              {voicesForLang.length === 0 && <option value="">音声が見つかりません</option>}
-              {voicesForLang.map((v) => (
-                <option key={v.voiceURI} value={v.voiceURI} className="text-black">
-                  {v.name} ({v.lang})
-                </option>
-              ))}
-            </select>
+            <p className="text-xs opacity-70">Fish Audio S2.1 Pro Free</p>
+            <label className="block space-y-1 text-sm">
+              <span>声：{prefs.voiceURI && prefs.voiceURI !== CALM_FEMALE_VOICE_ID ? "カスタム" : CALM_FEMALE_VOICE_NAME}</span>
+              <input
+                value={prefs.voiceURI}
+                onChange={(e) => update({ voiceURI: e.target.value.trim() })}
+                placeholder="空欄で落ち着いた女性"
+                aria-label="Fish Audio ボイスID"
+                className={`h-10 w-full rounded-xl border px-3 text-sm outline-none ${night ? "border-white/10 bg-white/10" : "border-black/10 bg-white/70"}`}
+              />
+            </label>
+            <button type="button" onClick={() => update({ voiceURI: CALM_FEMALE_VOICE_ID })} className="mr-3 text-xs underline">落ち着いた女性に戻す</button>
+            <a href="https://fish.audio/discovery" target="_blank" rel="noopener noreferrer" className="inline-block text-xs underline opacity-70">ボイスを探す</a>
             {(
               [
                 ["rate", "速度", 0.5, 2, 0.05],
-                ["pitch", "ピッチ", 0, 2, 0.05],
                 ["volume", "音量", 0, 1, 0.05],
               ] as const
             ).map(([k, name, min, max, step]) => (
@@ -4367,7 +4191,7 @@ function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
             <div className={`mb-2 mt-4 text-xs font-semibold ${label}`}>ジェスチャー</div>
             <div className="flex flex-wrap gap-1.5">
               {GESTURES.map((g) => (
-                <button key={g.id} type="button" onClick={() => fireGesture(g.id)} className={`${panelBtn} ${off}`}>
+                <button key={g.id} type="button" disabled={!info?.gestures?.includes(g.id)} title={info?.gestures?.includes(g.id) ? undefined : "このモデルには対応するボーン・アニメーションがありません"} onClick={() => fireGesture(g.id)} className={`${panelBtn} ${off} disabled:cursor-not-allowed disabled:opacity-35`}>
                   {g.label}
                 </button>
               ))}
@@ -4453,7 +4277,7 @@ function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
             )}
           </form>
         </div>
-        {!ttsOk && <div className="pointer-events-auto rounded-xl bg-amber-500/90 px-3 py-1.5 text-xs text-white">このブラウザは音声合成に未対応です</div>}
+        {!ttsOk && <div className="pointer-events-auto rounded-xl bg-amber-500/90 px-3 py-1.5 text-xs text-white">このブラウザはAI音声の再生に未対応です</div>}
       </div>
     </div>
   );
@@ -4910,24 +4734,6 @@ class RingTone {
   }
 }
 
-const MALE_VOICE = /(ichiro|takumi|keita|otoya|daichi|hiroshi|male|男|david|mark|james|guy|daniel|alex|fred)/i
-const FEMALE_VOICE = /(nanami|haruka|ayumi|kyoko|o-ren|sayaka|female|女|xiaoxiao|yuna|aria|jenny|samantha|zira|emma|karen|victoria)/i
-
-/** キャラクターの性別に合う声を優先して選ぶ(見つからなければ通常の選び方) */
-function pickCharacterVoice(voices: SpeechSynthesisVoice[], lang: string, gender?: 'female' | 'male') {
-  const prefix = lang.split('-')[0].toLowerCase()
-  const cands = voices.filter((v) => v.lang.toLowerCase().replace('_', '-').startsWith(prefix))
-  if (gender && cands.length) {
-    const re = gender === 'male' ? MALE_VOICE : FEMALE_VOICE
-    const hit = cands.filter((v) => re.test(v.name))
-    if (hit.length) {
-      const q = (v: SpeechSynthesisVoice) => (/(natural|online|neural)/i.test(v.name) ? 1 : 0)
-      return hit.sort((a, b) => q(b) - q(a))[0]
-    }
-  }
-  return pickVoice(voices, lang, '')
-}
-
 function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProps) {
   const [phase, setPhase] = useState<CallPhase>('connecting')
   const phaseRef = useRef<CallPhase>('connecting')
@@ -4941,9 +4747,25 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
   const [error, setError] = useState('')
   const speaker = useRef(new Speaker())
   const listener = useRef(new Listener())
+  const recorder = useRef(new CallRecorder(async (audio, lang, signal) => {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) throw new Error('ログインし直してから発信してください。')
+    const form = new FormData()
+    form.append('audio', audio, audio.type.includes('mp4') ? 'call.m4a' : 'call.webm')
+    form.append('language', lang.split('-')[0])
+    const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/transcribe-call`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${session.access_token}`, apikey: import.meta.env.VITE_SUPABASE_ANON_KEY },
+      body: form,
+      signal,
+    })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.error || '音声認識に失敗しました。')
+    return result.text || ''
+  }))
+  const useRecordedSpeech = useRef(!sttSupported())
   const ring = useRef(new RingTone())
   const abortAI = useRef<AbortController | null>(null)
-  const voicesRef = useRef<SpeechSynthesisVoice[]>([])
   const aliveRef = useRef(true)
   const startListenRef = useRef<() => void>(() => {})
   const onAskRef = useRef(onAsk)
@@ -4962,7 +4784,7 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
   const startListen = useCallback(() => {
     if (!aliveRef.current || mutedRef.current) return
     if (phaseRef.current === 'speaking' || phaseRef.current === 'thinking') return
-    if (!sttSupported()) {
+    if (useRecordedSpeech.current && typeof MediaRecorder === 'undefined') {
       setError(MIC_ERRORS.unsupported)
       mutedRef.current = true
       setMuted(true)
@@ -4970,6 +4792,21 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
     }
     setPhaseBoth('listening')
     const lang = assistantRef.current.lang ?? 'ja-JP'
+    if (useRecordedSpeech.current) {
+      recorder.current.start(lang, {
+        onFinal: t => handleUserTextRef.current(t),
+        onEnd: () => {
+          if (aliveRef.current && !mutedRef.current && phaseRef.current === 'listening') startListenRef.current()
+        },
+        onError: message => {
+          if (!aliveRef.current) return
+          setError(message)
+          mutedRef.current = true
+          setMuted(true)
+        },
+      })
+      return
+    }
     listener.current.start(lang, {
       onInterim: () => {},
       onFinal: (t) => {
@@ -4981,6 +4818,13 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
       },
       onError: (code) => {
         if (code === 'no-speech' || code === 'aborted') return
+        if (['not-allowed', 'service-not-allowed', 'unsupported', 'network'].includes(code) && typeof MediaRecorder !== 'undefined') {
+          listener.current.abort()
+          recorder.current.abort()
+          useRecordedSpeech.current = true
+          startListenRef.current()
+          return
+        }
         setError(MIC_ERRORS[code] || `音声認識エラー: ${code}`)
         if (code === 'not-allowed' || code === 'service-not-allowed' || code === 'audio-capture' || code === 'unsupported') {
           mutedRef.current = true
@@ -5000,24 +4844,22 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
   /* ---------- 話す ---------- */
   const speak = useCallback(
     (raw: string) => {
-      const t = raw.trim()
+      const t = stripMarkdown(raw)
       if (!t) {
         resumeListening()
         return
       }
       listener.current.abort()
+      recorder.current.abort()
       const a = assistantRef.current
       const lang = detectTtsLang(t)
-      const pool = voicesRef.current.length ? voicesRef.current : ttsSupported() ? speechSynthesis.getVoices() : []
-      const voice = pickCharacterVoice(pool, lang, a.gender)
       setPhaseBoth('speaking')
       speaker.current.speak(
         t,
         {
-          voiceURI: voice?.voiceURI,
+          gender: a.gender,
           lang,
           rate: a.rate ?? 1,
-          pitch: a.pitch ?? (a.gender === 'male' ? 0.85 : 1.08),
           volume: speakerRef.current ? 1 : 0.7,
         },
         {
@@ -5040,6 +4882,7 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
       speaker.current.cancel()
       abortAI.current?.abort()
       listener.current.abort()
+      recorder.current.abort()
       setError('')
       setPhaseBoth('thinking')
       const ac = new AbortController()
@@ -5064,9 +4907,6 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
   /* ---------- 発信(呼び出し音) → 相手が電話に出る → 第一声 ---------- */
   useEffect(() => {
     aliveRef.current = true
-    getVoices().then((v) => {
-      voicesRef.current = v
-    })
 
     let wake: { release: () => Promise<void> } | null = null
     try {
@@ -5096,6 +4936,7 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
 
     const sp = speaker.current
     const ls = listener.current
+    const rc = recorder.current
     return () => {
       aliveRef.current = false
       clearTimeout(connectTimer)
@@ -5103,6 +4944,7 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
       tone.stop()
       sp.cancel()
       ls.abort()
+      rc.abort()
       abortAI.current?.abort()
       try {
         wake?.release().catch(() => {})
@@ -5124,16 +4966,25 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
     ring.current.stop()
     speaker.current.cancel()
     listener.current.abort()
+    recorder.current.abort()
     abortAI.current?.abort()
     onClose()
   }
 
-  const toggleMute = () => {
+  const toggleMute = async () => {
     const next = !mutedRef.current
+    if (!next) {
+      try { await requestMicrophonePermission() } catch (e) {
+        if (aliveRef.current) setError(microphoneErrorMessage(e))
+        return
+      }
+      if (!aliveRef.current) return
+    }
     mutedRef.current = next
     setMuted(next)
     if (next) {
       listener.current.abort()
+      recorder.current.abort()
     } else {
       setError('')
       if (phaseRef.current === 'listening') startListenRef.current()
@@ -5248,7 +5099,7 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
           <CallButton label="終了" danger onClick={endCall}>
             <Phone size={30} strokeWidth={2.2} className="rotate-[135deg]" fill="currentColor" />
           </CallButton>
-          <CallButton label="ミュート" active={muted} onClick={toggleMute}>
+          <CallButton label={muted ? "マイクをオン" : "ミュート"} active={muted} onClick={toggleMute}>
             {muted ? <MicOff size={29} strokeWidth={2.2} /> : <Mic size={29} strokeWidth={2.2} />}
           </CallButton>
         </div>
@@ -5266,7 +5117,7 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
 /** true: 添付画像をGemini形式(inlineData)でそのまま送る / false: 画像はファイル名のみAIに伝える */
 const SEND_IMAGE_PARTS = true
 
-const VPOP_STYLES = `
+export const VPOP_STYLES = `
 @import url('https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap');
 
 /* ============================================================
@@ -6478,12 +6329,11 @@ export default function ChatPage() {
   const [artifactOpen, setArtifactOpen] = useState(false)
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null)
   const [voiceOpen, setVoiceOpen] = useState(false)
+  const messageSpeaker = useRef(new Speaker())
   // アシスタント専用の通話モード(PC・タブレット・モバイル対応)
-  const [callOpen, setCallOpen] = useState(false)
+  const callSession = useCallSession()
   // キャラクターのアイコン画像(ブラウザ内保存)
   const [avatars, setAvatars] = useState<AvatarMap>({})
-  // 通話中のキャラクター(通話中に state が変わっても設定がぶれないよう ref で保持)
-  const callAssistantRef = useRef<AssistantItem | null>(null)
 
   // モバイルでソフトキーボードが開いたときのレイアウト崩れ対策
   const { isKeyboardOpen, viewportHeight } = useMobileKeyboardViewport()
@@ -6493,7 +6343,6 @@ export default function ChatPage() {
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const lastArtifactCountRef = useRef(0)
   const voiceHistoryRef = useRef<Message[]>([])
-  const callHistoryRef = useRef<Message[]>([])
 
   // LimePro Status Management
   const mountedRef = useRef(true);
@@ -6624,7 +6473,8 @@ export default function ChatPage() {
     fetchLimeProStatus();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
-      fetchLimeProStatus();
+      // Release the auth callback lock before making another Supabase request.
+      window.setTimeout(() => { if (mountedRef.current) void fetchLimeProStatus(); }, 0);
     });
 
     return () => {
@@ -6670,10 +6520,6 @@ export default function ChatPage() {
     setAvatars(loadAvatars(uid))
   }, [uid])
 
-  // アシスタントを解除した場合は通話を閉じる
-  useEffect(() => {
-    if (callOpen && !assistant) setCallOpen(false)
-  }, [callOpen, assistant])
 
   // ユーザー情報が取得できた段階でSupabaseからチャット履歴を取得
   useEffect(() => {
@@ -6812,17 +6658,13 @@ export default function ChatPage() {
   }, [input, dismissedPostPreviewId, postLinkPreview?.id])
 
   useEffect(() => {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel()
-    }
+    messageSpeaker.current.cancel()
     setSpeakingMessageId(null)
   }, [currentSessionId])
 
   useEffect(() => {
     return () => {
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel()
-      }
+      messageSpeaker.current.cancel()
       abortRef.current?.abort()
     }
   }, [])
@@ -6991,29 +6833,15 @@ export default function ChatPage() {
   }
 
   const handleSpeak = (messageId: string, text: string) => {
-    if ('speechSynthesis' in window) {
-      if (speakingMessageId === messageId) {
-        window.speechSynthesis.cancel()
-        setSpeakingMessageId(null)
-      } else {
-        window.speechSynthesis.cancel()
-        // コードブロックやMarkdown記号は読み上げない
-        const utterance = new SpeechSynthesisUtterance(stripMarkdown(text))
-        utterance.lang = 'ja-JP'
-        
-        utterance.onend = () => {
-          setSpeakingMessageId(null)
-        }
-        utterance.onerror = () => {
-          setSpeakingMessageId(null)
-        }
-        
-        setSpeakingMessageId(messageId)
-        window.speechSynthesis.speak(utterance)
-      }
-    } else {
-      toast.error('お使いのブラウザは音声読み上げに対応していません')
-    }
+    if (callSession.isActive()) return
+    messageSpeaker.current.cancel()
+    if (speakingMessageId === messageId) { setSpeakingMessageId(null); return }
+    const plain = stripMarkdown(text)
+    setSpeakingMessageId(messageId)
+    messageSpeaker.current.speak(plain, { lang: detectTtsLang(plain), rate: 1, volume: 1 }, {
+      onEnd: () => setSpeakingMessageId(null),
+      onError: (message) => { setSpeakingMessageId(null); toast.error(message) },
+    })
   }
 
   const handleShare = async (text: string) => {
@@ -7498,6 +7326,10 @@ export default function ChatPage() {
   }
 
   const openVoiceMode = () => {
+    if (callSession.isActive()) return
+    messageSpeaker.current.cancel()
+    setSpeakingMessageId(null)
+    unlockAiAudio()
     voiceHistoryRef.current = []
     setVoiceOpen(true)
     if (typeof window !== 'undefined' && window.innerWidth < 768) {
@@ -7507,9 +7339,7 @@ export default function ChatPage() {
 
   /** アシスタント専用の通話モードから呼ばれる: アシスタント設定つきで1往復分の返答テキストを返す(履歴は通話中のみ) */
   /** アシスタント専用の通話モードから呼ばれる: キャラクター設定つきで1往復分の返答テキストを返す(履歴は通話中のみ) */
-  const askForAssistantCall = async (text: string, signal: AbortSignal) => {
-    const character = callAssistantRef.current ?? assistant
-    const history = callHistoryRef.current
+  const askForAssistantCall = async (character: AssistantItem, history: Message[], text: string, signal: AbortSignal) => {
     history.push({ id: crypto.randomUUID(), role: 'user', content: text })
 
     const contents = buildContents(history.slice(-20), {
@@ -7548,27 +7378,20 @@ export default function ChatPage() {
   /** アシスタントに発信する */
   const openAssistantCall = (targetAssistant?: AssistantItem | null) => {
     const nextAssistant = targetAssistant ?? assistant
-    if (!nextAssistant) return
+    if (!nextAssistant || callSession.isActive()) return
 
-    // iOS Safari を含むブラウザでは、ユーザー操作の中で一度音声合成を動かしておくと、
-    // その後の読み上げが無音になりにくい。PCでも同じ手順を安全に共通化する。
-    try {
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel()
-        const unlock = new SpeechSynthesisUtterance(' ')
-        unlock.volume = 0
-        window.speechSynthesis.speak(unlock)
-      }
-    } catch {
-      /* ignore */
-    }
+    messageSpeaker.current.cancel()
+    setSpeakingMessageId(null)
+    unlockAiAudio()
 
     setAssistant(nextAssistant)
     setSpeakingMessageId(null)
-    callAssistantRef.current = nextAssistant
     // 電話に出たときの第一声を履歴の先頭に入れておき、AIも「自分は挨拶済み」だと分かるようにする
-    callHistoryRef.current = [{ id: crypto.randomUUID(), role: 'assistant', content: greetingOf(nextAssistant) }]
-    setCallOpen(true)
+    const history: Message[] = [{ id: crypto.randomUUID(), role: 'assistant', content: greetingOf(nextAssistant) }]
+    const callAsk = (text: string, signal: AbortSignal) => askForAssistantCall(nextAssistant, history, text, signal)
+    callSession.start(close => (
+      <AssistantCall assistant={nextAssistant} avatars={avatars} onClose={close} onAsk={callAsk} />
+    ))
     setIsSidebarOpen(false)
   }
 
@@ -7610,9 +7433,9 @@ export default function ChatPage() {
       className={`vpop-root fixed left-0 right-0 w-full text-[#333a42] dark:text-[#e4e7ea] overflow-hidden flex z-40 ${
         isKeyboardOpen
           ? 'top-0 bottom-auto'
-          : 'inset-0 top-0 md:top-16 bottom-[60px] md:bottom-0'
+          : 'top-0 md:top-16 bottom-[var(--lime-bottom-nav-height,calc(4rem+env(safe-area-inset-bottom,0px)))] md:bottom-0'
       }`}
-      style={isKeyboardOpen && viewportHeight ? { height: `${viewportHeight}px`, bottom: 'auto' } : undefined}
+      style={{ paddingTop: 'env(safe-area-inset-top, 0px)', ...(isKeyboardOpen && viewportHeight ? { height: `${viewportHeight}px`, bottom: 'auto' } : {}) }}
     >
       <style>{VPOP_STYLES}</style>
       <style>{CHAT_EXT_STYLES}</style>
@@ -7838,6 +7661,7 @@ export default function ChatPage() {
           
           {!isSidebarOpen && (
             <button
+              aria-label="チャットメニューを開く"
               onClick={() => setIsSidebarOpen(true)}
               className="p-2 md:p-2.5 mr-1 md:mr-2 rounded-2xl hover:bg-[#e2e6ea]/55 dark:hover:bg-[#1c2128] text-[#69707a] dark:text-[#a8b0ba] hover:text-[#333a42] dark:hover:text-[#e4e7ea] transition"
             >
@@ -7936,7 +7760,6 @@ export default function ChatPage() {
           </div>
 
           <div className="flex-1 min-w-0" />
-
           {/* ヘッダー右側: エクスポート / ボイスモード / プレビューパネル */}
           {view === 'chat' && messages.length > 0 && (
             <button
@@ -8464,15 +8287,7 @@ export default function ChatPage() {
         </div>
       )}
 
-      {/* アシスタント専用の通話モード (PC / モバイル対応。画面全体を覆うため body 直下に描画) */}
-      {callOpen && assistant && (
-        <AssistantCall
-          assistant={assistant}
-          avatars={avatars}
-          onClose={() => setCallOpen(false)}
-          onAsk={askForAssistantCall}
-        />
-      )}
+
     </div>
   )
 }

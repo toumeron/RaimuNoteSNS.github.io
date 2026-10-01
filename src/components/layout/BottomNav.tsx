@@ -255,7 +255,7 @@ export function BottomNav() {
       window.removeEventListener('orientationchange', updateBottomNavHeight);
       document.documentElement.style.removeProperty('--lime-bottom-nav-height');
     };
-  }, [mounted, location.pathname, showPostCommentForm]);
+  }, [mounted, location.pathname, showPostCommentForm, isKeyboardOpen]);
 
   if (!user) return null;
 

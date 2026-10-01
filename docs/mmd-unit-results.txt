@@ -1,0 +1,14 @@
+
+> vite_react_shadcn_ts@0.0.0 test
+> vitest run --reporter=dot
+
+
+ RUN  v3.2.7 /Users/tamagawa/Downloads/limeSNS
+
+·······················································
+
+ Test Files  5 passed (5)
+      Tests  55 passed (55)
+   Start at  08:50:23
+   Duration  553ms (transform 101ms, setup 224ms, collect 141ms, tests 45ms, environment 348ms, prepare 325ms)
+

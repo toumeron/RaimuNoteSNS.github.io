@@ -40,6 +40,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
+    let alive = true;
+    let profileUserId: string | null = null;
+    let profileTimer: ReturnType<typeof setTimeout> | undefined;
     /**
      * DBから詳細プロフィールを取得する関数
      * select('*')を避け、必要なカラムのみを指定することでタイムアウトを抑制します。
@@ -53,7 +56,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           .eq('id', supabaseUser.id)
           .single();
 
-        if (!error && profile) {
+        if (alive && profileUserId === supabaseUser.id && !error && profile) {
           setUser(current => {
             // 非同期処理中にユーザーがログアウト・切り替わりをしていないか確認
             if (!current || current.id !== supabaseUser.id) return current;
@@ -75,84 +78,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
-    /**
-     * 1. 初回マウント時に現在のセッションを直接確認
-     * これにより、リフレッシュ直後に「未ログイン」と誤判定されるのを防ぎます。
-     */
-    supabase.auth.getSession().then(({ data: { session: initialSession } }) => {
-      if (initialSession) {
-        setSession(initialSession);
-        const meta = initialSession.user.user_metadata;
-        const emailName = initialSession.user.email?.split('@')[0] ?? 'user';
-
-        // まずはメタデータで仮のユーザー情報を構築
-        setUser({
-          ...initialSession.user,
-          username: meta?.username ?? emailName,
-          displayName: meta?.display_name ?? meta?.displayName ?? emailName,
-          avatarUrl: meta?.avatar_url ?? meta?.avatarUrl ?? '',
-          emojiEffect: '', // 初期値
-          bot_enabled: false, // 初期値
-          bot_prompt: '',     // 初期値
-        });
-        
-        // 詳細をDBに獲りに行く
-        fetchProfile(initialSession.user);
-      }
+    // Auth callbacks run while Supabase holds its session lock. Schedule DB work
+    // after the callback returns; resubscribing on every user/loading update
+    // causes repeated INITIAL_SESSION events and lock contention.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      if (!alive) return;
+      setSession(newSession);
       setLoading(false);
-    });
-
-    /**
-     * 2. 認証状態の変化を監視
-     */
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, newSession) => {
-        setSession(newSession);
-
-        // ログアウト時
-        if (!newSession?.user) {
-          setUser(null);
-          setLoading(false);
-          return;
-        }
-
-        const supabaseUser = newSession.user;
-
-        // 【最重要：タイムアウト・無限ループ対策】
-        // すでにこのIDのユーザーデータを持っており、プロフィール取得済みなら
-        // これ以上DB（profilesテーブル）へリクエストを飛ばさない。
-        if (user?.id === supabaseUser.id && user.username) {
-          setLoading(false);
-          return;
-        }
-
-        const meta = supabaseUser.user_metadata;
-        const emailName = supabaseUser.email?.split('@')[0] ?? 'user';
-
-        // DB取得を待まわずに、まずメタデータで画面を表示させる
-        setUser({
-          ...supabaseUser,
-          username: meta?.username ?? emailName,
-          displayName: meta?.display_name ?? meta?.displayName ?? emailName,
-          avatarUrl: meta?.avatar_url ?? meta?.avatarUrl ?? '',
-          bio: '',
-          coverUrl: '',
-          emojiEffect: '',
-          bot_enabled: false, // 初期値
-          bot_prompt: '',     // 初期値
-        });
-
-        if (loading) setLoading(false);
-
-        // 裏側で最新のプロフィールを取得
-        fetchProfile(supabaseUser);
+      const supabaseUser = newSession?.user;
+      if (!supabaseUser) {
+        profileUserId = null;
+        clearTimeout(profileTimer);
+        setUser(null);
+        return;
       }
-    );
-
+      const meta = supabaseUser.user_metadata;
+      const emailName = supabaseUser.email?.split('@')[0] ?? 'user';
+      setUser(current => current?.id === supabaseUser.id ? { ...current, ...supabaseUser } : {
+        ...supabaseUser,
+        username: meta?.username ?? emailName,
+        displayName: meta?.display_name ?? meta?.displayName ?? emailName,
+        avatarUrl: meta?.avatar_url ?? meta?.avatarUrl ?? '',
+        bio: '', coverUrl: '', emojiEffect: '', bot_enabled: false, bot_prompt: '',
+      });
+      if (profileUserId !== supabaseUser.id) {
+        profileUserId = supabaseUser.id;
+        clearTimeout(profileTimer);
+        profileTimer = setTimeout(() => { if (alive) void fetchProfile(supabaseUser); }, 0);
+      }
+    });
     return () => {
+      alive = false;
+      clearTimeout(profileTimer);
       subscription.unsubscribe();
     };
-  }, [user?.id, loading]);
+  }, []);
 
   return (
     <AuthContext.Provider value={{ user, session, loading, logout }}>

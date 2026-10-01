@@ -900,7 +900,9 @@ function ensureRootShiftWrappers(
 function useMobileDrawerMotion(
   isOpen: boolean,
   onOpenChange: (open: boolean) => void,
-  isFeedTimeline: boolean,
+  // 画面端以外(本文のどこか)からの右スワイプでも開いてよいか。
+  // ホームの「最新」タブ以外では、左右スワイプはタブ切り替えに使うので false にする。
+  openFromBody: boolean,
 ) {
   const rootRef = useRef<HTMLElement | null>(null);
   // 「動かす」ラッパーと「角丸にクリップする」ラッパーへの参照。
@@ -913,6 +915,8 @@ function useMobileDrawerMotion(
     startShift: 0,
     horizontal: false,
     startedAtEdge: false,
+    // フリック速度の判定用。
+    startedAtTime: 0,
   });
   // ドラッグ開始時点のスクロール位置。ドラッグでサイドバーを開いた場合でも
   // 閉じたときに元の位置へ戻せるよう保持しておく。
@@ -1175,13 +1179,25 @@ function useMobileDrawerMotion(
         startShift: 0,
         horizontal: false,
         startedAtEdge: false,
+        startedAtTime: 0,
       };
     };
 
-    // 「画面端」とみなす範囲。この範囲から始めた場合は、従来通り
-    // 少しの移動量で反応する軽いジェスチャーとして扱う(誤操作の心配が
-    // 少ない代わりに、素早く反応してほしい場所)。
-    const EDGE_ZONE = 32;
+    // 「画面端」とみなす範囲。従来の32pxは狭くて掴みにくかったため少し広げた。
+    // この範囲から始めた場合は、少しの移動量で反応する軽いジェスチャーとして扱う。
+    const EDGE_ZONE = 40;
+    // タップとみなす指のブレ許容量(px)。
+    const TAP_SLOP = 10;
+
+    // ドロワー操作の開始をそもそも許可しない要素。
+    // 以前は button / a も全部除外していたため、
+    //  - 開いているサイドバーは項目(button)だらけで、ドラッグして閉じられない
+    //  - 投稿カード(リンク/ボタン)の上から始めると開けない
+    // という問題があった。button/a は「横に動いて方向が確定するまで」は何も奪わないので、
+    // 開始を許可して問題ない(縦スクロール・タップ・クリックはそのまま通る)。
+    // BottomNavはbody直下のportalなので、ここでtouchmoveを奪わない。
+    const BLOCKED_START_SELECTOR =
+      'input, textarea, select, [role="slider"], nav[data-lime-bottom-nav-root="true"]';
 
     // 対象要素(またはその祖先)が横スクロール可能なコンテナかどうかを調べる。
     // 画像ギャラリーなど、要素自体が横スワイプを必要とするUIの内部では、
@@ -1204,48 +1220,36 @@ function useMobileDrawerMotion(
     };
 
     const handleTouchStart = (event: TouchEvent) => {
-      if (!isMobile() || event.touches.length === 0) return;
+      if (!isMobile()) return;
 
-      // ボタン・リンク・入力系の操作はDrawerジェスチャーより優先する。
-      // 特にBottomNavはbody直下のportalなので、ここでtouchmoveを奪わない。
-      const target = event.target;
-      if (
-        target instanceof Element &&
-        target.closest(
-          'button, a, input, textarea, select, option, [role="button"], [data-radix-collection-item]'
-        )
-      ) {
+      if (event.touches.length !== 1) {
         resetGesture();
         return;
       }
 
-      // 横スクロールするギャラリー等の内部からは、ドロワー用のジェスチャーとして奪わない。
-      if (isInsideHorizontalScroller(target)) {
+      const target = event.target;
+      if (target instanceof Element && target.closest(BLOCKED_START_SELECTOR)) {
+        resetGesture();
+        return;
+      }
+
+      // 開いている間は、サイドバー内・右側の本文(=オーバーレイ)のどこからでも
+      // 閉じるドラッグ/タップを受け付ける。(以前は clientX <= width の範囲だけで、
+      // 本文側から左へスワイプして閉じる自然な操作が一切効かなかった)
+      // 閉じている間だけ、横スクロールUI(画像ギャラリー等)の内部からは開始しない。
+      if (!isOpen && isInsideHorizontalScroller(target)) {
         resetGesture();
         return;
       }
 
       const touch = event.touches[0];
       const width = getDrawerWidth();
-
-      // タイムラインでは、Twitter/X風の左右スワイプをタブ切り替えに使う。
-      // 画面端からのスワイプだけは引き続きサイドバーを開く操作として許可する。
       const startedAtEdge = touch.clientX <= EDGE_ZONE;
-      if (isFeedTimeline && !startedAtEdge && !isOpen) {
-        resetGesture();
-        return;
-      }
 
-      // スワイプで開ける範囲は画面全体に広げる。ただしそれだけだと、縦スクロール中
-      // など他の操作中に誤って開いてしまいやすくなるため、開始位置が画面端
-      // (EDGE_ZONE)かどうかを記録しておき、touchmove/touchend側の判定基準
-      // (閾値)をそれぞれで変える(端は軽く、それ以外は厳しめに)。
-      const canOpenFromAnywhere = !isOpen;
-      // 開いている間は、サイドバー内のどこ(ボタン等を除く)からドラッグを始めても
-      // 閉じられるようにする(右端の細い帯だけに限定しない)。
-      const canCloseFromMain = isOpen && touch.clientX <= width;
-
-      if (!canOpenFromAnywhere && !canCloseFromMain) {
+      // 閉じているとき:画面端からは常に開始可。
+      // 本文の途中からは openFromBody が true のページ(ホームの「最新」タブ、
+      // およびタブスワイプを使わないページ)だけ開始可。
+      if (!isOpen && !startedAtEdge && !openFromBody) {
         resetGesture();
         return;
       }
@@ -1257,6 +1261,7 @@ function useMobileDrawerMotion(
         startShift: isOpen ? width : 0,
         horizontal: false,
         startedAtEdge,
+        startedAtTime: Date.now(),
       };
       if (moveWrapperRef.current) {
         moveWrapperRef.current.style.transition = 'none';
@@ -1272,20 +1277,13 @@ function useMobileDrawerMotion(
       const dy = touch.clientY - gesture.startedAtY;
 
       if (!gesture.horizontal) {
-        // 方向を確定させるまでの「遊び」。小さすぎると指の僅かなブレで
-        // 縦/横を誤判定しやすく、その誤判定のたびに(以前は)320msの
-        // アニメーション付きで巻き戻していたため「ワンテンポ遅れる」
-        // 体感になっていた。閾値を単純な絶対値比較にし、誤判定時は
-        // 何もアニメーションさせずに諦めるだけにする。
-        //
-        // 画面端(またはサイドバーを閉じる操作)から始めた場合は従来通り
-        // 軽い動きで反応させる。それ以外(画面中央寄りなど)から始めた
-        // 「開く」ジェスチャーは、スワイプ範囲を画面全体に広げたことで
-        // 縦スクロール等との誤操作が増えやすいため、より大きく・より
-        // 横方向がはっきりした動きだけをドロワー操作として採用する。
+        // 方向を確定させるまでの「遊び」。
+        // 画面端(またはサイドバーを閉じる操作)から始めた場合は軽い動きで反応させる。
+        // 本文から開く場合は縦スクロールとの誤判定を避けるため少しだけ厳しくするが、
+        // 以前(18px / 縦横比2.2)ほど厳しくはしない。
         const isLenient = gesture.startedAtEdge || isOpen;
-        const DIRECTION_LOCK_THRESHOLD = isLenient ? 6 : 18;
-        const HORIZONTAL_DOMINANCE_RATIO = isLenient ? 1 : 2.2;
+        const DIRECTION_LOCK_THRESHOLD = isLenient ? 6 : 12;
+        const HORIZONTAL_DOMINANCE_RATIO = isLenient ? 1 : 1.6;
 
         if (Math.abs(dx) < DIRECTION_LOCK_THRESHOLD && Math.abs(dy) < DIRECTION_LOCK_THRESHOLD) {
           return;
@@ -1296,6 +1294,13 @@ function useMobileDrawerMotion(
           // この時点ではまだroot側の見た目を一切変更していないので、
           // 巻き戻すアニメーションは不要(通常の縦スクロールとして
           // 素直にブラウザへ委ねる)。
+          resetGesture();
+          return;
+        }
+
+        // 閉じている状態での「左スワイプ」は開く操作ではない。
+        // (タブ切り替えや他のUIに任せ、誤ってドロワーが反応しないようにする)
+        if (!isOpen && dx < 0) {
           resetGesture();
           return;
         }
@@ -1323,25 +1328,42 @@ function useMobileDrawerMotion(
       const touch = event.changedTouches[0];
       const width = getDrawerWidth();
       const deltaX = touch.clientX - gesture.startedAtX;
+      const deltaY = touch.clientY - gesture.startedAtY;
+      const elapsed = Math.max(1, Date.now() - gesture.startedAtTime);
+      const startX = gesture.startedAtX;
+      const startedAtEdge = gesture.startedAtEdge;
 
       cancelScheduledVisualUpdate();
 
+      // 横ドラッグにならなかった場合
       if (!gesture.horizontal) {
+        const wasTap = Math.abs(deltaX) <= TAP_SLOP && Math.abs(deltaY) <= TAP_SLOP;
         resetGesture();
+
+        // 開いている状態で、右側の本文(サイドバーの外)をタップしたら閉じる。
+        if (isOpen && wasTap && startX > width) {
+          onOpenChange(false);
+          return;
+        }
+
         setRootVisual(isOpen ? width : 0, true);
         return;
       }
 
       const currentShift = Math.max(0, Math.min(width, gesture.startShift + deltaX));
+      // px/ms。負なら左向き、正なら右向き。
+      const velocity = deltaX / elapsed;
 
-      // 画面中央寄りから始めた「開く」ジェスチャーは、端から始めた場合より
-      // 少し厳しめの確定条件にして、誤操作による意図しない全開を防ぐ。
-      const openRatioThreshold = gesture.startedAtEdge ? 0.32 : 0.45;
-      const openFlickThreshold = gesture.startedAtEdge ? 34 : 60;
-
-      const nextOpen = isOpen
-        ? currentShift >= width * 0.55 && deltaX > -34
-        : currentShift >= width * openRatioThreshold || deltaX > openFlickThreshold;
+      let nextOpen: boolean;
+      if (isOpen) {
+        // 閉じる:ある程度左へ動かした、素早く左へはじいた、または半分以上戻した。
+        // (以前は「deltaX > -34」という逆向きの条件が入っていて、閉じにくかった)
+        nextOpen = !(deltaX < -40 || velocity < -0.4 || currentShift < width * 0.6);
+      } else {
+        // 開く:一定以上引き出した、または素早く右へはじいた。
+        const openRatio = startedAtEdge ? 0.3 : 0.38;
+        nextOpen = currentShift >= width * openRatio || (deltaX > 40 && velocity > 0.45);
+      }
 
       resetGesture();
       setRootVisual(nextOpen ? width : 0, true);
@@ -1366,7 +1388,7 @@ function useMobileDrawerMotion(
       document.removeEventListener('touchend', handleTouchEnd, true);
       document.removeEventListener('touchcancel', handleTouchCancel, true);
     };
-  }, [isOpen, onOpenChange, isFeedTimeline]);
+  }, [isOpen, onOpenChange, openFromBody]);
 }
 
 export const Header = () => {
@@ -1541,7 +1563,14 @@ export const Header = () => {
     };
   }, []);
 
-  useMobileDrawerMotion(isMobileSidebarOpen, setIsMobileSidebarOpen, isHomeTimeline);
+  useMobileDrawerMotion(
+    isMobileSidebarOpen,
+    setIsMobileSidebarOpen,
+    // ホーム以外のページ、またはホームの「最新」タブ(これ以上右に戻れない)では
+    // 本文からの右スワイプでも開ける。「フォロー中/トレンド」では右スワイプは
+    // 前のタブへ戻る操作に使うので、画面端からのみ開く。
+    !isHomeTimeline || activeFeedTab === 'all',
+  );
   useMobileFeedTabSwipe(
     isHomeTimeline,
     isMobileSidebarOpen,
@@ -2427,65 +2456,82 @@ export const Header = () => {
       : 'text-zinc-900 dark:text-white';
 
     return createPortal(
-      <aside
-        aria-hidden={!isMobileSidebarOpen}
-        data-lime-mobile-sidebar="true"
-        className={cn(
-          // サイドバー自体の幅を従来より広く確保する(全画面にはしない)。
-          // 角丸は本画面側(root要素をtransformを持たないラッパーで包み、
-          // ラッパーにborder-radius+overflow:hiddenを付与)に付けるものなので、
-          // ここ(サイドバー本体)には付けない。
-          'fixed inset-y-0 left-0 z-[100] flex w-[clamp(300px,78vw,420px)] flex-col border-r sm:hidden',
-          sidebarDarkClasses,
-          isMobileSidebarOpen
-            ? 'visible pointer-events-auto'
-            : 'invisible pointer-events-none'
+      <>
+        {/* サイドバーが開いている間だけ、右側に見えている本文の上に透明なオーバーレイを置く。
+            - 本文タップでサイドバーを閉じられる。
+            - 本文側のリンク/ボタンを誤タップして意図しない遷移をするのを防ぐ。
+            - 本文側から左へドラッグして閉じる操作も、このオーバーレイ上で受け付ける
+              (ジェスチャー処理は useMobileDrawerMotion が document レベルで担当)。
+            左端はサイドバーの幅(aside の width と同じ clamp)に合わせている。 */}
+        {isMobileSidebarOpen && (
+          <div
+            aria-hidden="true"
+            data-lime-mobile-sidebar-overlay="true"
+            onClick={() => setIsMobileSidebarOpen(false)}
+            className="fixed inset-y-0 right-0 z-[99] sm:hidden"
+            style={{ left: 'clamp(300px, 78vw, 420px)', touchAction: 'none' }}
+          />
         )}
-        style={{ visibility: isMobileSidebarOpen ? 'visible' : 'hidden' }}
-      >
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <div className="shrink-0 px-[clamp(24px,8vw,68px)] pt-[max(18px,env(safe-area-inset-top))]">
-            <div className="flex items-start gap-4">
-              <Avatar className="h-12 w-12 shrink-0 border-0">
-                <AvatarImage src={user.avatarUrl} alt={user.displayName} />
-                <AvatarFallback>{user.displayName?.slice(0, 1)}</AvatarFallback>
-              </Avatar>
-              <div className="min-w-0 pt-0.5">
-                <div className={cn("truncate text-[18px] font-extrabold leading-tight", sidebarIconText)}>
-                  {user.displayName}
-                </div>
-                <div className={cn("truncate text-[15px] font-medium leading-tight", sidebarMutedText)}>
-                  @{user.username}
+        <aside
+          aria-hidden={!isMobileSidebarOpen}
+          data-lime-mobile-sidebar="true"
+          className={cn(
+            // サイドバー自体の幅を従来より広く確保する(全画面にはしない)。
+            // 角丸は本画面側(root要素をtransformを持たないラッパーで包み、
+            // ラッパーにborder-radius+overflow:hiddenを付与)に付けるものなので、
+            // ここ(サイドバー本体)には付けない。
+            'fixed inset-y-0 left-0 z-[100] flex w-[clamp(300px,78vw,420px)] flex-col border-r sm:hidden',
+            sidebarDarkClasses,
+            isMobileSidebarOpen
+              ? 'visible pointer-events-auto'
+              : 'invisible pointer-events-none'
+          )}
+          style={{ visibility: isMobileSidebarOpen ? 'visible' : 'hidden' }}
+        >
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div className="shrink-0 px-[clamp(24px,8vw,68px)] pt-[max(18px,env(safe-area-inset-top))]">
+              <div className="flex items-start gap-4">
+                <Avatar className="h-12 w-12 shrink-0 border-0">
+                  <AvatarImage src={user.avatarUrl} alt={user.displayName} />
+                  <AvatarFallback>{user.displayName?.slice(0, 1)}</AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 pt-0.5">
+                  <div className={cn("truncate text-[18px] font-extrabold leading-tight", sidebarIconText)}>
+                    {user.displayName}
+                  </div>
+                  <div className={cn("truncate text-[15px] font-medium leading-tight", sidebarMutedText)}>
+                    @{user.username}
+                  </div>
                 </div>
               </div>
             </div>
+
+            <nav className="min-h-0 flex-1 overflow-y-auto px-[clamp(24px,8vw,68px)] pb-4 pt-7 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <div className="space-y-1">
+                {mobileSidebarItems.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <button
+                      key={item.label}
+                      type="button"
+                      onClick={item.onClick}
+                      className={cn("flex w-full items-center gap-6 rounded-xl py-3 text-left transition-colors", sidebarHover)}
+                    >
+                      <Icon className={cn("h-6 w-6 shrink-0 stroke-[2]", sidebarIconText)} />
+                      <span className={cn("whitespace-nowrap text-[18px] font-bold leading-tight", sidebarIconText)}>
+                        {item.label}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className={cn("my-6 border-t", useTimelineChromeDesign ? (isTimelineDark ? "border-white/[0.08]" : "border-black/[0.08]") : "border-black/[0.08] dark:border-white/[0.08]")} />
+
+            </nav>
           </div>
-
-          <nav className="min-h-0 flex-1 overflow-y-auto px-[clamp(24px,8vw,68px)] pb-4 pt-7 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            <div className="space-y-1">
-              {mobileSidebarItems.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <button
-                    key={item.label}
-                    type="button"
-                    onClick={item.onClick}
-                    className={cn("flex w-full items-center gap-6 rounded-xl py-3 text-left transition-colors", sidebarHover)}
-                  >
-                    <Icon className={cn("h-6 w-6 shrink-0 stroke-[2]", sidebarIconText)} />
-                    <span className={cn("whitespace-nowrap text-[18px] font-bold leading-tight", sidebarIconText)}>
-                      {item.label}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className={cn("my-6 border-t", useTimelineChromeDesign ? (isTimelineDark ? "border-white/[0.08]" : "border-black/[0.08]") : "border-black/[0.08] dark:border-white/[0.08]")} />
-
-          </nav>
-        </div>
-      </aside>,
+        </aside>
+      </>,
       document.body
     );
   };

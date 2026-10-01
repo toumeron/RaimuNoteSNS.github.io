@@ -417,3 +417,13 @@ entrypoint = "./functions/agora-token/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/agora-token/*.html" ]
+
+[functions.transcribe-call]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/transcribe-call/index.ts"
+
+[functions.synthesize-speech]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/synthesize-speech/index.ts"

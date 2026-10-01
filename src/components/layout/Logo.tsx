@@ -136,7 +136,8 @@ export function Logo({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(() => {
-      fetchLimeProStatus();
+      // Release the auth callback lock before making another Supabase request.
+      window.setTimeout(() => { if (mountedRef.current) void fetchLimeProStatus(); }, 0);
     });
 
     return () => {

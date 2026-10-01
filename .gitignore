@@ -27,3 +27,10 @@ dist-ssr
 .env.local
 node_modules
 dist
+
+# Browser regression output
+test-results/
+playwright-report/
+
+# Downloaded MMD validation assets (not redistributed)
+tests/avatar/local-models/
