@@ -1429,6 +1429,41 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   });
   const isHomeTimeline = isHomeTimelinePath(location.pathname);
 
+  // デスクトップのサイドバーが「展開表示(文字ラベル付き)」か「縮小表示(アイコンのみ)」かを
+  // 実際の幅で判定し、aside に data-lime-sidebar-expanded を付ける。
+  // 整列用のCSSは展開表示のときだけ効かせ、縮小表示は既存のスタイルのままにする。
+  const desktopAsideRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!desktopLayout || !desktopSidebarContainer || typeof window === 'undefined') return;
+
+    const update = () => {
+      const aside = desktopAsideRef.current;
+      if (!aside) return;
+      const asideWidth = aside.getBoundingClientRect().width || Infinity;
+      const containerWidth = desktopSidebarContainer.getBoundingClientRect().width || Infinity;
+      aside.setAttribute(
+        'data-lime-sidebar-expanded',
+        Math.min(asideWidth, containerWidth) >= 240 ? 'true' : 'false'
+      );
+    };
+
+    update();
+
+    let observer: ResizeObserver | null = null;
+    if ('ResizeObserver' in window) {
+      observer = new ResizeObserver(update);
+      observer.observe(desktopSidebarContainer);
+      if (desktopAsideRef.current) observer.observe(desktopAsideRef.current);
+    }
+    window.addEventListener('resize', update);
+
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', update);
+    };
+  }, [desktopLayout, desktopSidebarContainer, user]);
+
   // documentの高さを一時的に固定/解除するためのヘルパー。
   // ロック中に別のロックが開始された場合、古い方の解除が新しい方の固定値を
   // 誤って巻き戻さないよう、バージョン番号で「自分が最後に張ったロックか」を確認する。
@@ -2488,6 +2523,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
           />
         )}
         <aside
+          ref={desktopAsideRef}
           aria-hidden={desktopLayout ? false : !isMobileSidebarOpen}
           data-lime-desktop-sidebar={desktopLayout || undefined}
           data-lime-mobile-sidebar="true"
@@ -2537,17 +2573,17 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
                       aria-label={desktopLayout ? item.label : undefined}
                       title={desktopLayout ? item.label : undefined}
                       aria-current={isCurrent ? 'page' : undefined}
-                      data-lime-sidebar-item={desktopLayout || undefined}
+                      data-lime-sidebar-item={desktopLayout ? true : undefined}
                       type="button"
                       onClick={item.onClick}
                       className={cn("flex w-full items-center gap-6 rounded-xl py-3 text-left transition-colors", sidebarHover)}
                     >
                       <Icon
-                        data-lime-sidebar-item-icon={desktopLayout || undefined}
+                        data-lime-sidebar-item-icon={desktopLayout ? true : undefined}
                         className={cn("h-6 w-6 shrink-0 stroke-[2]", sidebarIconText)}
                       />
                       <span
-                        data-lime-sidebar-item-label={desktopLayout || undefined}
+                        data-lime-sidebar-item-label={desktopLayout ? true : undefined}
                         className={cn("whitespace-nowrap text-[18px] font-bold leading-tight", sidebarIconText)}
                       >
                         {item.label}
@@ -2629,50 +2665,41 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
              left/width のCSS transitionで左右へ滑らかにスライドさせる。 */
 
           /*
-             デスクトップ版サイドバー専用の整列ルール(640px以上のみ)。
-             モバイル(639px以下)のドロワーには一切影響しない。
+             デスクトップ版サイドバー専用の整列ルール(640px以上・展開表示のときだけ)。
+             - 縮小表示(アイコンのみ)や、モバイル(639px以下)のドロワーには一切影響しない。
+             - 全ナビ項目（LimeAIを含む）に同じ data 属性を付け、同一の整列・文字ウェイト規則を適用する。
+             - ロゴ・nav・フッターの余白や左右位置は触らず、既存の左端のラインをそのまま使う。
              Twitter(X)のサイドバーと同じ考え方で「視線の流れ」を作る。
-             - 主役は2つだけ: ロゴ(上)と「ポストする」ボタン(下)。
-             - ナビ項目は全て同じ大きさ・同じ太さ(通常)・同じ色で静かに並べ、
-               現在地だけを太字で示す(色は変えない)。
-             - アイコンの線を少し細くし、文字と同じ重さに揃える。
+             - 主役はロゴ(上)と「ポストする」ボタン(下)だけ。
+             - ナビ項目は同じ大きさ・通常の太さ・同じ色で並べ、現在地だけ太字(色は変えない)。
              - 区切り線は出さず、ボタンは項目の直下に一定の余白で置く。
              - 下部のアカウント表示は小さく控えめにする。
-             - 項目・ボタン・アカウントの左端を24pxの縦ラインに揃える。
-             色(ロゴのグラデーション・ボタンのピンク)は既存のまま。
           */
           @media (min-width: 640px) {
-            [data-lime-desktop-sidebar] [data-lime-sidebar-logo] {
-              padding: 20px 24px 12px 24px !important;
-            }
-
-            [data-lime-desktop-sidebar] nav {
-              padding: 4px 12px 16px 12px !important;
-            }
-
-            [data-lime-desktop-sidebar] [data-lime-sidebar-divider] {
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='true'] [data-lime-sidebar-divider] {
               display: none !important;
             }
 
-            /* ナビ項目: 全て同じ見た目。ホバー時だけ文字幅にフィットした丸い背景が出る。 */
-            [data-lime-desktop-sidebar] [data-lime-sidebar-item] {
+            /* ナビ項目: アイコンの左端は既存のまま。ホバーの丸い背景だけを左右へ広げる。 */
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='true'] [data-lime-sidebar-item] {
               gap: 20px !important;
               width: fit-content !important;
-              max-width: 100% !important;
+              max-width: calc(100% + 12px) !important;
               min-height: 52px !important;
+              margin-left: -12px !important;
               padding: 0 24px 0 12px !important;
               border-radius: 9999px !important;
               box-sizing: border-box !important;
             }
 
-            [data-lime-desktop-sidebar] [data-lime-sidebar-item-icon] {
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='true'] [data-lime-sidebar-item-icon] {
               width: 24px !important;
               height: 24px !important;
               stroke-width: 1.75px !important;
               flex-shrink: 0 !important;
             }
 
-            [data-lime-desktop-sidebar] [data-lime-sidebar-item-label] {
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='true'] [data-lime-sidebar-item-label] {
               font-size: 19px !important;
               font-weight: 400 !important;
               line-height: 1.25 !important;
@@ -2680,53 +2707,53 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
             }
 
             /* 現在地: 太字にするだけ。色は他の項目と同じ(ピンクにしない)。 */
-            [data-lime-desktop-sidebar] [data-lime-sidebar-item][aria-current='page'],
-            [data-lime-desktop-sidebar] [data-lime-sidebar-item][aria-current='page'] [data-lime-sidebar-item-icon],
-            [data-lime-desktop-sidebar] [data-lime-sidebar-item][aria-current='page'] [data-lime-sidebar-item-label] {
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='true'] [data-lime-sidebar-item][aria-current='page'],
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='true'] [data-lime-sidebar-item][aria-current='page'] [data-lime-sidebar-item-icon],
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='true'] [data-lime-sidebar-item][aria-current='page'] [data-lime-sidebar-item-label] {
               color: hsl(var(--foreground)) !important;
             }
 
-            [data-lime-desktop-sidebar] [data-lime-sidebar-item][aria-current='page'] [data-lime-sidebar-item-icon] {
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='true'] [data-lime-sidebar-item][aria-current='page'] [data-lime-sidebar-item-icon] {
               stroke: currentColor !important;
               stroke-width: 2.25px !important;
             }
 
-            [data-lime-desktop-sidebar] [data-lime-sidebar-item][aria-current='page'] [data-lime-sidebar-item-label] {
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='true'] [data-lime-sidebar-item][aria-current='page'] [data-lime-sidebar-item-label] {
               font-weight: 700 !important;
             }
 
-            /* ポストするボタン: 項目の直下に置く唯一の強調要素。端は項目のアイコンの少し外側に揃える。 */
-            [data-lime-desktop-sidebar] [data-lime-sidebar-compose] {
+            /* ポストするボタン: 項目の直下に置く唯一の強調要素。左右はnavの内側いっぱい(アイコンと同じ左端)。 */
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='true'] [data-lime-sidebar-compose] {
               display: flex !important;
               align-items: center !important;
               justify-content: center !important;
               gap: 8px !important;
               flex-shrink: 0 !important;
               box-sizing: border-box !important;
-              width: calc(100% - 24px) !important;
+              width: 100% !important;
               height: 52px !important;
               min-height: 52px !important;
-              margin: 16px 12px 0 12px !important;
+              margin: 16px 0 0 0 !important;
               padding: 0 24px !important;
               font-size: 17px !important;
               font-weight: 700 !important;
               line-height: 1 !important;
             }
 
-            [data-lime-desktop-sidebar] [data-lime-sidebar-compose] svg {
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='true'] [data-lime-sidebar-compose] svg {
               width: 20px !important;
               height: 20px !important;
               flex-shrink: 0 !important;
             }
 
-            [data-lime-desktop-sidebar] [data-lime-sidebar-compose] span {
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='true'] [data-lime-sidebar-compose] span {
               font-size: 17px !important;
               font-weight: 700 !important;
               line-height: 1 !important;
             }
 
             /* 下部のアカウント表示: ナビ項目より小さく控えめに(名前・ID とも15px)。 */
-            [data-lime-desktop-sidebar] [data-lime-sidebar-footer] * {
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='true'] [data-lime-sidebar-footer] * {
               font-size: 15px !important;
               line-height: 1.3 !important;
             }
