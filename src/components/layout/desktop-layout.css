@@ -72,6 +72,14 @@
     display: block; position: absolute; right: -2px; bottom: -2px; width: 16px; height: 16px;
   }
 
+  .lime-app-shell [data-lime-desktop-sidebar] nav button[data-lime-sidebar-compose] {
+    display: flex; align-items: center; width: 100%; gap: 12px;
+    margin-top: 20px; padding: 12px 20px; justify-content: center;
+    border-radius: 9999px; background: hsl(var(--primary)) !important;
+    color: hsl(var(--primary-foreground)); font-weight: 700;
+  }
+  .lime-app-shell[data-lime-workspace] [data-lime-desktop-sidebar] nav button[data-lime-sidebar-compose] { padding: 0; }
+
   /* Reuse the mobile tab row; retain the original header controls. */
   .lime-desktop-column [data-lime-app-header] {
     position: sticky;

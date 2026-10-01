@@ -309,3 +309,30 @@ test('desktop profile cover starts at the top without hidden element spacing', a
     await expect.poll(async () => (await cover.boundingBox())!.y).toBe(0);
   }
 });
+
+
+test('desktop sidebar opens the existing App post overlay and submits a post', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.route('**/src/api/posts.ts*', route => route.fulfill({ contentType: 'application/javascript', body: `
+    export const createPost=async(args)=>{window.__submittedPost=args;return ${JSON.stringify(posts[0])}};
+    export const getFeed=async()=>[];export const getFollowingFeed=async()=>[];
+    export const getPostsByUser=async()=>[];export const getLikedPostsByUser=async()=>[];
+    export const searchPosts=async()=>[];export const getPostById=async()=>(${JSON.stringify(posts[0])});
+    export const toggleLike=async()=>({});export const toggleRepost=async()=>({});export const deletePost=async()=>{};export const getPostLikers=async()=>[];
+  ` }));
+  for (const path of ['search', 'chat', 'u/lime']) {
+    await page.goto(path);
+    await expect(page.locator('[data-lime-sidebar-compose]')).toBeVisible();
+    await page.getByRole('button', { name: 'ポストする', exact: true }).click();
+    const overlay = page.getByRole('dialog', { name: '新規ポスト' });
+    await expect(overlay).toBeVisible();
+    await overlay.locator('textarea').fill('サイドバーからの投稿');
+    await overlay.getByRole('button', { name: 'ポスト', exact: true }).click();
+    await expect(overlay).toBeHidden();
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __submittedPost?: { content: string } }).__submittedPost?.content)).toBe('サイドバーからの投稿');
+  }
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.goto('./');
+  await expect(page.locator('[data-lime-sidebar-compose]')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '新規投稿', exact: true })).toBeVisible();
+});

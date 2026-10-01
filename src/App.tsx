@@ -1,3 +1,4 @@
+import { PostOverlayContext } from '@/components/layout/PostOverlayContext';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent } from "react";
@@ -2611,7 +2612,7 @@ const PostOverlay = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-[2147483000] flex items-start justify-center bg-black/50 p-4 pt-16 sm:items-center sm:pt-4 overflow-y-auto">
+    <div role="dialog" aria-modal="true" aria-label="新規ポスト" className="fixed inset-0 z-[2147483000] flex items-start justify-center bg-black/50 p-4 pt-16 sm:items-center sm:pt-4 overflow-y-auto">
       <div 
         className="fixed inset-0" 
         onClick={onClose} 
@@ -2672,7 +2673,7 @@ const isMediaPage = lowerPath === "/media" || lowerPath.startsWith("/media/");
 const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage || isMediaPage || isPostDetailPage;
 
   return (
-    <>
+    <PostOverlayContext.Provider value={() => setPostModalOpen(true)}>
       <ScrollToTop />
       
       <AuthProvider>
@@ -2712,7 +2713,7 @@ const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage |
         />
 
       </AuthProvider>
-    </>
+    </PostOverlayContext.Provider>
   );
 };
 
