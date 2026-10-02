@@ -47,11 +47,17 @@ export type Post = {
 };
 
 export type Comment = {
+  clientName?: string;
   id: string;
   postId: string;
   userId: string;
   content: string;
   createdAt: string;
+  parentCommentId?: string | null;
+  imageUrls?: string[];
+  commentsCount?: number;
+  likesCount?: number;
+  likedByMe?: boolean;
   likes_count?: number; // DBのスキーマに合わせたlikes_count
 };
 

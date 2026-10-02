@@ -1,14 +1,16 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
-import { MoreHorizontal, Trash2, CalendarDays, X, Plus, MessageCircle } from 'lucide-react';
+import { MoreHorizontal, ChartBarBig, Trash2, CalendarDays, X, Plus, MessageCircle } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ReplyShare } from '@/components/post/ReplyShare';
 import { Commentlikebutton } from '@/components/post/Commentlikebutton';
 import { FollowButton } from '@/components/profile/FollowButton';
 import { useFollowStats } from '@/hooks/useProfile';
 import { useComments } from '@/hooks/useComments';
 import { getCurrentUserId } from '@/lib/currentUser';
-import { formatRelative } from '@/lib/format';
+import { formatDate, formatRelative } from '@/lib/format';
 import { supabase } from '@/lib/supabase';
 import { getYouTubeId } from '@/lib/utils';
 import { YouTubeEmbed } from '@/components/YouTubeEmbed';
@@ -20,6 +22,7 @@ import {
   HoverCardTrigger,
 } from '@/components/ui/hover-card';
 import dayjs from 'dayjs';
+import { commentThreadUrl } from '@/lib/commentThread';
 
 // ─── 型 ───────────────────────────────────────────────────────────────────────
 interface CommentAuthor {
@@ -33,6 +36,7 @@ interface CommentAuthor {
 }
 
 interface Comment {
+  clientName?: string;
   id: string;
   postId: string;
   userId: string;
@@ -40,6 +44,9 @@ interface Comment {
   createdAt: string;
   likesCount: number;
   likedByMe: boolean;
+  imageUrls?: string[];
+  parentCommentId?: string | null;
+  commentsCount?: number;
   author: CommentAuthor;
 }
 
@@ -106,19 +113,24 @@ const getChannelSuffix = () => {
 };
 
 // ─── CommentCard ──────────────────────────────────────────────────────────────
-function CommentCard({
+export function CommentCard({
   comment,
   currentUserId,
   mobileFlat,
+  thread = false,
+  detail = false,
 }: {
   comment: Comment;
   currentUserId: string | null;
   mobileFlat: boolean;
+  thread?: boolean;
+  detail?: boolean;
 }) {
   const navigate = useNavigate();
 
   const [showMenu, setShowMenu] = useState(false);
   const [deleted, setDeleted] = useState(false);
+  const [imageSize, setImageSize] = useState<{ url: string; width: number; height: number } | null>(null);
   const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
   const [failedUrls, setFailedUrls] = useState<string[]>([]);
   const [, setTick] = useState(0);
@@ -198,15 +210,10 @@ function CommentCard({
   }, [comment.id]);
 
   useEffect(() => {
-    if (selectedImageUrl || showPicker) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = 'unset';
-    }
-
-    return () => {
-      document.body.style.overflow = 'unset';
-    };
+    if (!selectedImageUrl && !showPicker) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = previous; };
   }, [selectedImageUrl, showPicker]);
 
   const fetchReactions = async () => {
@@ -462,13 +469,68 @@ function CommentCard({
 
   const spotifyUrls = comment.content.match(spotifyRegex) || [];
   const extractedImageUrls = comment.content.match(imageRegex) || [];
-  const allImageUrls = [...extractedImageUrls].slice(0, 4);
+  const allImageUrls = [...new Set([...(comment.imageUrls ?? []), ...extractedImageUrls])].slice(0, 4);
 
   let displayContent = comment.content;
   displayContent = displayContent.replace(/(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|embed\/|shorts\/)?([a-zA-Z0-9_-]{11})([^?\s\n]*)?(\S+)?/g, '');
   displayContent = displayContent.replace(imageRegex, '');
   displayContent = displayContent.replace(spotifyRegex, '');
   displayContent = displayContent.trim();
+
+  const useMobilePresentation = mobileFlat || isMobile;
+  const naturalSize = imageSize?.url === allImageUrls[0] ? imageSize : null;
+  const singleImageFrameStyle = useMemo<React.CSSProperties>(() => {
+    if (!naturalSize) {
+      return {
+        width: '100%',
+        maxWidth: '100%',
+      };
+    }
+
+    const naturalWidth = Math.max(1, naturalSize.width);
+    const naturalHeight = Math.max(1, naturalSize.height);
+    const ratio = naturalWidth / naturalHeight;
+
+    const maxTimelineImageHeight = useMobilePresentation ? 300 : 480;
+    const minimumReadableWidth = useMobilePresentation ? 88 : 110;
+    const heightLimitedWidth = Math.max(
+      minimumReadableWidth,
+      Math.round(maxTimelineImageHeight * ratio)
+    );
+    const shouldLimitByHeight = ratio < (useMobilePresentation ? 1.64 : 1.72);
+    const shouldAvoidUpscale = naturalWidth <= (useMobilePresentation ? 360 : 520);
+    const shouldNarrowUltraWide = ratio >= 2.35;
+
+    if (shouldLimitByHeight) {
+      const width = shouldAvoidUpscale
+        ? Math.min(naturalWidth, heightLimitedWidth)
+        : heightLimitedWidth;
+
+      return {
+        width: `min(100%, ${Math.max(minimumReadableWidth, width)}px)`,
+        maxWidth: '100%',
+      };
+    }
+
+    if (shouldAvoidUpscale) {
+      return {
+        width: `${naturalWidth}px`,
+        maxWidth: '100%',
+      };
+    }
+
+    if (shouldNarrowUltraWide) {
+      return {
+        width: useMobilePresentation ? '100%' : 'min(100%, 560px)',
+        maxWidth: '100%',
+      };
+    }
+
+    return {
+      width: '100%',
+      maxWidth: '100%',
+    };
+  }, [naturalSize, useMobilePresentation]);
 
   const renderContentWithLinks = (text: string) => {
     if (!text) return null;
@@ -554,7 +616,8 @@ function CommentCard({
     if (!confirm('コメントを削除しますか？')) return;
 
     try {
-      await supabase.from('comments').delete().eq('id', comment.id);
+      const { error } = await supabase.from('comments').delete().eq('id', comment.id);
+      if (error) throw error;
       setDeleted(true);
     } catch {
       alert('削除に失敗しました');
@@ -568,7 +631,7 @@ function CommentCard({
   };
 
   const handleCardClick = () => {
-    navigate(`/post/${comment.postId}`);
+    navigate(commentThreadUrl(comment.postId, comment.id));
   };
 
   const HoverStats = ({ userId }: { userId: string }) => {
@@ -809,6 +872,9 @@ function CommentCard({
       )}
 
       <article
+        data-lime-comment-card={comment.id}
+        data-lime-reply-detail={detail || undefined}
+        data-lime-thread-item={thread || undefined}
         onClick={handleCardClick}
         className={
           mobileFlat
@@ -818,19 +884,20 @@ function CommentCard({
             : 'rounded-3xl border border-border/60 bg-card p-5 shadow-soft transition hover:shadow-card-soft relative cursor-pointer'
         }
       >
-        {isMobile && (
+        {isMobile && !thread && (
           <div className="pointer-events-none absolute bottom-0 left-1/2 w-screen -translate-x-1/2 border-b border-border/60" />
         )}
 
-        <div className="flex items-start gap-3">
+        <div className={detail ? "grid grid-cols-[48px_minmax(0,1fr)] gap-x-3" : "flex items-start gap-3"}>
           <HoverCard openDelay={300}>
             <HoverCardTrigger asChild>
               <Link
                 to={`/u/${comment.author.username}`}
                 className="shrink-0"
+                data-lime-thread-avatar={thread || undefined}
                 onClick={(e) => e.stopPropagation()}
               >
-                <Avatar className={isMobile ? 'h-11 w-11 border-2 border-primary/30' : 'h-11 w-11 border-2 border-primary/30'}>
+                <Avatar className={detail ? 'h-12 w-12 border border-border/60 post-detail-mobile-avatar' : 'h-11 w-11 border-2 border-primary/30'}>
                   <AvatarImage src={comment.author.avatarUrl} alt={comment.author.displayName} />
                   <AvatarFallback>{comment.author.displayName.slice(0, 1)}</AvatarFallback>
                 </Avatar>
@@ -840,9 +907,9 @@ function CommentCard({
             <ProfileHoverContent />
           </HoverCard>
 
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-between mb-1">
-              <div className="flex items-center overflow-hidden w-full min-w-0">
+          <div className={detail ? "contents" : "min-w-0 flex-1"}>
+            <div className={detail ? "flex items-start justify-between mb-1" : "flex items-center justify-between mb-1"}>
+              <div className={detail ? "flex flex-wrap items-center w-full min-w-0" : "flex items-center overflow-hidden w-full min-w-0"}>
                 <HoverCard openDelay={300}>
                   <HoverCardTrigger asChild>
                     <Link
@@ -851,7 +918,7 @@ function CommentCard({
                       onClick={(e) => e.stopPropagation()}
                     >
                       <div className="flex items-center gap-0.5 min-w-0">
-                        <span className={isMobile ? 'truncate text-[16px]' : 'truncate text-base'}>
+                        <span className={detail && mobileFlat ? 'truncate post-detail-mobile-name' : 'truncate text-base'}>
                           {comment.author.displayName}
                         </span>
 
@@ -870,18 +937,18 @@ function CommentCard({
                   <ProfileHoverContent />
                 </HoverCard>
 
-                <span className={isMobile ? 'truncate text-[16px] text-muted-foreground ml-1 opacity-80 shrink' : 'truncate text-base text-muted-foreground ml-1 opacity-80 shrink'}>
+                <span className={detail ? `w-full truncate text-xs text-muted-foreground ${mobileFlat ? 'post-detail-mobile-username' : ''}` : 'truncate text-base text-muted-foreground ml-1 opacity-80 shrink'}>
                   @{comment.author.username}
                 </span>
 
-                <span className="text-muted-foreground mx-1 shrink-0">·</span>
+                {!detail && <span className="text-muted-foreground mx-1 shrink-0">·</span>}
 
-                <span className={isMobile ? 'text-[16px] text-muted-foreground whitespace-nowrap shrink-0' : 'text-sm text-muted-foreground whitespace-nowrap shrink-0'}>
+                {!detail && <span className={isMobile ? 'text-[16px] text-muted-foreground whitespace-nowrap shrink-0' : 'text-sm text-muted-foreground whitespace-nowrap shrink-0'}>
                   {formatRelative(comment.createdAt)}
-                </span>
+                </span>}
               </div>
 
-              {isMyComment && (
+              {(
                 <div className="relative ml-2 shrink-0">
                   <button
                     onClick={(e) => {
@@ -909,6 +976,8 @@ function CommentCard({
                         className="absolute right-0 mt-1 w-44 rounded-xl border border-border bg-card p-1 shadow-lg z-20 overflow-hidden animate-in fade-in zoom-in duration-100"
                         onClick={(e) => e.stopPropagation()}
                       >
+                        <button onClick={(event) => { event.stopPropagation(); navigate(`/post/${comment.postId}/activity?reply=${encodeURIComponent(comment.id)}`); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"><ChartBarBig className="h-4 w-4" />ポストアクティビティ</button>
+                        {isMyComment && (
                         <button
                           onClick={handleDelete}
                           className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-destructive hover:bg-destructive/10 transition-colors border-t border-border/50 mt-1"
@@ -916,6 +985,7 @@ function CommentCard({
                           <Trash2 className="h-4 w-4" />
                           削除
                         </button>
+                        )}
                       </div>
                     </>
                   )}
@@ -923,10 +993,10 @@ function CommentCard({
               )}
             </div>
 
-            <div>
-              <div onClick={(e) => e.stopPropagation()}>
+            <div className={detail ? "col-span-2 min-w-0" : undefined}>
+              <div>
                 {displayContent && (
-                  <p className={isMobile ? 'whitespace-pre-wrap break-words text-[16px] leading-normal text-foreground mt-1' : 'whitespace-pre-wrap break-words text-base leading-relaxed text-foreground mt-1'}>
+                  <p className={detail ? `mt-4 whitespace-pre-wrap break-words text-lg leading-relaxed text-foreground ${mobileFlat ? 'post-detail-mobile-content' : ''}` : isMobile ? 'whitespace-pre-wrap break-words text-[16px] leading-normal text-foreground mt-1' : 'whitespace-pre-wrap break-words text-base leading-relaxed text-foreground mt-1'}>
                     {renderContentWithMentions(displayContent)}
                   </p>
                 )}
@@ -956,7 +1026,13 @@ function CommentCard({
                 </div>
               )}
 
-              {allImageUrls.length > 0 && (
+              {allImageUrls.length === 1 && !failedUrls.includes(allImageUrls[0]) ? (
+                <div className="mt-3 flex max-w-full justify-start" onClick={(e) => e.stopPropagation()}>
+                  <button type="button" aria-label="画像を拡大表示" className="block max-w-full cursor-zoom-in overflow-hidden rounded-2xl border border-border/50 bg-black/[0.025] text-left shadow-none dark:bg-white/[0.035]" style={singleImageFrameStyle} onClick={(e) => handleImageClick(e, allImageUrls[0])}>
+                    <img src={allImageUrls[0]} alt="返信画像" className="block select-none" style={{ width: '100%', height: 'auto', objectFit: 'contain' }} draggable={false} loading="lazy" decoding="async" onLoad={(e) => { const image = e.currentTarget; if (image.naturalWidth && image.naturalHeight) setImageSize({ url: allImageUrls[0], width: image.naturalWidth, height: image.naturalHeight }); }} onError={() => setFailedUrls((prev) => prev.includes(allImageUrls[0]) ? prev : [...prev, allImageUrls[0]])} />
+                  </button>
+                </div>
+              ) : allImageUrls.length > 1 && (
                 <div
                   className="cursor-zoom-in"
                   onClick={(e) => {
@@ -982,7 +1058,7 @@ function CommentCard({
             </div>
 
             {reactions.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-1.5 relative" onClick={(e) => e.stopPropagation()}>
+              <div className={`${detail ? "col-span-2 " : ""}mt-3 flex flex-wrap gap-1.5 relative`} onClick={(e) => e.stopPropagation()}>
                 {reactions.map((g) => {
                   const hasMyReaction = currentUserId ? g.user_ids.includes(currentUserId) : false;
                   const isPopupOpen = activePopupEmoji === g.emoji;
@@ -1042,21 +1118,24 @@ function CommentCard({
               </div>
             )}
 
-            <div className={isMobile ? 'mt-2 flex items-center gap-1 text-muted-foreground relative h-8' : 'mt-3 flex items-center gap-1 text-muted-foreground relative h-9'}>
-              <div onClick={(e) => e.stopPropagation()} className="flex items-center h-full">
-                <Commentlikebutton
+            {detail && <p className={`col-span-2 mt-4 text-xs text-muted-foreground ${mobileFlat ? 'post-detail-mobile-meta' : ''}`} title={formatDate(comment.createdAt)}>{formatDate(comment.createdAt)} · {formatRelative(comment.createdAt)}{comment.clientName && <><span className="mx-1">·</span><span className="text-primary/80 font-medium">{comment.clientName}</span></>}</p>}
+            <div data-lime-comment-actions className={detail ? `col-span-2 mt-3 flex items-center gap-1 text-muted-foreground relative h-9 ${mobileFlat ? 'post-detail-mobile-action-row' : 'border-t border-border/60 pt-3'}` : isMobile ? 'mt-2 flex items-center gap-1 text-muted-foreground relative h-8' : 'mt-3 flex items-center gap-1 text-muted-foreground relative h-9'}>
+              <div onClick={(e) => e.stopPropagation()} className={detail && mobileFlat ? "flex items-center h-full post-detail-mobile-action-hit" : "flex items-center h-full"}>
+                <div className="inline-flex"><Commentlikebutton
                   commentId={comment.id}
                   liked={comment.likedByMe}
                   count={comment.likesCount}
-                />
+                /></div>
               </div>
 
               <Link
-                to={`/post/${comment.postId}`}
+                to={commentThreadUrl(comment.postId, comment.id)}
+                aria-label="この返信に返信する"
                 onClick={(e) => e.stopPropagation()}
-                className={isMobile ? 'inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full' : 'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full'}
+                className={`inline-flex items-center gap-1.5 rounded-full ${useMobilePresentation && !detail ? "px-2 text-[13px]" : "px-2.5 text-sm"} py-1 transition-colors hover:text-accent h-full ${detail && mobileFlat ? 'post-detail-mobile-reply-count' : ''}`}
               >
                 <MessageCircle className="h-5 w-5" />
+                <span className={`font-bold tabular-nums ${mobileFlat || isMobile ? "text-[15px]" : "text-sm"}`}>{formatDisplayCount(comment.commentsCount ?? 0)}</span>
               </Link>
 
               <div className="relative inline-flex items-center h-full" onClick={(e) => e.stopPropagation()}>
@@ -1064,11 +1143,11 @@ function CommentCard({
                   ref={buttonRef}
                   onClick={() => setShowPicker(!showPicker)}
                   className={
-                    isMobile
+                    !(detail && mobileFlat) && useMobilePresentation
                       ? `inline-flex items-center justify-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full origin-center ${
                           showPicker ? 'text-accent bg-accent/10' : 'text-muted-foreground'
                         }`
-                      : `inline-flex items-center justify-center p-1.5 rounded-full transition-colors hover:text-accent h-8 w-8 origin-center ${
+                      : `inline-flex items-center justify-center p-1.5 rounded-full transition-colors hover:text-accent h-8 w-8 origin-center ${detail && mobileFlat ? 'post-detail-mobile-plus-button' : ''} ${
                           showPicker ? 'text-accent bg-accent/10' : 'text-muted-foreground'
                         }`
                   }
@@ -1237,14 +1316,17 @@ function CommentCard({
                   </>
                 )}
               </div>
+              <ReplyShare comment={comment} currentUserId={currentUserId} className={detail && mobileFlat ? 'post-detail-mobile-share-button' : ''} />
             </div>
           </div>
         </div>
       </article>
 
-      {selectedImageUrl && (
+      {selectedImageUrl && typeof document !== 'undefined' && createPortal(
         <div
-          className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black/95 backdrop-blur-sm animate-in fade-in duration-200"
+          role="dialog"
+          aria-label="返信画像を拡大表示"
+          className="fixed inset-0 z-[2147483647] flex flex-col items-center justify-center bg-black/95 backdrop-blur-sm animate-in fade-in duration-200"
           onClick={() => setSelectedImageUrl(null)}
         >
           <button
@@ -1279,7 +1361,7 @@ function CommentCard({
               <button
                 onClick={() => {
                   setSelectedImageUrl(null);
-                  navigate(`/post/${comment.postId}`);
+                  navigate(commentThreadUrl(comment.postId, comment.id));
                 }}
                 className="inline-flex items-center gap-2 text-white/90 hover:text-white transition-colors"
               >
@@ -1287,7 +1369,7 @@ function CommentCard({
               </button>
             </div>
           </div>
-        </div>
+        </div>, document.body
       )}
     </>
   );
@@ -1297,9 +1379,11 @@ function CommentCard({
 export function CommentList({
   postId,
   mobileFlat = false,
+  parentCommentId = null,
 }: {
   postId: string;
   mobileFlat?: boolean;
+  parentCommentId?: string | null;
 }) {
   const { data, isLoading, isError } = useComments(postId);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -1342,7 +1426,8 @@ export function CommentList({
     );
   }
 
-  if (!data || data.length === 0) {
+  const directReplies = data?.filter(comment => (comment.parentCommentId ?? null) === parentCommentId) ?? [];
+  if (directReplies.length === 0) {
     return (
       <div className={mobileFlat
         ? 'comment-list-mobile-empty p-8 text-center text-muted-foreground'
@@ -1353,7 +1438,7 @@ export function CommentList({
     );
   }
 
-  const sortedComments = [...data].sort((a, b) => {
+  const sortedComments = [...directReplies].sort((a, b) => {
     return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
   });
 

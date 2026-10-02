@@ -1,7 +1,23 @@
+import { getClientName } from '@/lib/clientName';
 import type { CommentWithAuthor } from '@/types';
 import type { User } from '@/types';
 import { supabase } from '@/lib/supabase';
 import { getCurrentUserId } from '@/lib/currentUser';
+import { uploadCommentImages } from '@/lib/uploadCommentImages';
+
+export type CommentInput = { content: string; imageUrls?: string[]; parentCommentId?: string | null };
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function rowToComment(row: any): CommentWithAuthor {
+  return {
+    id: row.id, postId: row.post_id, userId: row.user_id,
+    content: row.content, createdAt: row.created_at,
+    parentCommentId: row.parent_comment_id ?? null,
+    clientName: row.client_name ?? undefined,
+    imageUrls: row.image_urls ?? [], likes_count: row.likes_count ?? 0,
+    author: rowToUser(row.profiles),
+  };
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function rowToUser(profile: any): User {
@@ -13,37 +29,42 @@ function rowToUser(profile: any): User {
     avatarUrl:   profile.avatar_url  ?? '',
     coverUrl:    profile.cover_url   ?? '',
     createdAt:   profile.created_at  ?? '',
+    isOfficial: profile.is_official ?? false,
   };
 }
 
 export async function getCommentsByPost(postId: string): Promise<CommentWithAuthor[]> {
-  const { data, error } = await supabase
-    .from('comments')
-    .select('*, profiles(*)')
-    .eq('post_id', postId)
-    .order('created_at', { ascending: true });
-
-  if (error) throw error;
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (data ?? []).map((row: any) => ({
-    id:        row.id,
-    postId:    row.post_id,
-    userId:    row.user_id,
-    content:   row.content,
-    createdAt: row.created_at,
-    author:    rowToUser(row.profiles),
-  }));
+  const comments: CommentWithAuthor[] = [];
+  let after: { createdAt: string; id: string } | undefined;
+  // PostgREST caps a response at 1000 rows. Continue by a stable key so deep
+  // threads are not truncated and live insertions cannot shift page offsets.
+  for (;;) {
+    let query = supabase.from('comments').select('*, profiles(*)').eq('post_id', postId)
+      .order('created_at', { ascending: true }).order('id', { ascending: true }).range(0, 999);
+    if (after) query = query.or(`created_at.gt.${after.createdAt},and(created_at.eq.${after.createdAt},id.gt.${after.id})`);
+    const { data, error } = await query;
+    if (error) throw error;
+    const rows = data ?? [];
+    comments.push(...rows.map(rowToComment));
+    if (rows.length < 1000) return comments;
+    const last = rows[rows.length - 1];
+    after = { createdAt: last.created_at, id: last.id };
+  }
 }
 
-export async function createComment(postId: string, content: string): Promise<CommentWithAuthor> {
+export async function createComment(postId: string, input: string | CommentInput): Promise<CommentWithAuthor> {
   const userId = await getCurrentUserId();
+  if (!userId) throw new Error('ログインしてください');
+  const payload = typeof input === 'string' ? { content: input } : input;
+  const content = payload.content.trim();
+  if ((!content && !payload.imageUrls?.length) || content.length > 280) throw new Error('返信は280文字以内、または画像を添付してください');
+  const imageUrls = await uploadCommentImages(payload.imageUrls ?? []);
 
   // INSERT直後に profiles(*) を含む select を連鎖させると環境によっては
   // PostgREST エラーが発生するため、INSERT では id のみ取得して別途 SELECT する。
   const { data, error } = await supabase
     .from('comments')
-    .insert({ post_id: postId, user_id: userId, content })
+    .insert({ post_id: postId, user_id: userId, content, parent_comment_id: payload.parentCommentId ?? null, image_urls: imageUrls, client_name: getClientName() })
     .select('id')
     .single();
 
@@ -55,10 +76,9 @@ export async function createComment(postId: string, content: string): Promise<Co
     .select('*', { count: 'exact', head: true })
     .eq('post_id', postId);
 
-  await supabase
-    .from('posts')
-    .update({ comments_count: count ?? 0 })
-    .eq('id', postId);
+  if (count !== null) {
+    await supabase.from('posts').update({ comments_count: count }).eq('id', postId);
+  }
 
   // 挿入したコメントを author 情報込みで取得
   const { data: fullData, error: fetchError } = await supabase
@@ -69,12 +89,11 @@ export async function createComment(postId: string, content: string): Promise<Co
 
   if (fetchError || !fullData) throw new Error('コメントの取得に失敗しました');
 
-  return {
-    id:        fullData.id,
-    postId:    fullData.post_id,
-    userId:    fullData.user_id,
-    content:   fullData.content,
-    createdAt: fullData.created_at,
-    author:    rowToUser(fullData.profiles),
-  };
+  return rowToComment(fullData);
+}
+
+export async function getCommentLikers(commentId: string): Promise<User[]> {
+  const { data, error } = await supabase.from('comment_likes').select('profiles(*)').eq('comment_id', commentId);
+  if (error) throw error;
+  return (data ?? []).map(row => rowToUser(row.profiles));
 }

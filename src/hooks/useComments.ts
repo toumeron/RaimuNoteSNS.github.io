@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { createComment, getCommentsByPost } from '@/api/comments';
+import { createComment, getCommentsByPost, type CommentInput } from '@/api/comments';
 import { feedKey, postKey } from './useFeed';
 import { toast } from 'sonner';
 import type { CommentWithAuthor, PostWithAuthor } from '@/types';
@@ -99,6 +99,25 @@ export const useComments = (postId: string) => {
 
     const channel = supabase
       .channel(`comments-profiles-${postId}-${Math.random().toString(36).slice(2)}`)
+      .on('postgres_changes', {
+        event: 'INSERT', schema: 'public', table: 'comments', filter: `post_id=eq.${postId}`,
+      }, () => {
+        qc.invalidateQueries({ queryKey: commentsKey(postId) });
+        qc.invalidateQueries({ queryKey: postKey(postId) });
+      })
+      .on('postgres_changes', {
+        event: 'UPDATE', schema: 'public', table: 'comments', filter: `post_id=eq.${postId}`,
+      }, () => {
+        qc.invalidateQueries({ queryKey: commentsKey(postId) });
+      })
+      // DELETE payloads only carry the primary key and cannot be filtered by
+      // post_id. Refresh the open thread so removed replies/counts stay live.
+      .on('postgres_changes', {
+        event: 'DELETE', schema: 'public', table: 'comments',
+      }, () => {
+        qc.invalidateQueries({ queryKey: commentsKey(postId) });
+        qc.invalidateQueries({ queryKey: postKey(postId) });
+      })
       .on(
         'postgres_changes',
         {
@@ -110,7 +129,12 @@ export const useComments = (postId: string) => {
           qc.invalidateQueries({ queryKey: commentsKey(postId) });
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          qc.invalidateQueries({ queryKey: commentsKey(postId) });
+          qc.invalidateQueries({ queryKey: postKey(postId) });
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);
@@ -126,6 +150,11 @@ export const useComments = (postId: string) => {
       ]);
 
       if (!comments || comments.length === 0) return [];
+      const replyCounts = new Map<string, number>();
+      comments.forEach(comment => {
+        if (comment.parentCommentId) replyCounts.set(comment.parentCommentId, (replyCounts.get(comment.parentCommentId) ?? 0) + 1);
+      });
+      comments.forEach(comment => { comment.commentsCount = replyCounts.get(comment.id) ?? 0; });
 
       const authorIds = Array.from(
         new Set(
@@ -213,7 +242,7 @@ export const useCreateComment = (postId: string) => {
   const qc = useQueryClient();
 
   return useMutation({
-    mutationFn: (content: string) => createComment(postId, content),
+    mutationFn: (input: string | CommentInput) => createComment(postId, input),
     onMutate: async (content) => {
       await qc.cancelQueries({ queryKey: commentsKey(postId) });
 

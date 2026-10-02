@@ -1437,32 +1437,214 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   useEffect(() => {
     if (!desktopLayout || !desktopSidebarContainer || typeof window === 'undefined') return;
 
+    // サイドバー内の要素(ロゴ・メニュー項目・ポストするボタン)を、
+    // 下部の DesktopAccountFooter のアバターと同じ縦ラインに揃える。
+    // CSSの余白指定は他のスタイルに上書きされて効かなくなることがあるため、
+    // 実際に描画されている位置を測り、そのズレ量をインラインの translate で直接打ち消す。
+    //  - 展開表示: ロゴ/アイコン/ボタンの左端 = アバターの左端
+    //              ボタンの右端 = サイドバー右端からアバター左端と同じ距離だけ内側
+    //  - 縮小表示: ロゴ/アイコン/ボタンの中心 = アバターの中心
+    //
+    // 重要: 補正を一度外してから測り直す方式だと、要素に transition(例: transition: all)が
+    // 掛かっている場合、外した直後の getBoundingClientRect が「まだ補正が残った位置」を返し、
+    // ズレが 0 に近いと誤判定して補正が消えていく不具合になる。
+    // そのため補正は外さず、「いま掛けている補正量」を記録しておき、測った位置から
+    // その分を引いて"補正前の本来の位置"を求める。さらに補正対象には transition を付けない。
+    const getApplied = (el: HTMLElement, key: 'limeAlignTranslate' | 'limeAlignMargin') =>
+      Number.parseFloat(el.dataset[key] ?? '0') || 0;
+
+    const alignSidebarMenu = (aside: HTMLElement, expanded: boolean) => {
+      const items = Array.from(aside.querySelectorAll<HTMLElement>('[data-lime-sidebar-item]'));
+      const compose = aside.querySelector<HTMLElement>('[data-lime-sidebar-compose]');
+      const logoWrap = aside.querySelector<HTMLElement>('[data-lime-sidebar-logo]');
+
+      const avatar =
+        aside.querySelector<HTMLElement>("[data-lime-sidebar-account] [class*='rounded-full']") ??
+        aside.querySelector<HTMLElement>('[data-lime-sidebar-account] img') ??
+        aside.querySelector<HTMLElement>("[data-lime-sidebar-profile] [class*='rounded-full']");
+      if (!avatar) {
+        aside.setAttribute('data-lime-align-debug', 'avatar-not-found');
+        return;
+      }
+
+      const avatarRect = avatar.getBoundingClientRect();
+      if (avatarRect.width === 0) {
+        aside.setAttribute('data-lime-align-debug', 'avatar-width-0');
+        return;
+      }
+      const avatarCenter = avatarRect.left + avatarRect.width / 2;
+
+      // アバターの左端がサイドバーの左端からどれだけ内側にあるか。
+      // 右側にも同じ距離の余白を取ることで、左右対称の整った見た目にする。
+      const asideRect = aside.getBoundingClientRect();
+      const sideGap = Math.max(0, avatarRect.left - asideRect.left);
+      const contentRight = asideRect.right - sideGap;
+
+      const debug: Record<string, number | string> = {
+        mode: expanded ? 'expanded' : 'collapsed',
+        avatarLeft: Math.round(avatarRect.left * 10) / 10,
+      };
+
+      const applyTranslate = (el: HTMLElement, delta: number) => {
+        el.style.setProperty('transition', 'color 150ms, background-color 150ms', 'important');
+        if (Math.abs(delta) >= 0.5 && Math.abs(delta) < 400) {
+          el.style.setProperty('translate', `${delta}px 0`, 'important');
+          el.dataset.limeAlignTranslate = String(delta);
+        } else {
+          el.style.removeProperty('translate');
+          el.dataset.limeAlignTranslate = '0';
+        }
+      };
+
+      // ロゴ: ロゴ内の「実際に描画されている末端要素」の左端〜右端を測り、
+      // ロゴ全体のブロック幅(余白を含む)ではなく見た目の位置で揃える。
+      // これで「Lime Pro」の左端がメニューのアイコン・アバターと同じラインに来る。
+      if (logoWrap) {
+        const appliedTranslate = getApplied(logoWrap, 'limeAlignTranslate');
+        const leaves = Array.from(logoWrap.querySelectorAll<Element>('*')).filter(
+          (el) => el.children.length === 0
+        );
+        const targets: Element[] = leaves.length > 0 ? leaves : [logoWrap];
+
+        let minLeft = Number.POSITIVE_INFINITY;
+        let maxRight = Number.NEGATIVE_INFINITY;
+        targets.forEach((el) => {
+          const r = el.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) return;
+          minLeft = Math.min(minLeft, r.left);
+          maxRight = Math.max(maxRight, r.right);
+        });
+
+        if (Number.isFinite(minLeft) && Number.isFinite(maxRight)) {
+          const naturalLeft = minLeft - appliedTranslate;
+          const naturalCenter = naturalLeft + (maxRight - minLeft) / 2;
+          const delta = expanded ? avatarRect.left - naturalLeft : avatarCenter - naturalCenter;
+          applyTranslate(logoWrap, delta);
+        }
+      }
+
+      items.forEach((item) => {
+        const icon = item.querySelector<HTMLElement>('[data-lime-sidebar-item-icon]') ?? item;
+        const rect = icon.getBoundingClientRect();
+        if (rect.width === 0) return;
+
+        // 補正前の本来の位置 = 測った位置 - いま掛けている補正量
+        const appliedTranslate = getApplied(item, 'limeAlignTranslate');
+        const naturalLeft = rect.left - appliedTranslate;
+        const naturalCenter = naturalLeft + rect.width / 2;
+
+        const delta = expanded ? avatarRect.left - naturalLeft : avatarCenter - naturalCenter;
+        applyTranslate(item, delta);
+      });
+
+      if (compose) {
+        const rect = compose.getBoundingClientRect();
+        if (rect.width > 0) {
+          const appliedTranslate = getApplied(compose, 'limeAlignTranslate');
+          const appliedMargin = getApplied(compose, 'limeAlignMargin');
+          const naturalLeft = rect.left - appliedTranslate - appliedMargin;
+          const naturalCenter = naturalLeft + (rect.width + appliedMargin) / 2;
+
+          compose.style.setProperty('transition', 'background-color 150ms, opacity 150ms', 'important');
+
+          if (expanded) {
+            // ポストするボタンは「左端 = アバターの左端」「右端 = サイドバー右端から
+            // 左側と同じ距離だけ内側」にそろえる(左右対称の余白)。
+            compose.style.removeProperty('translate');
+            compose.dataset.limeAlignTranslate = '0';
+            const delta = avatarRect.left - naturalLeft;
+            const targetWidth = contentRight - avatarRect.left;
+            if (Math.abs(delta) > 0.5 && Math.abs(delta) < 400 && targetWidth > 0) {
+              compose.style.setProperty('margin-left', `${delta}px`, 'important');
+              compose.style.setProperty('width', `${targetWidth}px`, 'important');
+              compose.style.setProperty('max-width', 'none', 'important');
+              compose.dataset.limeAlignMargin = String(delta);
+            } else if (targetWidth > 0) {
+              compose.style.removeProperty('margin-left');
+              compose.style.setProperty('width', `${targetWidth}px`, 'important');
+              compose.style.setProperty('max-width', 'none', 'important');
+              compose.dataset.limeAlignMargin = '0';
+            } else {
+              compose.style.removeProperty('margin-left');
+              compose.style.removeProperty('width');
+              compose.style.removeProperty('max-width');
+              compose.dataset.limeAlignMargin = '0';
+            }
+          } else {
+            compose.style.removeProperty('margin-left');
+            compose.style.removeProperty('width');
+            compose.style.removeProperty('max-width');
+            compose.dataset.limeAlignMargin = '0';
+            applyTranslate(compose, avatarCenter - naturalCenter);
+          }
+        }
+      }
+
+      debug.items = items.length;
+      aside.setAttribute('data-lime-align-debug', JSON.stringify(debug));
+    };
+
     const update = () => {
       const aside = desktopAsideRef.current;
       if (!aside) return;
       const asideWidth = aside.getBoundingClientRect().width || Infinity;
       const containerWidth = desktopSidebarContainer.getBoundingClientRect().width || Infinity;
-      aside.setAttribute(
-        'data-lime-sidebar-expanded',
-        Math.min(asideWidth, containerWidth) >= 240 ? 'true' : 'false'
-      );
+      const expanded = Math.min(asideWidth, containerWidth) >= 240;
+      aside.setAttribute('data-lime-sidebar-expanded', expanded ? 'true' : 'false');
+
+      alignSidebarMenu(aside, expanded);
     };
 
     update();
 
+    let rafId: number | null = null;
+    const scheduleUpdate = () => {
+      if (rafId !== null) return;
+      rafId = window.requestAnimationFrame(() => {
+        rafId = null;
+        update();
+      });
+    };
+
     let observer: ResizeObserver | null = null;
     if ('ResizeObserver' in window) {
-      observer = new ResizeObserver(update);
+      observer = new ResizeObserver(scheduleUpdate);
       observer.observe(desktopSidebarContainer);
       if (desktopAsideRef.current) observer.observe(desktopAsideRef.current);
     }
-    window.addEventListener('resize', update);
+
+    // アカウント表示(DesktopAccountFooter)は後から描画・更新されることがあるため、
+    // 子要素の追加/変更も拾って再計測する。
+    let mutationObserver: MutationObserver | null = null;
+    if ('MutationObserver' in window && desktopAsideRef.current) {
+      mutationObserver = new MutationObserver(scheduleUpdate);
+      mutationObserver.observe(desktopAsideRef.current, { childList: true, subtree: true });
+    }
+
+    // サイドバー幅が変わるアニメーション中/後、フォント読み込み後にも測り直す。
+    const container = desktopSidebarContainer;
+    container.addEventListener('transitionend', scheduleUpdate);
+    const timers = [window.setTimeout(update, 150), window.setTimeout(update, 500), window.setTimeout(update, 1200)];
+    let fontsCancelled = false;
+    if ('fonts' in document) {
+      document.fonts.ready.then(() => {
+        if (!fontsCancelled) scheduleUpdate();
+      });
+    }
+    window.addEventListener('resize', scheduleUpdate);
+    window.addEventListener('load', scheduleUpdate);
 
     return () => {
+      fontsCancelled = true;
       observer?.disconnect();
-      window.removeEventListener('resize', update);
+      mutationObserver?.disconnect();
+      container.removeEventListener('transitionend', scheduleUpdate);
+      timers.forEach((id) => window.clearTimeout(id));
+      if (rafId !== null) window.cancelAnimationFrame(rafId);
+      window.removeEventListener('resize', scheduleUpdate);
+      window.removeEventListener('load', scheduleUpdate);
     };
-  }, [desktopLayout, desktopSidebarContainer, user]);
+  }, [desktopLayout, desktopSidebarContainer, user, location.pathname]);
 
   // documentの高さを一時的に固定/解除するためのヘルパー。
   // ロック中に別のロックが開始された場合、古い方の解除が新しい方の固定値を
@@ -2567,23 +2749,29 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
                     ? location.pathname === '/'
                     : item.path.startsWith('/u/') ? location.pathname.startsWith('/u/')
                     : location.pathname === item.path || location.pathname.startsWith(`${item.path}/`));
+                  // 修正: 以前は LimeAI(/chat) だけ data-lime-sidebar-item* 属性を付けていなかったため、
+                  // 整列・太さ用のデスクトップCSSの対象外になり、
+                  //  - ラベルが常に font-bold(下の className の既定値)のまま
+                  //  - 左端/余白/gap が他の項目とずれる
+                  // という不具合になっていた。全項目に同じ属性を付けて同じルールを適用する。
+                  const desktopItemAttr = desktopLayout ? true : undefined;
                   return (
                     <button
                       key={item.label}
                       aria-label={desktopLayout ? item.label : undefined}
                       title={desktopLayout ? item.label : undefined}
                       aria-current={isCurrent ? 'page' : undefined}
-                      data-lime-sidebar-item={desktopLayout ? true : undefined}
+                      data-lime-sidebar-item={desktopItemAttr}
                       type="button"
                       onClick={item.onClick}
                       className={cn("flex w-full items-center gap-6 rounded-xl py-3 text-left transition-colors", sidebarHover)}
                     >
                       <Icon
-                        data-lime-sidebar-item-icon={desktopLayout ? true : undefined}
+                        data-lime-sidebar-item-icon={desktopItemAttr}
                         className={cn("h-6 w-6 shrink-0 stroke-[2]", sidebarIconText)}
                       />
                       <span
-                        data-lime-sidebar-item-label={desktopLayout ? true : undefined}
+                        data-lime-sidebar-item-label={desktopItemAttr}
                         className={cn("whitespace-nowrap text-[18px] font-bold leading-tight", sidebarIconText)}
                       >
                         {item.label}
@@ -2665,10 +2853,14 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
              left/width のCSS transitionで左右へ滑らかにスライドさせる。 */
 
           /*
-             デスクトップ版サイドバー専用の整列ルール(640px以上・展開表示のときだけ)。
-             - 縮小表示(アイコンのみ)や、モバイル(639px以下)のドロワーには一切影響しない。
-             - 全ナビ項目（LimeAIを含む）に同じ data 属性を付け、同一の整列・文字ウェイト規則を適用する。
-             - ロゴ・nav・フッターの余白や左右位置は触らず、既存の左端のラインをそのまま使う。
+             デスクトップ版サイドバー専用の整列ルール(640px以上)。
+             - モバイル(639px以下)のドロワーには一切影響しない。
+             - LimeAIを含む全てのナビ項目に data-lime-sidebar-item* 属性が付くため、
+               すべて同じルール(同じ左端・同じ余白・同じ太さ)で整列する。
+             - ロゴ・メニュー項目・「ポストする」ボタン・下部のアカウント表示は、
+               すべて「アカウントのアバター」と同じ縦ライン(左端 / 縮小時は中心)に揃える。
+               その位置合わせは上のuseEffect(alignSidebarMenu)が実測して行うため、
+               ここでは各要素の「大きさ・間隔・太さ」だけを統一する。
              Twitter(X)のサイドバーと同じ考え方で「視線の流れ」を作る。
              - 主役はロゴ(上)と「ポストする」ボタン(下)だけ。
              - ナビ項目は同じ大きさ・通常の太さ・同じ色で並べ、現在地だけ太字(色は変えない)。
@@ -2678,6 +2870,13 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
           @media (min-width: 640px) {
             [data-lime-desktop-sidebar][data-lime-sidebar-expanded='true'] [data-lime-sidebar-divider] {
               display: none !important;
+            }
+
+            /* ロゴ: 上下の余白を一定にして、メニュー項目との間隔を揃える。
+               左右位置はJS(alignSidebarMenu)がアバターの左端に合わせる。 */
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='true'] [data-lime-sidebar-logo] {
+              padding-top: 8px !important;
+              padding-bottom: 8px !important;
             }
 
             /* ナビ項目: アイコンの左端は既存のまま。ホバーの丸い背景だけを左右へ広げる。 */
@@ -2722,7 +2921,9 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
               font-weight: 700 !important;
             }
 
-            /* ポストするボタン: 項目の直下に置く唯一の強調要素。左右はnavの内側いっぱい(アイコンと同じ左端)。 */
+            /* ポストするボタン: 項目の直下に置く唯一の強調要素。
+               左端 = アバターの左端、右端 = 左と同じ余白(幅と位置はJSが実測して確定する)。
+               高さはメニュー項目と同じ52pxにそろえる。 */
             [data-lime-desktop-sidebar][data-lime-sidebar-expanded='true'] [data-lime-sidebar-compose] {
               display: flex !important;
               align-items: center !important;
@@ -2733,7 +2934,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
               width: 100% !important;
               height: 52px !important;
               min-height: 52px !important;
-              margin: 16px 0 0 0 !important;
+              margin: 20px 0 0 0 !important;
               padding: 0 24px !important;
               font-size: 17px !important;
               font-weight: 700 !important;
@@ -2756,6 +2957,112 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
             [data-lime-desktop-sidebar][data-lime-sidebar-expanded='true'] [data-lime-sidebar-footer] * {
               font-size: 15px !important;
               line-height: 1.3 !important;
+            }
+
+            /* ---- 縮小表示(アイコンのみ)のときの整列 ----
+               ロゴ・ポストするボタン・区切り線・アカウントのアイコンを、サイドバーの
+               中央にそろえる。アバターが右へはみ出して切れていたのもここで解消する。 */
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='false'] nav {
+              padding-left: 0 !important;
+              padding-right: 0 !important;
+            }
+
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='false'] [data-lime-sidebar-logo] {
+              padding-top: 8px !important;
+              padding-bottom: 8px !important;
+            }
+
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='false'] [data-lime-sidebar-item] {
+              justify-content: center !important;
+              width: 52px !important;
+              height: 52px !important;
+              margin-left: auto !important;
+              margin-right: auto !important;
+              padding: 0 !important;
+              gap: 0 !important;
+              border-radius: 9999px !important;
+            }
+
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='false'] [data-lime-sidebar-item-label],
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='false'] [data-lime-sidebar-compose] span {
+              display: none !important;
+            }
+
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='false'] [data-lime-sidebar-compose] {
+              display: flex !important;
+              align-items: center !important;
+              justify-content: center !important;
+              box-sizing: border-box !important;
+              width: 52px !important;
+              height: 52px !important;
+              min-height: 52px !important;
+              margin: 20px auto 0 !important;
+              padding: 0 !important;
+              border-radius: 9999px !important;
+            }
+
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='false'] [data-lime-sidebar-compose] svg {
+              width: 22px !important;
+              height: 22px !important;
+              flex-shrink: 0 !important;
+            }
+
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='false'] [data-lime-sidebar-divider] {
+              width: 32px !important;
+              margin: 24px auto !important;
+            }
+
+            /* 下部のアカウント表示(DesktopAccountFooter)の縮小表示:
+               構造は footer > a[data-lime-sidebar-account] > (div.relative > Avatar + バッジ) + [data-lime-account-info]。
+               名前・IDの欄は隠し、アバター(44px)だけをサイドバーの中央に置く。
+               アバター右下のバッジ(data-lime-account-avatar-badge)は残して、アバターに重ねる。 */
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='false'] [data-lime-sidebar-footer] {
+              box-sizing: border-box !important;
+              width: 100% !important;
+              padding: 12px 0 !important;
+              overflow: hidden !important;
+            }
+
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='false'] [data-lime-sidebar-account] {
+              display: flex !important;
+              align-items: center !important;
+              justify-content: center !important;
+              box-sizing: border-box !important;
+              width: 100% !important;
+              min-width: 0 !important;
+              margin: 0 !important;
+              padding: 0 !important;
+              gap: 0 !important;
+            }
+
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='false'] [data-lime-sidebar-account] > div:first-child {
+              position: relative !important;
+              flex: 0 0 44px !important;
+              width: 44px !important;
+              height: 44px !important;
+              margin: 0 !important;
+            }
+
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='false'] [data-lime-account-avatar-badge] {
+              position: absolute !important;
+              right: -2px !important;
+              bottom: -2px !important;
+              left: auto !important;
+              top: auto !important;
+              width: 18px !important;
+              height: 18px !important;
+              margin: 0 !important;
+            }
+
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='false'] [data-lime-account-info] {
+              display: none !important;
+            }
+
+            /* 展開表示: リンク全体が親幅を超えて右へはみ出さないようにするだけ(見た目は従来のまま)。 */
+            [data-lime-desktop-sidebar][data-lime-sidebar-expanded='true'] [data-lime-sidebar-account] {
+              box-sizing: border-box !important;
+              max-width: 100% !important;
+              min-width: 0 !important;
             }
           }
 

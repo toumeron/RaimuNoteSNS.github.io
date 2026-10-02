@@ -1,14 +1,17 @@
+import { getClientName } from '@/lib/clientName';
 import type { PostWithAuthor } from '@/types';
 import type { User } from '@/types';
 import { supabase } from '@/lib/supabase';
 import { getCurrentUserId } from '@/lib/currentUser';
 
+export type FeedCursor = { createdAt: string; id: string };
+
 const POST_SELECT_QUERY = `
   *,
-  profiles:user_id (*),
+  profiles:user_id (id, username, display_name, bio, avatar_url, cover_url, created_at, is_official),
   parent_post:parent_id (
     *,
-    profiles:user_id (*)
+    profiles:user_id (id, username, display_name, bio, avatar_url, cover_url, created_at, is_official)
   )
 `;
 
@@ -55,30 +58,42 @@ function rowToPost(row: any, likedIds: Set<string>, repostedIds: Set<string>): P
   };
 }
 
+type ViewerPostRow = { id: string; parent_post?: { id: string } | null };
+
+// Fetch fresh viewer state only for this page and its quoted parent posts.
+async function getViewerReactions(userId: string, rows: ViewerPostRow[]) {
+  const postIds = [...new Set(rows.flatMap((row) => [row.id, row.parent_post?.id]).filter(Boolean))];
+  if (postIds.length === 0) return { likedIds: new Set<string>(), repostedIds: new Set<string>() };
+  const [likesRes, repostsRes] = await Promise.all([
+    supabase.from('likes').select('post_id').eq('user_id', userId).in('post_id', postIds),
+    supabase.from('reposts').select('post_id').eq('user_id', userId).in('post_id', postIds),
+  ]);
+  // Viewer flags are optional enrichment. A missing reactions table or failed
+  // request must not discard posts that were successfully fetched.
+  // Keep each successful response even when the other one fails.
+  return {
+    likedIds: new Set<string>((likesRes.data ?? []).map((row) => String(row.post_id))),
+    repostedIds: new Set<string>((repostsRes.data ?? []).map((row) => String(row.post_id))),
+  };
+}
+
 /**
  * タイムライン取得（無限スクロール対応）
  * ロジック: 公開投稿、自分の投稿、自分をフォローしている人の投稿、
  * または自分がメンバーになっている投稿主のメンバー限定投稿を表示
  */
-export async function getFeed(page: number = 0, limit: number = 10): Promise<PostWithAuthor[]> {
+export async function getFeed(page: number = 0, limit: number = 10, before?: FeedCursor): Promise<PostWithAuthor[]> {
   const userId = await getCurrentUserId();
   
-  const from = page * limit;
+  const from = before ? 0 : page * limit;
   const to = from + limit - 1;
 
   // 「自分(userId)をフォローしている投稿主」のリストを取得
-  const { data: followedByData } = await supabase
-    .from('follows')
-    .select('follower_id')
-    .eq('followee_id', userId);
-  
+  const [{ data: followedByData }, { data: membershipsData }] = await Promise.all([
+    supabase.from('follows').select('follower_id').eq('followee_id', userId),
+    supabase.from('memberships').select('creator_id').eq('member_id', userId),
+  ]);
   const authorsWhoFollowMe = followedByData?.map(f => f.follower_id) || [];
-
-  // 自分がメンバーになっている投稿主（creator）のリストを取得
-  const { data: membershipsData } = await supabase
-    .from('memberships')
-    .select('creator_id')
-    .eq('member_id', userId);
 
   const creatorsIAmMemberOf = membershipsData?.map(m => m.creator_id) || [];
 
@@ -98,24 +113,19 @@ export async function getFeed(page: number = 0, limit: number = 10): Promise<Pos
     conditions.push(`and(user_id.in.(${creatorsIAmMemberOf.join(',')}),visibility.eq.members)`);
   }
 
-  const [postsRes, likesRes, repostsRes] = await Promise.all([
-    supabase
+  const postsRes = await supabase
       .from('posts')
       .select(POST_SELECT_QUERY)
-      .or(conditions.join(','))
+      .or(before
+        ? `and(or(${conditions.join(',')}),or(created_at.lt.${before.createdAt},and(created_at.eq.${before.createdAt},id.lt.${before.id})))`
+        : conditions.join(','))
       .order('created_at', { ascending: false })
-      .range(from, to),
-    
-    supabase.from('likes').select('post_id').eq('user_id', userId),
-    supabase.from('reposts').select('post_id').eq('user_id', userId),
-  ]);
-
+      .order('id', { ascending: false })
+      .range(from, to);
   if (postsRes.error) throw postsRes.error;
-  
-  const likedIds = new Set<string>((likesRes.data ?? []).map((l: any) => l.post_id));
-  const repostedIds = new Set<string>((repostsRes.data ?? []).map((r: any) => r.post_id));
-  
-  return (postsRes.data ?? []).map((row: any) => rowToPost(row, likedIds, repostedIds));
+  const rows = postsRes.data ?? [];
+  const { likedIds, repostedIds } = await getViewerReactions(userId, rows);
+  return rows.map((row: any) => rowToPost(row, likedIds, repostedIds));
 }
 
 /**
@@ -123,36 +133,21 @@ export async function getFeed(page: number = 0, limit: number = 10): Promise<Pos
  * 「フォロー中」タブでも、フォローしている投稿主のメンバー限定投稿は
  * 自分がそのメンバーになっていれば表示する。
  */
-export async function getFollowingFeed(page: number = 0, limit: number = 10): Promise<PostWithAuthor[]> {
+export async function getFollowingFeed(page: number = 0, limit: number = 10, before?: FeedCursor): Promise<PostWithAuthor[]> {
   const userId = await getCurrentUserId();
   if (!userId) return [];
 
-  const from = page * limit;
+  const from = before ? 0 : page * limit;
   const to = from + limit - 1;
 
-  // 1. 自分がフォローしている人のリストを取得
-  const { data: followingData } = await supabase
-    .from('follows')
-    .select('followee_id')
-    .eq('follower_id', userId);
-
+  const [{ data: followingData }, { data: followedByData }, { data: membershipsData }] = await Promise.all([
+    supabase.from('follows').select('followee_id').eq('follower_id', userId),
+    supabase.from('follows').select('follower_id').eq('followee_id', userId),
+    supabase.from('memberships').select('creator_id').eq('member_id', userId),
+  ]);
   const followingIds = followingData?.map(f => f.followee_id) || [];
   if (followingIds.length === 0) return [];
-
-  // 2. 自分をフォローしてくれている人のリストを取得（限定公開用）
-  const { data: followedByData } = await supabase
-    .from('follows')
-    .select('follower_id')
-    .eq('followee_id', userId);
-
   const authorsWhoFollowMe = followedByData?.map(f => f.follower_id) || [];
-
-  // 3. 自分がメンバーになっている投稿主（creator）のリストを取得
-  const { data: membershipsData } = await supabase
-    .from('memberships')
-    .select('creator_id')
-    .eq('member_id', userId);
-
   const creatorsIAmMemberOf = membershipsData?.map(m => m.creator_id) || [];
 
   // 4. クエリ条件の組み立て
@@ -172,24 +167,19 @@ export async function getFollowingFeed(page: number = 0, limit: number = 10): Pr
     filterConditions += `,and(user_id.in.(${followingCreatorsIAmMemberOf.join(',')}),visibility.eq.members)`;
   }
 
-  const [postsRes, likesRes, repostsRes] = await Promise.all([
-    supabase
+  const postsRes = await supabase
       .from('posts')
       .select(POST_SELECT_QUERY)
-      .or(filterConditions)
+      .or(before
+        ? `and(or(${filterConditions}),or(created_at.lt.${before.createdAt},and(created_at.eq.${before.createdAt},id.lt.${before.id})))`
+        : filterConditions)
       .order('created_at', { ascending: false })
-      .range(from, to),
-    
-    supabase.from('likes').select('post_id').eq('user_id', userId),
-    supabase.from('reposts').select('post_id').eq('user_id', userId),
-  ]);
-
+      .order('id', { ascending: false })
+      .range(from, to);
   if (postsRes.error) throw postsRes.error;
-  
-  const likedIds = new Set<string>((likesRes.data ?? []).map((l: any) => String(l.post_id)));
-  const repostedIds = new Set<string>((repostsRes.data ?? []).map((r: any) => String(r.post_id)));
-  
-  return (postsRes.data ?? []).map((row: any) => rowToPost(row, likedIds, repostedIds));
+  const rows = postsRes.data ?? [];
+  const { likedIds, repostedIds } = await getViewerReactions(userId, rows);
+  return rows.map((row: any) => rowToPost(row, likedIds, repostedIds));
 }
 
 /**
@@ -205,26 +195,15 @@ export async function getPostsByUser(targetUserId: string, page: number = 0, lim
   const from = page * limit;
   const to = from + limit - 1;
 
-  // ターゲットユーザーが自分をフォローしているか確認
-  const { data: authorFollowsMe } = await supabase
-    .from('follows')
-    .select('*')
-    .eq('follower_id', targetUserId)
-    .eq('followee_id', userId)
-    .maybeSingle();
-
-  // 自分がターゲットユーザーのメンバーになっているか確認
-  let viewerIsMember = false;
-  if (userId && userId !== targetUserId) {
-    const { data: membershipRow } = await supabase
-      .from('memberships')
-      .select('id')
-      .eq('creator_id', targetUserId)
-      .eq('member_id', userId)
-      .maybeSingle();
-
-    viewerIsMember = Boolean(membershipRow);
-  }
+  const [{ data: authorFollowsMe }, { data: membershipRow }] = await Promise.all([
+    supabase.from('follows').select('follower_id')
+      .eq('follower_id', targetUserId).eq('followee_id', userId).maybeSingle(),
+    userId !== targetUserId
+      ? supabase.from('memberships').select('id')
+          .eq('creator_id', targetUserId).eq('member_id', userId).maybeSingle()
+      : Promise.resolve({ data: null }),
+  ]);
+  const viewerIsMember = Boolean(membershipRow);
 
   let query = supabase
     .from('posts')
@@ -240,16 +219,11 @@ export async function getPostsByUser(targetUserId: string, page: number = 0, lim
     query = query.in('visibility', allowedVisibilities);
   }
 
-  const [postsRes, likesRes, repostsRes] = await Promise.all([
-    query.order('created_at', { ascending: false }).range(from, to),
-    supabase.from('likes').select('post_id').eq('user_id', userId),
-    supabase.from('reposts').select('post_id').eq('user_id', userId),
-  ]);
-
+  const postsRes = await query.order('created_at', { ascending: false }).range(from, to);
   if (postsRes.error) throw postsRes.error;
-  const likedIds = new Set<string>((likesRes.data ?? []).map((l: any) => String(l.post_id)));
-  const repostedIds = new Set<string>((repostsRes.data ?? []).map((r: any) => String(r.post_id)));
-  return (postsRes.data ?? []).map((row: any) => rowToPost(row, likedIds, repostedIds));
+  const rows = postsRes.data ?? [];
+  const { likedIds, repostedIds } = await getViewerReactions(userId, rows);
+  return rows.map((row: any) => rowToPost(row, likedIds, repostedIds));
 }
 
 /**
@@ -260,13 +234,6 @@ export async function getLikedPostsByUser(targetUserId: string, page: number = 0
   
   const from = page * limit;
   const to = from + limit - 1;
-
-  // 自分をフォローしている投稿主を取得
-  const { data: followedByData } = await supabase
-    .from('follows')
-    .select('follower_id')
-    .eq('followee_id', userId);
-  const authorsWhoFollowMe = followedByData?.map(f => f.follower_id) || [];
 
   // RLSが適切に設定されていれば、フロントエンド側でvisibilityによる複雑なorフィルタをlikesテーブルに対してかける必要はありません。
   // ポストの公開・非公開はposts側のRLSで制御すべきですが、現状の400エラーを回避するためにor条件を削除または修正します。
@@ -283,13 +250,9 @@ export async function getLikedPostsByUser(targetUserId: string, page: number = 0
   if (likesErr) throw likesErr;
   if (!likesData) return [];
 
-  const [myLikesRes, myRepostsRes] = await Promise.all([
-    supabase.from('likes').select('post_id').eq('user_id', userId),
-    supabase.from('reposts').select('post_id').eq('user_id', userId),
-  ]);
-
-  const likedIds = new Set<string>((myLikesRes.data ?? []).map((l: any) => String(l.post_id)));
-  const repostedIds = new Set<string>((myRepostsRes.data ?? []).map((r: any) => String(r.post_id)));
+  const { likedIds, repostedIds } = await getViewerReactions(
+    userId, likesData.map((row) => row.posts as unknown as ViewerPostRow).filter(Boolean),
+  );
 
   return likesData.map((likeRow: any) => {
     const post = rowToPost(likeRow.posts, likedIds, repostedIds);
@@ -311,16 +274,12 @@ export async function searchPosts(query: string, page: number = 0, limit: number
   const from = page * limit;
   const to = from + limit - 1;
 
-  const { data: followedByData } = await supabase
-    .from('follows')
-    .select('follower_id')
-    .eq('followee_id', userId);
+  const [{ data: followedByData }, { data: membershipsData }] = await Promise.all([
+    supabase.from('follows').select('follower_id').eq('followee_id', userId),
+    supabase.from('memberships').select('creator_id').eq('member_id', userId),
+  ]);
   const authorsWhoFollowMe = followedByData?.map(f => f.follower_id) || [];
 
-  const { data: membershipsData } = await supabase
-    .from('memberships')
-    .select('creator_id')
-    .eq('member_id', userId);
   const creatorsIAmMemberOf = membershipsData?.map(m => m.creator_id) || [];
 
   const conditions = [
@@ -336,25 +295,17 @@ export async function searchPosts(query: string, page: number = 0, limit: number
     conditions.push(`and(user_id.in.(${creatorsIAmMemberOf.join(',')}),visibility.eq.members)`);
   }
 
-  const [postsRes, likesRes, repostsRes] = await Promise.all([
-    supabase
+  const postsRes = await supabase
       .from('posts')
       .select(POST_SELECT_QUERY)
       .ilike('content', `%${query}%`)
       .or(conditions.join(','))
       .order('created_at', { ascending: false })
-      .range(from, to),
-    
-    supabase.from('likes').select('post_id').eq('user_id', userId),
-    supabase.from('reposts').select('post_id').eq('user_id', userId),
-  ]);
-
+      .range(from, to);
   if (postsRes.error) throw postsRes.error;
-  
-  const likedIds = new Set<string>((likesRes.data ?? []).map((l: any) => l.post_id));
-  const repostedIds = new Set<string>((repostsRes.data ?? []).map((r: any) => r.post_id));
-  
-  return (postsRes.data ?? []).map((row: any) => rowToPost(row, likedIds, repostedIds));
+  const rows = postsRes.data ?? [];
+  const { likedIds, repostedIds } = await getViewerReactions(userId, rows);
+  return rows.map((row: any) => rowToPost(row, likedIds, repostedIds));
 }
 
 export async function getPostById(id: string): Promise<PostWithAuthor | null> {
@@ -413,14 +364,7 @@ export async function createPost(input: {
   const IMAGE_URL_PATTERN = /(https?:\/\/.*\.(?:png|jpg|jpeg|gif|webp|svg|avif)(?:\?.*)?)/gi;
   const detectedUrls = input.content.match(IMAGE_URL_PATTERN) || [];
 
-  const getDetailedClient = () => {
-    const ua = navigator.userAgent;
-    if (/iPhone/i.test(ua)) return "iPhone";
-    if (/Android/i.test(ua)) return "Android";
-    return "Web";
-  };
-
-  const clientSource = `LimeNote for ${getDetailedClient()}`;
+  const clientSource = getClientName();
 
   const uploadedUrls = await Promise.all(
     input.imageUrls.map(async (url) => {

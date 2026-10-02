@@ -1,7 +1,8 @@
 import { useDesktopLayout } from '@/components/layout/DesktopLayoutContext';
 import { useState, useEffect, useRef, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { ReplyDetail } from './ReplyDetail';
 import { ArrowLeft, MessageCircle, X, Plus, Link as LinkIcon, Upload, Send, Heart, Globe, MoreHorizontal, Trash2, ChartBarBig, Lock, Users } from 'lucide-react'; // Plus, MoreHorizontal等を追加
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -208,6 +209,12 @@ const useMobilePostDetailHeaderVisibility = (enabled: boolean) => {
 
 
 export default function PostDetail() {
+  const [params] = useSearchParams();
+  const replyId = params.get('reply');
+  return <RootPostDetail replyId={replyId} />;
+}
+
+function RootPostDetail({ replyId }: { replyId: string | null }) {
   const { id = '' } = useParams();
   const isBlueskyPost = isBlueskyPostLike({ id });
   const { data: limeData, isLoading: isLimeLoading, isError: isLimeError } = usePost(isBlueskyPost ? '' : id);
@@ -1462,15 +1469,17 @@ export default function PostDetail() {
           <span className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-[17px] font-bold">
             ポスト
           </span>
-          <button
-            ref={moreButtonMobileRef}
-            type="button"
-            onClick={handleToggleMoreMenu}
-            aria-label="その他のメニュー"
-            className="flex h-11 w-11 shrink-0 items-center justify-center"
-          >
-            <MoreHorizontal className="h-5 w-5" />
-          </button>
+          {!replyId && (
+            <button
+              ref={moreButtonMobileRef}
+              type="button"
+              onClick={handleToggleMoreMenu}
+              aria-label="その他のメニュー"
+              className="flex h-11 w-11 shrink-0 items-center justify-center"
+            >
+              <MoreHorizontal className="h-5 w-5" />
+            </button>
+          )}
         </div>
       )}
 
@@ -1565,7 +1574,9 @@ export default function PostDetail() {
         </div>
       )}
 
-      {data && (
+      {data && replyId && !isBlueskyPost && <ReplyDetail key={replyId} post={data as PostWithAuthor} commentId={replyId} mobileFlat={useMobileThreadLayout} />}
+
+      {data && !replyId && (
         <article data-lime-post-detail-card className={useMobileThreadLayout
           ? "post-detail-mobile-article relative"
           : "rounded-3xl border border-border/60 bg-card p-6 shadow-soft relative"
@@ -2182,7 +2193,7 @@ export default function PostDetail() {
         </article>
       )}
 
-      {data && (
+      {data && !replyId && (
         <>
           {!isBlueskyPost && (!useMobileThreadLayout || desktopLayout) && (
             <div>

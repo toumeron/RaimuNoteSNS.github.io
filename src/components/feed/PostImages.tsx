@@ -30,7 +30,8 @@ export function PostImages({
           <img 
             src={src} 
             alt="" 
-            loading="lazy" 
+            loading="lazy"
+            decoding="async"
             className="h-full w-full object-cover" 
             onError={(e) => {
               // 読み込みに失敗した場合、親コンポーネントに通知

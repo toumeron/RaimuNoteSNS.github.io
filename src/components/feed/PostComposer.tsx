@@ -85,6 +85,7 @@ const getQuotedPostCached = async (postId: string) => {
 };
 
 interface PostComposerProps {
+  imageEditor?: { src: string; onApply: (url: string) => void; onClose: () => void };
   initialQuotedPost?: PostWithAuthor | null;
   initialContent?: string;
   onSuccess?: () => void;
@@ -169,10 +170,10 @@ function getCaretCoordinates(element: HTMLTextAreaElement, position: number) {
   return coordinates;
 }
 
-function PostComposerComponent({ initialQuotedPost, initialContent = '', onSuccess, timelineGlass = false }: PostComposerProps) {
+function PostComposerComponent({ initialQuotedPost, initialContent = '', onSuccess, timelineGlass = false, imageEditor }: PostComposerProps) {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-  const quoteId = searchParams.get('quote');
+  const quoteId = imageEditor ? null : searchParams.get('quote');
 
   // メンバー限定投稿を選択できるのは、プロフィール側で加入ボタンを出しているアカウント（@cat / @LimeNote）のみ
   const normalizedUsername = user?.username ? user.username.trim().replace(/^@+/, '').toLowerCase() : '';
@@ -226,6 +227,11 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
     baseY: 0,
   });
   const cropRafRef = useRef<number | null>(null);
+  const editorModeAlive = useRef(true);
+  useEffect(() => {
+    editorModeAlive.current = true;
+    return () => { editorModeAlive.current = false; };
+  }, []);
   const suppressPointerUntilRef = useRef(0);
 
   // 公開範囲用ステート (追加)
@@ -390,6 +396,7 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
 
   useEffect(() => {
     return () => {
+      if (imageEditor) return; // The reply composer owns these URLs.
       const urls = new Set([...previewsRef.current, ...previewOriginalsRef.current]);
       urls.forEach((url) => URL.revokeObjectURL(url));
     };
@@ -654,7 +661,16 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
     setCropImageSize({ width: 0, height: 0 });
     setCropBoxSize({ width: 0, height: 0 });
     setCropStageSize({ width: 0, height: 0 });
-  }, []);
+    imageEditor?.onClose();
+  }, [imageEditor]);
+
+  const editorSource = imageEditor?.src;
+  useEffect(() => {
+    if (!editorSource) return;
+    setPreviews([editorSource]); setPreviewOriginals([editorSource]);
+    previewsRef.current = [editorSource]; previewOriginalsRef.current = [editorSource];
+    openImageEditor(0);
+  }, [editorSource, openImageEditor]);
 
   useEffect(() => {
     if (!editingImageSrc) return;
@@ -1062,6 +1078,7 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
       Math.abs(cropOffset.y) < 0.5;
 
     if (isOriginalUntouched) {
+      if (imageEditor) { imageEditor.onApply(editingImageSrc); closeImageEditor(); return; }
       const previousUrl = previewsRef.current[editingImageIndex];
       const originalUrl = previewOriginalsRef.current[editingImageIndex] ?? editingImageSrc;
       setPreviews((current) => current.map((src, index) => (index === editingImageIndex ? originalUrl : src)));
@@ -1098,14 +1115,16 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
       return;
     }
 
+    if (imageEditor && !editorModeAlive.current) return;
     const nextUrl = URL.createObjectURL(blob);
+    if (imageEditor) { imageEditor.onApply(nextUrl); closeImageEditor(); return; }
     const previousUrl = previewsRef.current[editingImageIndex];
     const originalUrl = previewOriginalsRef.current[editingImageIndex];
 
     setPreviews((current) => current.map((src, index) => (index === editingImageIndex ? nextUrl : src)));
     if (previousUrl && previousUrl !== originalUrl) URL.revokeObjectURL(previousUrl);
     closeImageEditor();
-  }, [closeImageEditor, cropImageSize.height, cropImageSize.width, cropOffset.x, cropOffset.y, cropZoom, editingImageIndex, editingImageSrc, getCropBoxSize, cropAspectId, selectedCropAspect.outputHeight, selectedCropAspect.outputWidth]);
+  }, [imageEditor, closeImageEditor, cropImageSize.height, cropImageSize.width, cropOffset.x, cropOffset.y, cropZoom, editingImageIndex, editingImageSrc, getCropBoxSize, cropAspectId, selectedCropAspect.outputHeight, selectedCropAspect.outputWidth]);
 
   // 文字数（内容量）に応じてテキストエリアの高さを自動調整する
   const resizeTextarea = useCallback(() => {
@@ -1295,6 +1314,133 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
 
   const remaining = MAX_LEN - content.length;
   const overLimit = remaining < 0;
+
+  const imageEditorDialog = editingImageSrc && typeof document !== 'undefined' && createPortal(
+        <div
+          className="limenote-crop-editor-overlay fixed inset-0 z-[2147483647] flex items-center justify-center bg-black/78 p-2 sm:p-3 backdrop-blur-sm"
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget) closeImageEditor();
+          }}
+        >
+          <div className="flex h-[min(92svh,760px)] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-border/60 bg-card text-card-foreground shadow-2xl">
+            <div className="flex h-16 shrink-0 items-center justify-between border-b border-border/60 px-4">
+              <button
+                type="button"
+                onClick={closeImageEditor}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                aria-label="編集を閉じる"
+              >
+                <X className="h-5 w-5" />
+              </button>
+              <div className="text-lg font-black">メディアをトリミング</div>
+              <Button type="button" size="sm" className="rounded-full px-4 font-bold" onClick={saveCroppedImage}>
+                保存
+              </Button>
+            </div>
+
+            <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-2 sm:p-4">
+              <div ref={cropStageRef} className="relative mx-auto flex h-full w-full max-w-[620px] items-center justify-center overflow-hidden bg-transparent touch-none select-none">
+                <div
+                  ref={cropBoxRef}
+                  className="relative z-10 cursor-grab overflow-hidden bg-transparent shadow-2xl touch-none select-none active:cursor-grabbing"
+                  style={{
+                    width: `${cropFrameSize.width}px`,
+                    height: `${cropFrameSize.height}px`,
+                    maxWidth: '100%',
+                    maxHeight: '100%',
+                    aspectRatio: `${selectedCropAspect.width} / ${selectedCropAspect.height}`,
+                    touchAction: 'none',
+                    WebkitUserSelect: 'none',
+                    userSelect: 'none',
+                    WebkitTouchCallout: 'none',
+                  }}
+                  onPointerDown={startCropGesture}
+                >
+                  <div
+                    className="absolute inset-0 bg-center bg-no-repeat"
+                    style={{
+                      backgroundImage: `url(${editingImageSrc})`,
+                      backgroundSize: cropImageSize.width && cropImageSize.height
+                        ? (() => {
+                            const baseScale = cropAspectId === 'original'
+                              ? Math.min((cropBoxSize.width || 320) / cropImageSize.width, (cropBoxSize.height || 320) / cropImageSize.height)
+                              : Math.max((cropBoxSize.width || 320) / cropImageSize.width, (cropBoxSize.height || 320) / cropImageSize.height);
+
+                            return `${cropImageSize.width * baseScale * cropZoom}px ${cropImageSize.height * baseScale * cropZoom}px`;
+                          })()
+                        : 'contain',
+                      backgroundPosition: `calc(50% + ${cropOffset.x}px) calc(50% + ${cropOffset.y}px)`,
+                    }}
+                  />
+                  <div className="pointer-events-none absolute inset-0 ring-2 ring-inset ring-accent" />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-2 border-t border-border/60 px-3 py-3 sm:gap-3 sm:px-4">
+              <div className="flex shrink-0 items-center gap-2">
+                {CROP_ASPECT_OPTIONS.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => selectCropAspect(option.id)}
+                    className={cn(
+                      'inline-flex h-9 w-9 items-center justify-center rounded-full transition',
+                      cropAspectId === option.id
+                        ? 'text-accent'
+                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                    )}
+                    aria-label={`${option.label}でトリミング`}
+                    title={option.label}
+                  >
+                    {(() => {
+                      const iconSize = getCropAspectIconSize(option);
+
+                      return (
+                        <span
+                          className={cn(
+                            'block rounded-[3px] border-2',
+                            cropAspectId === option.id ? 'border-current' : 'border-current/70'
+                          )}
+                          style={{ width: `${iconSize.width}px`, height: `${iconSize.height}px` }}
+                        />
+                      );
+                    })()}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => applyCropZoom(cropZoom - 0.15)}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                aria-label="縮小"
+              >
+                −
+              </button>
+              <input
+                type="range"
+                min="1"
+                max="3"
+                step="0.01"
+                value={cropZoom}
+                onChange={handleCropZoomChange}
+                className="min-w-0 flex-1 accent-current"
+              />
+              <button
+                type="button"
+                onClick={() => applyCropZoom(cropZoom + 0.15)}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                aria-label="拡大"
+              >
+                +
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      );
+  if (imageEditor) return imageEditorDialog;
 
   if (!user) return null;
 
@@ -1556,131 +1702,7 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
         </div>
       </div>
       </div>
-      {editingImageSrc && typeof document !== 'undefined' && createPortal(
-        <div
-          className="limenote-crop-editor-overlay fixed inset-0 z-[2147483647] flex items-center justify-center bg-black/78 p-2 sm:p-3 backdrop-blur-sm"
-          onPointerDown={(event) => {
-            if (event.target === event.currentTarget) closeImageEditor();
-          }}
-        >
-          <div className="flex h-[min(92svh,760px)] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-border/60 bg-card text-card-foreground shadow-2xl">
-            <div className="flex h-16 shrink-0 items-center justify-between border-b border-border/60 px-4">
-              <button
-                type="button"
-                onClick={closeImageEditor}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                aria-label="編集を閉じる"
-              >
-                <X className="h-5 w-5" />
-              </button>
-              <div className="text-lg font-black">メディアをトリミング</div>
-              <Button type="button" size="sm" className="rounded-full px-4 font-bold" onClick={saveCroppedImage}>
-                保存
-              </Button>
-            </div>
-
-            <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-2 sm:p-4">
-              <div ref={cropStageRef} className="relative mx-auto flex h-full w-full max-w-[620px] items-center justify-center overflow-hidden bg-transparent touch-none select-none">
-                <div
-                  ref={cropBoxRef}
-                  className="relative z-10 cursor-grab overflow-hidden bg-transparent shadow-2xl touch-none select-none active:cursor-grabbing"
-                  style={{
-                    width: `${cropFrameSize.width}px`,
-                    height: `${cropFrameSize.height}px`,
-                    maxWidth: '100%',
-                    maxHeight: '100%',
-                    aspectRatio: `${selectedCropAspect.width} / ${selectedCropAspect.height}`,
-                    touchAction: 'none',
-                    WebkitUserSelect: 'none',
-                    userSelect: 'none',
-                    WebkitTouchCallout: 'none',
-                  }}
-                  onPointerDown={startCropGesture}
-                >
-                  <div
-                    className="absolute inset-0 bg-center bg-no-repeat"
-                    style={{
-                      backgroundImage: `url(${editingImageSrc})`,
-                      backgroundSize: cropImageSize.width && cropImageSize.height
-                        ? (() => {
-                            const baseScale = cropAspectId === 'original'
-                              ? Math.min((cropBoxSize.width || 320) / cropImageSize.width, (cropBoxSize.height || 320) / cropImageSize.height)
-                              : Math.max((cropBoxSize.width || 320) / cropImageSize.width, (cropBoxSize.height || 320) / cropImageSize.height);
-
-                            return `${cropImageSize.width * baseScale * cropZoom}px ${cropImageSize.height * baseScale * cropZoom}px`;
-                          })()
-                        : 'contain',
-                      backgroundPosition: `calc(50% + ${cropOffset.x}px) calc(50% + ${cropOffset.y}px)`,
-                    }}
-                  />
-                  <div className="pointer-events-none absolute inset-0 ring-2 ring-inset ring-accent" />
-                </div>
-              </div>
-            </div>
-
-            <div className="flex shrink-0 items-center gap-2 border-t border-border/60 px-3 py-3 sm:gap-3 sm:px-4">
-              <div className="flex shrink-0 items-center gap-2">
-                {CROP_ASPECT_OPTIONS.map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => selectCropAspect(option.id)}
-                    className={cn(
-                      'inline-flex h-9 w-9 items-center justify-center rounded-full transition',
-                      cropAspectId === option.id
-                        ? 'text-accent'
-                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                    )}
-                    aria-label={`${option.label}でトリミング`}
-                    title={option.label}
-                  >
-                    {(() => {
-                      const iconSize = getCropAspectIconSize(option);
-
-                      return (
-                        <span
-                          className={cn(
-                            'block rounded-[3px] border-2',
-                            cropAspectId === option.id ? 'border-current' : 'border-current/70'
-                          )}
-                          style={{ width: `${iconSize.width}px`, height: `${iconSize.height}px` }}
-                        />
-                      );
-                    })()}
-                  </button>
-                ))}
-              </div>
-
-              <button
-                type="button"
-                onClick={() => applyCropZoom(cropZoom - 0.15)}
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                aria-label="縮小"
-              >
-                −
-              </button>
-              <input
-                type="range"
-                min="1"
-                max="3"
-                step="0.01"
-                value={cropZoom}
-                onChange={handleCropZoomChange}
-                className="min-w-0 flex-1 accent-current"
-              />
-              <button
-                type="button"
-                onClick={() => applyCropZoom(cropZoom + 0.15)}
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                aria-label="拡大"
-              >
-                +
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+      {imageEditorDialog}
     </>
   );
 }

@@ -17,6 +17,7 @@ import {
 import { supabase } from '@/lib/supabase';
 import { getCurrentUserId } from '@/lib/currentUser';
 import type { PostWithAuthor } from '@/types';
+import type { TimelinePage } from '@/lib/timelinePaging';
 import { toast } from 'sonner';
 
 /**
@@ -159,9 +160,8 @@ export const useUserPosts = (userId: string | undefined) =>
   useQuery({
     queryKey: userPostsKey(userId ?? ''),
     queryFn: async () => {
-      const posts = await getPostsByUser(userId!);
-      const { currentUserId, authorIdsFollowingViewer, creatorIdsViewerIsMemberOf } =
-        await getViewerPostAccess();
+      const [posts, { currentUserId, authorIdsFollowingViewer, creatorIdsViewerIsMemberOf }] =
+        await Promise.all([getPostsByUser(userId!), getViewerPostAccess()]);
 
       return posts.filter((post: any) => {
         return canViewPost(
@@ -202,13 +202,14 @@ const updatePostInCache = (
   flip: (p: PostWithAuthor) => PostWithAuthor,
 ) => {
   // 1. 全てのタイムライン（最新、フォロー中など 'feed' を含むもの全て）を更新
-  qc.setQueriesData<InfiniteData<PostWithAuthor[]>>({ queryKey: feedKey }, (old) => {
+  qc.setQueriesData<InfiniteData<PostWithAuthor[] | TimelinePage>>({ queryKey: feedKey }, (old) => {
     if (!old) return old;
     return {
       ...old,
-      pages: old.pages.map((page) =>
-        page.map((p) => (p.id === postId ? flip(p) : p)),
-      ),
+      pages: old.pages.map((page) => {
+        const update = (posts: PostWithAuthor[]) => posts.map((p) => (p.id === postId ? flip(p) : p));
+        return Array.isArray(page) ? update(page) : { ...page, posts: update(page.posts) };
+      }),
     };
   });
 

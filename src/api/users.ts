@@ -1,6 +1,9 @@
 import type { User } from '@/types';
 import { supabase } from '@/lib/supabase';
 
+// Keep the fields returned by toUser; exclude unrelated profile settings.
+const USER_SELECT_COLUMNS = 'id, username, display_name, bio, avatar_url, cover_url, created_at, is_official, emoji_effect, bot_enabled, bot_prompt';
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function toUser(row: any): User {
   return {
@@ -22,7 +25,7 @@ function toUser(row: any): User {
 export async function getUserByUsername(username: string): Promise<User | null> {
   const { data, error } = await supabase
     .from('profiles')
-    .select('*')
+    .select(USER_SELECT_COLUMNS)
     .eq('username', username)
     .single();
 
@@ -33,7 +36,7 @@ export async function getUserByUsername(username: string): Promise<User | null> 
 export async function getUserById(id: string): Promise<User | null> {
   const { data, error } = await supabase
     .from('profiles')
-    .select('*')
+    .select(USER_SELECT_COLUMNS)
     .eq('id', id)
     .single();
 
@@ -97,7 +100,7 @@ export async function updateProfile(
     .from('profiles')
     .update(dbPatch)
     .eq('id', id)
-    .select('*')
+    .select(USER_SELECT_COLUMNS)
     .single();
 
   if (error || !data) throw new Error('ユーザーが見つかりません');

@@ -878,7 +878,7 @@ function getIsMobileViewport() {
   return typeof window !== 'undefined' && window.innerWidth < 640;
 }
 
-function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuthor; timelineGlass?: boolean }) {
+function PostCardComponent({ post, timelineGlass = false, thread = false }: { post: PostWithAuthor; timelineGlass?: boolean; thread?: boolean }) {
   const [showMenu, setShowMenu] = useState(false);
   const [moreMenuPosition, setMoreMenuPosition] = useState<{ top: number; right: number } | null>(null);
   const [showShareMenu, setShowShareMenu] = useState(false);
@@ -2215,6 +2215,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
 
       <article
         data-lime-post-card
+        data-lime-thread-item={thread || undefined}
         ref={cardRootRef}
         onClickCapture={handleCardClickCapture}
         onClick={handleCardClick}
@@ -2228,7 +2229,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
               : "rounded-3xl border border-border/60 bg-card p-5 shadow-soft transition hover:shadow-card-soft relative cursor-pointer"
         }
       >
-        {isMobile && !timelineGlass && (
+        {isMobile && !timelineGlass && !thread && (
           <div className="pointer-events-none absolute bottom-0 left-1/2 w-screen -translate-x-1/2 border-b border-border/60" />
         )}
 
@@ -2238,6 +2239,7 @@ function PostCardComponent({ post, timelineGlass = false }: { post: PostWithAuth
               <Link
                 to={`/u/${post.author.username}`}
                 className="inline-flex h-11 w-11 shrink-0 items-center justify-center"
+                data-lime-thread-avatar={thread || undefined}
                 onMouseEnter={() => openProfileHover('avatar')}
                 onMouseLeave={closeProfileHover}
                 onFocus={() => openProfileHover('avatar')}

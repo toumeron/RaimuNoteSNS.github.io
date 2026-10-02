@@ -1,8 +1,12 @@
+import { ReplyShare } from '@/components/post/ReplyShare';
+import { useAuth } from '@/hooks/useAuth';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { buildProfileReplyThreads } from '@/lib/profileReplyThreads';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
 import { useInView } from 'react-intersection-observer';
-import { Loader2, Image as ImageIcon, X, MessageCircle, Plus, Upload, Link as LinkIcon, Send, Globe, Heart } from 'lucide-react';
+import { Loader2, MoreHorizontal, ChartBarBig, Image as ImageIcon, X, MessageCircle, Plus, Upload, Link as LinkIcon, Send, Globe, Heart } from 'lucide-react';
 import { ProfileHeader } from '@/components/profile/ProfileHeader';
 import { PostCard } from '@/components/feed/PostCard';
 import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
@@ -134,10 +138,13 @@ interface ProfileThreadImageSelection {
 type ProfileThreadImageTarget = Omit<ProfileThreadImageSelection, 'url'>;
 
 interface ProfileReplyThreadComment {
+  parentCommentId?: string | null;
+  clientName?: string;
   id: string;
   postId: string;
   userId: string;
   content: string;
+  imageUrls?: string[];
   createdAt: string;
   likesCount: number;
   likedByMe: boolean;
@@ -2146,6 +2153,7 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
   isBluesky?: boolean;
   blueskyUrl?: string | null;
 }) {
+  const { user } = useAuth();
   const inlineActionClass = 'inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full sm:px-2.5 sm:text-sm';
   const iconActionClass = 'inline-flex items-center justify-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full origin-center sm:h-8 sm:w-8 sm:p-1.5 sm:px-0';
 
@@ -2213,7 +2221,7 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
         />
       )}
 
-      <ProfileShareButton
+      {targetType === 'post' && <ProfileShareButton
         postId={sharePostId}
         title={shareTitle}
         text={shareText}
@@ -2221,7 +2229,8 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
         buttonClassName={iconActionClass}
         className="ml-auto shrink-0"
         shareUrlOverride={isBluesky ? blueskyUrl : null}
-      />
+      />}
+      {targetType === 'comment' && <ReplyShare currentUserId={user?.id ?? null} comment={{ id: targetId, postId: sharePostId, content: shareText, author: { id: sharePostAuthor?.id ?? '', username: sharePostAuthor?.username ?? '', displayName: sharePostAuthor?.displayName ?? sharePostAuthor?.display_name ?? sharePostAuthor?.username ?? 'ユーザー' } }} className={iconActionClass} />}
     </div>
   );
 });
@@ -2319,7 +2328,7 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
               imageTarget={{
                 targetType: 'post',
                 targetId: parent.id,
-                postId: parent.id,
+                postId: primaryComment.postId,
                 liked: !!(parent.likedByMe ?? parent.liked_by_me),
                 likesCount: Number(parent.likesCount ?? parent.likes_count ?? 0),
                 replyCount: Number(parent.commentsCount ?? parent.comments_count ?? 0),
@@ -2340,7 +2349,7 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
               liked={!!(parent.likedByMe ?? parent.liked_by_me)}
               likesCount={Number(parent.likesCount ?? parent.likes_count ?? 0)}
               replyCount={Number(parent.commentsCount ?? parent.comments_count ?? 0)}
-              sharePostId={parent.id}
+              sharePostId={primaryComment.postId}
               shareTitle={`${parentDisplayName}さんのポスト`}
               shareText={clippedParentContent ? `${parentDisplayName}さんのポスト: ${clippedParentContent}` : `${parentDisplayName}さんのポスト`}
               sharePostAuthor={parentAuthor}
@@ -2352,7 +2361,7 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
         </div>
       ) : (
         <div className="mb-3 rounded-2xl border border-dashed border-border/70 px-4 py-3 text-sm text-muted-foreground sm:bg-muted/20">
-          元のポストを表示できませんでした。
+          返信のつながりを表示できませんでした。
         </div>
       )}
 
@@ -2360,11 +2369,11 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
         const commentAuthor = comment.author;
         const replyContent = stripPreviewUrls(comment.content ?? '');
         const commentDisplayName = commentAuthor?.displayName ?? commentAuthor?.display_name ?? commentAuthor?.username ?? 'ユーザー';
-        const clippedReplyContent = replyContent.length > 120 ? `${replyContent.slice(0, 120)}...` : replyContent;
 
         return (
           <div
             key={comment.id}
+            onClick={(event) => { event.stopPropagation(); navigate(`/post/${comment.postId}?reply=${encodeURIComponent(comment.id)}`); }}
             className={`${commentIndex > 0 ? 'mt-3' : ''} grid grid-cols-[44px_minmax(0,1fr)] gap-3 sm:grid-cols-[44px_minmax(0,1fr)]`}
           >
             <div className="relative flex justify-center">
@@ -2384,7 +2393,10 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
             </div>
 
             <div className="min-w-0">
-              <ProfileThreadAuthorLine author={commentAuthor} createdAt={comment.createdAt} />
+              <div className="flex items-center justify-between">
+                <ProfileThreadAuthorLine author={commentAuthor} createdAt={comment.createdAt} />
+                <DropdownMenu><DropdownMenuTrigger asChild><button type="button" aria-label="コメントのメニュー" onClick={event => event.stopPropagation()} className="p-1 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"><MoreHorizontal className="h-5 w-5" /></button></DropdownMenuTrigger><DropdownMenuContent align="end" className="w-44 rounded-xl border border-border bg-card p-1 shadow-lg"><DropdownMenuItem asChild className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted focus:bg-muted focus:text-foreground transition-colors"><button type="button" onClick={() => navigate(`/post/${comment.postId}/activity?reply=${encodeURIComponent(comment.id)}`)}><ChartBarBig className="h-4 w-4" />ポストアクティビティ</button></DropdownMenuItem></DropdownMenuContent></DropdownMenu>
+              </div>
 
               {replyContent ? (
                 <p className="whitespace-pre-wrap break-words text-[16px] leading-normal text-foreground mt-1 sm:text-base sm:leading-relaxed">
@@ -2418,9 +2430,9 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
                 likesCount={comment.likesCount}
                 sharePostId={comment.postId}
                 shareTitle={`${commentDisplayName}さんの返信`}
-                shareText={clippedReplyContent ? `${commentDisplayName}さんの返信: ${clippedReplyContent}` : `${commentDisplayName}さんの返信`}
-                sharePostAuthor={parentAuthor}
-                onReplyClick={openThread}
+                shareText={replyContent}
+                sharePostAuthor={commentAuthor}
+                onReplyClick={() => navigate(`/post/${comment.postId}?reply=${encodeURIComponent(comment.id)}`)}
               />
             </div>
           </div>
@@ -2852,7 +2864,7 @@ export default function Profile() {
 
         const { data: comments, error: commentsError } = await supabase
           .from('comments')
-          .select('id, post_id, user_id, content, created_at, likes_count')
+          .select('id, post_id, user_id, content, created_at, likes_count, image_urls, parent_comment_id, client_name')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false })
           .limit(PROFILE_REPLY_LIMIT);
@@ -2949,51 +2961,48 @@ export default function Profile() {
           });
         }
 
-        let commentLikeRows: any[] = [];
-        if (currentUserId && visibleCommentIds.length > 0) {
-          const { data: likes, error: likesError } = await supabase
-            .from('comment_likes')
-            .select('comment_id')
-            .eq('user_id', currentUserId)
-            .in('comment_id', visibleCommentIds);
-
-          if (likesError) throw likesError;
-          commentLikeRows = likes || [];
+        // Resolve ancestors in batches, keeping root-post visibility checks in place.
+        const parentCommentRows: any[] = [];
+        const knownCommentIds = new Set(visibleRows.map((row: any) => row.id));
+        let pendingParentIds = uniqueStrings(visibleRows.map((row: any) => row.parent_comment_id).filter(Boolean));
+        while (pendingParentIds.length) {
+          const missingIds = pendingParentIds.filter(id => !knownCommentIds.has(id));
+          if (!missingIds.length) break;
+          missingIds.forEach(id => knownCommentIds.add(id));
+          const { data: ancestors, error } = await supabase.from('comments').select('*, profiles(*)').in('id', missingIds).in('post_id', visibleParentIds);
+          if (error) throw error;
+          parentCommentRows.push(...(ancestors ?? []));
+          pendingParentIds = uniqueStrings((ancestors ?? []).map((row: any) => row.parent_comment_id).filter(Boolean));
         }
+        const allVisibleCommentIds = uniqueStrings([...visibleCommentIds, ...(parentCommentRows ?? []).map((row: any) => row.id)]);
 
-        let parentLikedRows: any[] = [];
-        if (currentUserId && visibleParentIds.length > 0) {
-          const { data: likes, error: parentLikesError } = await supabase
-            .from('likes')
-            .select('post_id')
-            .eq('user_id', currentUserId)
-            .in('post_id', visibleParentIds);
-
-          if (parentLikesError) throw parentLikesError;
-          parentLikedRows = likes || [];
+        // These reads depend only on the already checked visible IDs.
+        // Fetch together without caching or delaying real-time updates.
+        const [commentLikesRes, parentLikesRes, parentReactionsRes, commentReactionsRes] = await Promise.all([
+          currentUserId && allVisibleCommentIds.length > 0
+            ? supabase.from('comment_likes').select('comment_id')
+                .eq('user_id', currentUserId).in('comment_id', allVisibleCommentIds)
+            : Promise.resolve({ data: [], error: null }),
+          currentUserId && visibleParentIds.length > 0
+            ? supabase.from('likes').select('post_id')
+                .eq('user_id', currentUserId).in('post_id', visibleParentIds)
+            : Promise.resolve({ data: [], error: null }),
+          visibleParentIds.length > 0
+            ? supabase.from('post_reactions').select('post_id, user_id, emoji')
+                .in('post_id', visibleParentIds)
+            : Promise.resolve({ data: [], error: null }),
+          allVisibleCommentIds.length > 0
+            ? supabase.from('comment_reactions').select('comment_id, user_id, emoji')
+                .in('comment_id', allVisibleCommentIds)
+            : Promise.resolve({ data: [], error: null }),
+        ]);
+        for (const result of [commentLikesRes, parentLikesRes, parentReactionsRes, commentReactionsRes]) {
+          if (result.error) throw result.error;
         }
-
-        let parentReactionRows: any[] = [];
-        if (visibleParentIds.length > 0) {
-          const { data: reactions, error: parentReactionsError } = await supabase
-            .from('post_reactions')
-            .select('post_id, user_id, emoji')
-            .in('post_id', visibleParentIds);
-
-          if (parentReactionsError) throw parentReactionsError;
-          parentReactionRows = reactions || [];
-        }
-
-        let commentReactionRows: any[] = [];
-        if (visibleCommentIds.length > 0) {
-          const { data: reactions, error: commentReactionsError } = await supabase
-            .from('comment_reactions')
-            .select('comment_id, user_id, emoji')
-            .in('comment_id', visibleCommentIds);
-
-          if (commentReactionsError) throw commentReactionsError;
-          commentReactionRows = reactions || [];
-        }
+        const commentLikeRows = commentLikesRes.data || [];
+        const parentLikedRows = parentLikesRes.data || [];
+        const parentReactionRows = parentReactionsRes.data || [];
+        const commentReactionRows = commentReactionsRes.data || [];
 
         const parentReactionMap = groupProfileReactionRows(parentReactionRows, 'post_id', currentUserId);
         const commentReactionMap = groupProfileReactionRows(commentReactionRows, 'comment_id', currentUserId);
@@ -3028,65 +3037,24 @@ export default function Profile() {
 
         const replyAuthor = normalizeAuthor(user, user.id);
 
-        const replyThreadsByPostId = new Map<string, ProfileReplyThread>();
-
-        visibleRows.forEach((comment: any) => {
-          const parentPost = parentMap.get(comment.post_id) ?? null;
-
-          if (!parentPost) {
-            return;
-          }
-
-          const nextComment: ProfileReplyThreadComment = {
-            id: comment.id,
-            postId: comment.post_id,
-            userId: comment.user_id,
-            content: comment.content ?? '',
-            createdAt: comment.created_at,
-            likesCount: Number(comment.likes_count ?? 0),
-            likedByMe: likedCommentSet.has(comment.id),
-            author: replyAuthor,
-            reactions: commentReactionMap.get(comment.id) ?? [],
-          };
-
-          const existingThread = replyThreadsByPostId.get(comment.post_id);
-
-          if (existingThread) {
-            existingThread.comments.push(nextComment);
-            return;
-          }
-
-          replyThreadsByPostId.set(comment.post_id, {
-            id: comment.post_id,
-            createdAt: nextComment.createdAt,
-            comment: nextComment,
-            comments: [nextComment],
-            parentPost,
-            parentReactions: parentReactionMap.get(comment.post_id) ?? [],
-          });
+        const toReply = (comment: any, author: any): ProfileReplyThreadComment => ({
+          id: comment.id,
+          postId: comment.post_id,
+          userId: comment.user_id,
+          content: comment.content ?? '',
+          imageUrls: comment.image_urls ?? [],
+          parentCommentId: comment.parent_comment_id ?? null,
+          clientName: comment.client_name ?? undefined,
+          createdAt: comment.created_at,
+          likesCount: Number(comment.likes_count ?? 0),
+          likedByMe: likedCommentSet.has(comment.id),
+          author,
+          reactions: commentReactionMap.get(comment.id) ?? [],
         });
-
-        const nextReplies = Array.from(replyThreadsByPostId.values())
-          .map((thread) => {
-            const comments = [...thread.comments].sort((a, b) => {
-              const aTime = new Date(a.createdAt || 0).getTime();
-              const bTime = new Date(b.createdAt || 0).getTime();
-              return bTime - aTime;
-            });
-            const latestComment = comments[0] ?? thread.comment;
-
-            return {
-              ...thread,
-              createdAt: latestComment.createdAt,
-              comment: latestComment,
-              comments,
-            };
-          })
-          .sort((a, b) => {
-            const aTime = new Date(a.createdAt || 0).getTime();
-            const bTime = new Date(b.createdAt || 0).getTime();
-            return bTime - aTime;
-          });
+        const parentCommentMap = new Map<string, ProfileReplyThreadComment>((parentCommentRows ?? []).map((comment: any) => [comment.id, toReply(comment, normalizeAuthor(comment.profiles, comment.user_id))]));
+        const nextReplies = buildProfileReplyThreads(
+          visibleRows.map((comment: any) => toReply(comment, replyAuthor)), parentMap, parentCommentMap, parentReactionMap, commentReactionMap,
+        );
 
         if (!cancelled) {
           setProfileReplies(nextReplies);

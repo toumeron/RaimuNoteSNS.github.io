@@ -1,7 +1,9 @@
+import { supabase } from '@/lib/supabase';
 import { useEffect, useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { ChevronLeft, Users } from 'lucide-react';
 import { getPostLikers } from '@/api/posts';
+import { getCommentLikers } from '@/api/comments';
 import type { User } from '@/types';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { FollowButton } from '@/components/profile/FollowButton';
@@ -9,16 +11,33 @@ import { FollowButton } from '@/components/profile/FollowButton';
 export default function PostActivity() {
   const { postId } = useParams<{ postId: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const replyId = searchParams.get('reply');
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     if (!postId) return;
+    let cancelled = false;
+    let revision = 0;
     setLoading(true);
-    getPostLikers(postId)
-      .then(setUsers)
-      .finally(() => setLoading(false));
-  }, [postId]);
+    setFailed(false);
+    setUsers([]);
+    const refresh = () => {
+      const request = ++revision;
+      (replyId ? getCommentLikers(replyId) : getPostLikers(postId))
+        .then(result => { if (!cancelled && request === revision) { setUsers(result); setFailed(false); } })
+        .catch(() => { if (!cancelled && request === revision) setFailed(true); })
+        .finally(() => { if (!cancelled && request === revision) setLoading(false); });
+    };
+    refresh();
+    const channel = replyId ? supabase.channel(`reply-activity-${replyId}-${crypto.randomUUID()}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'comment_likes', filter: `comment_id=eq.${replyId}` }, refresh)
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'comment_likes' }, refresh)
+      .subscribe(status => { if (status === 'SUBSCRIBED') refresh(); }) : null;
+    return () => { cancelled = true; if (channel) supabase.removeChannel(channel); };
+  }, [postId, replyId]);
 
   return (
     <div className="max-w-2xl mx-auto min-h-screen bg-transparent sm:p-4">
@@ -44,7 +63,7 @@ export default function PostActivity() {
 
         {/* ユーザーリスト */}
         <div className="divide-y divide-border/40 bg-transparent">
-          {loading ? (
+          {failed ? <p className="py-20 text-center text-sm text-muted-foreground">アクティビティの読み込みに失敗しました。</p> : loading ? (
             <div className="flex flex-col items-center justify-center py-20 gap-3 bg-transparent">
               <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary/20 border-t-primary" />
               <p className="text-sm font-bold text-muted-foreground">読み込み中...</p>

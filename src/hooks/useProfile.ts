@@ -21,6 +21,8 @@ export const userReactionsKey = (userId: string) => ['posts', 'reactions', userI
 const LIMIT = 10;
 const LIKES_FETCH_LIMIT = 30;
 const REACTIONS_FETCH_LIMIT = 30;
+// All author fields consumed by toSafeAuthor; omit unrelated profile settings.
+const POST_AUTHOR_COLUMNS = 'id, username, display_name, bio, avatar_url, cover_url, created_at, is_official, emoji_effect, bot_enabled, bot_prompt, bot_interval_hours, prefecture, city';
 
 type ViewerPostAccess = {
   currentUserId: string | null;
@@ -147,7 +149,7 @@ const getPostAuthorId = (post: any) => {
   return post?.user_id ?? post?.userId ?? post?.author?.id ?? post?.profiles?.id ?? '';
 };
 
-const getViewerPostAccess = async (): Promise<ViewerPostAccess> => {
+const getViewerPostAccess = async (profileOwnerId?: string): Promise<ViewerPostAccess> => {
   const currentUserId = await getCurrentUserId();
 
   if (!currentUserId) {
@@ -157,10 +159,12 @@ const getViewerPostAccess = async (): Promise<ViewerPostAccess> => {
     };
   }
 
-  const { data, error } = await supabase
-    .from('follows')
-    .select('follower_id')
-    .eq('followee_id', currentUserId);
+  if (profileOwnerId === currentUserId) {
+    return { currentUserId, authorIdsFollowingViewer: new Set<string>() };
+  }
+  let query = supabase.from('follows').select('follower_id').eq('followee_id', currentUserId);
+  if (profileOwnerId) query = query.eq('follower_id', profileOwnerId);
+  const { data, error } = await query;
 
   if (error) throw error;
 
@@ -232,7 +236,7 @@ export const useUserPostsInfinite = (userId: string | undefined) =>
       const from = (pageParam as number) * LIMIT;
       const to = from + LIMIT - 1;
 
-      const { currentUserId, authorIdsFollowingViewer } = await getViewerPostAccess();
+      const { currentUserId, authorIdsFollowingViewer } = await getViewerPostAccess(userId);
 
       const canSeeFollowingPosts = canViewProfileOwnerFollowingPosts(
         userId,
@@ -244,7 +248,7 @@ export const useUserPostsInfinite = (userId: string | undefined) =>
         .from('posts')
         .select(`
           *,
-          author:user_id(*)
+          author:user_id(${POST_AUTHOR_COLUMNS})
         `)
         .eq('user_id', userId);
 
@@ -363,7 +367,7 @@ export const useUserMediaInfinite = (userId: string | undefined) =>
       const from = (pageParam as number) * LIMIT;
       const to = from + LIMIT - 1;
 
-      const { currentUserId, authorIdsFollowingViewer } = await getViewerPostAccess();
+      const { currentUserId, authorIdsFollowingViewer } = await getViewerPostAccess(userId);
 
       const canSeeFollowingPosts = canViewProfileOwnerFollowingPosts(
         userId,
@@ -375,7 +379,7 @@ export const useUserMediaInfinite = (userId: string | undefined) =>
         .from('posts')
         .select(`
           *,
-          author:user_id(*)
+          author:user_id(${POST_AUTHOR_COLUMNS})
         `)
         .eq('user_id', userId);
 

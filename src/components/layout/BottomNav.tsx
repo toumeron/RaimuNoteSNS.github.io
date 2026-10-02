@@ -344,7 +344,7 @@ export function BottomNav() {
             )}
           >
           <div className="mx-auto max-w-md">
-            <CommentForm postId={postDetailId} variant="bottomNav" />
+            <CommentForm key={`${postDetailId}-${location.search}`} postId={postDetailId} parentCommentId={new URLSearchParams(location.search).get('reply')} variant="bottomNav" />
           </div>
         </div>
       )}

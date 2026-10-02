@@ -5,15 +5,14 @@ import { useQueryClient } from '@tanstack/react-query';
 import { PostComposer } from '@/components/feed/PostComposer';
 import { PostCard } from '@/components/feed/PostCard';
 import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
-import { useFeed } from '@/hooks/useFeed';
+import { useTimelineFeed } from '@/hooks/useTimelineFeed';
+import { normalizeTimelineBlueskyPost } from '@/lib/timelinePaging';
 import { useIsPWA } from '@/hooks/useIsPWA';
 import { supabase } from '@/lib/supabase';
 import { getPostById } from '@/api/posts';
 import type { PostWithAuthor } from '@/types';
 import {
-  fetchBlueskyAuthorFeed,
   fetchTrendingJapaneseBlueskyPosts,
-  getConfiguredBlueskyHandles,
   mergePostsByCreatedAt,
 } from '@/lib/bluesky';
 
@@ -82,13 +81,6 @@ type FeedPostInsertPayload = {
 const ESTIMATED_POST_HEIGHT = 360;
 const VIRTUAL_OVERSCAN = 4;
 const MIN_VIRTUALIZED_POSTS = 12;
-// バグ修正: Bluesky投稿がLime投稿の取得ペースを追い越しすぎないようにするための上限。
-// Lime側にまだ読み込んでいない投稿が残っている間は、Bluesky側の取得済み件数が
-// Lime側の取得済み件数よりこの値以上多くならないようペースを合わせる。
-// これがないと、Bluesky側(1回で最大30件×アカウント数を並列取得)がLime側
-// (1回10件)より遥かに速く積み上がり、スクロールするほどBluesky投稿ばかりが
-// 表示されてしまう(日付順マージの結果、Lime投稿がまだ残っていても埋もれてしまう)。
-const BLUESKY_LEAD_LIMIT = 20;
 // トレンドタブで1回に取得する件数の目安。
 const TRENDING_PAGE_LIMIT = 30;
 
@@ -243,14 +235,6 @@ export default function Feed() {
     following: [],
     trending: [],
   });
-  const [blueskyPosts, setBlueskyPosts] = useState<PostWithAuthor[]>([]);
-  const [blueskyLoading, setBlueskyLoading] = useState(false);
-  const [blueskyHasMore, setBlueskyHasMore] = useState(false);
-  const blueskyLoadingRef = useRef(false);
-  const blueskyRequestIdRef = useRef(0);
-  const blueskyCursorByHandleRef = useRef<Record<string, string | null>>({});
-  const blueskyHasMoreByHandleRef = useRef<Record<string, boolean>>({});
-
   // --- トレンドタブ(Bluesky・日本語・いいね500以上・ランダム表示)用の状態 ---
   const [trendingPosts, setTrendingPosts] = useState<PostWithAuthor[]>([]);
   const [trendingLoading, setTrendingLoading] = useState(false);
@@ -266,14 +250,16 @@ export default function Feed() {
     isError,
     fetchNextPage,
     hasNextPage,
-    isFetchingNextPage
-  } = useFeed(activeTab === 'following' ? 'following' : 'all');
+    isFetchingNextPage,
+    isFetching,
+    isFetchNextPageError,
+  } = useTimelineFeed(activeTab === 'following' ? 'following' : 'all');
 
   const { ref, inView } = useInView({
     rootMargin: '300px 0px 500px 0px',
   });
 
-  const fetchedPosts = useMemo(() => data?.pages.flatMap((page) => page) ?? [], [data]);
+  const fetchedPosts = useMemo(() => data?.pages.flatMap((page) => page.posts) ?? [], [data]);
   const limePosts = useMemo(
     () => mergeRealtimePostsWithFetchedPosts(
       realtimePostsByTab[activeTab === 'trending' ? 'all' : activeTab],
@@ -282,150 +268,15 @@ export default function Feed() {
     [activeTab, fetchedPosts, realtimePostsByTab]
   );
 
-  // バグ修正: マウント直後の初回ロードでは、設定済みのBlueskyアカウント全件を
-  // 並列に(1アカウントあたり最大30件)まとめて取得してしまうため、Lime側の
-  // 最初の1ページ(10件)よりはるかに多いBluesky投稿が、スクロールが始まる前から
-  // 既にメモリ上に存在してしまう。取得のペースだけを抑えても、この「初回に
-  // 積み上がった分」自体は減らせないため、実際にタイムラインへ混ぜて表示する
-  // Bluesky投稿の件数を、Lime投稿の取得件数に応じてここでキャップする。
-  // blueskyPosts自体は既に新しい順にソート済みなので、先頭からcap件だけを使えば
-  // 「直近のBluesky投稿」を段階的に見せつつ、裏で先読み済みの残りは
-  // Lime側の読み込みが追いつくにつれて順次表示されていく。
-  // Lime側を最後まで読み切った後(hasNextPage === false)は制限を解除する。
-  const visibleBlueskyPosts = useMemo(() => {
-    if (!hasNextPage) return blueskyPosts;
-    const cap = Math.max(0, limePosts.length + BLUESKY_LEAD_LIMIT);
-    return blueskyPosts.slice(0, cap);
-  }, [blueskyPosts, limePosts.length, hasNextPage]);
-
   // トレンドタブのときはLime投稿・時系列Bluesky投稿と混ぜず、
   // トレンド専用に取得したランダム順の投稿だけをそのまま表示する
   // (createdAt順に並び替えてしまうと「ランダム表示」の意図が崩れるため)。
   const allPosts = useMemo(() => {
     if (activeTab === 'trending') return trendingPosts;
-    return mergePostsByCreatedAt(limePosts, visibleBlueskyPosts);
-  }, [activeTab, limePosts, visibleBlueskyPosts, trendingPosts]);
+    return mergePostsByCreatedAt(limePosts);
+  }, [activeTab, limePosts, trendingPosts]);
 
-  const normalizeBlueskyPostForFeed = useCallback(
-    (post: Awaited<ReturnType<typeof fetchBlueskyAuthorFeed>>['posts'][number]): PostWithAuthor => ({
-      id: post.id,
-      userId: post.userId,
-      content: post.content,
-      imageUrls: post.imageUrls,
-      createdAt: post.createdAt,
-      visibility: post.visibility,
-      likedByMe: post.likedByMe,
-      likesCount: post.likesCount,
-      commentsCount: post.commentsCount,
-      isBot: post.isBot,
-      ...(post.is_bot !== undefined ? { is_bot: post.is_bot } : {}),
-      repostsCount: 0,
-      repostedByMe: false,
-      author: {
-        id: post.author.id,
-        username: post.author.username,
-        displayName: post.author.displayName,
-        avatarUrl: post.author.avatarUrl,
-        coverUrl: '',
-        isOfficial: false,
-        bio: post.author.bio,
-        createdAt: post.author.createdAt,
-      },
-    }),
-    []
-  );
-
-  const loadBlueskyPosts = useCallback(async (reset = false) => {
-    const handles = Array.from(
-      new Set(
-        getConfiguredBlueskyHandles()
-          .map((handle) => handle.trim().replace(/^@+/, '').toLowerCase())
-          .filter(Boolean)
-      )
-    );
-
-    if (handles.length === 0) {
-      blueskyRequestIdRef.current += 1;
-      blueskyCursorByHandleRef.current = {};
-      blueskyHasMoreByHandleRef.current = {};
-      setBlueskyPosts([]);
-      setBlueskyHasMore(false);
-      return;
-    }
-
-    if (blueskyLoadingRef.current) return;
-
-    if (reset) {
-      blueskyRequestIdRef.current += 1;
-      blueskyCursorByHandleRef.current = {};
-      blueskyHasMoreByHandleRef.current = Object.fromEntries(
-        handles.map((handle) => [handle, true])
-      );
-      setBlueskyPosts([]);
-      setBlueskyHasMore(true);
-    }
-
-    const targets = reset
-      ? handles
-      : handles.filter((handle) => blueskyHasMoreByHandleRef.current[handle] !== false);
-
-    if (targets.length === 0) {
-      setBlueskyHasMore(false);
-      return;
-    }
-
-    const requestId = ++blueskyRequestIdRef.current;
-    blueskyLoadingRef.current = true;
-    setBlueskyLoading(true);
-
-    try {
-      const results = await Promise.all(
-        targets.map(async (handle) => {
-          try {
-            const page = await fetchBlueskyAuthorFeed({
-              actor: handle,
-              cursor: reset ? null : (blueskyCursorByHandleRef.current[handle] ?? null),
-              limit: 30,
-            });
-            return { handle, page };
-          } catch (error) {
-            console.error(`Fetch Bluesky author feed failed for @${handle}:`, error);
-            return { handle, page: null };
-          }
-        })
-      );
-
-      if (requestId !== blueskyRequestIdRef.current) return;
-
-      const loadedPosts: PostWithAuthor[] = [];
-
-      for (const result of results) {
-        if (!result.page) {
-          blueskyHasMoreByHandleRef.current[result.handle] = false;
-          continue;
-        }
-
-        const normalizedPosts = result.page.posts.map(normalizeBlueskyPostForFeed);
-        blueskyCursorByHandleRef.current[result.handle] = result.page.cursor;
-        blueskyHasMoreByHandleRef.current[result.handle] =
-          Boolean(result.page.cursor) && normalizedPosts.length > 0;
-        loadedPosts.push(...normalizedPosts);
-      }
-
-      setBlueskyHasMore(
-        handles.some((handle) => blueskyHasMoreByHandleRef.current[handle] !== false)
-      );
-
-      setBlueskyPosts((current) =>
-        mergePostsByCreatedAt(reset ? [] : current, loadedPosts)
-      );
-    } finally {
-      if (requestId === blueskyRequestIdRef.current) {
-        blueskyLoadingRef.current = false;
-        setBlueskyLoading(false);
-      }
-    }
-  }, [normalizeBlueskyPostForFeed]);
+  const normalizeBlueskyPostForFeed = useCallback(normalizeTimelineBlueskyPost, []);
 
   // トレンドタブ用: Bluesky検索(日本語・いいね500以上)からランダムな投稿を取得する。
   // reset=true で1ページ目からやり直し(タブ初回表示・引っ張って更新時)、
@@ -492,31 +343,6 @@ export default function Feed() {
       void loadTrendingPosts(true);
     }
   }, [activeTab, trendingPosts.length, loadTrendingPosts]);
-
-  useEffect(() => {
-    const reloadConfiguredBlueskyHandles = () => {
-      const nextHandles = getConfiguredBlueskyHandles();
-      void loadBlueskyPosts(true);
-    };
-
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key === 'lime_bluesky_author_handles') {
-        reloadConfiguredBlueskyHandles();
-      }
-    };
-
-    window.addEventListener('lime-bluesky-handles-changed', reloadConfiguredBlueskyHandles);
-    window.addEventListener('storage', handleStorage);
-
-    return () => {
-      window.removeEventListener('lime-bluesky-handles-changed', reloadConfiguredBlueskyHandles);
-      window.removeEventListener('storage', handleStorage);
-    };
-  }, [loadBlueskyPosts]);
-
-  useEffect(() => {
-    void loadBlueskyPosts(true);
-  }, [loadBlueskyPosts]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1031,7 +857,7 @@ export default function Feed() {
         } else {
           await Promise.all([
             queryClient.invalidateQueries({ queryKey: ['posts'] }),
-            loadBlueskyPosts(true),
+            queryClient.invalidateQueries({ queryKey: ['feed'] }),
           ]);
         }
       } finally {
@@ -1072,7 +898,7 @@ export default function Feed() {
       window.removeEventListener('touchend', handleTouchEnd);
       window.removeEventListener('touchcancel', handleTouchCancel);
     };
-  }, [isPWAMobile, isRefreshing, queryClient, loadBlueskyPosts, activeTab, loadTrendingPosts]);
+  }, [isPWAMobile, isRefreshing, queryClient, activeTab, loadTrendingPosts]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1100,8 +926,7 @@ export default function Feed() {
   }, [showIncomingPostInAllVisibleFeeds]);
 
   useEffect(() => {
-    // トレンドタブでは、Lime本体のフィードやアカウント別Bluesky取得(loadBlueskyPosts)
-    // は使わず、代わりにトレンド専用のページング(loadTrendingPosts)だけを進める。
+    // トレンドタブは既存のトレンド専用ページングだけを進める。
     if (activeTab === 'trending') {
       if (inView && trendingHasMore && !trendingLoading) {
         void loadTrendingPosts(false);
@@ -1109,41 +934,14 @@ export default function Feed() {
       return;
     }
 
-    if (inView && hasNextPage && !isFetchingNextPage) {
-      fetchNextPage();
-    }
-
-    // バグ修正: 以前はスクロールで画面下部(inView)に到達するたびBluesky側の
-    // 設定済みアカウント全件を並列取得しており(1回あたり最大30件×アカウント数)、
-    // Lime側(1回10件)よりはるかに速く投稿がたまっていった。
-    // 日付順にマージして表示する仕組みのため、この差が開くほどBluesky投稿が
-    // 先に表示され続け、Lime側にまだ読み込んでいない投稿が残っているにも
-    // かかわらず「スクロールするとBluesky投稿しか出てこない」状態になっていた。
-    // ここでは、Lime側にまだ次のページがある間(hasNextPage === true)は、
-    // Bluesky投稿の取得済み件数がLime投稿の取得済み件数より
-    // BLUESKY_LEAD_LIMIT件以上先行しないよう歯止めをかける。
-    // Lime側を読み込み切った後(hasNextPage === false)はこの制限を解除し、
-    // Bluesky投稿は通常どおり無限スクロールで取得し続ける。
-    const blueskyLeadOverLime = blueskyPosts.length - limePosts.length;
-    const isBlueskyAllowedToLoadMore = !hasNextPage || blueskyLeadOverLime < BLUESKY_LEAD_LIMIT;
-
-    if (inView && blueskyHasMore && !blueskyLoading && isBlueskyAllowedToLoadMore) {
-      void loadBlueskyPosts(false);
+    // A single request owns both sources and publishes the merged page only
+    // when its lookahead is ready. Do not launch overlapping pages/refetches.
+    if (inView && hasNextPage && !isFetching && !isFetchNextPageError) {
+      void fetchNextPage();
     }
   }, [
-    activeTab,
-    inView,
-    hasNextPage,
-    isFetchingNextPage,
-    fetchNextPage,
-    blueskyHasMore,
-    blueskyLoading,
-    loadBlueskyPosts,
-    blueskyPosts.length,
-    limePosts.length,
-    trendingHasMore,
-    trendingLoading,
-    loadTrendingPosts,
+    activeTab, inView, hasNextPage, isFetching, isFetchNextPageError, fetchNextPage,
+    trendingHasMore, trendingLoading, loadTrendingPosts,
   ]);
 
   useLayoutEffect(() => {
@@ -1630,11 +1428,11 @@ export default function Feed() {
 
   const isBusyLoadingMore = activeTab === 'trending'
     ? trendingLoading
-    : isFetchingNextPage || blueskyLoading;
+    : isFetchingNextPage;
 
   const hasMoreToLoad = activeTab === 'trending'
     ? trendingHasMore
-    : (hasNextPage || blueskyHasMore);
+    : hasNextPage;
 
   const emptyStateMessage =
     activeTab === 'all'
@@ -1845,7 +1643,7 @@ export default function Feed() {
             {/* スマホ専用の LimeNoteBeta ボックス */}
             <span className="ribbon-tag sm:hidden">
               <Sparkles className="h-3 w-3" />
-              LimeNote 2.7.1
+              LimeNote 2.7.2
             </span>
           </div>
 
@@ -1854,7 +1652,7 @@ export default function Feed() {
         {/* PC専用の LimeNoteBeta ボックス */}
         <span className="ribbon-tag hidden sm:inline-flex">
           <Sparkles className="h-3 w-3" />
-          LimeNote 2.7.1
+          LimeNote 2.7.2
         </span>
       </div>
 

@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { getCurrentUserId } from '@/lib/currentUser';
 import { useQueryClient } from '@tanstack/react-query';
 import { useIsPWA } from '@/hooks/useIsPWA';
+import { updateLikeCountCache } from '@/lib/likeCountCache';
 import {
   fetchBlueskyPostViewerState,
   likeBlueskyPost,
@@ -314,6 +315,8 @@ export function LikeButton({
   const broadcastChannelRef = useRef<any>(null);
   const hasLocalStateRef = useRef(false);
   const lastLocalActionAtRef = useRef(0);
+  const countRequestRef = useRef(0);
+  const hasLiveCountRef = useRef(false);
 
   // Bluesky投稿用: 現在の app.bsky.feed.like レコードのuriと、
   // いいね作成に必要な対象投稿のcidをここに保持する。
@@ -429,52 +432,21 @@ export function LikeButton({
     }, 320);
   }, []);
 
-  // 初期表示と、親から届いた最新件数を表示へ反映する。
-  useEffect(() => {
-    const targetChanged =
-      lastTargetRef.current.postId !== postId || lastTargetRef.current.type !== type;
-    const safeCount = Number(count) || 0;
-
-    if (targetChanged) {
-      lastTargetRef.current = { postId, type };
-      hasLocalStateRef.current = false;
-      lastLocalActionAtRef.current = 0;
-      // 投稿が切り替わったら、前の投稿のBlueskyいいねレコード情報を持ち越さない
-      blueskyLikeUriRef.current = null;
-      blueskyCidRef.current = null;
-    }
-
-    if (targetChanged || !hasLocalStateRef.current) {
-      setDisplayLiked(liked);
-      setDisplayCount(safeCount);
-      setPreviousDisplayCount(safeCount);
-      setIsCountAnimating(false);
-      stateRef.current.liked = liked;
-      stateRef.current.count = safeCount;
-      return;
-    }
-
-    const recentlyClicked = Date.now() - lastLocalActionAtRef.current < 1200;
-    if (!recentlyClicked && safeCount !== stateRef.current.count) {
-      const currentCount = stateRef.current.count;
-      stateRef.current.count = safeCount;
-      animateCount(currentCount, safeCount);
-    }
-  }, [animateCount, postId, type, liked, count]);
-
   const applyLatestCount = useCallback((latestCount: number) => {
     if (!Number.isFinite(latestCount)) return;
 
     const safeLatestCount = Math.max(0, Math.trunc(latestCount));
     const currentCount = stateRef.current.count;
+    updateLikeCountCache(queryClient, type, postId, safeLatestCount);
+    hasLiveCountRef.current = true;
     if (safeLatestCount === currentCount) return;
 
     stateRef.current.count = safeLatestCount;
-    hasLocalStateRef.current = true;
     animateCount(currentCount, safeLatestCount);
-  }, [animateCount]);
+  }, [animateCount, postId, queryClient, type]);
 
   const syncLatestCount = useCallback(async () => {
+    const request = ++countRequestRef.current;
     const config = TABLE_CONFIG[type];
     const { count: latestCount, error } = await supabase
       .from(config.table)
@@ -486,10 +458,54 @@ export function LikeButton({
       return null;
     }
 
+    if (request !== countRequestRef.current || lastTargetRef.current.postId !== postId || lastTargetRef.current.type !== type) return null;
     if (typeof latestCount !== 'number') return null;
     applyLatestCount(latestCount);
     return latestCount;
   }, [applyLatestCount, postId, type]);
+
+  // 初期表示と、親から届いた最新件数を表示へ反映する。
+  useEffect(() => {
+    const targetChanged =
+      lastTargetRef.current.postId !== postId || lastTargetRef.current.type !== type;
+    const safeCount = Number(count) || 0;
+
+    if (targetChanged) {
+      lastTargetRef.current = { postId, type };
+      hasLocalStateRef.current = false;
+      hasLiveCountRef.current = false;
+      lastLocalActionAtRef.current = 0;
+      // 投稿が切り替わったら、前の投稿のBlueskyいいねレコード情報を持ち越さない
+      blueskyLikeUriRef.current = null;
+      blueskyCidRef.current = null;
+    }
+
+    if (!isBluesky && hasLiveCountRef.current && safeCount !== stateRef.current.count) {
+      void syncLatestCount();
+    }
+
+    if (targetChanged || !hasLocalStateRef.current) {
+      setDisplayLiked(liked);
+      stateRef.current.liked = liked;
+      if (!hasLiveCountRef.current) {
+        setDisplayCount(safeCount);
+        setPreviousDisplayCount(safeCount);
+        setIsCountAnimating(false);
+        stateRef.current.count = safeCount;
+      }
+      return;
+    }
+
+    // Once confirmed from like rows, stale posts.likes_count props must not
+    // overwrite the live count (for example when a profile query refetches).
+    if (!isBluesky && hasLiveCountRef.current) return;
+    const recentlyClicked = Date.now() - lastLocalActionAtRef.current < 1200;
+    if (!recentlyClicked && safeCount !== stateRef.current.count) {
+      const currentCount = stateRef.current.count;
+      stateRef.current.count = safeCount;
+      animateCount(currentCount, safeCount);
+    }
+  }, [animateCount, postId, type, liked, count, isBluesky, syncLatestCount]);
 
   // リアルタイム反映(Supabase Realtime)。Bluesky投稿はLimeのテーブルに
   // 行が存在しないため、この購読自体を行わない。
@@ -506,8 +522,10 @@ export function LikeButton({
         ({ payload }: any) => {
           if (payload?.origin === channelIdRef.current) return;
 
-          const latestCount = Number(payload?.count);
+          if (payload?.count == null) return;
+          const latestCount = Number(payload.count);
           if (Number.isFinite(latestCount)) {
+            countRequestRef.current += 1;
             applyLatestCount(latestCount);
           }
         }
@@ -530,7 +548,13 @@ export function LikeButton({
           void syncLatestCount();
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        // Also catch up after reconnecting, when events may have been missed.
+        if (status === 'SUBSCRIBED') void syncLatestCount();
+      });
+
+    // Correct stale denormalized counts on mount, without waiting for an event.
+    void syncLatestCount();
 
     const countColumnChannel = supabase
       .channel(`like-count-target-${channelSuffix}`)
@@ -542,20 +566,16 @@ export function LikeButton({
           table: config.targetTable,
           filter: `${config.targetIdCol}=eq.${postId}`,
         },
-        (payload: any) => {
-          const latestCount = Number(payload.new?.[config.countCol]);
-
-          if (Number.isFinite(latestCount)) {
-            applyLatestCount(latestCount);
-            return;
-          }
-
+        () => {
+          // An unrelated post update can carry a stale/null likes_count.
+          // Read the actual like rows rather than replacing the count with zero.
           void syncLatestCount();
         }
       )
       .subscribe();
 
     return () => {
+      countRequestRef.current += 1;
       broadcastChannelRef.current = null;
       void supabase.removeChannel(broadcastChannel);
       void supabase.removeChannel(likeRowsChannel);
@@ -621,6 +641,7 @@ export function LikeButton({
     const willBeLiked = !wasLiked;
     const nextCount = willBeLiked ? wasCount + 1 : Math.max(0, wasCount - 1);
 
+    countRequestRef.current += 1;
     stateRef.current.liked = willBeLiked;
     stateRef.current.count = nextCount;
     hasLocalStateRef.current = true;
