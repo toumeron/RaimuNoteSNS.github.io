@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { AccountSwitcherMenu } from './AccountSwitcher';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
@@ -22,7 +22,7 @@ export function DesktopAccountFooter() {
   const username = profile?.username || user.username || '';
   const badge = `${import.meta.env.BASE_URL}verified.png`;
   return (
-    <Link to={`/u/${username}`} data-lime-sidebar-account aria-label={`ログイン中のアカウント: ${name}`}>
+    <AccountSwitcherMenu><button type="button" className="w-full text-left" data-lime-sidebar-account aria-label={`ログイン中のアカウント: ${name}（アカウント切り替え）`}>
       <div className="relative shrink-0">
         <Avatar className="h-11 w-11 border-0">
           <AvatarImage src={profile?.avatar_url || user.avatarUrl} alt={name} />
@@ -30,13 +30,13 @@ export function DesktopAccountFooter() {
         </Avatar>
         {profile?.is_official && <img data-lime-account-avatar-badge src={badge} alt="Official" />}
       </div>
-      <div data-lime-account-info className="min-w-0">
+      <div data-lime-account-info className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1">
           <span className="truncate text-[18px] font-extrabold">{name}</span>
           {profile?.is_official && <img src={badge} alt="Official" className="h-5 w-5 shrink-0" />}
         </div>
         <div className="truncate text-[15px] text-muted-foreground">@{username}</div>
       </div>
-    </Link>
+    </button></AccountSwitcherMenu>
   );
 }

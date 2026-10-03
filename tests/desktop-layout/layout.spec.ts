@@ -13,7 +13,7 @@ test.beforeEach(async ({ page }) => {
     export const getPostsByUser=async()=>posts; export const getProfilePosts=async()=>posts.map(post=>post.repostedByMe?{...post,profileRepostedBy:post.userId,profileRepostedAt:"2026-10-03T00:00:00Z"}:post); export const getLikedPostsByUser=async()=>posts;
     export const searchPosts=async()=>posts; export const getPostById=async()=>posts[0];
     export const createPost=async(input)=>{window.__lastCreatedPost=input;return posts[0];}; export const toggleLike=async()=>({liked:true,likesCount:1});
-    export const toggleRepost=async(id)=>{const post=posts.find(p=>p.id===id);post.repostedByMe=!post.repostedByMe;post.repostsCount=post.repostedByMe?1:0;return {reposted:post.repostedByMe,repostsCount:post.repostsCount};}; export const deletePost=async()=>{}; export const getPostLikers=async()=>[];` }));
+    export const toggleRepost=async(id)=>{window.__repostRequests=[...(window.__repostRequests??[]),id];const post=posts.find(p=>p.id===id);post.repostedByMe=!post.repostedByMe;post.repostsCount=post.repostedByMe?1:0;return {reposted:post.repostedByMe,repostsCount:post.repostsCount};}; export const deletePost=async()=>{}; export const getPostLikers=async()=>[];` }));
   await page.route('**/*.supabase.co/**', route => {
     const url = new URL(route.request().url());
     const single = (route.request().headers().accept ?? '').includes('vnd.pgrst.object');
@@ -30,6 +30,33 @@ test.beforeEach(async ({ page }) => {
 });
 
 const routes = ['', 'search', 'notifications', 'chat', 'media', 'media/lime', 'news', 'u/lime', 'u/lime/followers_following', 'post/post-0', 'post/post-0/activity', 'settings', 'share', 'spaces/room', 'limepro'];
+for (const width of [768, 1440]) {
+  test(`desktop settings precedes more and photo opens from its menu at ${width}px`, async ({page}) => {
+    await page.setViewportSize({width,height:900});await page.goto('./');
+    const sidebar=page.locator('[data-lime-desktop-sidebar]');
+    await expect(sidebar.getByRole('button',{name:'フォト',exact:true})).toHaveCount(0);
+    const settings=sidebar.getByRole('button',{name:'設定',exact:true});
+    const more=sidebar.getByRole('button',{name:'もっと見る',exact:true});
+    await expect(settings).toBeVisible();await expect(more).toBeVisible();
+    expect((await settings.boundingBox())!.y).toBeLessThan((await more.boundingBox())!.y);
+    await expect(more.locator('svg')).toHaveClass(/lucide-circle-ellipsis/);
+    await more.click();
+    const menu=page.locator('[data-lime-sidebar-more]');
+    await expect(menu).toBeVisible();await expect(menu).toHaveCSS('border-top-width','0px');
+    await page.screenshot({path:test.info().outputPath('desktop-more.png'),animations:'disabled'});
+    await menu.getByRole('menuitem',{name:'フォト',exact:true}).click();
+    await expect(page).toHaveURL(/\/media$/);
+    await expect(menu).toBeHidden();
+  });
+}
+test('mobile sidebar retains its existing photo and settings items',async({page})=>{
+  await page.setViewportSize({width:390,height:844});await page.goto('./');
+  await page.getByRole('button',{name:'メニューを開く',exact:true}).click();
+  const sidebar=page.locator('[data-lime-mobile-sidebar="true"]');
+  await expect(sidebar.getByRole('button',{name:'フォト',exact:true})).toBeVisible();
+  await expect(sidebar.getByRole('button',{name:'設定',exact:true})).toBeVisible();
+  await expect(sidebar.getByRole('button',{name:'もっと見る',exact:true})).toHaveCount(0);
+});
 for (const width of [768, 1024, 1440]) {
   test(`every app page keeps its menu stable and required sidebars visible at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
@@ -374,6 +401,26 @@ for (const width of [390, 1440]) {
   });
 }
 
+
+test('repost still works after visiting a profile with a nonzero activity count',async({page})=>{
+  await page.setViewportSize({width:1440,height:900});
+  await page.route('**/rest/v1/rpc/get_profile_activity_count',route=>route.fulfill({contentType:'application/json',body:'3'}));
+  await page.goto('u/lime');
+  await expect(page.locator('[data-lime-profile-activity-count]')).toContainText('3');
+  await page.locator('[data-lime-desktop-sidebar]').getByRole('button',{name:'ホーム',exact:true}).click();
+  const card=page.locator('[data-lime-post-card]').filter({hasText:'画像付きの投稿'}).first();
+  await card.getByRole('button',{name:'リポスト',exact:true}).click();
+  await page.getByRole('menuitem',{name:'リポストする',exact:true}).click();
+  await expect.poll(()=>page.evaluate(()=>(window as any).__repostRequests?.length)).toBe(1);
+  await page.waitForLoadState('networkidle');
+  await expect(card.getByRole('button',{name:'リポスト',exact:true})).toHaveText('1');
+  await card.getByRole('button',{name:'リポスト',exact:true}).click();
+  await page.getByRole('menuitem',{name:'リポストを取り消す',exact:true}).click();
+  await expect.poll(()=>page.evaluate(()=>(window as any).__repostRequests?.length)).toBe(2);
+  await expect(card.getByRole('button',{name:'リポスト',exact:true})).toHaveText('');
+  await page.locator('[data-lime-desktop-sidebar]').getByRole('button',{name:'プロフィール',exact:true}).click();
+  await expect(page.locator('[data-lime-profile-activity-count]')).toContainText('3');
+});
 
 test('normal repost appears only as a profile entry and can be undone', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });

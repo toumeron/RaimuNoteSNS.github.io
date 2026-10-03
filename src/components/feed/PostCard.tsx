@@ -1,4 +1,5 @@
 import '@/components/post/post-actions.css';
+import { BookmarkButton } from '@/components/post/BookmarkButton';
 import { RepostButton } from '@/components/feed/RepostButton';
 import { QuotedPost } from '@/components/feed/QuotedPost';
 import { RepostIcon } from '@/components/feed/RepostIcon';
@@ -2884,6 +2885,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
               </div>}
 
               <div className="relative ml-auto inline-flex items-center h-full shrink-0" onClick={(e) => e.stopPropagation()}>
+                <BookmarkButton post={post} />
                 <button
                   ref={shareButtonRef}
                   onClick={handleShareButtonClick}

@@ -1,3 +1,4 @@
+import { BookmarkButton } from '@/components/post/BookmarkButton';
 import { ReplyShare } from '@/components/post/ReplyShare';
 import { useAuth } from '@/hooks/useAuth';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -2164,7 +2165,7 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
   const iconActionClass = 'inline-flex items-center justify-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full origin-center sm:h-8 sm:w-8 sm:p-1.5 sm:px-0';
 
   return (
-    <div className="profile-thread-actions mt-2 flex items-center gap-1 text-muted-foreground relative h-8 sm:mt-3 sm:h-9" onClick={(event) => event.stopPropagation()}>
+    <div data-lime-post-actions className="profile-thread-actions mt-2 flex items-center gap-1 text-muted-foreground relative h-8 sm:mt-3 sm:h-9" onClick={(event) => event.stopPropagation()}>
       {targetType === 'post' ? (
         <div className="flex items-center h-full">
           {isBluesky ? (
@@ -2228,15 +2229,15 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
         />
       )}
 
-      {targetType === 'post' && <ProfileShareButton
+      {targetType === 'post' && <div className="ml-auto flex shrink-0 items-center"><BookmarkButton post={repostTarget ? normalizePost(repostTarget) : {id: targetId}} className={iconActionClass} /><ProfileShareButton
         postId={sharePostId}
         title={shareTitle}
         text={shareText}
         postAuthor={sharePostAuthor}
         buttonClassName={iconActionClass}
-        className="ml-auto shrink-0"
+        className="shrink-0"
         shareUrlOverride={isBluesky ? blueskyUrl : null}
-      />}
+      /></div>}
       {targetType === 'comment' && <ReplyShare currentUserId={user?.id ?? null} comment={{ id: targetId, postId: sharePostId, content: shareText, author: { id: sharePostAuthor?.id ?? '', username: sharePostAuthor?.username ?? '', displayName: sharePostAuthor?.displayName ?? sharePostAuthor?.display_name ?? sharePostAuthor?.username ?? 'ユーザー' } }} className={iconActionClass} />}
     </div>
   );

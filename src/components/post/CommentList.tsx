@@ -1007,7 +1007,7 @@ export function CommentCard({
 
             <div data-lime-post-body data-lime-post-has-images={allImageUrls.length > 0 || undefined} className={detail ? "col-span-2 min-w-0" : undefined}>
               <div>
-                {replyToUsername && <p className="mb-1 text-sm text-muted-foreground">返信先: <Link className="text-accent hover:underline" to={`/u/${replyToUsername}`} onClick={event => event.stopPropagation()}>@{replyToUsername}</Link>さん</p>}
+                {replyToUsername && <p className="mb-1 text-sm text-muted-foreground">返信先: <Link className="text-primary hover:underline" to={`/u/${replyToUsername}`} onClick={event => event.stopPropagation()}>@{replyToUsername}</Link>さん</p>}
                 {displayContent && (
                   <p className={detail ? `mt-4 whitespace-pre-wrap break-words text-lg leading-relaxed text-foreground ${mobileFlat ? 'post-detail-mobile-content' : ''}` : isMobile ? 'whitespace-pre-wrap break-words text-[16px] leading-normal text-foreground mt-1' : 'whitespace-pre-wrap break-words text-base leading-relaxed text-foreground mt-1'}>
                     {renderContentWithMentions(displayContent)}

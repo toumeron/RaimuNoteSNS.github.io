@@ -1904,10 +1904,9 @@ export default function Settings() {
         <Button
           variant="outline"
           className="mt-4 rounded-full border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
-          onClick={() => {
-            logout();
-            toast.success('ログアウトしました');
-            navigate('/auth');
+          onClick={async () => {
+            try { await logout(); toast.success('ログアウトしました'); navigate('/auth'); }
+            catch { toast.error('ログアウトに失敗しました'); }
           }}
         >
           <LogOut className="mr-1.5 h-4 w-4" /> ログアウト

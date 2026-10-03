@@ -1,5 +1,5 @@
 import { useState, type FormEvent, useEffect, useRef } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { z } from 'zod';
 import { Heart, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -9,6 +9,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/lib/supabase';
 import { Logo } from '@/components/layout/Logo';
 import { toast } from 'sonner';
+import { useAuth } from '@/hooks/useAuth';
+import { SavedAccountList } from '@/components/layout/AccountSwitcher';
 
 const schema = z.object({
   email: z.string().email('メールアドレスの形式が正しくありません'),
@@ -169,6 +171,9 @@ function AuthForm({ mode }: { mode: Mode }) {
 
 export default function AuthPage() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const { user, accounts = [] } = useAuth();
+  const [searchParams] = useSearchParams();
+  const adding = searchParams.get('add') === '1';
 
   useEffect(() => {
     // ユーザーアクションを契機にBGM（音声）のロックを解除するハンドラー
@@ -218,6 +223,8 @@ export default function AuthPage() {
         </div>
 
         <div className="rounded-3xl border border-border/60 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md p-6 shadow-card-soft sm:p-8 transition-colors duration-200">
+          {adding && <div className="mb-4 flex items-center justify-between"><h1 className="font-bold">アカウントを追加</h1><Link to="/" className="text-sm text-muted-foreground hover:underline">戻る</Link></div>}
+          {!user && accounts.length > 0 && <div className="mb-4 overflow-hidden rounded-2xl border border-border"><SavedAccountList /></div>}
           <Tabs defaultValue="login" className="w-full">
             <TabsList className="mb-6 grid w-full grid-cols-2 rounded-full bg-secondary dark:bg-zinc-800 p-1">
               <TabsTrigger value="login" className="rounded-full data-[state=active]:bg-gradient-primary data-[state=active]:text-primary-foreground dark:text-zinc-400 dark:data-[state=active]:text-white">

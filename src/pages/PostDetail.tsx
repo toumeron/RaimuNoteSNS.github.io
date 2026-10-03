@@ -14,6 +14,7 @@ import { CommentList } from '@/components/post/CommentList';
 import { CommentForm } from '@/components/post/CommentForm';
 import { PostImages } from '@/components/feed/PostImages';
 import { usePost } from '@/hooks/useFeed';
+import { BookmarkButton } from '@/components/post/BookmarkButton';
 import { fetchBlueskyPostThread, getBlueskyUriFromPostId, type BlueskyMappedPost } from '@/lib/bluesky';
 import { useBlueskySession } from '@/hooks/useBlueskySession';
 import { useQuery } from '@tanstack/react-query';
@@ -1877,7 +1878,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
             )}
           </p>
 
-          <div className={useMobilePresentation ? "mt-3 flex items-center gap-1 relative h-9 post-detail-mobile-action-row" : "mt-3 flex items-center gap-1 border-t border-border/60 pt-3 relative h-9"}>
+          <div data-lime-post-actions className={useMobilePresentation ? "mt-3 flex items-center gap-1 relative h-9 post-detail-mobile-action-row" : "mt-3 flex items-center gap-1 border-t border-border/60 pt-3 relative h-9"}>
             <div onClick={(e) => e.stopPropagation()} className={`flex items-center h-full ${useMobilePresentation ? 'post-detail-mobile-action-hit' : ''}`}>
               {isBlueskyPost ? (
                 blueskySession && blueskyPostUri ? (
@@ -2133,6 +2134,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
 
             {/* --- 共有ボタンエリア --- */}
             <div className="relative ml-auto inline-flex items-center h-full shrink-0" onClick={(e) => e.stopPropagation()}>
+              <BookmarkButton post={data as PostWithAuthor} />
               <button
                 ref={shareButtonRef}
                 onClick={handleShareButtonClick}

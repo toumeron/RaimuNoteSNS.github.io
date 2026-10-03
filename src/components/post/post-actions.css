@@ -16,3 +16,57 @@
   padding: 0 8px !important;
   gap: 6px !important;
 }
+
+/* Keep only the action controls aligned; menus and reaction pickers retain their layout. */
+:is([data-lime-post-actions], [data-lime-comment-actions]) {
+  gap: 4px !important;
+  align-items: center !important;
+  min-height: 32px;
+}
+:is([data-lime-post-actions], [data-lime-comment-actions]) > :is(button, a),
+:is([data-lime-post-actions], [data-lime-comment-actions]) > div > button,
+:is([data-lime-post-actions], [data-lime-comment-actions]) [data-lime-post-action],
+:is([data-lime-post-actions], [data-lime-comment-actions]) [data-lime-post-action="like"] {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  min-width: 36px !important;
+  padding: 0 8px !important;
+  gap: 6px !important;
+  line-height: 1 !important;
+}
+[data-lime-post-detail-card] [data-lime-post-actions] :is([data-lime-post-action], .post-detail-mobile-reply-count, .post-detail-mobile-plus-button, .post-detail-mobile-share-button),
+[data-lime-comment-card] [data-lime-comment-actions] :is([data-lime-post-action], .post-detail-mobile-reply-count, .post-detail-mobile-plus-button) {
+  min-width: 36px !important;
+  height: 32px !important;
+  padding: 0 8px !important;
+}
+[data-lime-post-detail-card] [data-lime-post-actions] > .post-detail-mobile-action-hit,
+[data-lime-comment-card] [data-lime-comment-actions] > .post-detail-mobile-action-hit {
+  min-width: 0 !important;
+  padding: 0 !important;
+}
+:is([data-lime-post-actions], [data-lime-comment-actions]) [data-lime-post-action="like"] > span:first-child {
+  width: 20px !important;
+  height: 20px !important;
+  padding: 0 !important;
+  flex-shrink: 0;
+}
+:is([data-lime-post-actions], [data-lime-comment-actions]) .tabular-nums:empty,
+:is([data-lime-post-actions], [data-lime-comment-actions]) .tabular-nums:has(.repost-count[aria-label=""]):not(:has(.is-up, .is-down)),
+:is([data-lime-post-actions], [data-lime-comment-actions]) .tabular-nums:has(.twitter-like-count-static:empty):not(:has(.is-up, .is-down)) {
+  display: none !important;
+}
+
+/* Bookmark separators span the entire column, including on wide desktops. */
+[data-lime-bookmarks-page] > :is([data-lime-post-card], [data-lime-comment-card]) {
+  width: 100% !important;
+  max-width: none !important;
+  margin-inline: 0 !important;
+  border-radius: 0 !important;
+  border: 0 !important;
+  border-bottom: 1px solid hsl(var(--border)) !important;
+  padding-inline: 16px !important;
+}

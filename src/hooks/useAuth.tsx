@@ -1,6 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { createContext, useContext, useEffect, useState } from 'react';
+import { Fragment, createContext, useContext, useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { activateAccountIntegrations, getSavedAccountTokens, markSavedAccountNeedsLogin, readSavedAccounts, removeSavedAccount, saveAccountSession, SAVED_ACCOUNTS_EVENT, SAVED_ACCOUNTS_KEY, type SavedAccount } from '@/lib/savedAccounts';
 import type { Session, User as SupabaseUser } from '@supabase/supabase-js';
 
 // ユーザー情報の型定義（Supabaseの基本情報にプロフィール情報を統合）
@@ -8,7 +9,9 @@ type CustomUser = SupabaseUser & {
   username?: string;
   displayName?: string;
   avatarUrl?: string;
+  isOfficial?: boolean;
   bio?: string;
+  location?: string;
   coverUrl?: string;
   emojiEffect?: string; // 追加: 絵文字エフェクト用
   bot_enabled?: boolean; // 追加: Bot設定用
@@ -20,6 +23,10 @@ type AuthContextType = {
   session: Session | null;
   loading: boolean;
   logout: () => Promise<void>;
+  accounts: SavedAccount[];
+  switching: boolean;
+  switchAccount: (id: string) => Promise<void>;
+  forgetAccount: (id: string) => void;
 };
 
 // コンテキストの初期化
@@ -28,6 +35,7 @@ const AuthContext = createContext<AuthContextType>({
   session: null,
   loading: true,
   logout: async () => {},
+  accounts: [], switching: false, switchAccount: async () => {}, forgetAccount: () => {},
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -35,10 +43,67 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<CustomUser | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [accounts, setAccounts] = useState(readSavedAccounts);
+  const [switching, setSwitching] = useState(false);
+  const switchInFlight = useRef(false);
+  const sessionRef = useRef<Session | null>(null);
+  const profileRef = useRef<CustomUser | null>(null);
+
+  useEffect(() => {
+    const update = () => setAccounts(readSavedAccounts());
+    const storage = (event: StorageEvent) => { if (event.key === SAVED_ACCOUNTS_KEY || event.key === null) update(); };
+    window.addEventListener(SAVED_ACCOUNTS_EVENT, update);
+    window.addEventListener('storage', storage);
+    return () => { window.removeEventListener(SAVED_ACCOUNTS_EVENT, update); window.removeEventListener('storage', storage); };
+  }, []);
+
+  const switchAccount = async (id: string) => {
+    if (switchInFlight.current) throw new Error('アカウントを切り替えています');
+    if (id === sessionRef.current?.user.id) return;
+    const tokens = getSavedAccountTokens(id);
+    if (!tokens) throw new Error('このアカウントは再ログインが必要です');
+    switchInFlight.current = true;
+    setSwitching(true);
+    const previous = sessionRef.current;
+    if (previous) saveAccountSession(previous, profileRef.current ?? undefined);
+    try {
+      const { data, error } = await supabase.auth.setSession(tokens);
+      if (error || !data.session || data.session.user.id !== id) {
+        if (error && [400, 401, 403].includes(error.status)) markSavedAccountNeedsLogin(id);
+        throw new Error(error && [400, 401, 403].includes(error.status) ? 'このアカウントは再ログインが必要です' : 'アカウントの切り替えに失敗しました。通信状態を確認してください');
+      }
+      saveAccountSession(data.session);
+    } catch (error) {
+      // A rejected expired refresh token can make the SDK emit SIGNED_OUT.
+      // Restore the previous session before allowing the protected UI to resume.
+      if (previous && sessionRef.current?.user.id !== previous.user.id) {
+        const restored = await supabase.auth.setSession({ access_token: previous.access_token, refresh_token: previous.refresh_token });
+        if (restored.error) {
+          // Both sessions are invalid. Publish a real signed-out state rather
+          // than leaving the previous account's UI visible without its session.
+          switchInFlight.current = false;
+          await supabase.auth.signOut({ scope: 'local' });
+          throw new Error('ログイン状態を復元できませんでした。再ログインしてください');
+        }
+      }
+      throw error;
+    } finally {
+      switchInFlight.current = false;
+      setSwitching(false);
+    }
+  };
+  const forgetAccount = (id: string) => {
+    if (id === sessionRef.current?.user.id) throw new Error('ログイン中のアカウントはログアウトしてください');
+    removeSavedAccount(id);
+  };
 
   // ログアウト処理
   const logout = async () => {
-    await supabase.auth.signOut();
+    if (switchInFlight.current) throw new Error('アカウントを切り替えています');
+    const id = sessionRef.current?.user.id;
+    const { error } = await supabase.auth.signOut({ scope: 'local' });
+    if (error) throw error;
+    if (id) removeSavedAccount(id);
   };
 
   useEffect(() => {
@@ -55,19 +120,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const { data: profile, error } = await supabase
           .from('profiles')
           // bot_enabled, bot_prompt を select に追加
-          .select('username, display_name, avatar_url, bio, location, cover_url, emoji_effect, bot_enabled, bot_prompt')
+          .select('username, display_name, avatar_url, is_official, bio, location, cover_url, emoji_effect, bot_enabled, bot_prompt')
           .eq('id', supabaseUser.id)
           .single();
 
         if (alive && profileUserId === supabaseUser.id && !error && profile) {
+          const details = { username: profile.username ?? '', displayName: profile.display_name ?? '', avatarUrl: profile.avatar_url ?? '', isOfficial: !!profile.is_official };
+          const active = sessionRef.current;
+          if (active?.user.id === supabaseUser.id) saveAccountSession(active, details);
           setUser(current => {
             // 非同期処理中にユーザーがログアウト・切り替わりをしていないか確認
             if (!current || current.id !== supabaseUser.id) return current;
-            return {
+            const updated = {
               ...current,
               username: profile.username ?? current.username,
               displayName: profile.display_name ?? current.displayName,
               avatarUrl: profile.avatar_url ?? current.avatarUrl,
+              isOfficial: !!profile.is_official,
               bio: profile.bio ?? current.bio,
               location: profile.location ?? '',
               coverUrl: profile.cover_url ?? current.coverUrl,
@@ -75,6 +144,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               bot_enabled: profile.bot_enabled ?? false, // DBから取得した値を反映
               bot_prompt: profile.bot_prompt ?? '',      // DBから取得した値を反映
             };
+            profileRef.current = updated;
+            return updated;
           });
         }
       } catch (err) {
@@ -87,8 +158,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // causes repeated INITIAL_SESSION events and lock contention.
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
       if (!alive) return;
+      // Do not expose a transient failed-switch SIGNED_OUT to the router.
+      if (switchInFlight.current && !newSession) { sessionRef.current = null; return; }
+      sessionRef.current = newSession;
+      if (newSession) saveAccountSession(newSession);
+      else if (_event === 'SIGNED_OUT' && cachedViewerId) markSavedAccountNeedsLogin(cachedViewerId);
       const viewerId = newSession?.user.id ?? null;
       if (cachedViewerId !== viewerId) {
+        activateAccountIntegrations(cachedViewerId, viewerId);
         // Never reuse another account's cached restricted posts or quote parents.
         queryClient.clear();
         cachedViewerId = viewerId;
@@ -99,17 +176,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!supabaseUser) {
         profileUserId = null;
         clearTimeout(profileTimer);
+        profileRef.current = null;
         setUser(null);
         return;
       }
       const meta = supabaseUser.user_metadata;
       const emailName = supabaseUser.email?.split('@')[0] ?? 'user';
-      setUser(current => current?.id === supabaseUser.id ? { ...current, ...supabaseUser } : {
+      setUser(current => {
+        const next = current?.id === supabaseUser.id ? { ...current, ...supabaseUser } : {
         ...supabaseUser,
         username: meta?.username ?? emailName,
         displayName: meta?.display_name ?? meta?.displayName ?? emailName,
         avatarUrl: meta?.avatar_url ?? meta?.avatarUrl ?? '',
         bio: '', coverUrl: '', emojiEffect: '', bot_enabled: false, bot_prompt: '',
+      };
+        profileRef.current = next;
+        return next;
       });
       if (profileUserId !== supabaseUser.id) {
         profileUserId = supabaseUser.id;
@@ -125,11 +207,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [queryClient]);
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, logout }}>
+    <AuthContext.Provider value={{ user, session, loading, logout, accounts, switching, switchAccount, forgetAccount }}>
       {/* loadingがfalse（＝ユーザー情報の初期セット完了）になるまで
          childrenを描画しないことで、ログイン直後のコンポーネントエラーを防ぎます。
       */}
-      {!loading && children}
+      {!loading && <Fragment key={user?.id ?? 'guest'}>{children}</Fragment>}
     </AuthContext.Provider>
   );
 }

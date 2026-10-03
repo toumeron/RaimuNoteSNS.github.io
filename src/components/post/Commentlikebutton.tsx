@@ -428,6 +428,7 @@ export function Commentlikebutton({
 
       <button
         type="button"
+        data-lime-post-action="like"
         onClick={handleLike}
         className={cn(
           'group inline-flex items-center rounded-full transition-colors outline-none select-none overflow-visible',

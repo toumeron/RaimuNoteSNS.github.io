@@ -4,6 +4,7 @@ import { Send, Link as LinkIcon, Upload, X } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { supabase } from '@/lib/supabase';
 import { commentThreadUrl } from '@/lib/commentThread';
+import { BookmarkButton } from './BookmarkButton';
 
 interface SharedReply { id: string; postId: string; content: string; author: { id: string; username: string; displayName: string } }
 interface LimeDropTarget { id: string; username: string; displayName: string; avatarUrl: string }
@@ -310,7 +311,7 @@ export function ReplyShare({ comment, currentUserId, className = '' }: { comment
 
 
   return <>
-    <button type="button" onClick={handleShareButtonClick} aria-label="返信を共有" className={`ml-auto inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-accent ${className}`}><Upload className="h-5 w-5" /></button>
+    <div className="ml-auto inline-flex shrink-0 items-center"><BookmarkButton post={{id:`reply:${comment.id}`}} className={className} /><button type="button" onClick={handleShareButtonClick} aria-label="返信を共有" className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-accent ${className}`}><Upload className="h-5 w-5" /></button></div>
                 {showShareMenu && typeof document !== 'undefined' && createPortal(
                   <>
                     <div

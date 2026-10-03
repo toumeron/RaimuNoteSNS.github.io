@@ -1,3 +1,4 @@
+import { ACTIVE_ACCOUNT_KEY } from './savedAccounts';
 // 初期状態ではBlueskyアカウントを1件も登録しない。
 // BSKY_AUTHOR_HANDLE は既存コードとの互換性のためだけに残し、既定の登録先には使用しない。
 export const BSKY_AUTHOR_HANDLES = [] as const;
@@ -123,6 +124,7 @@ function saveBlueskySession(session: BlueskySession | null) {
  * (https://bsky.app/settings/app-passwords)
  */
 export async function loginToBluesky(identifierRaw: string, appPassword: string): Promise<BlueskySession> {
+  const owner = window.localStorage.getItem(ACTIVE_ACCOUNT_KEY);
   const identifier = normalizeBlueskyHandle(identifierRaw) || identifierRaw.trim();
   if (!identifier || !appPassword.trim()) {
     throw new Error('ユーザー名とアプリパスワードを入力してください');
@@ -157,6 +159,7 @@ export async function loginToBluesky(identifierRaw: string, appPassword: string)
     refreshJwt: data.refreshJwt,
   };
 
+  if (window.localStorage.getItem(ACTIVE_ACCOUNT_KEY) !== owner) throw new Error('アカウントが切り替わりました。もう一度ログインしてください');
   saveBlueskySession(session);
   return session;
 }
@@ -176,7 +179,7 @@ export async function refreshBlueskySession(): Promise<BlueskySession | null> {
     });
 
     if (!response.ok) {
-      saveBlueskySession(null);
+      if (getStoredBlueskySession()?.refreshJwt === current.refreshJwt) saveBlueskySession(null);
       return null;
     }
 
@@ -195,6 +198,7 @@ export async function refreshBlueskySession(): Promise<BlueskySession | null> {
       refreshJwt: data.refreshJwt,
     };
 
+    if (getStoredBlueskySession()?.refreshJwt !== current.refreshJwt) return null;
     saveBlueskySession(session);
     return session;
   } catch (error) {

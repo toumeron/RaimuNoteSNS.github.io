@@ -3,7 +3,6 @@ import {
   useQuery,
   useInfiniteQuery,
   useQueryClient,
-  InfiniteData,
 } from '@tanstack/react-query';
 import {
   createPost,
@@ -17,7 +16,6 @@ import {
 import { supabase } from '@/lib/supabase';
 import { getCurrentUserId } from '@/lib/currentUser';
 import type { PostWithAuthor } from '@/types';
-import type { TimelinePage } from '@/lib/timelinePaging';
 import { toast } from 'sonner';
 
 /**
@@ -203,20 +201,29 @@ const updatePostInCache = (
   postId: string,
   flip: (p: PostWithAuthor) => PostWithAuthor,
 ) => {
-  const update = (post: PostWithAuthor): PostWithAuthor => {
-    const next = post.id === postId ? flip(post) : post;
-    return next.parentPost ? { ...next, parentPost: update(next.parentPost) } : next;
+  // Feeds can contain arrays, paged timelines, or query metadata. Walk only
+  // actual post containers; never assume every cached page has a posts array.
+  const update = (value: unknown): unknown => {
+    if (Array.isArray(value)) {
+      const next = value.map(update);
+      return next.some((item, index) => item !== value[index]) ? next : value;
+    }
+    if (!value || typeof value !== 'object') return value;
+    const row = value as Record<string, unknown>;
+    let next = row.id === postId ? flip(value as PostWithAuthor) as unknown as Record<string, unknown> : row;
+    for (const key of ['pages', 'posts', 'parentPost'] as const) {
+      if (!(key in row)) continue;
+      const child = update(row[key]);
+      if (child !== row[key]) {
+        if (next === row) next = { ...row };
+        next[key] = child;
+      }
+    }
+    return next;
   };
-  qc.setQueriesData<InfiniteData<PostWithAuthor[] | TimelinePage>>({ queryKey: feedKey }, old => {
-    if (!old) return old;
-    return { ...old, pages: old.pages.map(page => Array.isArray(page)
-      ? page.map(update) : { ...page, posts: page.posts.map(update) }) };
-  });
-  qc.setQueriesData<PostWithAuthor>({ queryKey: ['post'] }, old => old ? update(old) : old);
-  qc.setQueriesData<InfiniteData<PostWithAuthor[]> | PostWithAuthor[]>({ queryKey: ['posts', 'user'] }, old => {
-    if (!old) return old;
-    return Array.isArray(old) ? old.map(update) : { ...old, pages: old.pages.map(page => page.map(update)) };
-  });
+  qc.setQueriesData({ queryKey: feedKey }, update);
+  qc.setQueriesData({ queryKey: ['post'] }, update);
+  qc.setQueriesData({ queryKey: ['posts', 'user'] }, update);
 };
 
 /**
@@ -264,7 +271,7 @@ export const useToggleRepost = () => {
       const flip = (p: PostWithAuthor): PostWithAuthor => ({
         ...p,
         repostedByMe: !p.repostedByMe,
-        repostsCount: p.repostsCount + (p.repostedByMe ? -1 : 1),
+        repostsCount: Math.max(0, (p.repostsCount ?? 0) + (p.repostedByMe ? -1 : 1)),
       });
 
       updatePostInCache(qc, postId, flip);
@@ -278,7 +285,7 @@ export const useToggleRepost = () => {
     },
     onError: (_err, postId) => {
       updatePostInCache(qc, postId, post => ({ ...post, repostedByMe: !post.repostedByMe,
-        repostsCount: Math.max(0, post.repostsCount + (post.repostedByMe ? -1 : 1)) }));
+        repostsCount: Math.max(0, (post.repostsCount ?? 0) + (post.repostedByMe ? -1 : 1)) }));
       qc.invalidateQueries({ queryKey: ['posts', 'user'] });
       qc.invalidateQueries({ queryKey: feedKey });
       qc.invalidateQueries({ queryKey: postKey(postId) });

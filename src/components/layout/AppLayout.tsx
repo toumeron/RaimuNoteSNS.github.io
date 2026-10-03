@@ -46,15 +46,17 @@ export function AppLayout() {
   if (isLimeProPage) {
     // LimeProページの場合は最大幅制限を解除し、パディングもゼロにする（フルスクリーン対応）
     mainClassName = 'w-full max-w-none px-0 py-0';
+  } else if (location.pathname === '/bookmarks') {
+    mainClassName = 'mx-auto max-w-2xl px-0 py-0';
   } else if (isPostDetailPage) {
     mainClassName = 'mx-auto max-w-2xl px-4 pb-6 pt-0';
   }
 
   if (isDesktop) {
     const isWorkspacePage = location.pathname === '/chat' || location.pathname.startsWith('/media');
-    const hideHeader = location.pathname.startsWith('/u/') || ['/search', '/notifications', '/settings', '/chat'].includes(location.pathname) || location.pathname.startsWith('/media') || isPostDetailPage;
+    const hideHeader = location.pathname.startsWith('/u/') || ['/search', '/notifications', '/settings', '/chat', '/bookmarks'].includes(location.pathname) || location.pathname.startsWith('/media') || isPostDetailPage;
     const showRightSidebar = !['/chat', '/settings'].includes(location.pathname);
-    const isEdgePage = isWorkspacePage || location.pathname === '/' || location.pathname.startsWith('/u/') || isPostDetailPage;
+    const isEdgePage = isWorkspacePage || location.pathname === '/bookmarks' || location.pathname === '/' || location.pathname.startsWith('/u/') || isPostDetailPage;
     return (
       <CallSessionProvider>
         <DesktopLayoutContext.Provider value={true}>
@@ -81,7 +83,7 @@ export function AppLayout() {
       <div className={`min-h-screen ${isLimeProPage ? 'pb-0' : 'pb-20 md:pb-0'}`}>
       
         {/* LimeProページ以外でのみヘッダーを表示する */}
-        {!isLimeProPage && <Header />}
+        {!isLimeProPage && location.pathname !== '/bookmarks' && <Header />}
       
         <main className={mainClassName}>
           <Outlet />

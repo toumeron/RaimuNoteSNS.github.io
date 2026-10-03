@@ -2,7 +2,7 @@ import { QuotedPost } from '@/components/feed/QuotedPost';
 import { PostOverlayContext } from '@/components/layout/PostOverlayContext';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from 'react-router-dom';
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -14,6 +14,7 @@ import { ThemeProvider } from "next-themes";
 import { useOSNotification } from "@/hooks/useOSNotification"; 
 import AuthPage from "./pages/Auth";
 import Feed from "./pages/Feed";
+import Bookmarks from "./pages/Bookmarks";
 import PostDetail from "./pages/PostDetail";
 import Profile from "./pages/Profile";
 import Settings from "./pages/Settings";
@@ -325,6 +326,12 @@ function BackgroundMediaRoot({ children }: { children: ReactNode }) {
 
   return <>{children}</>;
 }
+
+const AccountOverlayReset = ({ onReset }: { onReset: () => void }) => {
+  const { user } = useAuth();
+  useLayoutEffect(() => { onReset(); }, [user?.id, onReset]);
+  return null;
+};
 
 const NotificationWatcher = () => {
   const { user } = useAuth();
@@ -2642,6 +2649,10 @@ const AppContent = () => {
     setOverlayQuotedPost(quotedPost);
     setPostModalOpen(true);
   };
+  const resetAccountOverlays = useCallback(() => {
+    setPostModalOpen(false);
+    setOverlayQuotedPost(undefined);
+  }, []);
   const isFABVisible = useScrollDirection();
   const { pathname } = useLocation();
 
@@ -2661,6 +2672,7 @@ const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage |
       <ScrollToTop />
       
       <AuthProvider>
+        <AccountOverlayReset onReset={resetAccountOverlays} />
         <NotificationWatcher />
         <LimeDropReceiver />
         <EmojiRainEffect /> 
@@ -2679,6 +2691,7 @@ const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage |
             <Route path="/u/:username" element={<Profile />} />
             <Route path="/u/:username/followers_following" element={<FollowersFollowingPage />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/bookmarks" element={<Bookmarks />} />
             <Route path="/share" element={<Share />} />
             <Route path="/spaces/:id" element={<SpacePage />} />
             <Route path="/limepro" element={<LimeProLanding />} />
@@ -2711,7 +2724,7 @@ const App = () => {
           <Sonner />
           
           <BrowserRouter 
-            basename="/RaimuNoteSNS.github.io"
+            basename={import.meta.env.BASE_URL}
             future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
           >
             <BackgroundMediaRoot>

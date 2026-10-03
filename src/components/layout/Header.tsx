@@ -1,4 +1,5 @@
 import { usePostOverlay } from './PostOverlayContext';
+import { MobileAccountShortcuts } from './AccountSwitcher';
 import { DesktopAccountFooter } from './DesktopAccountFooter';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal, flushSync } from 'react-dom';
@@ -16,6 +17,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { searchBluesky } from '@/lib/bluesky';
 import type { User } from '@/types';
@@ -27,6 +29,8 @@ import {
   Bell,
   MessageSquare,
   Images,
+  CircleEllipsis,
+  Bookmark,
   UserRound,
   X,
   Clock,
@@ -1154,7 +1158,7 @@ function useMobileDrawerMotion(
 
     const handleTouchMove = (event: TouchEvent) => {
       const target = event.target;
-      if (target instanceof Element && target.closest(MOBILE_SIDEBAR_SELECTOR)) {
+      if (target instanceof Element && target.closest(`${MOBILE_SIDEBAR_SELECTOR}, [data-lime-account-switcher]`)) {
         return;
       }
       if (event.cancelable) {
@@ -1202,7 +1206,7 @@ function useMobileDrawerMotion(
     // 開始を許可して問題ない(縦スクロール・タップ・クリックはそのまま通る)。
     // BottomNavはbody直下のportalなので、ここでtouchmoveを奪わない。
     const BLOCKED_START_SELECTOR =
-      'input, textarea, select, [role="slider"], nav[data-lime-bottom-nav-root="true"]';
+      'input, textarea, select, [role="slider"], nav[data-lime-bottom-nav-root="true"], [data-lime-account-switcher]';
 
     // 対象要素(またはその祖先)が横スクロール可能なコンテナかどうかを調べる。
     // 画像ギャラリーなど、要素自体が横スワイプを必要とするUIの内部では、
@@ -1412,6 +1416,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   );
   const { registerLabelRef: registerFeedTabLabelRef, widths: feedTabUnderlineWidths } = useFeedTabUnderlineWidths();
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isSidebarMoreOpen, setIsSidebarMoreOpen] = useState(false);
   const [isFeedTabChanging, setIsFeedTabChanging] = useState(false);
   const feedTabChangingTimerRef = useRef<number | null>(null);
   const feedTabViewTransitionRef = useRef<FeedTabViewTransition | null>(null);
@@ -2347,9 +2352,9 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
           <DropdownMenuSeparator className={separatorClass} />
 
           <DropdownMenuItem
-            onClick={() => {
-              logout();
-              navigate('/auth');
+            onClick={async () => {
+              try { await logout(); navigate('/auth'); }
+              catch { toast.error('ログアウトに失敗しました'); }
             }}
             className={cn(
               'text-destructive focus:bg-destructive/10',
@@ -2646,12 +2651,17 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
           icon: MessageSquare,
           onClick: () => navigate('/chat'),
         },
-        {
+        ...(!desktopLayout ? [{
           label: 'フォト',
           path: '/media',
           icon: Images,
           onClick: () => navigate('/media'),
-        },
+        }, {
+          label: 'ブックマーク',
+          path: '/bookmarks',
+          icon: Bookmark,
+          onClick: () => navigate('/bookmarks'),
+        }] : []),
         {
           label: '設定',
           path: '/settings',
@@ -2731,7 +2741,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
                   <AvatarImage src={user.avatarUrl} alt={user.displayName} />
                   <AvatarFallback>{user.displayName?.slice(0, 1)}</AvatarFallback>
                 </Avatar>
-                <div className="min-w-0 pt-0.5">
+                <div className="min-w-0 flex-1 pt-0.5">
                   <div className={cn("truncate text-[18px] font-extrabold leading-tight", sidebarIconText)}>
                     {user.displayName}
                   </div>
@@ -2739,6 +2749,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
                     @{user.username}
                   </div>
                 </div>
+                {!desktopLayout && <MobileAccountShortcuts onDone={() => setIsMobileSidebarOpen(false)} />}
               </div>
             </div>
 
@@ -2780,6 +2791,22 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
                     </button>
                   );
                 })}
+                {desktopLayout && <DropdownMenu open={isSidebarMoreOpen} onOpenChange={setIsSidebarMoreOpen}>
+                  <DropdownMenuTrigger asChild>
+                    <button type="button" aria-label="もっと見る" title="もっと見る" data-lime-sidebar-item onPointerDown={event => event.preventDefault()} onClick={() => setIsSidebarMoreOpen(open => !open)} className={cn("flex w-full items-center gap-6 rounded-xl py-3 text-left transition-colors", sidebarHover)}>
+                      <CircleEllipsis data-lime-sidebar-item-icon className={cn("h-6 w-6 shrink-0 stroke-[2]", sidebarIconText)} />
+                      <span data-lime-sidebar-item-label className={cn("whitespace-nowrap text-[18px] font-bold leading-tight", sidebarIconText)}>もっと見る</span>
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent side="top" align="start" sideOffset={-56} collisionPadding={12} data-lime-sidebar-more className="z-[500] w-64 rounded-2xl border-0 p-2 shadow-[0_8px_40px_rgba(0,0,0,0.3)] dark:shadow-[0_0_20px_rgba(255,255,255,0.15)]">
+                    <DropdownMenuItem className="gap-3 rounded-xl px-4 py-4 text-base font-bold" onClick={() => navigate('/media')}>
+                      <Images className="h-6 w-6 shrink-0 stroke-[2]" />フォト
+                    </DropdownMenuItem>
+                    <DropdownMenuItem className="gap-3 rounded-xl px-4 py-4 text-base font-bold" onClick={() => navigate('/bookmarks')}>
+                      <Bookmark className="h-6 w-6 shrink-0 stroke-[2]" />ブックマーク
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>}
               </div>
 
               {desktopLayout && (
