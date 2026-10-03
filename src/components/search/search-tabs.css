@@ -1,0 +1,2 @@
+.lime-search-tab-indicator { transition-property:transform,width; transition-duration:280ms; transition-timing-function:cubic-bezier(.22,1,.36,1); }
+@media(prefers-reduced-motion:reduce) { .lime-search-tab-indicator { transition:none; } }

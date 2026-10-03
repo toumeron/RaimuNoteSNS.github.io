@@ -420,7 +420,7 @@ export function ProfileHeader({
             onClick={() => setIsAvatarOpen(true)}
             className="-mt-[48px] box-border h-[96px] w-[96px] shrink-0 cursor-pointer rounded-full border-4 border-solid border-transparent bg-transparent p-0 text-left outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 sm:-mt-14 sm:h-28 sm:w-28"
           >
-            <Avatar className="h-full w-full overflow-hidden rounded-full bg-background shadow-none">
+            <Avatar userId={user.id} className="h-full w-full overflow-hidden rounded-full bg-background shadow-none">
               <AvatarImage
                 src={user.avatarUrl}
                 alt={user.displayName}
@@ -677,7 +677,7 @@ export function ProfileHeader({
             )}
             <div style={{ minHeight: 0, overflowY: 'auto', padding: '8px 16px 16px', flex: '1 1 auto', boxSizing: 'border-box' }}>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
-                <Avatar className="h-20 w-20 border-2 border-white/90 shadow-xl">
+                <Avatar userId={user.id} className="h-20 w-20 border-2 border-white/90 shadow-xl">
                   <AvatarImage src={user.avatarUrl} alt={user.displayName} className="h-full w-full object-cover" />
                   <AvatarFallback className="h-full w-full bg-white/10 text-4xl font-black text-white">{user.displayName.slice(0, 1)}</AvatarFallback>
                 </Avatar>

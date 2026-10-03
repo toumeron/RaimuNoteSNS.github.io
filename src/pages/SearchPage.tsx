@@ -1,15 +1,23 @@
+import { useAuth } from '@/hooks/useAuth';
+import { getRecommendationPreferences } from '@/api/recommendations';
+import type { RecommendationPreferences } from '@/lib/recommendations';
+import { useTrends } from '@/hooks/useTrends';
 import { useDesktopLayout } from '@/components/layout/DesktopLayoutContext';
-import { TrendSection } from '@/components/search/TrendSection';
+import { SearchExploreContent } from '@/components/search/SearchExploreContent';
+import { SearchExploreTabs } from '@/components/search/SearchExploreTabs';
+import { SearchTabIndicator } from '@/components/search/SearchTabIndicator';
+import { useSearchExploreTab } from '@/hooks/useSearchExploreTab';
+import { getNewsSources, type SearchNewsItem, type NewsSources } from '@/api/search-news';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Search, X, Clock, Loader2, TrendingUp, Newspaper, Radio, Play, Square, UsersRound, Settings2,
+  Search, X, Clock, Loader2, Play, Settings,
   AlertTriangle, ChevronLeft, ChevronRight, Heart,
 } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
 import { PostCard } from '@/components/feed/PostCard';
 import UserCard from '@/components/search/UserCard';
-import { FollowButton } from '@/components/profile/FollowButton';
 import { supabase } from '@/lib/supabase';
 import { searchBluesky } from '@/lib/bluesky';
 import type { User, PostWithAuthor } from '@/types';
@@ -617,728 +625,6 @@ export function formToQuery(f: AdvancedForm): string {
   return parts.join(' ').trim();
 }
 
-
-// ===========================================================================
-// ラジオ機能(元のSearchPage.tsxにあった処理を、そのままフックにまとめたもの)
-// ===========================================================================
-// 検索ページの「ラジオ」機能。SearchPage.tsx にあったロジックをそのまま移したもの。
-// (ページを離れても再生が続く仕様のため、状態の一部は window に持たせている)
-
-declare global {
-  interface Window {
-    __limeSearchRadioIsPlaying?: boolean;
-    __limeSearchRadioOwnerId?: string;
-    __limeSearchRadioStop?: () => void;
-  }
-}
-
-// ページを離れて戻ってきた後でも、再生状態の表示が実際の状態とズレないよう
-// 再生/停止のたびにこのイベントで全インスタンスへ通知する。
-const SEARCH_RADIO_STATE_EVENT = 'lime-search-radio-state-changed';
-
-export type RadioNewsItem = { title: string; content: string; category: string };
-
-// 修正: 以前は「バグが発生しています」と読み上げてしまっていた。
-const RADIO_FALLBACK_SCRIPT = `
-現在、読み上げできるニュースがありません。しばらくしてからもう一度お試しください。
-`;
-
-const createSilentAudioUrl = () => {
-  const sampleRate = 8000;
-  const seconds = 1;
-  const samples = sampleRate * seconds;
-  const dataSize = samples * 2;
-  const buffer = new ArrayBuffer(44 + dataSize);
-  const view = new DataView(buffer);
-
-  const writeString = (offset: number, value: string) => {
-    for (let i = 0; i < value.length; i += 1) {
-      view.setUint8(offset + i, value.charCodeAt(i));
-    }
-  };
-
-  writeString(0, 'RIFF');
-  view.setUint32(4, 36 + dataSize, true);
-  writeString(8, 'WAVE');
-  writeString(12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  writeString(36, 'data');
-  view.setUint32(40, dataSize, true);
-
-  return URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
-};
-
-const getHumanLikeJapaneseVoice = () => {
-  if (!('speechSynthesis' in window)) return null;
-
-  const voices = window.speechSynthesis.getVoices();
-  const japaneseVoices = voices.filter((voice) => voice.lang.toLowerCase().startsWith('ja'));
-  const candidates = japaneseVoices.length > 0 ? japaneseVoices : voices;
-
-  return candidates
-    .map((voice) => {
-      const name = voice.name.toLowerCase();
-      const uri = voice.voiceURI.toLowerCase();
-      const label = `${name} ${uri}`;
-      let score = 0;
-
-      if (voice.lang.toLowerCase().startsWith('ja')) score += 130;
-      if (/siri|voice 1|voice 2|voice 3|voice 4/.test(label)) score += 110;
-      if (/kyoko|otoya/.test(label) && /enhanced|premium/.test(label)) score += 105;
-      if (/kyoko|otoya|aoi|mayu|shiori|haruka|ichiro|sayaka/.test(label)) score += 62;
-      if (/natural|neural/.test(label)) score += 55;
-      if (/enhanced|premium|online/.test(label)) score += 50;
-      if (/apple|com.apple/.test(label)) score += 36;
-      if (/microsoft|google|nanami|keita/.test(label)) score -= 70;
-      if (/compact/.test(label)) score -= 90;
-      if (/default/.test(label)) score -= 22;
-      if (/novelty|whisper|organ|bad news|bells|boing|bubbles/.test(label)) score -= 120;
-      if (voice.localService) score += 18;
-      if (!voice.default) score += 10;
-
-      return { voice, score };
-    })
-    .sort((a, b) => b.score - a.score)[0]?.voice || null;
-};
-
-const getRadioTimeIntro = () => {
-  const now = new Date();
-  const hours = now.getHours();
-  const minutes = now.getMinutes();
-  const period = hours < 12 ? '午前' : '午後';
-  const displayHours = hours % 12 || 12;
-  const minuteText = minutes === 0 ? 'ちょうど' : `${minutes}分`;
-
-  return `現在、${period}${displayHours}時${minuteText}です。`;
-};
-
-export function useSearchRadio(radioNews: RadioNewsItem[]) {
-  const [isRadioPlaying, setIsRadioPlaying] = useState(() => !!window.__limeSearchRadioIsPlaying);
-
-  const radioPlayingRef = useRef(false);
-  const backgroundAudioRef = useRef<HTMLAudioElement | null>(null);
-  const backgroundAudioUrlRef = useRef<string | null>(null);
-  const radioAudioContextRef = useRef<AudioContext | null>(null);
-  const radioBeatTimerRef = useRef<number | null>(null);
-  const radioBeatGainRef = useRef<GainNode | null>(null);
-  const isMountedRef = useRef(true);
-  const radioInstanceIdRef = useRef(`search-radio-${Date.now()}-${Math.random()}`);
-  // 選択済みの読み上げボイスをキャッシュし、発話のたびに全ボイスをスコアリングし直さない
-  const cachedVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
-  // 修正: 再生/停止のたびに増やすセッション番号。
-  // speechSynthesis.cancel() は古い発話の onerror を非同期に発火させるため、
-  // 「停止 → すぐ再生」すると古い発話のエラーで新しい再生まで止まってしまっていた。
-  const speechSessionRef = useRef(0);
-  // 修正: ジングル後の読み上げ開始/ループ再開用タイマー。停止・再生時に確実に破棄する
-  // (以前は追跡しておらず、停止後もタイマーが残って二重再生になることがあった)。
-  const radioSpeakTimerRef = useRef<number | null>(null);
-
-  const radioScript = useMemo(() => {
-    const newsLines = radioNews.slice(0, 4).map((news, idx) => {
-      const content = news.content ? `。${news.content.slice(0, 140)}` : '';
-      return `${idx + 1}本目、${news.category}から。${news.title}${content}`;
-    });
-
-    if (newsLines.length === 0) {
-      return RADIO_FALLBACK_SCRIPT;
-    }
-
-    return [
-      'こんにちは。こちらはLimeNote開発部です。',
-      '検索ページで見つけたニュースを、読み上げます。',
-      'まずはニュースです。',
-      ...newsLines,
-      '以上、LimeNoteでした。読み上げが終わると、また最初から繰り返します。',
-    ].filter(Boolean).join('\n');
-  }, [radioNews]);
-
-  const clearRadioSpeakTimer = useCallback(() => {
-    if (radioSpeakTimerRef.current !== null) {
-      window.clearTimeout(radioSpeakTimerRef.current);
-      radioSpeakTimerRef.current = null;
-    }
-  }, []);
-
-  const playRadioJingle = useCallback(() => {
-    const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioContextCtor) return;
-
-    const audioContext = radioAudioContextRef.current || new AudioContextCtor();
-    radioAudioContextRef.current = audioContext;
-
-    if (audioContext.state === 'suspended') {
-      audioContext.resume().catch(() => {
-        // ブラウザ側でAudioContextの再開が拒否された場合は読み上げだけ続ける
-      });
-    }
-
-    const now = audioContext.currentTime;
-    const master = audioContext.createGain();
-    const compressor = audioContext.createDynamicsCompressor();
-    compressor.threshold.setValueAtTime(-20, now);
-    compressor.knee.setValueAtTime(16, now);
-    compressor.ratio.setValueAtTime(3, now);
-    compressor.attack.setValueAtTime(0.006, now);
-    compressor.release.setValueAtTime(0.16, now);
-    master.gain.setValueAtTime(0.0001, now);
-    master.gain.exponentialRampToValueAtTime(0.32, now + 0.08);
-    master.gain.setValueAtTime(0.28, now + 1.75);
-    master.gain.exponentialRampToValueAtTime(0.0001, now + 2.35);
-    master.connect(compressor);
-    compressor.connect(audioContext.destination);
-
-    const playTone = (
-      frequency: number,
-      start: number,
-      duration: number,
-      peak: number,
-      type: OscillatorType = 'sine'
-    ) => {
-      const oscillator = audioContext.createOscillator();
-      const gain = audioContext.createGain();
-      const end = start + duration;
-
-      oscillator.type = type;
-      oscillator.frequency.setValueAtTime(frequency, start);
-      gain.gain.setValueAtTime(0.0001, start);
-      gain.gain.exponentialRampToValueAtTime(peak, start + 0.035);
-      gain.gain.exponentialRampToValueAtTime(0.0001, end);
-
-      oscillator.connect(gain);
-      gain.connect(master);
-      oscillator.start(start);
-      oscillator.stop(end + 0.02);
-    };
-
-    const playChordHit = (start: number, frequencies: number[], duration: number) => {
-      const chordGain = audioContext.createGain();
-      const filter = audioContext.createBiquadFilter();
-
-      filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(2200, start);
-      chordGain.gain.setValueAtTime(0.0001, start);
-      chordGain.gain.exponentialRampToValueAtTime(0.2, start + 0.06);
-      chordGain.gain.setValueAtTime(0.17, start + duration - 0.16);
-      chordGain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
-
-      frequencies.forEach((frequency, index) => {
-        const oscillator = audioContext.createOscillator();
-        oscillator.type = index % 2 === 0 ? 'triangle' : 'sine';
-        oscillator.frequency.setValueAtTime(frequency, start);
-        oscillator.detune.setValueAtTime(index % 2 === 0 ? -5 : 5, start);
-        oscillator.connect(filter);
-        oscillator.start(start);
-        oscillator.stop(start + duration + 0.03);
-      });
-
-      filter.connect(chordGain);
-      chordGain.connect(master);
-    };
-
-    const createNoiseBuffer = (duration: number) => {
-      const bufferSize = Math.floor(audioContext.sampleRate * duration);
-      const buffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
-      const output = buffer.getChannelData(0);
-      for (let i = 0; i < bufferSize; i += 1) output[i] = Math.random() * 2 - 1;
-      return buffer;
-    };
-
-    const playNoise = (start: number, duration: number, peak: number, frequency: number) => {
-      const noise = audioContext.createBufferSource();
-      const filter = audioContext.createBiquadFilter();
-      const gain = audioContext.createGain();
-
-      noise.buffer = createNoiseBuffer(duration);
-      filter.type = 'highpass';
-      filter.frequency.setValueAtTime(frequency, start);
-      gain.gain.setValueAtTime(0.0001, start);
-      gain.gain.exponentialRampToValueAtTime(peak, start + 0.015);
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
-      noise.connect(filter);
-      filter.connect(gain);
-      gain.connect(master);
-      noise.start(start);
-      noise.stop(start + duration + 0.02);
-    };
-
-    playChordHit(now, [293.66, 349.23, 440.00, 523.25, 659.25], 0.62);
-    playTone(73.42, now, 0.38, 0.14, 'sawtooth');
-    playNoise(now + 0.02, 0.08, 0.08, 6200);
-
-    playChordHit(now + 0.55, [196.00, 246.94, 349.23, 440.00, 587.33], 0.72);
-    playTone(98.00, now + 0.56, 0.46, 0.15, 'sawtooth');
-    playNoise(now + 0.58, 0.12, 0.1, 2200);
-
-    playChordHit(now + 1.18, [261.63, 329.63, 392.00, 493.88, 587.33], 1.05);
-    playTone(65.41, now + 1.18, 0.72, 0.16, 'sawtooth');
-
-    [659.25, 783.99, 987.77, 1174.66, 987.77, 1318.51, 1174.66].forEach((frequency, index) => {
-      playTone(frequency, now + 0.18 + index * 0.18, 0.24, 0.13, index % 2 === 0 ? 'triangle' : 'sine');
-    });
-
-    playTone(880.00, now + 1.55, 0.26, 0.11, 'triangle');
-    playTone(987.77, now + 1.72, 0.28, 0.12, 'triangle');
-    playTone(1318.51, now + 1.96, 0.48, 0.15, 'sine');
-    playNoise(now + 2.05, 0.22, 0.13, 5600);
-  }, []);
-
-  const startRadioBeat = useCallback(() => {
-    if (radioBeatTimerRef.current !== null) return;
-
-    const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioContextCtor) return;
-
-    const audioContext = radioAudioContextRef.current || new AudioContextCtor();
-    radioAudioContextRef.current = audioContext;
-
-    if (audioContext.state === 'suspended') {
-      audioContext.resume().catch(() => {
-        // ブラウザ側でAudioContextの再開が拒否された場合は読み上げだけ続ける
-      });
-    }
-
-    const beatGain = audioContext.createGain();
-    const compressor = audioContext.createDynamicsCompressor();
-    compressor.threshold.setValueAtTime(-18, audioContext.currentTime);
-    compressor.knee.setValueAtTime(18, audioContext.currentTime);
-    compressor.ratio.setValueAtTime(4, audioContext.currentTime);
-    compressor.attack.setValueAtTime(0.006, audioContext.currentTime);
-    compressor.release.setValueAtTime(0.18, audioContext.currentTime);
-    beatGain.gain.setValueAtTime(1.25, audioContext.currentTime);
-    beatGain.connect(compressor);
-    compressor.connect(audioContext.destination);
-    radioBeatGainRef.current = beatGain;
-
-    const createNoiseBuffer = (duration = 0.18) => {
-      const bufferSize = Math.floor(audioContext.sampleRate * duration);
-      const buffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
-      const output = buffer.getChannelData(0);
-
-      for (let i = 0; i < bufferSize; i += 1) {
-        output[i] = Math.random() * 2 - 1;
-      }
-
-      return buffer;
-    };
-
-    const playKick = (time: number) => {
-      const oscillator = audioContext.createOscillator();
-      const gain = audioContext.createGain();
-
-      oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(116, time);
-      oscillator.frequency.exponentialRampToValueAtTime(48, time + 0.14);
-      gain.gain.setValueAtTime(0.0001, time);
-      gain.gain.exponentialRampToValueAtTime(0.18, time + 0.012);
-      gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.24);
-
-      oscillator.connect(gain);
-      gain.connect(beatGain);
-      oscillator.start(time);
-      oscillator.stop(time + 0.24);
-    };
-
-    // ノイズ(ハイハット/スネア)は渡されたバッファを共有して使う
-    const playSnare = (time: number, noiseBuffer: AudioBuffer) => {
-      const noise = audioContext.createBufferSource();
-      const filter = audioContext.createBiquadFilter();
-      const gain = audioContext.createGain();
-
-      noise.buffer = noiseBuffer;
-      filter.type = 'highpass';
-      filter.frequency.setValueAtTime(950, time);
-      gain.gain.setValueAtTime(0.0001, time);
-      gain.gain.exponentialRampToValueAtTime(0.095, time + 0.012);
-      gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.16);
-
-      noise.connect(filter);
-      filter.connect(gain);
-      gain.connect(beatGain);
-      noise.start(time);
-      noise.stop(time + 0.15);
-    };
-
-    const playHat = (time: number, noiseBuffer: AudioBuffer) => {
-      const noise = audioContext.createBufferSource();
-      const filter = audioContext.createBiquadFilter();
-      const gain = audioContext.createGain();
-
-      noise.buffer = noiseBuffer;
-      filter.type = 'highpass';
-      filter.frequency.setValueAtTime(6200, time);
-      gain.gain.setValueAtTime(0.0001, time);
-      gain.gain.exponentialRampToValueAtTime(0.045, time + 0.006);
-      gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.06);
-
-      noise.connect(filter);
-      filter.connect(gain);
-      gain.connect(beatGain);
-      noise.start(time);
-      noise.stop(time + 0.07);
-    };
-
-    const playBass = (time: number, frequency: number) => {
-      const oscillator = audioContext.createOscillator();
-      const filter = audioContext.createBiquadFilter();
-      const gain = audioContext.createGain();
-
-      oscillator.type = 'sawtooth';
-      oscillator.frequency.setValueAtTime(frequency, time);
-      filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(420, time);
-      filter.Q.setValueAtTime(1.2, time);
-      gain.gain.setValueAtTime(0.0001, time);
-      gain.gain.exponentialRampToValueAtTime(0.16, time + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.34);
-
-      oscillator.connect(filter);
-      filter.connect(gain);
-      gain.connect(beatGain);
-      oscillator.start(time);
-      oscillator.stop(time + 0.36);
-    };
-
-    const playChord = (time: number, frequencies: number[], duration: number) => {
-      const chordGain = audioContext.createGain();
-      const filter = audioContext.createBiquadFilter();
-
-      filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(1550, time);
-      filter.Q.setValueAtTime(0.6, time);
-      chordGain.gain.setValueAtTime(0.0001, time);
-      chordGain.gain.exponentialRampToValueAtTime(0.085, time + 0.08);
-      chordGain.gain.setValueAtTime(0.075, time + duration - 0.16);
-      chordGain.gain.exponentialRampToValueAtTime(0.0001, time + duration);
-
-      frequencies.forEach((frequency, index) => {
-        const oscillator = audioContext.createOscillator();
-        oscillator.type = index % 2 === 0 ? 'triangle' : 'sine';
-        oscillator.frequency.setValueAtTime(frequency, time);
-        oscillator.detune.setValueAtTime(index % 2 === 0 ? -4 : 4, time);
-        oscillator.connect(filter);
-        oscillator.start(time);
-        oscillator.stop(time + duration + 0.03);
-      });
-
-      filter.connect(chordGain);
-      chordGain.connect(beatGain);
-    };
-
-    const playArp = (time: number, frequency: number) => {
-      const oscillator = audioContext.createOscillator();
-      const gain = audioContext.createGain();
-      const filter = audioContext.createBiquadFilter();
-
-      oscillator.type = 'triangle';
-      oscillator.frequency.setValueAtTime(frequency, time);
-      filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(2400, time);
-      gain.gain.setValueAtTime(0.0001, time);
-      gain.gain.exponentialRampToValueAtTime(0.055, time + 0.012);
-      gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.18);
-
-      oscillator.connect(filter);
-      filter.connect(gain);
-      gain.connect(beatGain);
-      oscillator.start(time);
-      oscillator.stop(time + 0.2);
-    };
-
-    const bpm = 92;
-    const step = 60 / bpm / 4;
-    const patternSteps = 64;
-    const patternLength = step * patternSteps;
-    const chordProgression = [
-      { chord: [261.63, 329.63, 392.00, 493.88], bass: 65.41, arp: [392.00, 493.88, 659.25, 493.88] },
-      { chord: [220.00, 261.63, 329.63, 392.00], bass: 55.00, arp: [329.63, 392.00, 523.25, 392.00] },
-      { chord: [174.61, 220.00, 261.63, 329.63], bass: 43.65, arp: [329.63, 440.00, 523.25, 440.00] },
-      { chord: [196.00, 246.94, 293.66, 392.00], bass: 49.00, arp: [293.66, 392.00, 587.33, 392.00] },
-    ];
-
-    const schedulePattern = () => {
-      if (!radioPlayingRef.current) return;
-
-      // このパターン周期の間、ハイハット/スネアで使い回すノイズバッファを1個だけ生成する
-      const cycleNoiseBuffer = createNoiseBuffer(0.18);
-
-      const start = audioContext.currentTime + 0.04;
-      for (let i = 0; i < patternSteps; i += 1) {
-        const time = start + i * step;
-        const barIndex = Math.floor(i / 16);
-        const stepInBar = i % 16;
-        const section = chordProgression[barIndex % chordProgression.length];
-
-        if (stepInBar === 0) {
-          playChord(time, section.chord, step * 16);
-        }
-        if (stepInBar === 0 || stepInBar === 6 || stepInBar === 10) playKick(time);
-        if (stepInBar === 4 || stepInBar === 12) playSnare(time, cycleNoiseBuffer);
-        if (stepInBar % 2 === 0) playHat(time, cycleNoiseBuffer);
-        if ([0, 3, 6, 10, 13].includes(stepInBar)) playBass(time, section.bass);
-        if ([2, 5, 8, 11, 14].includes(stepInBar)) {
-          playArp(time, section.arp[(stepInBar + barIndex) % section.arp.length]);
-        }
-      }
-    };
-
-    schedulePattern();
-    radioBeatTimerRef.current = window.setInterval(schedulePattern, patternLength * 1000);
-  }, []);
-
-  const setRadioBeatVolume = useCallback((volume: number, fadeSeconds = 0.18) => {
-    const beatGain = radioBeatGainRef.current;
-    if (!beatGain) return;
-
-    const now = beatGain.context.currentTime;
-    beatGain.gain.cancelScheduledValues(now);
-    beatGain.gain.setTargetAtTime(volume, now, fadeSeconds);
-  }, []);
-
-  const setRadioPlayingState = useCallback((value: boolean) => {
-    if (isMountedRef.current) {
-      setIsRadioPlaying(value);
-    }
-    // 他のインスタンス(ページを離れて戻った後の新しいインスタンス等)にも反映させる
-    window.dispatchEvent(new CustomEvent(SEARCH_RADIO_STATE_EVENT));
-  }, []);
-
-  const stopRadioBeat = useCallback(() => {
-    if (radioBeatTimerRef.current !== null) {
-      window.clearInterval(radioBeatTimerRef.current);
-      radioBeatTimerRef.current = null;
-    }
-    if (radioBeatGainRef.current) {
-      radioBeatGainRef.current.gain.setValueAtTime(0.0001, radioBeatGainRef.current.context.currentTime);
-      radioBeatGainRef.current.disconnect();
-      radioBeatGainRef.current = null;
-    }
-  }, []);
-
-  const stopRadio = useCallback(() => {
-    if (
-      window.__limeSearchRadioOwnerId &&
-      window.__limeSearchRadioOwnerId !== radioInstanceIdRef.current &&
-      window.__limeSearchRadioStop
-    ) {
-      window.__limeSearchRadioStop();
-      window.__limeSearchRadioIsPlaying = false;
-      setRadioPlayingState(false);
-      return;
-    }
-
-    speechSessionRef.current += 1;
-    clearRadioSpeakTimer();
-    radioPlayingRef.current = false;
-    window.__limeSearchRadioIsPlaying = false;
-    if (window.__limeSearchRadioOwnerId === radioInstanceIdRef.current) {
-      window.__limeSearchRadioOwnerId = undefined;
-      window.__limeSearchRadioStop = undefined;
-    }
-    setRadioPlayingState(false);
-    stopRadioBeat();
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-    if (backgroundAudioRef.current) {
-      backgroundAudioRef.current.pause();
-      backgroundAudioRef.current.currentTime = 0;
-    }
-  }, [clearRadioSpeakTimer, setRadioPlayingState, stopRadioBeat]);
-
-  const playRadio = useCallback(() => {
-    if (!('speechSynthesis' in window)) return;
-
-    if (
-      window.__limeSearchRadioOwnerId &&
-      window.__limeSearchRadioOwnerId !== radioInstanceIdRef.current &&
-      window.__limeSearchRadioStop
-    ) {
-      window.__limeSearchRadioStop();
-    }
-
-    // 新しい再生セッションを開始し、古い発話・タイマーの影響を断つ
-    speechSessionRef.current += 1;
-    const session = speechSessionRef.current;
-    clearRadioSpeakTimer();
-
-    window.__limeSearchRadioOwnerId = radioInstanceIdRef.current;
-    window.__limeSearchRadioStop = stopRadio;
-    window.__limeSearchRadioIsPlaying = true;
-    radioPlayingRef.current = true;
-    setRadioPlayingState(true);
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.getVoices();
-    stopRadioBeat();
-
-    if (!backgroundAudioUrlRef.current) {
-      backgroundAudioUrlRef.current = createSilentAudioUrl();
-    }
-
-    if (!backgroundAudioRef.current) {
-      backgroundAudioRef.current = new Audio(backgroundAudioUrlRef.current);
-      backgroundAudioRef.current.loop = true;
-      backgroundAudioRef.current.preload = 'auto';
-    }
-
-    backgroundAudioRef.current.play().catch(() => {
-      // ブラウザ側でバックグラウンド保持用audioが拒否されても、読み上げ自体は続ける
-    });
-
-    if ('mediaSession' in navigator) {
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: 'ベータラジオ',
-        artist: '検索ページ',
-        album: 'ニュース',
-      });
-      navigator.mediaSession.setActionHandler('play', () => {
-        if (!radioPlayingRef.current) {
-          radioPlayingRef.current = true;
-          setRadioPlayingState(true);
-        }
-        backgroundAudioRef.current?.play().catch(() => {
-          // ブラウザ側で再開が拒否された場合は、次のユーザー操作で復帰する
-        });
-        startRadioBeat();
-        setRadioBeatVolume(0.24, 0.18);
-        if (window.speechSynthesis.paused) {
-          window.speechSynthesis.resume();
-        }
-      });
-      navigator.mediaSession.setActionHandler('pause', stopRadio);
-      navigator.mediaSession.setActionHandler('stop', stopRadio);
-    }
-
-    const isCurrentSession = () => radioPlayingRef.current && session === speechSessionRef.current;
-
-    // 修正: Chrome などは長い発話(十数秒以上)を途中で打ち切ることがあるため、
-    // 1行ずつに分けて順番に読み上げる。
-    const speakChunk = (chunks: string[], index: number) => {
-      if (!isCurrentSession()) return;
-
-      const utterance = new SpeechSynthesisUtterance(chunks[index]);
-      // ボイス選択は初回だけスコアリングし、以降は使い回す
-      if (!cachedVoiceRef.current) {
-        cachedVoiceRef.current = getHumanLikeJapaneseVoice();
-      }
-      const voice = cachedVoiceRef.current;
-      if (voice) utterance.voice = voice;
-      utterance.lang = 'ja-JP';
-      utterance.rate = 0.98;
-      utterance.pitch = 1;
-      utterance.volume = 1;
-      utterance.onend = () => {
-        if (!isCurrentSession()) return;
-
-        if (index + 1 < chunks.length) {
-          speakChunk(chunks, index + 1);
-          return;
-        }
-
-        setRadioBeatVolume(0.62, 0.2);
-        radioSpeakTimerRef.current = window.setTimeout(() => {
-          radioSpeakTimerRef.current = null;
-          speak();
-        }, 900);
-      };
-      utterance.onerror = (event) => {
-        // 古いセッションの発話や、cancel()による中断では停止しない
-        if (session !== speechSessionRef.current) return;
-        if (event.error === 'interrupted' || event.error === 'canceled') return;
-        stopRadio();
-      };
-
-      window.speechSynthesis.speak(utterance);
-    };
-
-    const speak = () => {
-      if (!isCurrentSession()) return;
-
-      const chunks = `${getRadioTimeIntro()}\n${radioScript}`
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean);
-
-      playRadioJingle();
-      stopRadioBeat();
-      clearRadioSpeakTimer();
-      radioSpeakTimerRef.current = window.setTimeout(() => {
-        radioSpeakTimerRef.current = null;
-        if (!isCurrentSession()) return;
-
-        startRadioBeat();
-        setRadioBeatVolume(0.24, 0.18);
-        speakChunk(chunks, 0);
-      }, 2450);
-    };
-
-    speak();
-  }, [clearRadioSpeakTimer, playRadioJingle, radioScript, setRadioBeatVolume, setRadioPlayingState, startRadioBeat, stopRadio, stopRadioBeat]);
-
-  useEffect(() => {
-    const keepRadioAlive = () => {
-      if (!radioPlayingRef.current) return;
-
-      backgroundAudioRef.current?.play().catch(() => {
-        // ブラウザ側で再開が拒否された場合は読み上げ自体は続ける
-      });
-      startRadioBeat();
-      setRadioBeatVolume(0.24, 0.18);
-
-      if ('speechSynthesis' in window && window.speechSynthesis.paused) {
-        window.speechSynthesis.resume();
-      }
-    };
-
-    document.addEventListener('visibilitychange', keepRadioAlive);
-    window.addEventListener('focus', keepRadioAlive);
-    return () => {
-      document.removeEventListener('visibilitychange', keepRadioAlive);
-      window.removeEventListener('focus', keepRadioAlive);
-    };
-  }, [setRadioBeatVolume, startRadioBeat]);
-
-  useEffect(() => {
-    if (!('speechSynthesis' in window)) return;
-
-    const loadVoices = () => {
-      window.speechSynthesis.getVoices();
-      // ボイス一覧が変わった場合はキャッシュを破棄して再選択する
-      cachedVoiceRef.current = null;
-    };
-
-    loadVoices();
-    window.speechSynthesis.addEventListener('voiceschanged', loadVoices);
-    return () => {
-      window.speechSynthesis.removeEventListener('voiceschanged', loadVoices);
-    };
-  }, []);
-
-  // 他のインスタンスで再生/停止された場合に、表示上の再生状態を実際の状態へ合わせる。
-  useEffect(() => {
-    const syncFromWindow = () => {
-      if (isMountedRef.current) {
-        setIsRadioPlaying(!!window.__limeSearchRadioIsPlaying);
-      }
-    };
-    window.addEventListener(SEARCH_RADIO_STATE_EVENT, syncFromWindow);
-    return () => window.removeEventListener(SEARCH_RADIO_STATE_EVENT, syncFromWindow);
-  }, []);
-
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
-
-  return { isRadioPlaying, playRadio, stopRadio };
-}
 
 // ===========================================================================
 // 詳細検索パネル(PCの設定ポップアップ・モバイルHeaderで共通利用)
@@ -2131,7 +1417,7 @@ function SearchResults({
 
   const renderFeedStatus = (m: FeedMode, emptyTitle: string, emptyDesc: string) => {
     if (isFirstLoading) {
-      return <div>{Array.from({ length: 5 }).map((_, i) => <RowSkeleton key={i} />)}</div>;
+      return <div>{Array.from({ length: 5 }).map((_, i) => <PostCardSkeleton key={i} />)}</div>;
     }
     if (currentFeed && currentFeed.error && currentFeed.items.length === 0) {
       return (
@@ -2308,22 +1594,10 @@ const readStoredSearchPageTab = (): SearchTab => {
 };
 
 const desktopTabTriggerClass =
-  "relative h-full bg-transparent text-[15px] font-medium text-[rgb(83,100,113)] dark:text-gray-400 data-[state=active]:text-[rgb(15,20,25)] dark:data-[state=active]:text-white data-[state=active]:font-bold data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-black/[0.03] dark:hover:bg-white/5 transition-colors data-[state=active]:after:content-[''] data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:w-12 data-[state=active]:after:h-1 data-[state=active]:after:rounded-full data-[state=active]:after:bg-primary";
-
-// トレンドアイテムの型定義
-type TrendItem = {
-  title: string;
-  traffic: string;
-};
+  "relative h-full bg-transparent text-[15px] font-medium text-[rgb(83,100,113)] dark:text-gray-400 data-[state=active]:text-[rgb(15,20,25)] dark:data-[state=active]:text-white data-[state=active]:font-bold data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-black/[0.03] dark:hover:bg-white/5 transition-colors";
 
 // ニュースアイテムの型定義
-type NewsItem = {
-  id: string;
-  title: string;
-  content: string;
-  category: string;
-  created_at: string;
-};
+type NewsItem = SearchNewsItem;
 
 // PC版の検索バーのサジェスト行(検索キーワード or ユーザー)の型定義
 type SuggestionRow =
@@ -2370,12 +1644,12 @@ export default function SearchPage() {
   const [isUsersLoading, setIsUsersLoading] = useState(true);
 
   // トレンド用ステート
-  const [trends, setTrends] = useState<TrendItem[]>([]);
-  const [isTrendsLoading, setIsTrendsLoading] = useState(false);
+  const { data: trends = [], isPending: isTrendsLoading } = useTrends();
 
   // ニュース用ステート
-  const [latestNews, setLatestNews] = useState<NewsItem | null>(null);
-  const [radioNews, setRadioNews] = useState<NewsItem[]>([]);
+  const [newsSources, setNewsSources] = useState<Record<string, NewsSources>>({});
+  const [exploreTab] = useSearchExploreTab();
+  const [newsItems, setNewsItems] = useState<NewsItem[]>([]);
   const [isNewsLoading, setIsNewsLoading] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -2386,7 +1660,16 @@ export default function SearchPage() {
   // すでに処理したものを覚えておく(同じ navigation state で二重に処理しないため)。
   const appliedSearchHomeTokenRef = useRef<number | null>(null);
 
-  const { isRadioPlaying, playRadio, stopRadio } = useSearchRadio(radioNews);
+  const { user } = useAuth();
+  const [preferences, setPreferences] = useState<RecommendationPreferences>({authors: {}, terms: {}});
+  useEffect(() => {
+    let cancelled = false;
+    setPreferences({authors: {}, terms: {}});
+    getRecommendationPreferences(user?.id ?? null).then(value => {
+      if (!cancelled) setPreferences(value);
+    }).catch(() => { /* Public ranking remains usable if preferences cannot load. */ });
+    return () => { cancelled = true; };
+  }, [user?.id]);
 
   // PC版の検索バー: 入力中のBlueskyユーザーサジェストを取得する。
   // 演算子(from: など)は除き、検索語だけを渡す。
@@ -2463,8 +1746,8 @@ export default function SearchPage() {
         if (error) throw error;
         if (cancelled) return;
         const newsItems = Array.isArray(data) ? data : [];
-        setRadioNews(newsItems);
-        setLatestNews(newsItems[0] || null);
+        setNewsItems(newsItems);
+        void getNewsSources(newsItems.slice(0, 1)).then(sources => { if (!cancelled) setNewsSources(sources); });
       } catch (err) {
         console.error('Failed to fetch news:', err);
       } finally {
@@ -2472,37 +1755,6 @@ export default function SearchPage() {
       }
     }
     fetchLatestNews();
-    return () => { cancelled = true; };
-  }, []);
-
-  // トレンド取得用Effect
-  useEffect(() => {
-    let cancelled = false;
-    async function fetchTrends() {
-      setIsTrendsLoading(true);
-      try {
-        const { data, error } = await supabase.functions.invoke('get-trends', {
-          method: 'POST',
-          body: {},
-        });
-
-        if (error) throw error;
-        if (cancelled) return;
-
-        if (Array.isArray(data)) {
-          setTrends(data);
-        } else if (data && data.error) {
-          console.error('Function returned error:', data.error);
-          setTrends([]);
-        }
-      } catch (err) {
-        console.error('Failed to fetch trends:', err);
-        if (!cancelled) setTrends([]);
-      } finally {
-        if (!cancelled) setIsTrendsLoading(false);
-      }
-    }
-    fetchTrends();
     return () => { cancelled = true; };
   }, []);
 
@@ -2583,7 +1835,7 @@ export default function SearchPage() {
 
   // 検索トップ(検索前のメイン画面)へ戻す。
   // 検索語・入力欄・サジェスト・詳細検索パネルをすべて初期状態に戻し、
-  // <SearchResults> を外して「ニュース/トレンド/おすすめユーザー/ラジオ」の画面を表示させる。
+  // <SearchResults> を外して「ニュース/トレンド/おすすめユーザー」の画面を表示させる。
   const resetToSearchHome = useCallback(() => {
     setSearchQuery('');
     setInputValue('');
@@ -2770,166 +2022,11 @@ export default function SearchPage() {
   }, [allUsers]);
 
   const renderSearchHomeSections = () => (
-    <div className="flex flex-col gap-6">
-      {/* 最新ニュースセクション */}
-      <div className="px-4">
-        <div className="bg-primary/10 dark:bg-primary/5 rounded-2xl border border-primary/20 dark:border-primary/10 overflow-hidden">
-          <div className="px-4 py-3 border-b border-primary/20 dark:border-primary/10 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Newspaper className="w-5 h-5 text-primary" />
-              <h2 className="font-extrabold text-xl">ニュース</h2>
-            </div>
-            {latestNews && (
-               <button
-                 onClick={() => navigate('/news')}
-                 className="text-[11px] font-bold bg-primary text-white px-2 py-0.5 rounded-full uppercase hover:opacity-80 transition-opacity"
-               >
-                 NEW
-               </button>
-            )}
-          </div>
+    <div className="flex flex-col">
+      <SearchExploreContent tab={exploreTab} preferences={preferences} viewerId={user?.id ?? null} news={newsItems} sources={newsSources} trends={trends} users={recommendedUsers}
+        newsLoading={isNewsLoading} trendsLoading={isTrendsLoading} usersLoading={isUsersLoading}
+        onSearch={commitSearch} onNews={id => navigate(`/news?story=${encodeURIComponent(id)}`)} />
 
-          {isNewsLoading ? (
-            <div className="p-8 flex justify-center">
-              <Loader2 className="w-6 h-6 animate-spin text-primary" />
-            </div>
-          ) : latestNews ? (
-            <div
-              className="p-4 flex flex-col gap-2 cursor-pointer hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors"
-              onClick={() => navigate('/news')}
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-[12px] font-bold text-primary px-2 py-0.5 bg-primary/10 rounded-md">
-                  {latestNews.category}
-                </span>
-                <span className="text-[12px] text-[rgb(83,100,113)] dark:text-gray-400">
-                  {new Date(latestNews.created_at).toLocaleDateString()}
-                </span>
-              </div>
-              <h3 className="font-bold text-[17px] leading-tight hover:underline">
-                {latestNews.title}
-              </h3>
-              <p className="text-[14px] text-[rgb(83,100,113)] dark:text-gray-300 leading-normal line-clamp-3">
-                {latestNews.content}
-              </p>
-            </div>
-          ) : (
-            <div className="px-4 py-8 text-center text-[rgb(83,100,113)] dark:text-gray-400 text-[14px]">
-              現在、表示できるニュースはありません
-            </div>
-          )}
-        </div>
-      </div>
-
-      <TrendSection items={trends} loading={isTrendsLoading} onSelect={commitSearch} />
-
-      {/* おすすめユーザーセクション */}
-      <div className="px-4">
-        <div className="bg-black/[0.02] dark:bg-white/[0.03] rounded-2xl border border-black/[0.03] dark:border-white/[0.05] overflow-hidden">
-          <div className="px-4 py-3 border-b border-black/[0.03] dark:border-white/[0.05] flex items-center gap-2">
-            <UsersRound className="w-5 h-5 text-primary" />
-            <h2 className="font-extrabold text-xl">おすすめユーザー</h2>
-          </div>
-
-          {isUsersLoading ? (
-            <div className="p-4">
-              {Array.from({ length: 3 }).map((_, idx) => (
-                <div key={idx} className="flex items-center gap-3 px-1 py-3 border-b last:border-none border-black/[0.03] dark:border-white/[0.05] animate-pulse">
-                  <div className="w-12 h-12 rounded-full bg-black/5 dark:bg-white/10 shrink-0" />
-                  <div className="flex-1 min-w-0 space-y-2">
-                    <div className="h-4 w-32 bg-black/5 dark:bg-white/10 rounded" />
-                    <div className="h-3 w-24 bg-black/5 dark:bg-white/10 rounded" />
-                  </div>
-                  <div className="w-24 h-9 rounded-full bg-black/5 dark:bg-white/10 shrink-0" />
-                </div>
-              ))}
-            </div>
-          ) : recommendedUsers.length > 0 ? (
-            <div className="flex flex-col">
-              {recommendedUsers.map((user) => (
-                <div
-                  key={user.id}
-                  className="flex items-center gap-3 px-4 py-3 border-b last:border-none border-black/[0.03] dark:border-white/[0.05] hover:bg-black/[0.02] dark:hover:bg-white/[0.04] transition-colors cursor-pointer"
-                  onClick={() => navigate(`/u/${user.username}`)}
-                >
-                  {user.avatarUrl ? (
-                    <img
-                      src={user.avatarUrl}
-                      alt={user.displayName}
-                      loading="lazy"
-                      className="w-12 h-12 rounded-full object-cover shrink-0"
-                    />
-                  ) : (
-                    <div className="w-12 h-12 rounded-full bg-black/5 dark:bg-white/10 shrink-0" />
-                  )}
-
-                  <div className="min-w-0 flex-1">
-                    <div className="flex min-w-0 items-center gap-1">
-                      <span className="truncate font-bold text-[16px]">{user.displayName}</span>
-                      {user.isOfficial && (
-                        <img
-                          src={`${import.meta.env.BASE_URL}verified.png`}
-                          alt="Official"
-                          className="h-4 w-4 shrink-0 translate-y-[0.5px]"
-                          loading="eager"
-                        />
-                      )}
-                    </div>
-                    <div className="truncate text-[14px] text-[rgb(83,100,113)] dark:text-gray-400">@{user.username}</div>
-                  </div>
-
-                  <div
-                    className="shrink-0"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <FollowButton userId={user.id} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="px-4 py-8 text-center text-[rgb(83,100,113)] dark:text-gray-400 text-[14px]">
-              現在、おすすめユーザーを表示できません
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ベータラジオセクション */}
-      <div className="px-4 pb-6">
-        <div className="bg-black/[0.02] dark:bg-white/[0.03] rounded-2xl border border-black/[0.03] dark:border-white/[0.05] overflow-hidden">
-          <div className="px-4 py-3 border-b border-black/[0.03] dark:border-white/[0.05] flex items-center gap-2">
-            <Radio className="w-5 h-5 text-primary" />
-            <h2 className="font-extrabold text-xl">ラジオ</h2>
-          </div>
-
-          <div className="p-4 flex items-center justify-between gap-4">
-            <div className="min-w-0 flex flex-col gap-1">
-              <p className="text-[14px] text-[rgb(83,100,113)] dark:text-gray-400 leading-normal">
-                by LimeNote
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onClick={isRadioPlaying ? stopRadio : playRadio}
-              className="shrink-0 inline-flex h-10 items-center gap-2 rounded-full bg-primary px-4 text-[14px] font-bold text-white hover:opacity-90 transition-opacity"
-            >
-              {isRadioPlaying ? (
-                <>
-                  <Square className="w-4 h-4" fill="currentColor" />
-                  停止
-                </>
-              ) : (
-                <>
-                  <Play className="w-4 h-4" fill="currentColor" />
-                  再生
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
     </div>
   );
 
@@ -2943,12 +2040,12 @@ export default function SearchPage() {
         }`}
         style={{ position: 'sticky', top: 0 }}
       >
-        <div className="max-w-3xl mx-auto w-full px-4">
-          <form onSubmit={(e) => { e.preventDefault(); commitSearch(inputValue); }} className="relative">
-            <div className={`relative flex items-center h-11 rounded-full transition-all ${
+        <div className="mx-auto w-full px-4">
+          <form onSubmit={(e) => { e.preventDefault(); commitSearch(inputValue); }} className="relative pr-12">
+            <div className={`relative flex items-center h-11 rounded-full border border-border transition-all ${
               isInputFocused
                 ? 'bg-white dark:bg-black ring-2 ring-primary'
-                : 'bg-black/5 dark:bg-white/10'
+                : 'bg-transparent'
             }`}>
               <Search className={`absolute left-4 w-[18px] h-[18px] ${isInputFocused ? 'text-primary' : 'text-[rgb(83,100,113)] dark:text-gray-400'}`} />
               <input
@@ -2963,23 +2060,23 @@ export default function SearchPage() {
                 }}
                 onKeyDown={onKeyDown}
                 placeholder="検索"
-                className="w-full h-full bg-transparent border-none pl-11 pr-20 text-[15px] outline-none dark:placeholder-gray-500"
+                className="w-full h-full bg-transparent border-none pl-11 pr-10 text-[15px] outline-none dark:placeholder-gray-500"
               />
               {inputValue && (
-                <button type="button" onClick={() => { setInputValue(''); inputRef.current?.focus(); }} className="absolute right-11 w-5 h-5 flex items-center justify-center bg-primary rounded-full">
+                <button type="button" onClick={() => { setInputValue(''); inputRef.current?.focus(); }} className="absolute right-3 w-5 h-5 flex items-center justify-center bg-primary rounded-full">
                   <X className="w-3 h-3 text-white" strokeWidth={3} />
                 </button>
               )}
+            </div>
               <button
                 type="button"
                 aria-label="詳細検索"
                 aria-expanded={isSearchSettingsOpen}
                 onClick={() => setIsSearchSettingsOpen((open) => !open)}
-                className="absolute right-3 flex h-7 w-7 items-center justify-center rounded-full text-[rgb(83,100,113)] transition-colors hover:bg-black/10 dark:text-gray-400 dark:hover:bg-white/10"
+                className="absolute right-0 top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-full text-foreground transition-colors hover:bg-muted"
               >
-                <Settings2 className="h-[18px] w-[18px]" />
+                <Settings className="h-5 w-5" />
               </button>
-            </div>
 
             {isSearchSettingsOpen && (
               <>
@@ -3066,15 +2163,16 @@ export default function SearchPage() {
         </div>
       </div>
   );
-  const searchTabs = (
+  const searchTabs = !searchQuery ? <div className="hidden sm:block" data-lime-search-home-tabs><SearchExploreTabs /></div> : (
         <Tabs value={activeTab} onValueChange={(value) => changeActiveTab(value as SearchTab)} className="w-full max-sm:hidden" data-lime-search-tabs>
           <div className="hidden sm:block">
             <TabsList className="w-full h-[53px] bg-transparent border-b border-black/[0.03] dark:border-white/[0.05] rounded-none p-0 grid grid-cols-4 relative z-20">
               {SEARCH_TABS.map((tab) => (
                 <TabsTrigger key={tab.value} value={tab.value} className={desktopTabTriggerClass}>
-                  {tab.label}
+                  <span data-lime-tab-label>{tab.label}</span>
                 </TabsTrigger>
               ))}
+              <SearchTabIndicator active={activeTab} />
             </TabsList>
           </div>
         </Tabs>
@@ -3088,7 +2186,7 @@ export default function SearchPage() {
         <div data-lime-search-header className="lime-desktop-search-header">{searchBar}{searchTabs}</div>
       ) : searchBar}
 
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 max-sm:relative max-sm:left-0 max-sm:w-full max-sm:max-w-none max-sm:translate-x-0 max-sm:gap-0 max-sm:px-1">
+      <div data-lime-search-content className={`mx-auto flex w-full max-w-3xl flex-col gap-6 max-sm:relative max-sm:left-0 max-sm:w-full max-sm:max-w-none max-sm:translate-x-0 max-sm:gap-0 max-sm:px-0`}>
         {/* モバイルではこのタブバーの代わりにHeader.tsx側のタブボタンを使う。
             結果の中身は <SearchResults> が activeTab を見て切り替える(タブごとの
             読み込み済み結果は保持され、切り替えても再取得しない)。
@@ -3097,7 +2195,7 @@ export default function SearchPage() {
             余白の原因を取り除いた。 */}
         {!desktopLayout && searchTabs}
 
-        <div className="-mt-2 bg-transparent max-sm:mt-3">
+        <div className={searchQuery ? '-mt-2 bg-transparent max-sm:mt-0' : 'bg-transparent'}>
           {!searchQuery ? (
             renderSearchHomeSections()
           ) : (

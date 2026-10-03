@@ -46,7 +46,7 @@ export function AppLayout() {
   if (isLimeProPage) {
     // LimeProページの場合は最大幅制限を解除し、パディングもゼロにする（フルスクリーン対応）
     mainClassName = 'w-full max-w-none px-0 py-0';
-  } else if (location.pathname === '/bookmarks') {
+  } else if (location.pathname === '/bookmarks' || location.pathname === '/search') {
     mainClassName = 'mx-auto max-w-2xl px-0 py-0';
   } else if (isPostDetailPage) {
     mainClassName = 'mx-auto max-w-2xl px-4 pb-6 pt-0';

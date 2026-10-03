@@ -25,6 +25,7 @@ import NotFound from "./pages/NotFound";
 import Notifications from "./pages/Notifications";
 import FollowersFollowingPage from "./pages/FollowersFollowingPage";
 import SpacePage from "./pages/SpacePage";
+import { SpaceProvider } from '@/components/spaces/SpaceProvider';
 import NewsPage from './pages/NewsPage';
 import ChatPage from "./pages/ChatPage"; // AIチャットページのインポートを追加
 import TermsPage from "./pages/terms";
@@ -2672,6 +2673,7 @@ const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage |
       <ScrollToTop />
       
       <AuthProvider>
+        <SpaceProvider>
         <AccountOverlayReset onReset={resetAccountOverlays} />
         <NotificationWatcher />
         <LimeDropReceiver />
@@ -2710,6 +2712,7 @@ const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage |
           onClose={() => setPostModalOpen(false)} 
         />
 
+        </SpaceProvider>
       </AuthProvider>
     </PostOverlayContext.Provider>
   );

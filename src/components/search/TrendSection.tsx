@@ -1,6 +1,6 @@
 import { Loader2, TrendingUp } from 'lucide-react';
 
-export type TrendItem = { title: string; traffic: string };
+export type TrendItem = { title: string; traffic: string; rank?: number };
 
 // Shared existing search UI, also used in the desktop timeline sidebar.
 export function TrendSection({ items, loading, onSelect }: {
@@ -26,11 +26,13 @@ export function TrendSection({ items, loading, onSelect }: {
                 items.map((trend, idx) => (
                   <button
                     key={idx}
+                    data-lime-sidebar-trend-title={trend.title}
+                    data-lime-trend-rank={trend.rank ?? idx + 1}
                     onClick={() => onSelect(trend.title)}
                     className="px-4 py-3 text-left hover:bg-black/[0.03] dark:hover:bg-white/[0.05] transition-colors border-b last:border-none border-black/[0.03] dark:border-white/[0.05] flex flex-col gap-0.5"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="text-[13px] text-[rgb(83,100,113)] dark:text-gray-400">{idx + 1} · トレンド</span>
+                      <span className="text-[13px] text-[rgb(83,100,113)] dark:text-gray-400">{trend.rank ?? idx + 1} · トレンド</span>
                     </div>
                     <div className="font-bold text-[15px]">{trend.title}</div>
                   </button>

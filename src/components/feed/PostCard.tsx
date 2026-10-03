@@ -2125,7 +2125,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
       onMouseLeave={closeProfileHover}
     >
       <div className="flex justify-between items-start mb-3">
-        <Avatar className="h-14 w-14 border border-primary/5">
+        <Avatar userId={post.author.id} className="h-14 w-14 border border-primary/5">
           <AvatarImage src={post.author.avatarUrl} alt={post.author.displayName} />
           <AvatarFallback>{post.author.displayName.slice(0, 1)}</AvatarFallback>
         </Avatar>
@@ -2260,7 +2260,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                 onBlur={closeProfileHover}
                 onClick={handleAuthorNavigate}
               >
-                <Avatar className="h-11 w-11 translate-y-1">
+                <Avatar userId={post.author.id} className="h-11 w-11 translate-y-1">
                   <AvatarImage src={post.author.avatarUrl} alt={post.author.displayName} />
                   <AvatarFallback>{post.author.displayName.slice(0, 1)}</AvatarFallback>
                 </Avatar>

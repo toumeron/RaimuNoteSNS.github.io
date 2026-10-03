@@ -93,6 +93,8 @@
   .lime-desktop-column [data-lime-header-row] { height: var(--desktop-header-height); max-width: none; }
   .lime-app-shell [data-lime-desktop-feed-tabs] { display: none; }
   .lime-app-shell [data-lime-feed-tab-row] { display: block; }
+  .lime-app-shell [data-lime-feed-tab-row] [role="tablist"],
+  .lime-app-shell [data-lime-feed-tab-row] .feed-tabs-trigger { height: 48px; }
   .lime-app-shell [data-lime-feed-tab-row] > div { padding-inline: 0; }
   .lime-app-shell [data-lime-header-row] > .cursor-pointer {
     position: absolute;
@@ -163,10 +165,12 @@
     backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
   }
   .lime-app-shell [data-lime-search-header] > [data-lime-search-bar],
-  .lime-app-shell [data-lime-search-header] > [data-lime-search-tabs] {
+  .lime-app-shell [data-lime-search-header] > [data-lime-search-tabs],
+  .lime-app-shell [data-lime-search-header] > [data-lime-search-home-tabs] {
     position: relative !important; top: auto !important; background: transparent;
     backdrop-filter: none; -webkit-backdrop-filter: none;
   }
+  .lime-app-shell [data-lime-search-content] { max-width: none; padding-top: 0 !important; gap: 0; }
 
   .lime-app-shell [data-lime-profile-desktop-tabs] { display: none; }
   .lime-app-shell[data-lime-page^="/u/"] .space-y-4 > * + * { margin-top: 0; }
@@ -460,4 +464,10 @@
   .lime-app-shell [data-lime-media-viewport] > aside { height: auto; border-left: 0; border-top: 1px solid var(--desktop-line); }
   .lime-app-shell .vpop-root .chat-sidebar[data-open="true"] { width: 220px; }
   .lime-app-shell .vpop-root .chat-sidebar > div { width: 220px; }
+}
+
+/* Touch tablet layouts reserve the icon rail; desktop mouse layouts retain their columns. */
+@media (min-width: 768px) and (max-width: 1399px) and (hover: none) and (pointer: coarse) {
+  .lime-app-shell:not([data-lime-workspace]) { grid-template-columns: 72px minmax(0, 1fr) clamp(210px, 25vw, 380px); }
+  .lime-app-shell [data-lime-sidebar-logo] { display: none !important; }
 }

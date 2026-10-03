@@ -8,7 +8,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ReplyDetail } from './ReplyDetail';
 import { ArrowLeft, MessageCircle, X, Plus, Link as LinkIcon, Upload, Send, Heart, Globe, MoreHorizontal, Trash2, ChartBarBig, Lock, Users } from 'lucide-react'; // Plus, MoreHorizontal等を追加
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Skeleton } from '@/components/ui/skeleton';
+import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
 import { LikeButton } from '@/components/post/LikeButton';
 import { CommentList } from '@/components/post/CommentList';
 import { CommentForm } from '@/components/post/CommentForm';
@@ -124,7 +124,7 @@ function BlueskyReplyList({
   mobileFlat: boolean;
 }) {
   if (isLoading) {
-    return <div className="space-y-3"><div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft"><Skeleton className="h-14 w-full" /></div></div>;
+    return <PostCardSkeleton />;
   }
   if (isError) {
     return <div className="rounded-3xl border border-destructive/40 bg-destructive/5 p-6 text-center"><p className="text-sm text-destructive">返信の読み込みに失敗しました。</p></div>;
@@ -139,7 +139,7 @@ function BlueskyReplyList({
         <li key={reply.id} className={mobileFlat ? 'border-b border-border/60 px-4 py-3' : 'rounded-3xl border border-border/60 bg-card p-5 shadow-soft'}>
           <div className="flex gap-3">
             <Link to={`/u/${encodeURIComponent(reply.author.username)}`}>
-              <Avatar className="h-11 w-11 shrink-0"><AvatarImage src={reply.author.avatarUrl} alt={reply.author.displayName} /><AvatarFallback>{reply.author.displayName.slice(0, 1)}</AvatarFallback></Avatar>
+              <Avatar userId={reply.author.id} className="h-11 w-11 shrink-0"><AvatarImage src={reply.author.avatarUrl} alt={reply.author.displayName} /><AvatarFallback>{reply.author.displayName.slice(0, 1)}</AvatarFallback></Avatar>
             </Link>
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 items-center gap-1 text-sm">
@@ -1553,18 +1553,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
         </button>
       )}
 
-      {isLoading && (
-        <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
-          <div className="flex gap-3">
-            <Skeleton className="h-12 w-12 rounded-full" />
-            <div className="flex-1 space-y-2">
-              <Skeleton className="h-4 w-1/3" />
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-4/5" />
-            </div>
-          </div>
-        </div>
-      )}
+      {isLoading && <PostCardSkeleton />}
       
       {isError && (
         <div className="rounded-3xl border border-destructive/40 bg-destructive/5 p-6 text-center">
@@ -1588,7 +1577,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
           <div className="flex items-center justify-between">
             <div className={`flex items-center gap-3 ${useMobileThreadLayout ? 'post-detail-mobile-author-row' : ''}`}>
               <Link to={`/u/${data.author.username}`} onClick={handleAuthorNavigate}>
-                <Avatar className={useMobileThreadLayout ? "post-detail-mobile-avatar" : "h-12 w-12 border-2 border-primary/30"}>
+                <Avatar userId={data.author.id} className={useMobileThreadLayout ? "post-detail-mobile-avatar" : "h-12 w-12 border-2 border-primary/30"}>
                   <AvatarImage src={data.author.avatarUrl} alt={data.author.displayName} />
                   <AvatarFallback>{data.author.displayName.slice(0, 1)}</AvatarFallback>
                 </Avatar>

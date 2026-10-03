@@ -11,6 +11,12 @@ serve(async (req: Request) => {
   try {
     const body = await req.json().catch(() => ({}));
     const { channelName, uid } = body;
+    // New Spaces have their own membership-checked token endpoint. Preserve legacy calls.
+    if (typeof channelName === 'string' && channelName.startsWith('lime-space:')) {
+      return new Response(JSON.stringify({ error: 'Use the authenticated space-token endpoint' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403,
+      });
+    }
 
     const APP_ID = Deno.env.get('AGORA_APP_ID')
     const APP_CERTIFICATE = Deno.env.get('AGORA_APP_CERTIFICATE')

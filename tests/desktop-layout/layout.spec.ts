@@ -30,6 +30,26 @@ test.beforeEach(async ({ page }) => {
 });
 
 const routes = ['', 'search', 'notifications', 'chat', 'media', 'media/lime', 'news', 'u/lime', 'u/lime/followers_following', 'post/post-0', 'post/post-0/activity', 'settings', 'share', 'spaces/room', 'limepro'];
+test('iPad keeps trends and expands content using the compact sidebar in both orientations',async({page},info)=>{
+  test.skip(!info.project.name.startsWith('iPad'),'Touch iPad projects only');
+  await page.goto('./');
+  for(const width of [768,820,1024,1180,1366,1376]){
+    await page.setViewportSize({width,height:900});
+    expect(await page.evaluate(()=>matchMedia('(hover: none) and (pointer: coarse)').matches)).toBe(true);
+    await expect(page.locator('[data-lime-sidebar-logo]')).toBeHidden();
+    await expect(page.locator('.lime-desktop-discover')).toBeVisible();
+    await expect.poll(async()=> (await page.locator('.lime-desktop-menu').boundingBox())!.width).toBe(72);
+    const column=(await page.locator('.lime-desktop-column').boundingBox())!;
+    const right=(await page.locator('.lime-desktop-discover').boundingBox())!;
+    expect(column.width).toBeCloseTo(width-72-right.width,0);
+    expect(column.x).toBe(72);expect(right.x+right.width).toBeCloseTo(width,0);
+    expect((await page.locator('[data-lime-post-card]').first().boundingBox())!.width).toBeCloseTo(column.width-2,0);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    if(width===820||width===1180)await page.screenshot({path:info.outputPath(`ipad-${width}.png`),animations:'disabled'});
+  }
+  await page.locator('[data-lime-desktop-sidebar]').getByRole('button',{name:'もっと見る',exact:true}).click();
+  await expect(page.locator('[data-lime-sidebar-more]')).toBeVisible();
+});
 for (const width of [768, 1440]) {
   test(`desktop settings precedes more and photo opens from its menu at ${width}px`, async ({page}) => {
     await page.setViewportSize({width,height:900});await page.goto('./');
@@ -200,9 +220,9 @@ test('profile mobile tabs and posts, search sticky tabs, and native post detail 
     document.querySelector('.lime-desktop-main > div')!.append(filler);
     window.scrollTo(0, 400);
   });
-  await expect.poll(() => page.locator('[data-lime-search-tabs]').evaluate(el => Math.round(el.getBoundingClientRect().top))).toBe(64);
+  await expect.poll(() => page.locator('[data-lime-search-home-tabs]').evaluate(el => Math.round(el.getBoundingClientRect().top))).toBe(64);
   await expect(page.locator('.lime-desktop-main input').first()).toBeVisible();
-  await expect(page.locator('[data-lime-search-tabs]')).toBeVisible();
+  await expect(page.locator('[data-lime-search-home-tabs]')).toBeVisible();
   await expect(page.locator('[data-lime-desktop-sidebar] button[aria-current="page"]')).toHaveText('検索');
   await page.goto('post/post-0');
   await expect(page.locator('.post-detail-mobile-topbar')).toBeVisible();
@@ -214,7 +234,7 @@ test('profile mobile tabs and posts, search sticky tabs, and native post detail 
 });
 
 
-for (const width of [768, 1024, 1440, 1920]) {
+for (const width of [768, 820, 1024, 1180, 1376, 1440, 1920]) {
   test(`desktop uses available width, sidebar logo, and visible tab underlines at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.goto('./');
@@ -243,7 +263,7 @@ for (const width of [768, 1024, 1440, 1920]) {
       window.scrollTo(0, 400);
     });
     await expect(page.locator('[data-lime-search-bar]')).toHaveCSS('border-bottom-width', '0px');
-    await expect.poll(() => page.locator('[data-lime-search-tabs]').evaluate(el => Math.round(el.getBoundingClientRect().top))).toBe(64);
+    await expect.poll(() => page.locator('[data-lime-search-home-tabs]').evaluate(el => Math.round(el.getBoundingClientRect().top))).toBe(64);
     await page.goto('u/lime');
     const tabs = page.locator('[data-lime-profile-mobile-tabs]');
     await page.evaluate(() => {
@@ -275,9 +295,9 @@ test('desktop sticky surfaces reuse mobile blur and reply composer matches the r
   await page.goto('search');
   await expect(page.locator('[data-lime-search-header]')).toHaveCSS('backdrop-filter', 'blur(12px)');
   await expect(page.locator('[data-lime-search-bar]')).toHaveCSS('backdrop-filter', 'none');
-  await expect(page.locator('[data-lime-search-tabs]')).toHaveCSS('backdrop-filter', 'none');
+  await expect(page.locator('[data-lime-search-home-tabs]')).toHaveCSS('backdrop-filter', 'none');
   await expect(page.locator('[data-lime-search-header] > [data-lime-search-bar]')).toBeVisible();
-  await expect(page.locator('[data-lime-search-header] > [data-lime-search-tabs]')).toBeVisible();
+  await expect(page.locator('[data-lime-search-header] > [data-lime-search-home-tabs]')).toBeVisible();
   await page.goto('u/lime');
   await expect(page.locator('[data-lime-post-card]').first()).toBeVisible();
   await page.evaluate(() => {
@@ -693,7 +713,7 @@ test('news history animates every time it opens from the search news page',async
   ])}));
   await page.goto('search');
   await page.getByText('最新のニュース',{exact:true}).click();
-  await expect(page).toHaveURL(/\/news$/);
+  await expect(page).toHaveURL(/\/news(?:\?story=latest)?$/);
   for(let i=0;i<2;i++) {
     await page.getByRole('button',{name:'履歴を見る',exact:true}).click();
     const history=page.locator('[data-lime-news-history]');

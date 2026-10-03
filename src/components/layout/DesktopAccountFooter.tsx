@@ -24,7 +24,7 @@ export function DesktopAccountFooter() {
   return (
     <AccountSwitcherMenu><button type="button" className="w-full text-left" data-lime-sidebar-account aria-label={`ログイン中のアカウント: ${name}（アカウント切り替え）`}>
       <div className="relative shrink-0">
-        <Avatar className="h-11 w-11 border-0">
+        <Avatar userId={user.id} className="h-11 w-11 border-0">
           <AvatarImage src={profile?.avatar_url || user.avatarUrl} alt={name} />
           <AvatarFallback>{name.slice(0, 1)}</AvatarFallback>
         </Avatar>

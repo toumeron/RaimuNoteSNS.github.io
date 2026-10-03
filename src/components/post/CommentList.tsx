@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { MoreHorizontal, ChartBarBig, Trash2, CalendarDays, X, Plus, MessageCircle } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Skeleton } from '@/components/ui/skeleton';
+import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
 import { ReplyShare } from '@/components/post/ReplyShare';
 import { RepostButton } from '@/components/feed/RepostButton';
 import { RepostIcon } from '@/components/feed/RepostIcon';
@@ -671,7 +671,7 @@ export function CommentCard({
       className="w-[280px] rounded-[20px] border border-border/60 bg-card p-4 shadow-xl animate-in fade-in zoom-in duration-200 overflow-hidden"
     >
       <div className="flex justify-between items-start mb-3">
-        <Avatar className="h-14 w-14 border border-primary/5">
+        <Avatar userId={comment.author.id} className="h-14 w-14 border border-primary/5">
           <AvatarImage src={comment.author.avatarUrl} alt={comment.author.displayName} />
           <AvatarFallback>{comment.author.displayName.slice(0, 1)}</AvatarFallback>
         </Avatar>
@@ -909,7 +909,7 @@ export function CommentCard({
                 data-lime-post-avatar
                 onClick={(e) => e.stopPropagation()}
               >
-                <Avatar className={detail ? 'h-12 w-12 border border-border/60 post-detail-mobile-avatar' : 'h-11 w-11 border-2 border-primary/30'}>
+                <Avatar userId={comment.author.id} className={detail ? 'h-12 w-12 border border-border/60 post-detail-mobile-avatar' : 'h-11 w-11 border-2 border-primary/30'}>
                   <AvatarImage src={comment.author.avatarUrl} alt={comment.author.displayName} />
                   <AvatarFallback>{comment.author.displayName.slice(0, 1)}</AvatarFallback>
                 </Avatar>
@@ -1415,22 +1415,7 @@ export function CommentList({
   }, []);
 
   if (isLoading) {
-    return (
-      <div className="space-y-3">
-        {Array.from({ length: 2 }).map((_, i) => (
-          <div key={i} className={`${mobileFlat ? 'comment-list-mobile-state ' : ''}rounded-3xl border border-border/60 bg-card p-5 shadow-soft`}>
-            <div className="flex gap-3">
-              <Skeleton className="h-11 w-11 shrink-0 rounded-full" />
-              <div className="flex-1 space-y-2">
-                <Skeleton className="h-4 w-1/3" />
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-4/5" />
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    );
+    return <div><PostCardSkeleton /><PostCardSkeleton /></div>;
   }
 
   if (isError) {

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { getBookmarkPage } from '@/api/bookmarks';
+import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
 import { PostCard } from '@/components/feed/PostCard';
 import { RepostedReplyCard } from '@/components/post/RepostedReplyCard';
 
@@ -27,7 +28,7 @@ export default function Bookmarks() {
         {searchOpen ? <label className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-full border border-border px-3 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary"><Search className="h-4 w-4 shrink-0 text-muted-foreground" /><input autoFocus aria-label="ブックマークを検索" placeholder="ブックマークを検索" value={search} onChange={event => setSearch(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none" /></label> : <><h1 className="min-w-0 flex-1 text-xl font-bold">ブックマーク</h1><button type="button" aria-label="ブックマークを検索" className="flex h-9 w-9 items-center justify-center rounded-full hover:bg-muted" onClick={() => setSearchOpen(true)}><Search className="h-5 w-5" /></button></>}
       </div>
     </header>
-    {query.isPending && <p className="px-4 py-10 text-center text-sm text-muted-foreground">読み込み中...</p>}
+    {query.isPending && <div className="px-4 sm:px-0"><PostCardSkeleton /><PostCardSkeleton /></div>}
     {query.isError && <div className="px-4 py-10 text-center"><p className="text-sm text-muted-foreground">ブックマークの取得に失敗しました。</p><button type="button" className="mt-3 text-sm font-bold text-primary" onClick={() => query.refetch()}>再試行</button></div>}
     {!query.isPending && !query.isError && posts.length === 0 && !searching && <p className="px-4 py-10 text-center text-sm text-muted-foreground">{searchTerm ? '一致するブックマークがありません。' : 'ブックマークしたポストがありません。'}</p>}
     {searching && <p role="status" className="px-4 py-3 text-center text-sm text-muted-foreground">ブックマークを検索中...</p>}

@@ -7,7 +7,7 @@ import { PostCard } from '@/components/feed/PostCard';
 import { CommentCard, CommentList } from '@/components/post/CommentList';
 import { CommentForm } from '@/components/post/CommentForm';
 import { ReplyChain } from '@/components/post/ReplyChain';
-import { Skeleton } from '@/components/ui/skeleton';
+import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
 import { getCommentAncestors } from '@/lib/commentThread';
 import type { PostWithAuthor } from '@/types';
 
@@ -41,7 +41,7 @@ export function ReplyDetail({ commentId, post, mobileFlat }: { commentId: string
     };
   }, [ready]);
 
-  if (comments.isLoading) return <Skeleton className="h-40 w-full rounded-3xl" />;
+  if (comments.isLoading) return <PostCardSkeleton />;
   if (!chain) return <p className="p-6 text-center text-muted-foreground">返信を読み込めませんでした。削除されたか、表示する権限がありません。</p>;
 
   return (

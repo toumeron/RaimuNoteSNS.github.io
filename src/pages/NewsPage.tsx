@@ -4,9 +4,11 @@ import { supabase } from '@/lib/supabase';
 import { formatRelative } from '@/lib/format';
 import { History, X } from 'lucide-react';
 import { PostCard } from '@/components/feed/PostCard'; // PostCardをインポート
+import { useSearchParams } from 'react-router-dom';
 
 
 export default function NewsPage() {
+  const [params] = useSearchParams();
   const [news, setNews] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showHistory, setShowHistory] = useState(false);
@@ -26,8 +28,8 @@ export default function NewsPage() {
 
   if (loading) return <div className="min-h-screen bg-transparent flex items-center justify-center text-gray-500 font-bold">読み込み中...</div>;
 
-  const latest = news[0];
-  const historyItems = news.slice(1);
+  const latest = news.find(item => item.id === params.get('story')) ?? news[0];
+  const historyItems = news.filter(item => item.id !== latest?.id);
 
   return (
     <div className="min-h-screen bg-transparent text-black dark:text-white pb-20">

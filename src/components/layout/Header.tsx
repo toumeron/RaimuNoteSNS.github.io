@@ -1,5 +1,7 @@
 import { usePostOverlay } from './PostOverlayContext';
 import { MobileAccountShortcuts } from './AccountSwitcher';
+import { SearchExploreTabs } from '@/components/search/SearchExploreTabs';
+import { useSpaces } from '@/components/spaces/SpaceContext';
 import { DesktopAccountFooter } from './DesktopAccountFooter';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal, flushSync } from 'react-dom';
@@ -36,6 +38,7 @@ import {
   Clock,
   Home,
   PenSquare,
+  Mic,
 } from 'lucide-react';
 
 type TimelineChromeTheme = 'light' | 'dark';
@@ -1404,6 +1407,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   desktopLayout?: boolean;
   desktopSidebarContainer?: HTMLElement | null;
 } = {}) => {
+  const spaces = useSpaces();
   const { user, logout } = useAuth();
   const openPostOverlay = usePostOverlay();
   const navigate = useNavigate();
@@ -1417,6 +1421,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   const { registerLabelRef: registerFeedTabLabelRef, widths: feedTabUnderlineWidths } = useFeedTabUnderlineWidths();
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isSidebarMoreOpen, setIsSidebarMoreOpen] = useState(false);
+  const createSpaceAfterMenuClose = useRef(false);
   const [isFeedTabChanging, setIsFeedTabChanging] = useState(false);
   const feedTabChangingTimerRef = useRef<number | null>(null);
   const feedTabViewTransitionRef = useRef<FeedTabViewTransition | null>(null);
@@ -2062,14 +2067,10 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   const useTimelineChromeDesign = timelineChrome.enabled;
   const isTimelineDark = timelineChrome.theme === 'dark';
   // タブはタイムライン(ホーム画面)のみ。
-  // ヘッダーのスクロール開閉は、タイムラインに加えて「検索バーが表示される
-  // モバイル検索ページ(/search)」にも同じ挙動を適用する。
-  // それ以外のページのヘッダーは常に表示したままにする。
+  // タイムラインとモバイル検索トップではスクロール方向に応じて開閉する。
   const showFeedTabs = isHomeTimeline;
-  // モバイル検索ページは未検索のメイン画面だけスクロールでヘッダーを閉じる。
-  // 検索結果が出た後は、結果を見ながら検索できるよう常に表示する。
-  const enableMobileHeaderScrollHide =
-    showFeedTabs || (isSearchRoute && !isSearchResultsVisible);
+  // 検索結果は常に表示し、未検索のトップだけ既存の開閉アニメーションを使う。
+  const enableMobileHeaderScrollHide = showFeedTabs || (isSearchRoute && !isSearchResultsVisible);
 
   const isHiddenOnMobile = useMobileHeaderVisibility(enableMobileHeaderScrollHide, isFeedTabChanging);
   // サイドバーを開いている間はヘッダー(タイムライン/検索のタブを含む)を
@@ -2412,10 +2413,10 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
         <form onSubmit={handleHeaderSearchSubmit} className="flex min-w-0 flex-1 items-center gap-2">
           <div
             className={cn(
-              "flex h-10 min-w-0 flex-1 items-center rounded-full px-4 transition-colors",
+              "flex h-10 min-w-0 flex-1 items-center rounded-full border border-border px-4 transition-colors",
               isHeaderSearchFocused
                 ? "bg-white ring-2 ring-primary dark:bg-black"
-                : "bg-black/[0.06] dark:bg-white/10"
+                : "bg-transparent"
             )}
           >
             <Search className={cn("h-[18px] w-[18px] shrink-0", isHeaderSearchFocused ? "text-primary" : "text-zinc-500 dark:text-zinc-400")} />
@@ -2578,6 +2579,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   // 並び順・ラベルはPC版(SearchPage.tsxのSEARCH_TABS)と同じ4タブ。
   const renderMobileSearchPageTabs = () => {
     if (!isSearchRoute) return null;
+    if (!isSearchResultsVisible) return <div className="sm:hidden"><SearchExploreTabs /></div>;
 
     const tabButtonClass = (value: SearchPageTabValue) =>
       cn(
@@ -2593,9 +2595,9 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
     );
 
     return (
-      <div className="relative z-[1] sm:hidden">
-        <div className="mx-auto max-w-5xl px-2 sm:px-4">
-          <div className="relative grid grid-cols-4 border-b border-black/[0.03] dark:border-white/[0.05]">
+      <div data-lime-search-result-tabs className="relative z-[1] sm:hidden">
+        <div className="mx-auto max-w-5xl sm:px-4">
+          <div data-lime-search-results-divider className="relative grid grid-cols-4 border-b border-border">
             {/* 検索ページのタブもタイムラインと同じく、
                 アクティブインジケーターを1本だけ使って左右へ滑らかに移動させる。
                 選択ロジックは変更せず、見た目のアニメーションだけを追加する。 */}
@@ -2661,6 +2663,11 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
           path: '/bookmarks',
           icon: Bookmark,
           onClick: () => navigate('/bookmarks'),
+        }, {
+          label: 'スペースを作成',
+          path: '/spaces/new',
+          icon: Mic,
+          onClick: () => { setIsMobileSidebarOpen(false); spaces.create(); },
         }] : []),
         {
           label: '設定',
@@ -2737,7 +2744,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
             {desktopLayout && <div data-lime-sidebar-logo className="shrink-0"><Logo size="md" /></div>}
             <div data-lime-sidebar-profile className="shrink-0 px-[clamp(24px,8vw,68px)] pt-[max(18px,env(safe-area-inset-top))]">
               <div className="flex items-start gap-4">
-                <Avatar className="h-12 w-12 shrink-0 border-0">
+                <Avatar userId={user.id} className="h-12 w-12 shrink-0 border-0">
                   <AvatarImage src={user.avatarUrl} alt={user.displayName} />
                   <AvatarFallback>{user.displayName?.slice(0, 1)}</AvatarFallback>
                 </Avatar>
@@ -2798,12 +2805,15 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
                       <span data-lime-sidebar-item-label className={cn("whitespace-nowrap text-[18px] font-bold leading-tight", sidebarIconText)}>もっと見る</span>
                     </button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent side="top" align="start" sideOffset={-56} collisionPadding={12} data-lime-sidebar-more className="z-[500] w-64 rounded-2xl border-0 p-2 shadow-[0_8px_40px_rgba(0,0,0,0.3)] dark:shadow-[0_0_20px_rgba(255,255,255,0.15)]">
+                  <DropdownMenuContent side="top" align="start" sideOffset={-56} collisionPadding={12} data-lime-sidebar-more onCloseAutoFocus={event => { if (createSpaceAfterMenuClose.current) { event.preventDefault(); createSpaceAfterMenuClose.current = false; requestAnimationFrame(() => spaces.create()); } }} className="z-[500] w-64 rounded-2xl border-0 p-2 shadow-[0_8px_40px_rgba(0,0,0,0.3)] dark:shadow-[0_0_20px_rgba(255,255,255,0.15)]">
                     <DropdownMenuItem className="gap-3 rounded-xl px-4 py-4 text-base font-bold" onClick={() => navigate('/media')}>
                       <Images className="h-6 w-6 shrink-0 stroke-[2]" />フォト
                     </DropdownMenuItem>
                     <DropdownMenuItem className="gap-3 rounded-xl px-4 py-4 text-base font-bold" onClick={() => navigate('/bookmarks')}>
                       <Bookmark className="h-6 w-6 shrink-0 stroke-[2]" />ブックマーク
+                    </DropdownMenuItem>
+                    <DropdownMenuItem className="gap-3 rounded-xl px-4 py-4 text-base font-bold" onSelect={() => { createSpaceAfterMenuClose.current = true; setIsSidebarMoreOpen(false); }}>
+                      <Mic className="h-6 w-6 shrink-0 stroke-[2]" />スペースを作成
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>}

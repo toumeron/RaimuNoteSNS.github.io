@@ -7,6 +7,7 @@ import type { User } from "@/types";
 
 interface UserCardProps {
   user: User;
+  explore?: boolean;
 }
 
 function getInitials(name?: string) {
@@ -15,7 +16,7 @@ function getInitials(name?: string) {
   return s.slice(0, 1).toUpperCase();
 }
 
-export default function UserCard({ user }: UserCardProps) {
+export default function UserCard({ user, explore = false }: UserCardProps) {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -35,9 +36,9 @@ export default function UserCard({ user }: UserCardProps) {
   const initials = useMemo(() => getInitials(user.displayName), [user.displayName]);
 
   return (
-    <div className="flex items-start justify-between px-4 py-3 hover:bg-black/[0.03] dark:hover:bg-white/[0.05] transition-colors bg-transparent border-b border-border/40 w-full">
+    <div className={`flex items-start justify-between px-4 hover:bg-black/[0.03] dark:hover:bg-white/[0.05] transition-colors bg-transparent w-full ${explore ? 'py-4' : 'py-3 border-b border-border/40'}`}>
       <Link to={`/u/${user.username}`} className="flex gap-3 min-w-0 flex-1">
-        <Avatar className="h-10 w-10 shrink-0">
+        <Avatar userId={user.id} className={`${explore ? 'h-12 w-12' : 'h-10 w-10'} shrink-0`}>
           <AvatarImage src={user.avatarUrl} alt={user.displayName} />
           <AvatarFallback className="bg-muted text-[12px] font-bold">
             {initials}
@@ -64,7 +65,7 @@ export default function UserCard({ user }: UserCardProps) {
           </span>
 
           {user.bio && (
-            <p className="text-[14.5px] text-foreground/90 mt-1 line-clamp-2 leading-snug">
+            <p className={`text-[14.5px] text-foreground/90 mt-1 leading-snug ${explore ? 'whitespace-pre-wrap break-words' : 'line-clamp-2'}`}>
               {user.bio}
             </p>
           )}
@@ -73,9 +74,7 @@ export default function UserCard({ user }: UserCardProps) {
 
       {currentUserId !== user.id && (
         <div className="shrink-0 ml-3 pt-1">
-          <div className="[&_button]:!h-[32px] [&_button]:!px-4 [&_button]:!text-[14px] [&_button]:!font-bold [&_button]:!rounded-full [&_button]:!border-none [&_button]:!bg-foreground [&_button]:!text-background hover:[&_button]:!opacity-90 transition-opacity">
-            <FollowButton userId={user.id} />
-          </div>
+          <FollowButton userId={user.id} />
         </div>
       )}
     </div>
