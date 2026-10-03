@@ -18,13 +18,14 @@ vi.mock('@/lib/supabase', () => ({ supabase: {
       eq: (column: string, value: unknown) => { call.filters[column] = value; return builder; },
       in: (column: string, value: unknown[]) => { call.filters[column] = value; return builder; },
       or: () => builder, order: () => builder, range: () => builder,
+      maybeSingle: () => { call.filters.single = true; return builder; },
       then: (resolve: (value: unknown) => void) => {
         db.calls.push(call);
         const data = table === 'follows'
           ? db.follows.filter(row => (!call.filters.follower_id || row.follower_id === call.filters.follower_id)
             && row.followee_id === call.filters.followee_id)
           : [];
-        return Promise.resolve({ data, error: null }).then(resolve);
+        return Promise.resolve({ data: call.filters.single ? data[0] ?? null : data, error: null }).then(resolve);
       },
     };
     return builder;
@@ -45,17 +46,17 @@ describe('profile permission request scope', () => {
     expect(db.calls.some(call => call.table === 'follows')).toBe(false);
     expect(db.calls.find(call => call.table === 'posts')?.filters.visibility).toBeUndefined();
     expect(db.calls.find(call => call.table === 'posts')?.select).not.toContain('author:user_id(*)');
-    expect(db.calls.find(call => call.table === 'posts')?.select).toContain('bot_prompt');
+    expect(db.calls.find(call => call.table === 'posts')?.select).toContain(hook === useUserPostsInfinite ? 'parent_post:parent_id' : 'bot_prompt');
   });
   it.each([useUserPostsInfinite, useUserMediaInfinite])('checks only the profile owner and preserves following access', async hook => {
     await run(hook('author'));
-    expect(db.calls.find(call => call.table === 'follows')?.filters).toEqual({ follower_id: 'author', followee_id: 'viewer' });
+    expect(db.calls.find(call => call.table === 'follows')?.filters).toMatchObject({ follower_id: 'author', followee_id: 'viewer' });
     expect(db.calls.find(call => call.table === 'posts')?.filters.visibility).toEqual(['public', 'following']);
   });
   it.each([useUserPostsInfinite, useUserMediaInfinite])('keeps public-only access when owner does not follow viewer', async hook => {
     db.follows = [];
     await run(hook('author'));
-    expect(db.calls.find(call => call.table === 'posts')?.filters.visibility).toBe('public');
+    expect(db.calls.find(call => call.table === 'posts')?.filters.visibility).toEqual(hook === useUserPostsInfinite ? ['public'] : 'public');
   });
   it.each([useUserLikesInfinite, useUserReactionsInfinite])('retains cross-author access checks for likes/reactions tabs', async hook => {
     await run(hook('author'));

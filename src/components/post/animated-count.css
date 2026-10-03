@@ -1,0 +1,10 @@
+.repost-count,.repost-count-layers { display: inline-grid; position: relative; overflow: hidden; line-height: 1; }
+.repost-count-old,.repost-count-new { grid-area: 1 / 1; will-change: transform; }
+.repost-count.is-up .repost-count-old { animation: repostCountOldUp .3s ease forwards; }
+.repost-count.is-up .repost-count-new { animation: repostCountNewUp .3s ease forwards; }
+.repost-count.is-down .repost-count-old { animation: repostCountOldDown .3s ease forwards; }
+.repost-count.is-down .repost-count-new { animation: repostCountNewDown .3s ease forwards; }
+@keyframes repostCountOldUp { from {transform:translateY(0)} to {transform:translateY(-100%)} }
+@keyframes repostCountNewUp { from {transform:translateY(100%)} to {transform:translateY(0)} }
+@keyframes repostCountOldDown { from {transform:translateY(0)} to {transform:translateY(100%)} }
+@keyframes repostCountNewDown { from {transform:translateY(-100%)} to {transform:translateY(0)} }

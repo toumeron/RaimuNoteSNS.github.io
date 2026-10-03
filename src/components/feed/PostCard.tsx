@@ -1,3 +1,7 @@
+import '@/components/post/post-actions.css';
+import { RepostButton } from '@/components/feed/RepostButton';
+import { QuotedPost } from '@/components/feed/QuotedPost';
+import { RepostIcon } from '@/components/feed/RepostIcon';
 import { useDesktopLayout } from '@/components/layout/DesktopLayoutContext';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -878,7 +882,7 @@ function getIsMobileViewport() {
   return typeof window !== 'undefined' && window.innerWidth < 640;
 }
 
-function PostCardComponent({ post, timelineGlass = false, thread = false }: { post: PostWithAuthor; timelineGlass?: boolean; thread?: boolean }) {
+function PostCardComponent({ post, timelineGlass = false, thread = false, embedded = false, repostedByLabel }: { post: PostWithAuthor; timelineGlass?: boolean; thread?: boolean; embedded?: boolean; repostedByLabel?: string }) {
   const [showMenu, setShowMenu] = useState(false);
   const [moreMenuPosition, setMoreMenuPosition] = useState<{ top: number; right: number } | null>(null);
   const [showShareMenu, setShowShareMenu] = useState(false);
@@ -1119,7 +1123,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false }: { po
     fetchCustomEmojis().then(() => undefined);
 
     const channels = supabase
-      .channel(`post-reactions-${post.id}`)
+      .channel(`post-reactions-${post.id}-${crypto.randomUUID()}`)
       .on(
         'postgres_changes',
         {
@@ -2216,11 +2220,13 @@ function PostCardComponent({ post, timelineGlass = false, thread = false }: { po
       <article
         data-lime-post-card
         data-lime-thread-item={thread || undefined}
+        data-lime-embedded={embedded || undefined}
+        style={embedded ? { width: '100%', maxWidth: '100%', margin: 0 } : undefined}
         ref={cardRootRef}
         onClickCapture={handleCardClickCapture}
         onClick={handleCardClick}
         className={
-          timelineGlass
+          embedded ? "relative w-full cursor-pointer" : timelineGlass
             ? useMobilePresentation
               ? "timeline-mobile-readable px-5 py-4 cursor-pointer"
               : "timeline-glass-card rounded-3xl p-5 transition relative cursor-pointer"
@@ -2233,13 +2239,20 @@ function PostCardComponent({ post, timelineGlass = false, thread = false }: { po
           <div className="pointer-events-none absolute bottom-0 left-1/2 w-screen -translate-x-1/2 border-b border-border/60" />
         )}
 
-        <div className="flex items-start gap-3">
+        {repostedByLabel && !embedded && (
+          <div data-lime-repost-label className="mb-1 flex items-center gap-3 text-sm font-semibold text-muted-foreground">
+            <span className="inline-flex w-11 shrink-0 justify-end"><RepostIcon className="h-4 w-4" /></span>
+            <span>{repostedByLabel}がリポストしました</span>
+          </div>
+        )}
+        <div data-lime-post-layout className="flex items-start gap-3">
           <HoverCard open={profileHoverTarget === 'avatar'} openDelay={300}>
             <HoverCardTrigger asChild>
               <Link
                 to={`/u/${post.author.username}`}
                 className="inline-flex h-11 w-11 shrink-0 items-center justify-center"
                 data-lime-thread-avatar={thread || undefined}
+                data-lime-post-avatar
                 onMouseEnter={() => openProfileHover('avatar')}
                 onMouseLeave={closeProfileHover}
                 onFocus={() => openProfileHover('avatar')}
@@ -2255,8 +2268,8 @@ function PostCardComponent({ post, timelineGlass = false, thread = false }: { po
             <ProfileHoverContent />
           </HoverCard>
 
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-between mb-1">
+          <div data-lime-post-content className="min-w-0 flex-1">
+            <div data-lime-post-header className="flex items-center justify-between mb-1">
               <div className="flex items-center w-full min-w-0">
                 <HoverCard open={profileHoverTarget === 'name'} openDelay={300}>
                   <HoverCardTrigger asChild>
@@ -2309,7 +2322,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false }: { po
                   </span>
                 )}
 
-                <div className="relative shrink-0">
+                {!embedded && <div className="relative shrink-0">
                   <button
                     ref={moreButtonRef}
                     onClick={(e) => {
@@ -2415,11 +2428,11 @@ function PostCardComponent({ post, timelineGlass = false, thread = false }: { po
                     </>,
                     document.body
                   )}
-                </div>
+                </div>}
               </div>
             </div>
 
-            <div>
+            <div data-lime-post-body data-lime-post-has-images={allImageUrls.length > 0 || undefined}>
               <div
                 onClick={(e) => {
                   e.stopPropagation();
@@ -2557,6 +2570,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false }: { po
                 >
                   <PostImages
                     urls={allImageUrls}
+                    embedded={embedded}
                     onImageError={(url) => {
                       if (!failedUrls.includes(url)) {
                         setFailedUrls(prev => [...prev, url]);
@@ -2567,7 +2581,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false }: { po
               ))}
             </div>
 
-            {canViewMembersOnlyPost && reactions.length > 0 && (
+            {!embedded && canViewMembersOnlyPost && reactions.length > 0 && (
               <div className="mt-3 flex flex-wrap gap-1.5 relative" onClick={(e) => e.stopPropagation()}>
                 {reactions.map((g) => {
                   const hasMyReaction = currentUserId ? g.user_ids.includes(currentUserId) : false;
@@ -2626,7 +2640,9 @@ function PostCardComponent({ post, timelineGlass = false, thread = false }: { po
               </div>
             )}
 
-            <div className={useMobilePresentation ? "mt-2 flex items-center gap-1 text-muted-foreground relative h-8" : "mt-3 flex items-center gap-1 text-muted-foreground relative h-9"}>
+            {post.isQuote && <QuotedPost post={post.parentPost} timelineGlass={timelineGlass} />}
+
+            {!embedded && <div data-lime-post-actions className={useMobilePresentation ? "mt-2 flex items-center gap-1 text-muted-foreground relative h-8" : "mt-3 flex items-center gap-1 text-muted-foreground relative h-9"}>
               <div onClick={(e) => e.stopPropagation()} className="flex items-center h-full">
                 {isBlueskyPost ? (
                   blueskySession && blueskyPostUri ? (
@@ -2658,6 +2674,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false }: { po
                   />
                 )}
               </div>
+              {(!isMembersOnlyPost || canViewMembersOnlyPost) && <RepostButton post={post} mobilePresentation={useMobilePresentation} />}
               {isBlueskyPost ? (
                 <button
                   type="button"
@@ -2938,7 +2955,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false }: { po
                   document.body
                 )}
               </div>
-            </div>
+            </div>}
           </div>
         </div>
       </article>

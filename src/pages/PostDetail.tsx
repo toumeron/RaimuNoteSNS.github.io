@@ -1,3 +1,6 @@
+import '@/components/post/post-actions.css';
+import { RepostButton } from '@/components/feed/RepostButton';
+import { QuotedPost } from '@/components/feed/QuotedPost';
 import { useDesktopLayout } from '@/components/layout/DesktopLayoutContext';
 import { useState, useEffect, useRef, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
@@ -442,7 +445,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
     fetchCustomEmojis();
 
     const channels = supabase
-      .channel(`post-detail-reactions-${id}`)
+      .channel(`post-detail-reactions-${id}-${crypto.randomUUID()}`)
       .on(
         'postgres_changes',
         {
@@ -1860,6 +1863,8 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
             </div>
           )}
 
+          {!isBlueskyPost && (data as PostWithAuthor).isQuote && <QuotedPost post={(data as PostWithAuthor).parentPost} />}
+
           <p className={`mt-4 text-xs text-muted-foreground ${useMobileThreadLayout ? 'post-detail-mobile-meta' : ''}`} title={formatDate(data.createdAt)}>
             {formatDate(data.createdAt)} · {formatRelative(data.createdAt)}
             {!isBlueskyPost && (data as PostWithAuthor).clientName && (
@@ -1904,6 +1909,11 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                 />
               )}
             </div>
+            {(
+              <div className={`flex items-center h-full ${useMobilePresentation ? 'post-detail-mobile-action-hit' : ''}`}>
+                <RepostButton post={data as PostWithAuthor} mobilePresentation={useMobilePresentation} />
+              </div>
+            )}
             {isBlueskyPost ? (
               <button
                 type="button"

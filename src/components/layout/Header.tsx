@@ -2782,7 +2782,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
               </div>
 
               {desktopLayout && (
-                <button type="button" data-lime-sidebar-compose aria-label="ポストする" title="ポストする" onClick={openPostOverlay}>
+                <button type="button" data-lime-sidebar-compose aria-label="ポストする" title="ポストする" onClick={() => openPostOverlay()}>
                   <PenSquare aria-hidden="true" />
                   <span>ポストする</span>
                 </button>

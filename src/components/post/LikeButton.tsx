@@ -513,7 +513,7 @@ export function LikeButton({
     if (isBluesky) return;
 
     const config = TABLE_CONFIG[type];
-    const channelSuffix = `${type}-${postId}-${channelIdRef.current}`;
+    const channelSuffix = `${type}-${postId}-${channelIdRef.current}-${crypto.randomUUID()}`;
     const broadcastChannel = supabase
       .channel(`like-count-broadcast-${type}-${postId}`)
       .on(
@@ -728,6 +728,7 @@ export function LikeButton({
   return (
     <button
       type="button"
+      data-lime-post-action="like"
       onClick={handleClick}
       className={cn(
         'group inline-flex items-center rounded-full transition-colors outline-none select-none overflow-visible',

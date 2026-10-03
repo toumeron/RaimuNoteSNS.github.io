@@ -38,6 +38,11 @@ export type Post = {
   isQuote?: boolean;
   repostsCount: number;
   repostedByMe: boolean;
+  profileRepostedAt?: string;
+  profileRepostedBy?: string;
+  replyId?: string;
+  replyPostId?: string;
+  replyToUsername?: string;
 
   // --- 公開範囲制御用の追加 ---
   visibility?: 'public' | 'following'; // これを追加することでエラーが解消されます

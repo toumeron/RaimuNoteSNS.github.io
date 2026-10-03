@@ -36,7 +36,7 @@ vi.mock('@/lib/supabase', () => ({
 }));
 
 import { getUserByUsername } from './users';
-import { getFeed, getFollowingFeed, getPostsByUser, getLikedPostsByUser, searchPosts } from './posts';
+import { getFeed, getFollowingFeed, getPostsByUser, getLikedPostsByUser, searchPosts, getProfilePosts, getPostById } from './posts';
 
 const post = (id: string, parent?: string) => ({
   id, user_id: 'author', content: 'post', image_urls: ['https://example.com/image.png'],
@@ -167,3 +167,92 @@ describe('bounded fresh post viewer state', () => {
    expect(String(call?.filters.or)).toContain('created_at.lt.2026-10-02T00:00:00Z');
    expect(String(call?.filters.or)).toContain('id.lt.one');
  });
+
+describe('reposts and quoted originals', () => {
+  it('normalizes quoted parent fields into the same model as regular posts', async () => {
+    db.rows.posts = [{ ...post('quote'), parent_post: {
+      ...post('original'), created_at: '2026-09-30T00:00:00Z',
+      image_urls: ['https://example.com/original.png'], reposts_count: 3,
+    } }];
+    const [quote] = await getFeed();
+    expect(quote.parentPost).toMatchObject({
+      id: 'original', userId: 'author', createdAt: '2026-09-30T00:00:00Z',
+      imageUrls: ['https://example.com/original.png'], repostsCount: 3,
+    });
+  });
+
+  it('does not expose a restricted quoted original to an unauthorized viewer', async () => {
+    db.rows.follows = [];
+    db.rows.memberships = [];
+    db.rows.posts = [{ ...post('quote'), parent_post: { ...post('private'), visibility: 'following' } }];
+    const [quote] = await getFeed();
+    expect(quote.parentPost).toBeNull();
+  });
+});
+
+
+describe('profile repost timeline', () => {
+  it('merges before paging and orders by the time of reposting', async () => {
+    db.rows.posts = [post('own')];
+    db.rows.reposts = [{ user_id: 'author', post_id: 'original', created_at: '2026-10-03T00:00:00Z', posts: post('original') }];
+    const first = await getProfilePosts('author', 0, 1);
+    const second = await getProfilePosts('author', 1, 1);
+    expect(first.map(row => row.id)).toEqual(['original']);
+    expect(first[0].profileRepostedAt).toBe('2026-10-03T00:00:00Z');
+    expect(second.map(row => row.id)).toEqual(['own']);
+  });
+
+  it('continues past inaccessible reposts so they do not end pagination early', async () => {
+    db.rows.posts = [];
+    db.rows.follows = [];
+    db.rows.memberships = [];
+    db.rows.reposts = [
+      { user_id: 'author', post_id: 'private', created_at: '2026-10-03T01:00:00Z', posts: { ...post('private'), visibility: 'members' } },
+      { user_id: 'author', post_id: 'public', created_at: '2026-10-03T00:00:00Z', posts: post('public') },
+    ];
+    expect((await getProfilePosts('author', 0, 1)).map(row => row.id)).toEqual(['public']);
+  });
+
+  it('does not add repost records to the home feed', async () => {
+    db.rows.posts = [post('own')];
+    db.rows.reposts = [{ user_id: 'author', post_id: 'original', created_at: '2026-10-03T00:00:00Z', posts: post('original') }];
+    expect((await getFeed()).map(row => row.id)).toEqual(['own']);
+  });
+});
+
+
+describe('profile repost error isolation', () => {
+  it('keeps regular posts when the repost table cannot be read', async () => {
+    db.rows.posts = [post('own')];
+    db.errors.reposts = new Error('PGRST205: table missing');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect((await getProfilePosts('author')).map(row => row.id)).toEqual(['own']);
+    log.mockRestore();
+  });
+  it('keeps regular post pagination when repost retrieval fails', async () => {
+    db.rows.posts = [post('first'), post('second')];
+    db.errors.reposts = new Error('permission denied');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect((await getProfilePosts('author', 1, 1)).map(row => row.id)).toEqual(['second']);
+    log.mockRestore();
+  });
+});
+
+
+describe('restricted post follow direction', () => {
+  it('allows the viewer followed by the author even without a reverse follow', async () => {
+    db.rows.posts = [{ ...post('restricted'), visibility: 'following' }];
+    db.rows.follows = [{ follower_id: 'author', followee_id: 'viewer' }];
+    expect((await getPostById('restricted'))?.id).toBe('restricted');
+  });
+  it('denies a viewer who only follows the author', async () => {
+    db.rows.posts = [{ ...post('restricted'), visibility: 'following' }];
+    db.rows.follows = [{ follower_id: 'viewer', followee_id: 'author' }];
+    expect(await getPostById('restricted')).toBeNull();
+  });
+  it('hides a quoted original from a viewer who only follows the author', async () => {
+    db.rows.posts = [{ ...post('quote'), parent_post: { ...post('restricted'), visibility: 'following' } }];
+    db.rows.follows = [{ follower_id: 'viewer', followee_id: 'author' }];
+    expect((await getFeed())[0].parentPost).toBeNull();
+  });
+});

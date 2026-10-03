@@ -3,12 +3,15 @@ import type { PostWithAuthor } from '@/types';
 import type { User } from '@/types';
 import { supabase } from '@/lib/supabase';
 import { getCurrentUserId } from '@/lib/currentUser';
+import { getExternalPost, getExternalProfileReposts, isExternalPostId, toggleExternalRepost } from './external-posts';
+import { getReplyPost, getProfileReplyReposts, isReplyPostId, toggleReplyRepost, replyToPost, REPLY_REPOST_SELECT } from './reply-reposts';
 
 export type FeedCursor = { createdAt: string; id: string };
 
 const POST_SELECT_QUERY = `
   *,
   profiles:user_id (id, username, display_name, bio, avatar_url, cover_url, created_at, is_official),
+  parent_reply:quoted_reply_id (${REPLY_REPOST_SELECT}),
   parent_post:parent_id (
     *,
     profiles:user_id (id, username, display_name, bio, avatar_url, cover_url, created_at, is_official)
@@ -31,6 +34,7 @@ function rowToUser(profile: any): User {
 
 function rowToPost(row: any, likedIds: Set<string>, repostedIds: Set<string>): PostWithAuthor {
   return {
+    ...row,
     id:            row.id,
     userId:        row.user_id,
     content:       row.content,
@@ -47,21 +51,33 @@ function rowToPost(row: any, likedIds: Set<string>, repostedIds: Set<string>): P
     isQuote:       row.is_quote,
     visibility:    row.visibility,
     isBot:         row.is_bot ?? false, // AIフラグをマッピングに追加
-    parentPost: row.parent_post ? {
-      ...row.parent_post,
-      imageUrls: row.parent_post.image_urls ?? [],
-      author: rowToUser(row.parent_post.profiles),
-      likedByMe: likedIds.has(row.parent_post.id),
-      repostedByMe: repostedIds.has(row.parent_post.id),
-      isBot: row.parent_post.is_bot ?? false, // 親投稿のAIフラグも追加
-    } : null,
+    parentPost: row.parent_post ? rowToPost(row.parent_post, likedIds, repostedIds) : row.parent_reply ? replyToPost(row.parent_reply) : row.quoted_external_post ?? null,
   };
 }
 
 type ViewerPostRow = { id: string; parent_post?: { id: string } | null };
 
+// Apply the same visibility rules to reposted and quoted originals.
+async function filterVisibleRows(rows: any[], userId: string | null): Promise<any[]> {
+  const restrictedAuthors = [...new Set(rows.filter(row => row.visibility && row.visibility !== 'public' && row.user_id !== userId).map(row => row.user_id))];
+  if (!restrictedAuthors.length) return rows;
+  if (!userId) return rows.filter(row => !row.visibility || row.visibility === 'public');
+  const [follows, memberships] = await Promise.all([
+    supabase.from('follows').select('follower_id').eq('followee_id', userId).in('follower_id', restrictedAuthors),
+    supabase.from('memberships').select('creator_id').eq('member_id', userId).in('creator_id', restrictedAuthors),
+  ]);
+  const following = new Set((follows.data ?? []).map(row => row.follower_id));
+  const members = new Set((memberships.data ?? []).map(row => row.creator_id));
+  return rows.filter(row => !row.visibility || row.visibility === 'public' || row.user_id === userId
+    || (row.visibility === 'following' && following.has(row.user_id))
+    || (row.visibility === 'members' && members.has(row.user_id)));
+}
+
 // Fetch fresh viewer state only for this page and its quoted parent posts.
 async function getViewerReactions(userId: string, rows: ViewerPostRow[]) {
+  const parents = rows.map((row: any) => row.parent_post).filter(Boolean);
+  const visibleParents = new Set((await filterVisibleRows(parents, userId)).map(row => row.id));
+  rows.forEach((row: any) => { if (row.parent_post && !visibleParents.has(row.parent_post.id)) row.parent_post = null; });
   const postIds = [...new Set(rows.flatMap((row) => [row.id, row.parent_post?.id]).filter(Boolean))];
   if (postIds.length === 0) return { likedIds: new Set<string>(), repostedIds: new Set<string>() };
   const [likesRes, repostsRes] = await Promise.all([
@@ -196,8 +212,10 @@ export async function getPostsByUser(targetUserId: string, page: number = 0, lim
   const to = from + limit - 1;
 
   const [{ data: authorFollowsMe }, { data: membershipRow }] = await Promise.all([
-    supabase.from('follows').select('follower_id')
-      .eq('follower_id', targetUserId).eq('followee_id', userId).maybeSingle(),
+    userId !== targetUserId
+      ? supabase.from('follows').select('follower_id')
+          .eq('follower_id', targetUserId).eq('followee_id', userId).maybeSingle()
+      : Promise.resolve({ data: null }),
     userId !== targetUserId
       ? supabase.from('memberships').select('id')
           .eq('creator_id', targetUserId).eq('member_id', userId).maybeSingle()
@@ -219,7 +237,7 @@ export async function getPostsByUser(targetUserId: string, page: number = 0, lim
     query = query.in('visibility', allowedVisibilities);
   }
 
-  const postsRes = await query.order('created_at', { ascending: false }).range(from, to);
+  const postsRes = await query.order('created_at', { ascending: false }).order('id', { ascending: false }).range(from, to);
   if (postsRes.error) throw postsRes.error;
   const rows = postsRes.data ?? [];
   const { likedIds, repostedIds } = await getViewerReactions(userId, rows);
@@ -309,14 +327,12 @@ export async function searchPosts(query: string, page: number = 0, limit: number
 }
 
 export async function getPostById(id: string): Promise<PostWithAuthor | null> {
+  if (isReplyPostId(id)) return getReplyPost(id);
+  if (isExternalPostId(id)) return getExternalPost(id);
   const userId = await getCurrentUserId();
   
-  const [postRes, likeRes, repostRes] = await Promise.all([
-    supabase.from('posts').select(POST_SELECT_QUERY).eq('id', id).single(),
-    supabase.from('likes').select('post_id').eq('post_id', id).eq('user_id', userId).maybeSingle(),
-    supabase.from('reposts').select('post_id').eq('post_id', id).eq('user_id', userId).maybeSingle(),
-  ]);
-  
+  const postRes = await supabase.from('posts').select(POST_SELECT_QUERY).eq('id', id).single();
+
   if (postRes.error || !postRes.data) return null;
 
   // visibilityが'following'の場合、投稿主があなたをフォローしているかチェックする
@@ -345,8 +361,7 @@ export async function getPostById(id: string): Promise<PostWithAuthor | null> {
     if (!membershipRow) return null;
   }
 
-  const likedIds = new Set<string>(likeRes.data ? [id] : []);
-  const repostedIds = new Set<string>(repostRes.data ? [id] : []);
+  const { likedIds, repostedIds } = await getViewerReactions(userId, [postRes.data]);
   return rowToPost(postRes.data, likedIds, repostedIds);
 }
 
@@ -365,6 +380,11 @@ export async function createPost(input: {
   const detectedUrls = input.content.match(IMAGE_URL_PATTERN) || [];
 
   const clientSource = getClientName();
+  const externalParent = input.parentId && isExternalPostId(input.parentId)
+    ? await getExternalPost(input.parentId) : null;
+  if (input.parentId && isExternalPostId(input.parentId) && !externalParent) throw new Error('引用元の投稿が見つかりません');
+  const replyParent = input.parentId && isReplyPostId(input.parentId) ? await getReplyPost(input.parentId) : null;
+  if (input.parentId && isReplyPostId(input.parentId) && !replyParent) throw new Error('引用元の返信を閲覧できません');
 
   const uploadedUrls = await Promise.all(
     input.imageUrls.map(async (url) => {
@@ -396,7 +416,9 @@ export async function createPost(input: {
     content:     input.content,
     image_urls:  finalImageUrls, 
     client_name: clientSource,
-    parent_id:   input.parentId || null,
+    parent_id:   externalParent || replyParent ? null : input.parentId || null,
+    ...(replyParent ? { quoted_reply_id: replyParent.replyId } : {}),
+    ...(externalParent ? { quoted_external_post: externalParent } : {}),
     is_quote:    input.isQuote || false,
     visibility:  input.visibility || 'public',
     is_bot:      input.isBot || false // AIフラグをDBに保存
@@ -419,13 +441,6 @@ export async function createPost(input: {
     }
   }
 
-  if (input.parentId && input.isQuote) {
-    const [rep, quo] = await Promise.all([
-      supabase.from('reposts').select('*', { count: 'exact', head: true }).eq('post_id', input.parentId),
-      supabase.from('posts').select('*', { count: 'exact', head: true }).eq('parent_id', input.parentId).eq('is_quote', true)
-    ]);
-    await supabase.from('posts').update({ reposts_count: (rep.count ?? 0) + (quo.count ?? 0) }).eq('id', input.parentId);
-  }
 
   const post = await getPostById(newId);
   if (!post) throw new Error('投稿の取得に失敗しました');
@@ -449,32 +464,32 @@ export async function toggleLike(postId: string): Promise<{ liked: boolean; like
   return { liked: !existing, likesCount };
 }
 
-export async function toggleRepost(postId: string): Promise<{ reposted: boolean; repostsCount: number }> {
+export async function toggleRepost(postId: string): Promise<{ reposted: boolean; repostsCount?: number }> {
+  if (isReplyPostId(postId)) return toggleReplyRepost(postId);
+  if (isExternalPostId(postId)) return toggleExternalRepost(postId);
   const userId = await getCurrentUserId();
   if (!userId) throw new Error("ログインが必要です");
 
-  const { data: existing } = await supabase
+  const { data: existing, error: lookupError } = await supabase
     .from('reposts')
     .select('post_id')
     .eq('post_id', postId)
     .eq('user_id', userId)
     .maybeSingle();
 
-  if (existing) {
-    await supabase.from('reposts').delete().eq('post_id', postId).eq('user_id', userId);
-  } else {
-    await supabase.from('reposts').insert({ post_id: postId, user_id: userId });
-  }
+  if (lookupError) throw lookupError;
+  const result = existing
+    ? await supabase.from('reposts').delete().eq('post_id', postId).eq('user_id', userId)
+    : await supabase.from('reposts').insert({ post_id: postId, user_id: userId });
+  if (result.error) throw result.error;
 
-  const [repostsRes, quotesRes] = await Promise.all([
-    supabase.from('reposts').select('*', { count: 'exact', head: true }).eq('post_id', postId),
-    supabase.from('posts').select('*', { count: 'exact', head: true }).eq('parent_id', postId).eq('is_quote', true)
-  ]);
-
-  const totalReposts = (repostsRes.count ?? 0) + (quotesRes.count ?? 0);
-  await supabase.from('posts').update({ reposts_count: totalReposts }).eq('id', postId);
-  
-  return { reposted: !existing, repostsCount: totalReposts };
+  // Persistence succeeded. A failed count refresh must not report this as a
+  // failed repost, which would invite a retry that actually undoes it.
+  const countResult = await supabase.from('posts').select('reposts_count').eq('id', postId).single();
+  return {
+    reposted: !existing,
+    repostsCount: countResult.error || !countResult.data ? undefined : Number(countResult.data.reposts_count ?? 0),
+  };
 }
 
 export async function deletePost(postId: string): Promise<void> {
@@ -487,4 +502,43 @@ export async function getPostLikers(postId: string): Promise<User[]> {
   const { data, error } = await supabase.from('likes').select(`profiles (*)`).eq('post_id', postId);
   if (error) throw error;
   return (data ?? []).map((row: any) => rowToUser(row.profiles));
+}
+
+/** Merge before paging so repost time, rather than original post time, determines order. */
+export async function getProfilePosts(userId: string, page = 0, limit = 10): Promise<PostWithAuthor[]> {
+  const viewerId = await getCurrentUserId();
+  const end = (page + 1) * limit;
+  const loadReposts = async () => {
+    const visible: any[] = [];
+    let offset = 0;
+    while (visible.length < end) {
+      const result = await supabase.from('reposts').select(`created_at, posts!inner (${POST_SELECT_QUERY})`)
+        .eq('user_id', userId).order('created_at', { ascending: false }).order('post_id', { ascending: false }).range(offset, offset + end - 1);
+      if (result.error) throw result.error;
+      const entries = result.data ?? [];
+      const rows = entries.map((entry: any) => ({ ...entry.posts, reposted_at: entry.created_at }));
+      visible.push(...await filterVisibleRows(rows, viewerId));
+      if (entries.length < end) break;
+      offset += end;
+    }
+    return visible.slice(0, end);
+  };
+  const [postsResult, repostsResult, externalResult, repliesResult] = await Promise.allSettled([getPostsByUser(userId, 0, end), loadReposts(), getExternalProfileReposts(userId, end), getProfileReplyReposts(userId, end)]);
+  if (postsResult.status === 'rejected') throw postsResult.reason;
+  const ownPosts = postsResult.value;
+  if (repostsResult.status === 'rejected') {
+    console.error('Profile reposts could not be loaded:', repostsResult.reason);
+  }
+  const visibleRows = repostsResult.status === 'fulfilled' ? repostsResult.value : [];
+  const { likedIds, repostedIds } = await getViewerReactions(viewerId, visibleRows);
+  const shared = visibleRows.map(row => ({ ...rowToPost(row, likedIds, repostedIds),
+    profileRepostedAt: row.reposted_at, profileRepostedBy: userId }));
+  const externalShares = externalResult.status === 'fulfilled' ? externalResult.value : [];
+  const replyShares = repliesResult.status === 'fulfilled' ? repliesResult.value : [];
+  if (shared.length === 0 && externalShares.length === 0 && replyShares.length === 0) return ownPosts.slice(page * limit, end);
+  return [...ownPosts, ...shared, ...externalShares, ...replyShares].sort((a, b) => {
+    const dateA = a.profileRepostedAt ?? a.createdAt;
+    const dateB = b.profileRepostedAt ?? b.createdAt;
+    return dateB.localeCompare(dateA) || b.id.localeCompare(a.id);
+  }).slice(page * limit, end);
 }

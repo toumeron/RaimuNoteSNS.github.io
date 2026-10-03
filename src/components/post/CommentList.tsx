@@ -5,6 +5,9 @@ import { MoreHorizontal, ChartBarBig, Trash2, CalendarDays, X, Plus, MessageCirc
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ReplyShare } from '@/components/post/ReplyShare';
+import { RepostButton } from '@/components/feed/RepostButton';
+import { RepostIcon } from '@/components/feed/RepostIcon';
+import { replyToPost } from '@/api/reply-reposts';
 import { Commentlikebutton } from '@/components/post/Commentlikebutton';
 import { FollowButton } from '@/components/profile/FollowButton';
 import { useFollowStats } from '@/hooks/useProfile';
@@ -119,12 +122,18 @@ export function CommentCard({
   mobileFlat,
   thread = false,
   detail = false,
+  embedded = false,
+  repostedByLabel,
+  replyToUsername,
 }: {
   comment: Comment;
   currentUserId: string | null;
   mobileFlat: boolean;
   thread?: boolean;
   detail?: boolean;
+  embedded?: boolean;
+  repostedByLabel?: string;
+  replyToUsername?: string;
 }) {
   const navigate = useNavigate();
 
@@ -873,11 +882,12 @@ export function CommentCard({
 
       <article
         data-lime-comment-card={comment.id}
+        data-lime-embedded={embedded || undefined}
         data-lime-reply-detail={detail || undefined}
         data-lime-thread-item={thread || undefined}
         onClick={handleCardClick}
         className={
-          mobileFlat
+          embedded ? 'relative w-full cursor-pointer' : mobileFlat
             ? 'comment-list-mobile-item relative mx-auto w-full max-w-[600px] px-0 py-3 cursor-pointer'
             : isMobile
               ? 'relative mx-auto w-full max-w-[600px] px-0 py-3 cursor-pointer'
@@ -888,13 +898,15 @@ export function CommentCard({
           <div className="pointer-events-none absolute bottom-0 left-1/2 w-screen -translate-x-1/2 border-b border-border/60" />
         )}
 
-        <div className={detail ? "grid grid-cols-[48px_minmax(0,1fr)] gap-x-3" : "flex items-start gap-3"}>
+        {repostedByLabel && !embedded && <div data-lime-repost-label className="mb-1 flex items-center gap-3 text-sm font-semibold text-muted-foreground"><span className="inline-flex w-11 shrink-0 justify-end"><RepostIcon className="h-4 w-4" /></span><span>{repostedByLabel}がリポストしました</span></div>}
+        <div data-lime-post-layout className={detail ? "grid grid-cols-[48px_minmax(0,1fr)] gap-x-3" : "flex items-start gap-3"}>
           <HoverCard openDelay={300}>
             <HoverCardTrigger asChild>
               <Link
                 to={`/u/${comment.author.username}`}
                 className="shrink-0"
                 data-lime-thread-avatar={thread || undefined}
+                data-lime-post-avatar
                 onClick={(e) => e.stopPropagation()}
               >
                 <Avatar className={detail ? 'h-12 w-12 border border-border/60 post-detail-mobile-avatar' : 'h-11 w-11 border-2 border-primary/30'}>
@@ -907,8 +919,8 @@ export function CommentCard({
             <ProfileHoverContent />
           </HoverCard>
 
-          <div className={detail ? "contents" : "min-w-0 flex-1"}>
-            <div className={detail ? "flex items-start justify-between mb-1" : "flex items-center justify-between mb-1"}>
+          <div data-lime-post-content className={detail ? "contents" : "min-w-0 flex-1"}>
+            <div data-lime-post-header className={detail ? "flex items-start justify-between mb-1" : "flex items-center justify-between mb-1"}>
               <div className={detail ? "flex flex-wrap items-center w-full min-w-0" : "flex items-center overflow-hidden w-full min-w-0"}>
                 <HoverCard openDelay={300}>
                   <HoverCardTrigger asChild>
@@ -948,7 +960,7 @@ export function CommentCard({
                 </span>}
               </div>
 
-              {(
+              {!embedded && (
                 <div className="relative ml-2 shrink-0">
                   <button
                     onClick={(e) => {
@@ -993,8 +1005,9 @@ export function CommentCard({
               )}
             </div>
 
-            <div className={detail ? "col-span-2 min-w-0" : undefined}>
+            <div data-lime-post-body data-lime-post-has-images={allImageUrls.length > 0 || undefined} className={detail ? "col-span-2 min-w-0" : undefined}>
               <div>
+                {replyToUsername && <p className="mb-1 text-sm text-muted-foreground">返信先: <Link className="text-accent hover:underline" to={`/u/${replyToUsername}`} onClick={event => event.stopPropagation()}>@{replyToUsername}</Link>さん</p>}
                 {displayContent && (
                   <p className={detail ? `mt-4 whitespace-pre-wrap break-words text-lg leading-relaxed text-foreground ${mobileFlat ? 'post-detail-mobile-content' : ''}` : isMobile ? 'whitespace-pre-wrap break-words text-[16px] leading-normal text-foreground mt-1' : 'whitespace-pre-wrap break-words text-base leading-relaxed text-foreground mt-1'}>
                     {renderContentWithMentions(displayContent)}
@@ -1028,7 +1041,7 @@ export function CommentCard({
 
               {allImageUrls.length === 1 && !failedUrls.includes(allImageUrls[0]) ? (
                 <div className="mt-3 flex max-w-full justify-start" onClick={(e) => e.stopPropagation()}>
-                  <button type="button" aria-label="画像を拡大表示" className="block max-w-full cursor-zoom-in overflow-hidden rounded-2xl border border-border/50 bg-black/[0.025] text-left shadow-none dark:bg-white/[0.035]" style={singleImageFrameStyle} onClick={(e) => handleImageClick(e, allImageUrls[0])}>
+                  <button type="button" data-lime-single-post-image aria-label="画像を拡大表示" className="block max-w-full cursor-zoom-in overflow-hidden rounded-2xl border border-border/50 bg-black/[0.025] text-left shadow-none dark:bg-white/[0.035]" style={singleImageFrameStyle} onClick={(e) => handleImageClick(e, allImageUrls[0])}>
                     <img src={allImageUrls[0]} alt="返信画像" className="block select-none" style={{ width: '100%', height: 'auto', objectFit: 'contain' }} draggable={false} loading="lazy" decoding="async" onLoad={(e) => { const image = e.currentTarget; if (image.naturalWidth && image.naturalHeight) setImageSize({ url: allImageUrls[0], width: image.naturalWidth, height: image.naturalHeight }); }} onError={() => setFailedUrls((prev) => prev.includes(allImageUrls[0]) ? prev : [...prev, allImageUrls[0]])} />
                   </button>
                 </div>
@@ -1047,6 +1060,7 @@ export function CommentCard({
                 >
                   <PostImages
                     urls={allImageUrls}
+                    embedded={embedded}
                     onImageError={(url) => {
                       if (!failedUrls.includes(url)) {
                         setFailedUrls((prev) => [...prev, url]);
@@ -1057,7 +1071,7 @@ export function CommentCard({
               )}
             </div>
 
-            {reactions.length > 0 && (
+            {!embedded && reactions.length > 0 && (
               <div className={`${detail ? "col-span-2 " : ""}mt-3 flex flex-wrap gap-1.5 relative`} onClick={(e) => e.stopPropagation()}>
                 {reactions.map((g) => {
                   const hasMyReaction = currentUserId ? g.user_ids.includes(currentUserId) : false;
@@ -1119,7 +1133,7 @@ export function CommentCard({
             )}
 
             {detail && <p className={`col-span-2 mt-4 text-xs text-muted-foreground ${mobileFlat ? 'post-detail-mobile-meta' : ''}`} title={formatDate(comment.createdAt)}>{formatDate(comment.createdAt)} · {formatRelative(comment.createdAt)}{comment.clientName && <><span className="mx-1">·</span><span className="text-primary/80 font-medium">{comment.clientName}</span></>}</p>}
-            <div data-lime-comment-actions className={detail ? `col-span-2 mt-3 flex items-center gap-1 text-muted-foreground relative h-9 ${mobileFlat ? 'post-detail-mobile-action-row' : 'border-t border-border/60 pt-3'}` : isMobile ? 'mt-2 flex items-center gap-1 text-muted-foreground relative h-8' : 'mt-3 flex items-center gap-1 text-muted-foreground relative h-9'}>
+            {!embedded && <div data-lime-comment-actions className={detail ? `col-span-2 mt-3 flex items-center gap-1 text-muted-foreground relative h-9 ${mobileFlat ? 'post-detail-mobile-action-row' : 'border-t border-border/60 pt-3'}` : isMobile ? 'mt-2 flex items-center gap-1 text-muted-foreground relative h-8' : 'mt-3 flex items-center gap-1 text-muted-foreground relative h-9'}>
               <div onClick={(e) => e.stopPropagation()} className={detail && mobileFlat ? "flex items-center h-full post-detail-mobile-action-hit" : "flex items-center h-full"}>
                 <div className="inline-flex"><Commentlikebutton
                   commentId={comment.id}
@@ -1128,6 +1142,7 @@ export function CommentCard({
                 /></div>
               </div>
 
+              <RepostButton post={replyToPost({...comment,replyToUsername})} mobilePresentation={useMobilePresentation} />
               <Link
                 to={commentThreadUrl(comment.postId, comment.id)}
                 aria-label="この返信に返信する"
@@ -1317,7 +1332,7 @@ export function CommentCard({
                 )}
               </div>
               <ReplyShare comment={comment} currentUserId={currentUserId} className={detail && mobileFlat ? 'post-detail-mobile-share-button' : ''} />
-            </div>
+            </div>}
           </div>
         </div>
       </article>

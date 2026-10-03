@@ -362,7 +362,7 @@ export default function Feed() {
 
       const { data: follows, error } = await supabase
         .from('follows')
-        .select('following_id')
+        .select('followee_id')
         .eq('follower_id', currentUserId);
 
       if (cancelled) return;
@@ -375,7 +375,7 @@ export default function Feed() {
 
       followedUserIdsRef.current = new Set(
         (follows ?? [])
-          .map((follow) => follow.following_id)
+          .map((follow) => follow.followee_id)
           .filter((id): id is string => Boolean(id))
       );
     };

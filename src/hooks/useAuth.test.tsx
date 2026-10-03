@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { Session } from '@supabase/supabase-js';
@@ -16,7 +17,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.clearAllMocks(); });
 const session = { user: { id: 'test-user', email: 'test@example.invalid', user_metadata: { display_name: 'Metadata Name' } }, access_token: 'fixture', refresh_token: 'fixture', token_type: 'bearer', expires_in: 3600 } as unknown as Session;
 it('defers profile requests until the auth callback returns and keeps one subscription', async () => {
-  render(<AuthProvider><Probe /></AuthProvider>);
+  render(<QueryClientProvider client={new QueryClient()}><AuthProvider><Probe /></AuthProvider></QueryClientProvider>);
   act(() => mock.callback?.('INITIAL_SESSION', session));
   expect(screen.getByText('Metadata Name')).toBeTruthy();
   expect(mock.from).not.toHaveBeenCalled();
@@ -29,4 +30,15 @@ it('defers profile requests until the auth callback returns and keeps one subscr
   expect(mock.from).toHaveBeenCalledOnce();
   act(() => mock.callback?.('SIGNED_OUT', null));
   expect(screen.getByText('signed out')).toBeTruthy();
+});
+
+it('clears cached restricted posts when accounts change but retains them on token refresh', () => {
+  const client = new QueryClient();
+  render(<QueryClientProvider client={client}><AuthProvider><Probe /></AuthProvider></QueryClientProvider>);
+  act(() => mock.callback?.('INITIAL_SESSION', session));
+  client.setQueryData(['feed', 'all'], { content: 'restricted post' });
+  act(() => mock.callback?.('TOKEN_REFRESHED', session));
+  expect(client.getQueryData(['feed', 'all'])).toBeDefined();
+  act(() => mock.callback?.('SIGNED_IN', { ...session, user: { ...session.user, id: 'another-user' } }));
+  expect(client.getQueryData(['feed', 'all'])).toBeUndefined();
 });

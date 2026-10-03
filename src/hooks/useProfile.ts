@@ -1,3 +1,4 @@
+import { getProfilePosts } from '@/api/posts';
 import {
   useMutation,
   useQuery,
@@ -233,42 +234,7 @@ export const useUserPostsInfinite = (userId: string | undefined) =>
     queryFn: async ({ pageParam = 0 }) => {
       if (!userId) return [];
 
-      const from = (pageParam as number) * LIMIT;
-      const to = from + LIMIT - 1;
-
-      const { currentUserId, authorIdsFollowingViewer } = await getViewerPostAccess(userId);
-
-      const canSeeFollowingPosts = canViewProfileOwnerFollowingPosts(
-        userId,
-        currentUserId,
-        authorIdsFollowingViewer,
-      );
-
-      let query = supabase
-        .from('posts')
-        .select(`
-          *,
-          author:user_id(${POST_AUTHOR_COLUMNS})
-        `)
-        .eq('user_id', userId);
-
-      if (currentUserId === userId) {
-        // 自分のプロフィールでは全て表示
-      } else if (canSeeFollowingPosts) {
-        query = query.in('visibility', ['public', 'following']);
-      } else {
-        query = query.eq('visibility', 'public');
-      }
-
-      const { data, error } = await query
-        .order('created_at', { ascending: false })
-        .range(from, to);
-
-      if (error) throw error;
-
-      return (data || [])
-        .map((post: any) => toSafePost(post))
-        .filter(Boolean);
+      return getProfilePosts(userId, pageParam as number, LIMIT);
     },
     initialPageParam: 0,
     getNextPageParam: (lastPage, allPages) => {

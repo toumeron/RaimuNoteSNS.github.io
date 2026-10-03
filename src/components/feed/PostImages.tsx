@@ -2,10 +2,12 @@ import { cn } from '@/lib/utils';
 
 export function PostImages({ 
   urls, 
-  onImageError 
+  onImageError,
+  embedded = false,
 }: { 
   urls?: string[], 
   onImageError?: (url: string) => void 
+  embedded?: boolean
 }) { 
   // urlsがnull、undefined、または空配列の場合は何も表示しない
   if (!urls || urls.length === 0) return null;
@@ -18,7 +20,7 @@ export function PostImages({
   };
 
   return (
-    <div className={cn('mt-3 grid gap-1.5 overflow-hidden rounded-2xl border border-border/60', layouts[urls.length] || 'grid-cols-2')}>
+    <div data-lime-post-image-grid className={cn('mt-3 grid overflow-hidden', embedded ? 'gap-1' : 'gap-1.5 rounded-2xl border border-border/60', layouts[urls.length] || 'grid-cols-2')}>
       {urls.map((src, i) => (
         <div
           key={i}

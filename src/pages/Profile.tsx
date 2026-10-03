@@ -9,6 +9,9 @@ import { useInView } from 'react-intersection-observer';
 import { Loader2, MoreHorizontal, ChartBarBig, Image as ImageIcon, X, MessageCircle, Plus, Upload, Link as LinkIcon, Send, Globe, Heart } from 'lucide-react';
 import { ProfileHeader } from '@/components/profile/ProfileHeader';
 import { PostCard } from '@/components/feed/PostCard';
+import { RepostButton } from '@/components/feed/RepostButton';
+import { RepostedReplyCard } from '@/components/post/RepostedReplyCard';
+import { replyToPost } from '@/api/reply-reposts';
 import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -139,6 +142,7 @@ type ProfileThreadImageTarget = Omit<ProfileThreadImageSelection, 'url'>;
 
 interface ProfileReplyThreadComment {
   parentCommentId?: string | null;
+  replyToUsername?: string;
   clientName?: string;
   id: string;
   postId: string;
@@ -2139,6 +2143,7 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
   onReplyClick,
   isBluesky = false,
   blueskyUrl = null,
+  repostTarget,
 }: {
   targetType: 'post' | 'comment';
   targetId: string;
@@ -2152,6 +2157,7 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
   onReplyClick: () => void;
   isBluesky?: boolean;
   blueskyUrl?: string | null;
+  repostTarget?: any;
 }) {
   const { user } = useAuth();
   const inlineActionClass = 'inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full sm:px-2.5 sm:text-sm';
@@ -2184,6 +2190,7 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
         </div>
       )}
 
+      {repostTarget && <RepostButton post={targetType === 'post' ? normalizePost(repostTarget) : replyToPost(repostTarget)} mobilePresentation refreshState />}
       <button
         type="button"
         onClick={(event) => {
@@ -2345,6 +2352,7 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
 
             <ProfileThreadActionRow
               targetType="post"
+              repostTarget={parent}
               targetId={parent.id}
               liked={!!(parent.likedByMe ?? parent.liked_by_me)}
               likesCount={Number(parent.likesCount ?? parent.likes_count ?? 0)}
@@ -2425,6 +2433,7 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
 
               <ProfileThreadActionRow
                 targetType="comment"
+                repostTarget={{...comment,replyToUsername:comment.replyToUsername ?? parentAuthor?.username}}
                 targetId={comment.id}
                 liked={comment.likedByMe}
                 likesCount={comment.likesCount}
@@ -2656,6 +2665,7 @@ const PROFILE_PAGE_STYLES = `
         `;
 
 export default function Profile() {
+  const { user: viewer } = useAuth();
   const { username = '' } = useParams();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<ProfileTabValue>('posts');
@@ -2969,7 +2979,7 @@ export default function Profile() {
           const missingIds = pendingParentIds.filter(id => !knownCommentIds.has(id));
           if (!missingIds.length) break;
           missingIds.forEach(id => knownCommentIds.add(id));
-          const { data: ancestors, error } = await supabase.from('comments').select('*, profiles(*)').in('id', missingIds).in('post_id', visibleParentIds);
+          const { data: ancestors, error } = await supabase.from('comments').select('*, profiles:profiles!comments_user_id_fkey(*)').in('id', missingIds).in('post_id', visibleParentIds);
           if (error) throw error;
           parentCommentRows.push(...(ancestors ?? []));
           pendingParentIds = uniqueStrings((ancestors ?? []).map((row: any) => row.parent_comment_id).filter(Boolean));
@@ -3044,6 +3054,7 @@ export default function Profile() {
           content: comment.content ?? '',
           imageUrls: comment.image_urls ?? [],
           parentCommentId: comment.parent_comment_id ?? null,
+          replyToUsername: comment.parent_comment_id ? normalizeAuthor(parentCommentRows.find((row: any) => row.id === comment.parent_comment_id)?.profiles)?.username : parentMap.get(comment.post_id)?.author?.username,
           clientName: comment.client_name ?? undefined,
           createdAt: comment.created_at,
           likesCount: Number(comment.likes_count ?? 0),
@@ -3162,7 +3173,7 @@ export default function Profile() {
 
     const ownPosts: ProfilePostItem[] = uniquePostsById(flatPageItems).map((post: any) => ({
       __profileItemType: PROFILE_POST_ITEM,
-      sortAt: post.createdAt ?? post.created_at ?? new Date().toISOString(),
+      sortAt: post.profileRepostedAt ?? post.createdAt ?? post.created_at ?? new Date().toISOString(),
       post,
     }));
 
@@ -3414,7 +3425,7 @@ export default function Profile() {
               }
 
               const p = activeTab === 'posts' && item?.__profileItemType === PROFILE_POST_ITEM ? item.post : item;
-              const rowKey = activeTab === 'reactions' ? `reactions-${p.id}-${idx}` : `${activeTab}-${p.id}-${idx}`;
+              const rowKey = activeTab === 'posts' ? `profile-post-${p.id}` : activeTab === 'reactions' ? `reactions-${p.id}-${idx}` : `${activeTab}-${p.id}-${idx}`;
 
               return (
                 <div
@@ -3433,7 +3444,7 @@ export default function Profile() {
                       </div>
                     )}
 
-                    <PostCard post={p} />
+                    {p.replyId ? <RepostedReplyCard post={p} repostedByLabel={p.profileRepostedBy === viewer?.id ? 'あなた' : `${user?.displayName ?? user?.username ?? ''}さん`} /> : <PostCard post={p} repostedByLabel={p.profileRepostedBy ? (p.profileRepostedBy === viewer?.id ? 'あなた' : `${user?.displayName ?? user?.username ?? ''}さん`) : undefined} />}
                   </ProfileVirtualizedListItem>
                 </div>
               );

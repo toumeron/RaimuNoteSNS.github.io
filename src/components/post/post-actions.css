@@ -1,0 +1,18 @@
+[data-lime-post-card] [data-lime-post-actions] [data-lime-post-action] {
+  height: 32px;
+  padding: 0 8px;
+  gap: 6px;
+}
+[data-lime-post-detail-card] .post-detail-mobile-action-row > .post-detail-mobile-action-hit {
+  padding: 0 !important;
+}
+[data-lime-post-detail-card] .post-detail-mobile-action-row [data-lime-post-action],
+[data-lime-post-detail-card] .post-detail-mobile-action-row .post-detail-mobile-reply-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 46px !important;
+  height: 32px !important;
+  padding: 0 8px !important;
+  gap: 6px !important;
+}

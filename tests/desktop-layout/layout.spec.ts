@@ -10,10 +10,10 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/src/lib/currentUser.ts*', route => route.fulfill({ contentType: 'application/javascript', body: `export const getCurrentUserId=async()=> '${user.id}';` }));
   await page.route('**/src/api/posts.ts*', route => route.fulfill({ contentType: 'application/javascript', body: `const posts=${JSON.stringify(posts)};
     export const getFeed=async()=>posts; export const getFollowingFeed=async()=>[posts[1]];
-    export const getPostsByUser=async()=>posts; export const getLikedPostsByUser=async()=>posts;
+    export const getPostsByUser=async()=>posts; export const getProfilePosts=async()=>posts.map(post=>post.repostedByMe?{...post,profileRepostedBy:post.userId,profileRepostedAt:"2026-10-03T00:00:00Z"}:post); export const getLikedPostsByUser=async()=>posts;
     export const searchPosts=async()=>posts; export const getPostById=async()=>posts[0];
-    export const createPost=async()=>posts[0]; export const toggleLike=async()=>({liked:true,likesCount:1});
-    export const toggleRepost=async()=>({reposted:true,repostsCount:1}); export const deletePost=async()=>{}; export const getPostLikers=async()=>[];` }));
+    export const createPost=async(input)=>{window.__lastCreatedPost=input;return posts[0];}; export const toggleLike=async()=>({liked:true,likesCount:1});
+    export const toggleRepost=async(id)=>{const post=posts.find(p=>p.id===id);post.repostedByMe=!post.repostedByMe;post.repostsCount=post.repostedByMe?1:0;return {reposted:post.repostedByMe,repostsCount:post.repostsCount};}; export const deletePost=async()=>{}; export const getPostLikers=async()=>[];` }));
   await page.route('**/*.supabase.co/**', route => {
     const url = new URL(route.request().url());
     const single = (route.request().headers().accept ?? '').includes('vnd.pgrst.object');
@@ -316,7 +316,7 @@ test('desktop sidebar opens the existing App post overlay and submits a post', a
   await page.route('**/src/api/posts.ts*', route => route.fulfill({ contentType: 'application/javascript', body: `
     export const createPost=async(args)=>{window.__submittedPost=args;return ${JSON.stringify(posts[0])}};
     export const getFeed=async()=>[];export const getFollowingFeed=async()=>[];
-    export const getPostsByUser=async()=>[];export const getLikedPostsByUser=async()=>[];
+    export const getPostsByUser=async()=>[];export const getProfilePosts=async()=>[];export const getLikedPostsByUser=async()=>[];
     export const searchPosts=async()=>[];export const getPostById=async()=>(${JSON.stringify(posts[0])});
     export const toggleLike=async()=>({});export const toggleRepost=async()=>({});export const deletePost=async()=>{};export const getPostLikers=async()=>[];
   ` }));
@@ -336,3 +336,342 @@ test('desktop sidebar opens the existing App post overlay and submits a post', a
   await expect(page.locator('[data-lime-sidebar-compose]')).toHaveCount(0);
   await expect(page.getByRole('button', { name: '新規投稿', exact: true })).toBeVisible();
 });
+
+
+for (const width of [390, 1440]) {
+  test(`quote repost uses the existing composer in the correct overlay at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto('./');
+    const card = page.locator('[data-lime-post-card]').filter({ hasText: '画像付きの投稿' }).first();
+    await card.getByRole('button', { name: 'リポスト', exact: true }).click();
+    await page.getByRole('menuitem', { name: '引用リポスト', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: '引用リポスト' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator('textarea')).toBeVisible();
+    await expect(dialog.getByText('画像付きの投稿', { exact: true })).toBeVisible();
+    await expect(dialog.getByText('[画像あり]', {exact:true})).toHaveCount(0);
+    const previewBox=(await dialog.locator('[data-lime-quote-preview]').boundingBox())!;
+    expect(previewBox.height).toBeLessThan(300);
+    await expect(dialog.locator('[data-lime-quoted-post] img[alt="投稿画像"]')).toBeVisible();
+    const bounds = (await dialog.boundingBox())!;
+    if (width < 768) {
+      expect(bounds.x).toBe(0);
+      expect(bounds.y).toBe(0);
+      expect(bounds.width).toBe(width);
+      expect(bounds.height).toBe(844);
+    } else {
+      const composer = (await dialog.locator('textarea').boundingBox())!;
+      expect(composer.width).toBeLessThan(700);
+      expect(composer.x).toBeGreaterThan(0);
+    }
+    await dialog.locator('textarea').fill('引用リポストのコメント');
+    await dialog.getByRole('button', { name: '引用ポスト', exact: true }).click();
+    await expect(dialog).toBeHidden();
+    expect(await page.evaluate(() => (window as any).__lastCreatedPost)).toMatchObject({
+      content: '引用リポストのコメント', parentId: 'post-0', isQuote: true,
+    });
+    await expect(card).toBeVisible();
+  });
+}
+
+
+test('normal repost appears only as a profile entry and can be undone', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('./');
+  await page.evaluate(()=>{
+    (window as any).__countAnimations=[];
+    new MutationObserver(()=>document.querySelectorAll('.repost-count-old').forEach(el=>{const name=getComputedStyle(el).animationName;if(name!=='none')(window as any).__countAnimations.push(name);})).observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['class']});
+  });
+  const card = page.locator('[data-lime-post-card]').filter({ hasText: '画像付きの投稿' }).first();
+  await card.getByRole('button', { name: 'リポスト', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'リポストする', exact: true }).click();
+  await expect(card.getByRole('button', { name: 'リポスト', exact: true })).toHaveText('1');
+  expect(await page.evaluate(()=>(window as any).__countAnimations)).toContain('repostCountOldUp');
+  await expect(page.getByText('あなたがリポストしました', { exact: true })).toHaveCount(0);
+  await page.locator('[data-lime-desktop-sidebar]').getByRole('button', { name: 'プロフィール', exact: true }).click();
+  await expect(page.getByText('あなたがリポストしました', { exact: true })).toBeVisible();
+  const profileCard = page.locator('[data-lime-post-card]').filter({ hasText: '画像付きの投稿' }).first();
+  await expect(profileCard.locator('[data-lime-repost-label] svg')).toBeVisible();
+  const label = (await profileCard.locator('[data-lime-repost-label] > span').last().boundingBox())!;
+  const header = (await profileCard.locator('[data-lime-post-header]').boundingBox())!;
+  expect(label.y).toBeLessThan(header.y);
+  expect(Math.abs(label.x - header.x)).toBeLessThan(1);
+  await profileCard.getByRole('button', { name: 'リポスト', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'リポストを取り消す', exact: true }).click();
+  await expect(page.getByText('あなたがリポストしました', { exact: true })).toHaveCount(0);
+  expect(await page.evaluate(()=>(window as any).__countAnimations)).toContain('repostCountOldDown');
+});
+
+
+for (const width of [390, 1440]) {
+  test(`post detail keeps likes first and reposts second at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('post/post-0');
+    const row = page.locator('.post-detail-mobile-action-row');
+    await expect(row).toBeVisible();
+    const buttons = row.locator('button');
+    await expect(buttons.nth(0).locator('.twitter-like-heart')).toBeVisible();
+    await expect(buttons.nth(1)).toHaveAttribute('aria-label', 'リポスト');
+    const likeBounds = (await buttons.nth(0).boundingBox())!;
+    const repostBounds = (await buttons.nth(1).boundingBox())!;
+    expect(repostBounds.height).toBe(likeBounds.height);
+    expect(Math.abs(repostBounds.y - likeBounds.y)).toBeLessThan(1);
+    const replyBounds=(await row.locator('.post-detail-mobile-reply-count').boundingBox())!;
+    expect(Math.abs(likeBounds.width-repostBounds.width)).toBeLessThan(1);
+    expect(Math.abs(repostBounds.width-replyBounds.width)).toBeLessThan(1);
+    expect(replyBounds.height).toBe(likeBounds.height);
+  });
+
+  test(`quoted originals show a compact preview without action buttons at ${width}px`, async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on('pageerror', error => pageErrors.push(error.message));
+    await page.setViewportSize({ width, height: 900 });
+    const original = posts[0];
+    const quote = { ...posts[1], id: 'quote-0', content: '引用した側のコメント', isQuote: true, parentId: original.id, parentPost: original };
+    await page.route('**/src/api/posts.ts*', route => route.fulfill({ contentType: 'application/javascript', body: `
+      const original=${JSON.stringify(original)};const quote=${JSON.stringify(quote)};quote.parentPost=original;
+      export const getFeed=async()=>[quote,original,{...quote,id:'quote-two'}];export const getFollowingFeed=getFeed;
+      export const getPostsByUser=getFeed;export const getProfilePosts=getFeed;export const getLikedPostsByUser=async()=>[];
+      export const searchPosts=getFeed;export const getPostById=async(id)=>id==='quote-0'?quote:original;
+      export const createPost=async()=>quote;export const toggleLike=async()=>({liked:true,likesCount:1});
+      export const toggleRepost=async()=>{original.repostedByMe=true;original.repostsCount=1;return {reposted:true,repostsCount:1};};
+      export const deletePost=async()=>{};export const getPostLikers=async()=>[];
+    ` }));
+    await page.goto('./');
+    const quoted = page.locator('[data-lime-quoted-post]').first();
+    await expect(quoted.locator('[data-lime-post-card]')).toBeVisible();
+    await expect(quoted.locator('[data-lime-post-actions]')).toHaveCount(0);
+    await expect(quoted.locator('[data-lime-post-header] button')).toHaveCount(0);
+    const normalName = page.locator('[data-lime-post-card]:not([data-lime-embedded])').first().locator('[data-lime-post-header] span').first();
+    const quoteName = quoted.locator('[data-lime-post-header] span').first();
+    await expect(quoteName).toHaveCSS('font-size', await normalName.evaluate(el => getComputedStyle(el).fontSize));
+    const bounds = (await quoted.boundingBox())!;
+    const cardBounds = (await quoted.locator('[data-lime-post-card]').boundingBox())!;
+    expect(cardBounds.width).toBeLessThanOrEqual(bounds.width);
+    const imageBounds = (await quoted.locator('[data-lime-single-post-image]').boundingBox())!;
+    expect(Math.abs(imageBounds.width - cardBounds.width)).toBeLessThan(3);
+    expect(Math.abs(imageBounds.y + imageBounds.height - cardBounds.y - cardBounds.height)).toBeLessThan(1);
+    await page.screenshot({ path: `artifacts/quote-layout-${width}.png`, fullPage: false });
+    await quoted.getByText('画像付きの投稿', {exact: true}).click();
+    await expect(page).toHaveURL(/post\/post-0$/);
+    expect(pageErrors).toEqual([]);
+  });
+}
+
+
+test.describe('mobile touch quote composer', () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
+  test('opens from touch selection and accepts input after scrolling', async ({page}) => {
+    const errors: string[] = [];
+    page.on('pageerror', e => errors.push(e.message));
+    const manyPosts = Array.from({length:80}, (_,i)=>({...posts[1],id:`touch-${i}`,content:`スクロールした投稿 ${i}`}));
+    await page.route('**/src/api/posts.ts*', route => route.fulfill({contentType:'application/javascript',body:`
+      const posts=${JSON.stringify(manyPosts)};
+      export const getFeed=async()=>posts;export const getFollowingFeed=getFeed;export const getProfilePosts=getFeed;
+      export const getPostsByUser=getFeed;export const getLikedPostsByUser=getFeed;export const searchPosts=getFeed;
+      export const getPostById=async()=>posts[0];export const createPost=async()=>posts[0];
+      export const toggleLike=async()=>({liked:true});export const toggleRepost=async()=>({reposted:true});
+      export const deletePost=async()=>{};export const getPostLikers=async()=>[];
+    `}));
+    await page.goto('./');
+    await expect(page.locator('[data-lime-post-card]').first()).toBeVisible();
+    await page.evaluate(()=>window.scrollTo(0,6000));
+    await expect.poll(()=>page.evaluate(()=>window.scrollY)).toBeGreaterThan(3000);
+    const card = page.locator('[data-lime-post-card]').last();
+    await card.getByRole('button', {name:'リポスト',exact:true}).tap();
+    await page.getByRole('menuitem', {name:'引用リポスト',exact:true}).tap();
+    const dialog = page.getByRole('dialog',{name:'引用リポスト'});
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toHaveAttribute('aria-modal','true');
+    await dialog.locator('textarea').tap();
+    await expect(dialog.locator('textarea')).toBeFocused();
+    await expect(page.locator('body')).toHaveCSS('pointer-events','auto');
+    await page.setViewportSize({width:390,height:500});
+    await dialog.locator('textarea').pressSequentially('タッチで引用');
+    await expect(dialog.locator('textarea')).toHaveValue('タッチで引用');
+    const inputBounds=(await dialog.locator('textarea').boundingBox())!;
+    expect(inputBounds.height).toBeGreaterThan(100);
+    await dialog.getByRole('button',{name:'引用ポスト',exact:true}).tap();
+    await expect(dialog).toBeHidden();
+    await expect(page).toHaveURL(/RaimuNoteSNS.github.io\/$/);
+    expect(errors).toEqual([]);
+  });
+});
+
+for (const width of [390,1440]) {
+  test(`quoted image grids reach the card edges in posts and the composer at ${width}px`, async ({page}) => {
+    await page.setViewportSize({width,height:900});
+    const original = {...posts[0],content:'複数画像の元投稿',imageUrls:[image,image]};
+    const quote = {...posts[1],id:'media-quote',isQuote:true,parentId:original.id,parentPost:original};
+    await page.route('**/src/api/posts.ts*', route => route.fulfill({contentType:'application/javascript',body:`
+      const original=${JSON.stringify(original)},quote=${JSON.stringify(quote)};
+      export const getFeed=async()=>[quote,original];export const getFollowingFeed=getFeed;
+      export const getPostsByUser=getFeed;export const getProfilePosts=getFeed;export const getLikedPostsByUser=getFeed;
+      export const searchPosts=getFeed;export const getPostById=async()=>original;
+      export const createPost=async()=>quote;export const toggleLike=async()=>({liked:true});
+      export const toggleRepost=async()=>({reposted:true});export const deletePost=async()=>{};export const getPostLikers=async()=>[];
+    `}));
+    await page.goto('./');
+    async function checkGrid(container: ReturnType<typeof page.locator>) {
+      const card=container.locator('[data-lime-embedded]').first();
+      const grid=card.locator('[data-lime-post-image-grid]');
+      await expect(grid.locator('img')).toHaveCount(2);
+      await expect(grid).toHaveCSS('border-radius','0px');
+      await expect(grid).toHaveCSS('border-bottom-width','0px');
+      await expect.poll(()=>card.evaluate(card => {
+        const cardBox=card.getBoundingClientRect();
+        const gridBox=card.querySelector('[data-lime-post-image-grid]')!.getBoundingClientRect();
+        return Math.max(Math.abs(gridBox.x-cardBox.x), Math.abs(gridBox.width-cardBox.width), Math.abs(gridBox.bottom-cardBox.bottom));
+      })).toBeLessThan(1);
+    }
+    const quoted=page.locator('[data-lime-quoted-post]').first();
+    await expect(quoted).toBeVisible();
+    await checkGrid(quoted);
+    await quoted.screenshot({path:`artifacts/quote-grid-${width}.png`,animations:'disabled'});
+    const source=page.locator('[data-lime-post-card]:not([data-lime-embedded])').filter({hasNot:page.locator('[data-lime-quoted-post]')}).first();
+    await source.getByRole('button',{name:'リポスト',exact:true}).click();
+    await page.getByRole('menuitem',{name:'引用リポスト',exact:true}).click();
+    const dialog=page.getByRole('dialog',{name:'引用リポスト'});
+    await expect(dialog).toBeVisible();
+    await checkGrid(dialog.locator('[data-lime-quoted-post]'));
+    await expect(dialog.getByText('[画像あり]',{exact:true})).toHaveCount(0);
+    await dialog.locator('[data-lime-quoted-post]').screenshot({path:`artifacts/quote-composer-grid-${width}.png`,animations:'disabled'});
+  });
+}
+
+for (const width of [390,1440]) {
+  test(`external posts expose local repost and quote actions at ${width}px`, async ({page}) => {
+    await page.setViewportSize({width,height:844});
+    const external = {...posts[0], id:'bsky:at://did:plc:author/app.bsky.feed.post/original',userId:'did:plc:author',source:'bluesky',blueskyUri:'at://did:plc:author/app.bsky.feed.post/original',blueskyUrl:'https://bsky.app/profile/author.bsky.social/post/original',content:'外部の引用元',author:{...user,id:'did:plc:author',username:'author.bsky.social'}};
+    await page.route('**/src/api/posts.ts*', route=>route.fulfill({contentType:'application/javascript',body:`
+      const post=${JSON.stringify(external)};
+      export const getFeed=async()=>[post];export const getFollowingFeed=getFeed;
+      export const getPostsByUser=getFeed;export const getProfilePosts=getFeed;export const getLikedPostsByUser=getFeed;
+      export const searchPosts=getFeed;export const getPostById=async()=>post;
+      export const createPost=async(input)=>{window.__lastCreatedPost=input;return {...post,id:'created-quote'};};
+      export const toggleLike=async()=>({liked:true});export const toggleRepost=async()=>({reposted:true,repostsCount:1});
+      export const deletePost=async()=>{};export const getPostLikers=async()=>[];
+    `}));
+    await page.goto('./');
+    const repost=page.getByRole('button',{name:'リポスト',exact:true});
+    await expect(repost).toBeVisible();
+    await repost.click();
+    await expect(page.getByRole('menuitem',{name:'リポストする',exact:true})).toBeEnabled();
+    await page.getByRole('menuitem',{name:'引用リポスト',exact:true}).click();
+    const dialog=page.getByRole('dialog',{name:'引用リポスト'});
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText('外部の引用元',{exact:true})).toBeVisible();
+    await dialog.locator('textarea').fill('外部投稿へのコメント');
+    await dialog.getByRole('button',{name:'引用ポスト',exact:true}).click();
+    await expect(dialog).toBeHidden();
+    expect(await page.evaluate(()=>(window as any).__lastCreatedPost)).toMatchObject({parentId:external.id,isQuote:true,content:'外部投稿へのコメント'});
+  });
+}
+
+for (const width of [390,1440]) {
+  test(`profile reply and its source both support repost; shared reply keeps recipient and media at ${width}px`,async({page})=>{
+    await page.setViewportSize({width,height:844});
+    const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
+    const reply={id:'22222222-2222-2222-2222-222222222222',post_id:'post-0',user_id:user.id,content:'プロフィールの返信本文',created_at:'2026-10-03T00:00:00Z',image_urls:[image],likes_count:0,parent_comment_id:null,profiles:profile,post:{user_id:user.id,profiles:{username:'lime'}},replying_to:null};
+    let shared=false;
+    await page.route('**/src/api/posts.ts*',route=>route.fulfill({contentType:'application/javascript',body:`
+      import {toggleReplyRepost,getProfileReplyReposts,getReplyPost} from '/RaimuNoteSNS.github.io/src/api/reply-reposts.ts';
+      const posts=${JSON.stringify(posts)};
+      export const getFeed=async()=>posts;export const getFollowingFeed=async()=>posts;export const getPostsByUser=async()=>posts;
+      export const getProfilePosts=async()=>[...posts,...await getProfileReplyReposts('${user.id}',10)];
+      export const getLikedPostsByUser=async()=>[];export const searchPosts=async()=>posts;
+      export const getPostById=async(id)=>id.startsWith('reply:')?getReplyPost(id):posts[0];
+      export const createPost=async(input)=>{window.__lastCreatedPost=input;return posts[0];};export const toggleLike=async()=>({liked:true,likesCount:1});
+      export const toggleRepost=async(id)=>id.startsWith('reply:')?toggleReplyRepost(id):({reposted:true,repostsCount:1});
+      export const deletePost=async()=>{};export const getPostLikers=async()=>[];` }));
+    await page.route('**/*.supabase.co/rest/v1/**',async route=>{
+      const request=route.request(),url=new URL(request.url());
+      if(url.pathname.endsWith('/comments')) return route.fulfill({contentType:'application/json',body:JSON.stringify(request.headers().accept?.includes('vnd.pgrst.object')?reply:[reply])});
+      if(url.pathname.endsWith('/reply_reposts')) {
+        if(request.method()==='POST'){shared=true;return route.fulfill({status:201,body:''});}
+        if(request.method()==='DELETE'){shared=false;return route.fulfill({status:204,body:''});}
+        if(request.method()==='HEAD') return route.fulfill({headers:{'content-range':`*/${shared?1:0}`,'access-control-expose-headers':'content-range'},body:''});
+        const embedded=url.searchParams.get('select')?.includes('comments!inner');
+        return route.fulfill({contentType:'application/json',body:JSON.stringify(embedded?(shared?[{created_at:'2026-10-03T01:00:00Z',comments:reply}]:[]):(shared?{comment_id:reply.id}:null))});
+      }
+      if(url.pathname.endsWith('/posts') && request.method()==='HEAD') return route.fulfill({headers:{'content-range':'*/0','access-control-expose-headers':'content-range'},body:''});
+      return route.fallback();
+    });
+    await page.goto('u/lime');
+    const thread=page.locator('.profile-reply-thread');
+    await expect(thread).toContainText(reply.content);
+    await expect(thread.getByRole('button',{name:'リポスト',exact:true})).toHaveCount(2);
+    const replyButton=thread.getByRole('button',{name:'リポスト',exact:true}).last();
+    await replyButton.click();await page.getByRole('menuitem',{name:'リポストする',exact:true}).click();
+    const sharedCard=page.locator(`[data-lime-comment-card="${reply.id}"]`).filter({hasText:'あなたがリポストしました'});
+    await expect(sharedCard).toBeVisible();
+    await expect(sharedCard).toContainText('返信先: @limeさん');
+    await expect(sharedCard).toContainText(reply.content);
+    await expect(sharedCard).not.toContainText('画像付きの投稿');
+    await expect(sharedCard.locator('img[alt="返信画像"]')).toBeVisible();
+    await expect(sharedCard.getByRole('button',{name:'リポスト',exact:true})).toHaveText('1');
+    await sharedCard.screenshot({path:`artifacts/reposted-reply-${width}.png`,animations:'disabled'});
+    const label=(await sharedCard.locator('[data-lime-repost-label] > span').last().boundingBox())!;
+    const header=(await sharedCard.locator('[data-lime-post-header]').boundingBox())!;
+    expect(label.y).toBeLessThan(header.y);expect(Math.abs(label.x-header.x)).toBeLessThan(1);
+    await sharedCard.getByRole('button',{name:'リポスト',exact:true}).click();
+    await page.getByRole('menuitem',{name:'引用リポスト',exact:true}).click();
+    const dialog=page.getByRole('dialog',{name:'引用リポスト'});
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator('[data-lime-quoted-post]')).toContainText('返信先: @limeさん');
+    await expect(dialog.locator('[data-lime-quoted-post] [data-lime-post-action]')).toHaveCount(0);
+    await dialog.locator('textarea').fill('返信を引用');
+    await dialog.getByRole('button',{name:'引用ポスト',exact:true}).click();
+    expect(await page.evaluate(()=>(window as any).__lastCreatedPost)).toMatchObject({parentId:`reply:${reply.id}`,content:'返信を引用',isQuote:true});
+    await sharedCard.getByRole('button',{name:'リポスト',exact:true}).click();
+    await page.getByRole('menuitem',{name:'リポストを取り消す',exact:true}).click();
+    await expect(sharedCard).toHaveCount(0);
+    expect(shared).toBe(false);expect(errors).toEqual([]);
+  });
+}
+
+test('news history animates every time it opens from the search news page',async({page})=>{
+  await page.emulateMedia({reducedMotion:'no-preference'});
+  await page.route('**/*.supabase.co/rest/v1/news_summaries*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify([
+    {id:'latest',title:'最新のニュース',content:'最新の本文',created_at:'2026-10-03T00:00:00Z'},
+    {id:'older',title:'過去の記事',content:'過去の本文',created_at:'2026-10-02T00:00:00Z'}
+  ])}));
+  await page.goto('search');
+  await page.getByText('最新のニュース',{exact:true}).click();
+  await expect(page).toHaveURL(/\/news$/);
+  for(let i=0;i<2;i++) {
+    await page.getByRole('button',{name:'履歴を見る',exact:true}).click();
+    const history=page.locator('[data-lime-news-history]');
+    await expect(history).toContainText('過去の記事');
+    expect(await history.evaluate(el=>({name:getComputedStyle(el).animationName,duration:getComputedStyle(el).animationDuration}))).toEqual({name:'newsHistoryEnter',duration:'0.3s'});
+    await history.getByRole('button').click();await expect(history).toHaveCount(0);
+  }
+});
+
+for (const width of [390,1440]) {
+  test(`replies remain visible in posts, nested threads and profiles after adding reposts at ${width}px`,async({page})=>{
+    await page.setViewportSize({width,height:900});
+    const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
+    const root={id:'33333333-3333-3333-3333-333333333333',post_id:'post-0',user_id:user.id,content:'復旧した通常の返信',created_at:'2026-10-03T00:00:00Z',likes_count:0,image_urls:[],parent_comment_id:null,profiles:profile};
+    const child={...root,id:'44444444-4444-4444-4444-444444444444',content:'復旧した返信への返信',parent_comment_id:root.id};
+    const selects:string[]=[];
+    await page.route('**/*.supabase.co/rest/v1/comments*',route=>{
+      const select=new URL(route.request().url()).searchParams.get('select') ?? '';
+      selects.push(select);
+      // Reproduce the ambiguous author embed introduced by a share join table.
+      if(select.includes('profiles(*)')) return route.fulfill({status:300,contentType:'application/json',body:JSON.stringify({code:'PGRST201',message:'Ambiguous comments/profiles relationship'})});
+      return route.fulfill({contentType:'application/json',body:JSON.stringify([root,child])});
+    });
+    await page.goto('post/post-0');
+    await expect(page.locator(`[data-lime-comment-card="${root.id}"]`)).toContainText(root.content);
+    await page.goto(`post/post-0?reply=${child.id}`);
+    await expect(page.locator('[data-lime-reply-chain]')).toContainText(root.content);
+    await expect(page.locator('[data-lime-selected-reply]')).toContainText(child.content);
+    await page.goto('u/lime');
+    const profileThread=page.locator('.profile-reply-thread').filter({hasText:child.content}).first();
+    await expect(profileThread).toContainText(root.content);
+    await expect(profileThread).toContainText(child.content);
+    expect(selects).toContain('*,profiles:profiles!comments_user_id_fkey(*)');
+    expect(errors).toEqual([]);
+  });
+}

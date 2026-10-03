@@ -182,7 +182,9 @@ export const useCreatePost = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: createPost,
-    onSuccess: () => {
+    onSuccess: (post) => {
+      if (post.parentId) qc.invalidateQueries({ queryKey: postKey(post.parentId) });
+      if (post.parentPost?.id) qc.invalidateQueries({ queryKey: ['repost-state', post.parentPost.id] });
       // 'feed' から始まる全てのキャッシュ（最新・フォロー中両方）を無効化
       qc.invalidateQueries({ queryKey: feedKey });
       qc.invalidateQueries({ queryKey: ['posts', 'user'] });
@@ -201,26 +203,19 @@ const updatePostInCache = (
   postId: string,
   flip: (p: PostWithAuthor) => PostWithAuthor,
 ) => {
-  // 1. 全てのタイムライン（最新、フォロー中など 'feed' を含むもの全て）を更新
-  qc.setQueriesData<InfiniteData<PostWithAuthor[] | TimelinePage>>({ queryKey: feedKey }, (old) => {
+  const update = (post: PostWithAuthor): PostWithAuthor => {
+    const next = post.id === postId ? flip(post) : post;
+    return next.parentPost ? { ...next, parentPost: update(next.parentPost) } : next;
+  };
+  qc.setQueriesData<InfiniteData<PostWithAuthor[] | TimelinePage>>({ queryKey: feedKey }, old => {
     if (!old) return old;
-    return {
-      ...old,
-      pages: old.pages.map((page) => {
-        const update = (posts: PostWithAuthor[]) => posts.map((p) => (p.id === postId ? flip(p) : p));
-        return Array.isArray(page) ? update(page) : { ...page, posts: update(page.posts) };
-      }),
-    };
+    return { ...old, pages: old.pages.map(page => Array.isArray(page)
+      ? page.map(update) : { ...page, posts: page.posts.map(update) }) };
   });
-
-  // 2. 個別投稿詳細のキャッシュを更新
-  qc.setQueryData<PostWithAuthor>(postKey(postId), (old) => (old ? flip(old) : old));
-
-  // 3. 各ユーザーの投稿一覧キャッシュをスキャンして更新
-  qc.getQueriesData<PostWithAuthor[]>({ queryKey: ['posts', 'user'] }).forEach(([key]) => {
-    qc.setQueryData<PostWithAuthor[]>(key, (old) =>
-      old ? old.map((p) => (p.id === postId ? flip(p) : p)) : old,
-    );
+  qc.setQueriesData<PostWithAuthor>({ queryKey: ['post'] }, old => old ? update(old) : old);
+  qc.setQueriesData<InfiniteData<PostWithAuthor[]> | PostWithAuthor[]>({ queryKey: ['posts', 'user'] }, old => {
+    if (!old) return old;
+    return Array.isArray(old) ? old.map(update) : { ...old, pages: old.pages.map(page => page.map(update)) };
   });
 };
 
@@ -264,6 +259,8 @@ export const useToggleRepost = () => {
       await qc.cancelQueries({ queryKey: feedKey });
       await qc.cancelQueries({ queryKey: postKey(postId) });
 
+      await qc.cancelQueries({ queryKey: ['posts', 'user'] });
+
       const flip = (p: PostWithAuthor): PostWithAuthor => ({
         ...p,
         repostedByMe: !p.repostedByMe,
@@ -272,12 +269,17 @@ export const useToggleRepost = () => {
 
       updatePostInCache(qc, postId, flip);
     },
-    onSuccess: (_, postId) => {
-      // リポストは自身のフォロワーのタイムラインに影響するため、
-      // 成功後にバックグラウンドで最新状態を取得し直すのが安全
+    onSuccess: (result, postId) => {
+      qc.invalidateQueries({ queryKey: ['repost-state', postId] });
+      updatePostInCache(qc, postId, post => ({ ...post, repostedByMe: result.reposted, repostsCount: result.repostsCount ?? post.repostsCount }));
+      qc.invalidateQueries({ queryKey: ['posts', 'user'] });
       qc.invalidateQueries({ queryKey: feedKey });
+      qc.invalidateQueries({ queryKey: postKey(postId) });
     },
-    onError: (err, postId) => {
+    onError: (_err, postId) => {
+      updatePostInCache(qc, postId, post => ({ ...post, repostedByMe: !post.repostedByMe,
+        repostsCount: Math.max(0, post.repostsCount + (post.repostedByMe ? -1 : 1)) }));
+      qc.invalidateQueries({ queryKey: ['posts', 'user'] });
       qc.invalidateQueries({ queryKey: feedKey });
       qc.invalidateQueries({ queryKey: postKey(postId) });
       toast.error('リポストの更新に失敗しました');

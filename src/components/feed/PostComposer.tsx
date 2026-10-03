@@ -1,3 +1,4 @@
+import { QuotedPost } from '@/components/feed/QuotedPost';
 import { memo, useCallback, useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type PointerEvent as ReactPointerEvent, type UIEvent as ReactUIEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -27,7 +28,6 @@ const MAX_IMAGES = 4;
 const MENTION_SEARCH_DEBOUNCE_MS = 180;
 const HASHTAG_SEARCH_DEBOUNCE_MS = 180;
 const SUGGESTION_CACHE_LIMIT = 24;
-const QUOTED_POST_CACHE_LIMIT = 8;
 
 // テキストエリアの自動リサイズ設定
 const TEXTAREA_MIN_HEIGHT = 96; // 3行分程度の高さを最低保証
@@ -35,7 +35,6 @@ const TEXTAREA_MAX_HEIGHT = 480; // これ以上は内部スクロールに切�
 
 const mentionSuggestionCache = new Map<string, any[]>();
 const hashtagSuggestionCache = new Map<string, any[]>();
-const quotedPostCache = new Map<string, PostWithAuthor>();
 const quotedPostFetches = new Map<string, Promise<PostWithAuthor | null>>();
 
 const normalizeSuggestionQuery = (query: string) => query.trim().toLowerCase();
@@ -60,27 +59,19 @@ const getLimitedCache = <K, V>(map: Map<K, V>, key: K) => {
   return cached;
 };
 
-const getQuotedPostCached = async (postId: string) => {
-  const cached = getLimitedCache(quotedPostCache, postId);
-  if (cached) return cached;
-
-  const pending = quotedPostFetches.get(postId);
+// Share only simultaneous requests for the same viewer. Reopening the composer
+// rechecks visibility so a removed follow or account switch cannot expose a cache.
+const getQuotedPostCached = async (postId: string, viewerId?: string) => {
+  const key = `${viewerId ?? ''}:${postId}`;
+  const pending = quotedPostFetches.get(key);
   if (pending) return pending;
-
   const request = getPostById(postId)
-    .then((post) => {
-      setLimitedCache(quotedPostCache, postId, post, QUOTED_POST_CACHE_LIMIT);
-      return post;
-    })
     .catch((error) => {
       console.error('Fetch quoted post failed:', error);
       return null;
     })
-    .finally(() => {
-      quotedPostFetches.delete(postId);
-    });
-
-  quotedPostFetches.set(postId, request);
+    .finally(() => { quotedPostFetches.delete(key); });
+  quotedPostFetches.set(key, request);
   return request;
 };
 
@@ -268,7 +259,7 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
 
     let cancelled = false;
 
-    getQuotedPostCached(quoteId).then((post) => {
+    getQuotedPostCached(quoteId, user?.id).then((post) => {
       if (cancelled) return;
 
       if (post) {
@@ -283,7 +274,7 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
     return () => {
       cancelled = true;
     };
-  }, [quoteId, initialQuotedPost, setSearchParams]);
+  }, [quoteId, initialQuotedPost, setSearchParams, user?.id]);
 
   useEffect(() => {
     if (initialQuotedPost) {
@@ -1557,34 +1548,13 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
           )}
 
           {quotedPost && (
-            <div className={cn("relative mt-2 overflow-hidden rounded-2xl border border-border/60 bg-muted/20 p-4 transition-all", timelineGlass && "bg-background/35 backdrop-blur-xl")}>
+            <div className="relative">
               {!initialQuotedPost && (
-                <button
-                  type="button"
-                  onClick={cancelQuote}
-                  className="absolute right-2 top-2 z-10 rounded-full bg-background/80 p-1 backdrop-blur hover:bg-background"
-                >
+                <button type="button" onClick={cancelQuote} aria-label="引用を解除" className="absolute right-2 top-2 z-10 rounded-full bg-background/80 p-1 backdrop-blur hover:bg-background">
                   <X className="h-4 w-4 text-muted-foreground" />
                 </button>
               )}
-              
-              <div className="flex items-center gap-2 mb-1.5">
-                <Avatar className="h-5 w-5">
-                  <AvatarImage src={quotedPost.author.avatarUrl} />
-                  <AvatarFallback>{quotedPost.author.displayName[0]}</AvatarFallback>
-                </Avatar>
-                <span className="text-sm font-bold text-foreground truncate">{quotedPost.author.displayName}</span>
-                <span className="text-xs text-muted-foreground">@{quotedPost.author.username}</span>
-                <span className="text-xs text-muted-foreground">· {formatRelative(quotedPost.createdAt)}</span>
-              </div>
-              <p className="text-[14px] text-foreground line-clamp-2 leading-snug whitespace-pre-wrap">
-                {quotedPost.content}
-              </p>
-              {quotedPost.imageUrls.length > 0 && (
-                <div className="mt-2 text-xs text-accent font-bold">
-                  [画像あり]
-                </div>
-              )}
+              <QuotedPost post={quotedPost} timelineGlass={timelineGlass} compact />
             </div>
           )}
 

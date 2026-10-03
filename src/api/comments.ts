@@ -39,7 +39,7 @@ export async function getCommentsByPost(postId: string): Promise<CommentWithAuth
   // PostgREST caps a response at 1000 rows. Continue by a stable key so deep
   // threads are not truncated and live insertions cannot shift page offsets.
   for (;;) {
-    let query = supabase.from('comments').select('*, profiles(*)').eq('post_id', postId)
+    let query = supabase.from('comments').select('*, profiles:profiles!comments_user_id_fkey(*)').eq('post_id', postId)
       .order('created_at', { ascending: true }).order('id', { ascending: true }).range(0, 999);
     if (after) query = query.or(`created_at.gt.${after.createdAt},and(created_at.eq.${after.createdAt},id.gt.${after.id})`);
     const { data, error } = await query;
@@ -83,7 +83,7 @@ export async function createComment(postId: string, input: string | CommentInput
   // 挿入したコメントを author 情報込みで取得
   const { data: fullData, error: fetchError } = await supabase
     .from('comments')
-    .select('*, profiles(*)')
+    .select('*, profiles:profiles!comments_user_id_fkey(*)')
     .eq('id', data.id)
     .single();
 

@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 const db = vi.hoisted(() => ({ likes: vi.fn() }));
@@ -18,7 +19,9 @@ vi.mock('@/lib/supabase', () => ({ supabase: {
 import { CommentCard } from './CommentList';
 const comment = { id: 'reply-id', postId: 'original', userId: 'author', content: '返信本文をクリック', createdAt: '2026-10-02T00:00:00Z', likesCount: 1, likedByMe: false, imageUrls: ['https://example.com/image.png'], author: { id: 'author', username: 'author', displayName: 'Author', avatarUrl: '', createdAt: '' } };
 function Location() { const location = useLocation(); return <output data-testid="location">{location.pathname}{location.search}</output>; }
-function mount(detail = false) { return render(<MemoryRouter initialEntries={['/post/original']}><CommentCard comment={comment} currentUserId="author" mobileFlat thread detail={detail} /><Location /></MemoryRouter>); }
+function mount(detail = false) { return renderWithQuery(<MemoryRouter initialEntries={['/post/original']}><CommentCard comment={comment} currentUserId="author" mobileFlat thread detail={detail} /><Location /></MemoryRouter>); }
+const navigationRender = render;
+function renderWithQuery(ui: React.ReactNode) { return navigationRender(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}>{ui}</QueryClientProvider>); }
 afterEach(cleanup);
 describe('reply card interactions', () => {
   it('uses the existing detail typography and full-width body for a selected reply', async () => {
@@ -33,7 +36,7 @@ describe('reply card interactions', () => {
     expect(screen.getByRole('link', { name: 'この返信に返信する' })).toHaveTextContent('0');
   });
   it('shows the saved client alongside the selected reply timestamp', async () => {
-    render(<MemoryRouter><CommentCard comment={{ ...comment, clientName: 'LimeNote for iPhone' }} currentUserId="author" mobileFlat thread detail /></MemoryRouter>);
+    renderWithQuery(<MemoryRouter><CommentCard comment={{ ...comment, clientName: 'LimeNote for iPhone' }} currentUserId="author" mobileFlat thread detail /></MemoryRouter>);
     await waitFor(() => expect(screen.getByText('LimeNote for iPhone')).toBeInTheDocument());
     expect(screen.getByText('LimeNote for iPhone').closest('p')).toHaveClass('post-detail-mobile-meta');
   });

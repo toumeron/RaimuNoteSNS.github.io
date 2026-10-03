@@ -6,6 +6,7 @@ const state = vi.hoisted(() => ({
   userId: 'viewer' as string | null,
   pages: null as Record<string, unknown>[][] | null,
   cursors: [] as string[],
+  authorSelects: [] as string[],
   uploads: vi.fn(), updates: vi.fn(),
 }));
 vi.mock('@/lib/currentUser', () => ({ getCurrentUserId: async () => state.userId }));
@@ -15,7 +16,7 @@ vi.mock('@/lib/supabase', () => ({ supabase: { from: (table: string) => {
   const row = () => ({ id: 'reply', ...state.inserted, created_at: '2026-10-02T00:00:00Z', profiles: { id: 'viewer', username: 'viewer', display_name: 'Viewer' } });
   const builder = {
     insert: (input: Record<string, unknown>) => { state.inserted = input; operation = 'insert'; return builder; },
-    select: (_columns: string, options?: { head?: boolean }) => { head = !!options?.head; return builder; },
+    select: (columns: string, options?: { head?: boolean }) => { head = !!options?.head; if (table === 'comments' && columns.includes('profiles')) state.authorSelects.push(columns); return builder; },
     eq: () => builder,
     order: () => builder,
     range: () => builder,
@@ -33,7 +34,7 @@ vi.mock('@/lib/supabase', () => ({ supabase: { from: (table: string) => {
 import { createComment, getCommentsByPost } from './comments';
 beforeEach(() => {
   state.inserted = null; state.error = null; state.count = 1; state.userId = 'viewer';
-  state.pages = null; state.cursors = [];
+  state.pages = null; state.cursors = []; state.authorSelects = [];
   state.updates.mockReset(); state.uploads.mockReset().mockResolvedValue(['https://example.com/image.png']);
 });
 describe('reply persistence', () => {
@@ -42,6 +43,13 @@ describe('reply persistence', () => {
     state.pages = [Array.from({ length: 1000 }, (_, i) => row(i)), [row(1000)]];
     expect(await getCommentsByPost('original')).toHaveLength(1001);
     expect(state.cursors).toEqual(['created_at.gt.2026-10-02T00:00:00Z,and(created_at.eq.2026-10-02T00:00:00Z,id.gt.999)']);
+  });
+  it('selects the reply author explicitly for both thread reads and new replies', async () => {
+    state.pages = [[{id:'reply',post_id:'original',user_id:'author',profiles:{id:'author'}}]];
+    await getCommentsByPost('original');
+    state.pages = null;
+    await createComment('original','reply');
+    expect(state.authorSelects).toEqual(['*, profiles:profiles!comments_user_id_fkey(*)','*, profiles:profiles!comments_user_id_fkey(*)']);
   });
   it('stores the original post and selected reply parent separately', async () => {
     const result = await createComment('original', { content: ' reply ', parentCommentId: 'parent-reply', imageUrls: ['blob:preview'] });

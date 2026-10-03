@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import type { Session, User as SupabaseUser } from '@supabase/supabase-js';
@@ -30,6 +31,7 @@ const AuthContext = createContext<AuthContextType>({
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const queryClient = useQueryClient();
   const [user, setUser] = useState<CustomUser | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
@@ -41,6 +43,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let alive = true;
+    let cachedViewerId: string | null | undefined;
     let profileUserId: string | null = null;
     let profileTimer: ReturnType<typeof setTimeout> | undefined;
     /**
@@ -83,6 +86,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // causes repeated INITIAL_SESSION events and lock contention.
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
       if (!alive) return;
+      const viewerId = newSession?.user.id ?? null;
+      if (cachedViewerId !== viewerId) {
+        // Never reuse another account's cached restricted posts or quote parents.
+        queryClient.clear();
+        cachedViewerId = viewerId;
+      }
       setSession(newSession);
       setLoading(false);
       const supabaseUser = newSession?.user;
@@ -112,7 +121,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       clearTimeout(profileTimer);
       subscription.unsubscribe();
     };
-  }, []);
+  }, [queryClient]);
 
   return (
     <AuthContext.Provider value={{ user, session, loading, logout }}>

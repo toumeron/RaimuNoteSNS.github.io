@@ -1,3 +1,4 @@
+import { QuotedPost } from '@/components/feed/QuotedPost';
 import { PostOverlayContext } from '@/components/layout/PostOverlayContext';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
@@ -794,11 +795,9 @@ const MAX_IMAGES = 4;
 const MENTION_SEARCH_DEBOUNCE_MS = 180;
 const HASHTAG_SEARCH_DEBOUNCE_MS = 180;
 const SUGGESTION_CACHE_LIMIT = 24;
-const QUOTED_POST_CACHE_LIMIT = 8;
 
 const mentionSuggestionCache = new Map<string, any[]>();
 const hashtagSuggestionCache = new Map<string, any[]>();
-const quotedPostCache = new Map<string, PostWithAuthor>();
 const quotedPostFetches = new Map<string, Promise<PostWithAuthor | null>>();
 
 const normalizeSuggestionQuery = (query: string) => query.trim().toLowerCase();
@@ -823,27 +822,19 @@ const getLimitedCache = <K, V>(map: Map<K, V>, key: K) => {
   return cached;
 };
 
-const getQuotedPostCached = async (postId: string) => {
-  const cached = getLimitedCache(quotedPostCache, postId);
-  if (cached) return cached;
-
-  const pending = quotedPostFetches.get(postId);
+// Share only simultaneous requests for the same viewer. Reopening the composer
+// rechecks visibility so a removed follow or account switch cannot expose a cache.
+const getQuotedPostCached = async (postId: string, viewerId?: string) => {
+  const key = `${viewerId ?? ''}:${postId}`;
+  const pending = quotedPostFetches.get(key);
   if (pending) return pending;
-
   const request = getPostById(postId)
-    .then((post) => {
-      setLimitedCache(quotedPostCache, postId, post, QUOTED_POST_CACHE_LIMIT);
-      return post;
-    })
     .catch((error) => {
       console.error('Fetch quoted post failed:', error);
       return null;
     })
-    .finally(() => {
-      quotedPostFetches.delete(postId);
-    });
-
-  quotedPostFetches.set(postId, request);
+    .finally(() => { quotedPostFetches.delete(key); });
+  quotedPostFetches.set(key, request);
   return request;
 };
 
@@ -1024,7 +1015,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
 
     let cancelled = false;
 
-    getQuotedPostCached(quoteId).then((post) => {
+    getQuotedPostCached(quoteId, user?.id).then((post) => {
       if (cancelled) return;
 
       if (post) {
@@ -1039,7 +1030,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
     return () => {
       cancelled = true;
     };
-  }, [quoteId, initialQuotedPost, setSearchParams]);
+  }, [quoteId, initialQuotedPost, setSearchParams, user?.id]);
 
   useEffect(() => {
     if (initialQuotedPost) {
@@ -1961,9 +1952,9 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
   }, []);
 
   const cancelQuote = useCallback(() => {
-    setSearchParams({});
+    if (!initialQuotedPost) setSearchParams(params => { params.delete('quote'); return params; });
     setQuotedPost(null);
-  }, [setSearchParams]);
+  }, [setSearchParams, initialQuotedPost]);
 
   const submit = async () => {
     if (!user) return;
@@ -2081,7 +2072,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
 
   // 本文入力欄(下線・ハイライト付き)。コンパクト版・全画面版で共有。
   const textareaBlock = (
-    <div className="relative w-full overflow-hidden">
+    <div className="relative w-full shrink-0 overflow-hidden">
       {!content && (
         <div className={cn(
           "absolute inset-0 pointer-events-none px-0 py-2 leading-relaxed text-muted-foreground z-0",
@@ -2179,34 +2170,13 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
 
   // 引用元プレビュー(共有)
   const quotedBlock = quotedPost && (
-    <div className={cn("relative mt-2 overflow-hidden rounded-2xl border border-border/60 bg-muted/20 p-4 transition-all", timelineGlass && "bg-background/35 backdrop-blur-xl")}>
+    <div className="relative">
       {!initialQuotedPost && (
-        <button
-          type="button"
-          onClick={cancelQuote}
-          className="absolute right-2 top-2 z-10 rounded-full bg-background/80 p-1 backdrop-blur hover:bg-background"
-        >
+        <button type="button" onClick={cancelQuote} aria-label="引用を解除" className="absolute right-2 top-2 z-10 rounded-full bg-background/80 p-1 backdrop-blur hover:bg-background">
           <X className="h-4 w-4 text-muted-foreground" />
         </button>
       )}
-      
-      <div className="flex items-center gap-2 mb-1.5">
-        <Avatar className="h-5 w-5">
-          <AvatarImage src={quotedPost.author.avatarUrl} />
-          <AvatarFallback>{quotedPost.author.displayName[0]}</AvatarFallback>
-        </Avatar>
-        <span className="text-sm font-bold text-foreground truncate">{quotedPost.author.displayName}</span>
-        <span className="text-xs text-muted-foreground">@{quotedPost.author.username}</span>
-        <span className="text-xs text-muted-foreground">· {formatRelative(quotedPost.createdAt)}</span>
-      </div>
-      <p className="text-[14px] text-foreground line-clamp-2 leading-snug whitespace-pre-wrap">
-        {quotedPost.content}
-      </p>
-      {quotedPost.imageUrls.length > 0 && (
-        <div className="mt-2 text-xs text-accent font-bold">
-          [画像あり]
-        </div>
-      )}
+      <QuotedPost post={quotedPost} timelineGlass={timelineGlass} compact />
     </div>
   );
 
@@ -2401,7 +2371,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
           </div>
 
           {/* 本文エリア(スクロール可能) */}
-          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-3" ref={containerRef}>
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3" ref={containerRef}>
             <div className="relative mb-2 flex items-center gap-3">
               <Avatar className="h-11 w-11 border-2 border-primary/30 shrink-0">
                 <AvatarImage src={user.avatarUrl} alt={user.displayName} />
@@ -2541,7 +2511,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
 // 新規投稿モーダル/全画面コンポーズ。
 // document.body へポータル描画することで、祖先(Provider群)のCSSに影響されず
 // 常に画面全体を基準に固定表示できるようにしている(iPhone PWAやモバイル幅Chromeでの表示崩れ対策)。
-const PostOverlay = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) => {
+export const PostOverlay = ({ isOpen, onClose, initialQuotedPost }: { isOpen: boolean; onClose: () => void; initialQuotedPost?: PostWithAuthor }) => {
   const isMobile = useIsMobileViewport();
 
   useEffect(() => {
@@ -2573,7 +2543,7 @@ const PostOverlay = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
       body.style.overflow = 'hidden';
       body.style.overscrollBehavior = 'none';
       body.style.position = 'fixed';
-      body.style.top = `-${scrollY}px`;
+      body.style.top = `-${lockedScrollY}px`;
       body.style.left = '0';
       body.style.right = '0';
       body.style.width = '100%';
@@ -2599,26 +2569,35 @@ const PostOverlay = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
     };
   }, [isOpen, isMobile]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !document.querySelector('[data-limenote-crop-editor-lock]')) onClose();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen || typeof document === 'undefined') return null;
 
   if (isMobile) {
     // モバイルはオーバーレイではなく全画面で表示する
     return createPortal(
-      <div className="fixed inset-0 z-[2147483000] flex h-[100dvh] max-h-[100dvh] flex-col overflow-hidden overscroll-none bg-background">
-        <PostComposer fullScreen onSuccess={onClose} onCancel={onClose} />
+      <div role="dialog" aria-modal="true" aria-label={initialQuotedPost ? "引用リポスト" : "新規ポスト"} onClick={event => event.stopPropagation()} className="fixed inset-0 z-[2147483000] flex h-[100dvh] max-h-[100dvh] flex-col overflow-hidden overscroll-none bg-background">
+        <PostComposer fullScreen initialQuotedPost={initialQuotedPost} onSuccess={onClose} onCancel={onClose} />
       </div>,
       document.body
     );
   }
 
   return createPortal(
-    <div role="dialog" aria-modal="true" aria-label="新規ポスト" className="fixed inset-0 z-[2147483000] flex items-start justify-center bg-black/50 p-4 pt-16 sm:items-center sm:pt-4 overflow-y-auto">
+    <div role="dialog" aria-modal="true" aria-label={initialQuotedPost ? "引用リポスト" : "新規ポスト"} onClick={event => event.stopPropagation()} className="fixed inset-0 z-[2147483000] flex items-start justify-center bg-black/50 p-4 pt-16 sm:items-center sm:pt-4 overflow-y-auto">
       <div 
         className="fixed inset-0" 
         onClick={onClose} 
       />
       <div className="relative w-full max-w-xl animate-in fade-in zoom-in-95 duration-200">
-        <PostComposer onSuccess={onClose} onCancel={onClose} />
+        <PostComposer initialQuotedPost={initialQuotedPost} onSuccess={onClose} onCancel={onClose} />
       </div>
     </div>,
     document.body
@@ -2658,6 +2637,11 @@ const FloatingComposeButton = ({ hidden, onOpen }: { hidden: boolean; onOpen: ()
 // コンポーネントツリー内で useLocation を利用できるようにするためのラッパーコンポーネント
 const AppContent = () => {
   const [isPostModalOpen, setPostModalOpen] = useState(false);
+  const [overlayQuotedPost, setOverlayQuotedPost] = useState<PostWithAuthor | undefined>();
+  const openPostOverlay = (quotedPost?: PostWithAuthor) => {
+    setOverlayQuotedPost(quotedPost);
+    setPostModalOpen(true);
+  };
   const isFABVisible = useScrollDirection();
   const { pathname } = useLocation();
 
@@ -2673,7 +2657,7 @@ const isMediaPage = lowerPath === "/media" || lowerPath.startsWith("/media/");
 const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage || isMediaPage || isPostDetailPage;
 
   return (
-    <PostOverlayContext.Provider value={() => setPostModalOpen(true)}>
+    <PostOverlayContext.Provider value={openPostOverlay}>
       <ScrollToTop />
       
       <AuthProvider>
@@ -2705,10 +2689,11 @@ const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage |
           <Route path="*" element={<NotFound />} />
         </Routes>
 
-        <FloatingComposeButton hidden={shouldHideFAB} onOpen={() => setPostModalOpen(true)} />
+        <FloatingComposeButton hidden={shouldHideFAB} onOpen={() => openPostOverlay()} />
 
         <PostOverlay 
           isOpen={isPostModalOpen} 
+          initialQuotedPost={overlayQuotedPost}
           onClose={() => setPostModalOpen(false)} 
         />
 

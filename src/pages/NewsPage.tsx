@@ -1,3 +1,4 @@
+import './news-history.css';
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { formatRelative } from '@/lib/format';
@@ -90,7 +91,7 @@ export default function NewsPage() {
 
         {/* 履歴リスト（展開時） */}
         {showHistory && (
-          <div className="mt-2 animate-in slide-in-from-bottom-2 duration-300">
+          <div data-lime-news-history className="mt-2 news-history-enter">
             <div className="flex items-center justify-between mb-4 px-2">
               <span className="text-sm font-bold text-gray-500 dark:text-gray-400">過去のニュース</span>
               <button 

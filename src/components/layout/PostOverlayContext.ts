@@ -1,3 +1,4 @@
 import { createContext, useContext } from 'react';
-export const PostOverlayContext = createContext<() => void>(() => {});
+import type { PostWithAuthor } from '@/types';
+export const PostOverlayContext = createContext<(quotedPost?: PostWithAuthor) => void>(() => {});
 export const usePostOverlay = () => useContext(PostOverlayContext);
