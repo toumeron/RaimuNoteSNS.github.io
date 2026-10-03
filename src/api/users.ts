@@ -2,7 +2,7 @@ import type { User } from '@/types';
 import { supabase } from '@/lib/supabase';
 
 // Keep the fields returned by toUser; exclude unrelated profile settings.
-const USER_SELECT_COLUMNS = 'id, username, display_name, bio, avatar_url, cover_url, created_at, is_official, emoji_effect, bot_enabled, bot_prompt';
+const USER_SELECT_COLUMNS = 'id, username, display_name, bio, location, avatar_url, cover_url, created_at, is_official, emoji_effect, bot_enabled, bot_prompt';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function toUser(row: any): User {
@@ -11,6 +11,7 @@ function toUser(row: any): User {
     username: row.username as string,
     displayName: (row.display_name ?? '') as string,
     bio: (row.bio ?? '') as string,
+    location: (row.location ?? '') as string,
     avatarUrl: (row.avatar_url ?? '') as string,
     coverUrl: (row.cover_url ?? '') as string,
     createdAt: (row.created_at ?? '') as string,
@@ -49,11 +50,12 @@ export async function getUserById(id: string): Promise<User | null> {
  */
 export async function updateProfile(
   id: string,
-  patch: Partial<Pick<User, 'displayName' | 'bio' | 'avatarUrl' | 'coverUrl' | 'emojiEffect' | 'bot_enabled' | 'bot_prompt'>>,
+  patch: Partial<Pick<User, 'displayName' | 'bio' | 'location' | 'avatarUrl' | 'coverUrl' | 'emojiEffect' | 'bot_enabled' | 'bot_prompt'>>,
 ): Promise<User> {
   const dbPatch: Record<string, unknown> = {};
   if (patch.displayName !== undefined) dbPatch.display_name = patch.displayName;
   if (patch.bio !== undefined) dbPatch.bio = patch.bio;
+  if (patch.location !== undefined) dbPatch.location = patch.location.trim();
   if (patch.emojiEffect !== undefined) dbPatch.emoji_effect = patch.emojiEffect;
   // bot関連の値をDBのカラム名（スネークケース）にマッピングして追加
   if (patch.bot_enabled !== undefined) dbPatch.bot_enabled = patch.bot_enabled;

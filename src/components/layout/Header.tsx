@@ -44,7 +44,7 @@ type TimelineChromeState = {
 // 最新/フォロー中/トレンドタブの選択状態。タブUI自体はFeed.tsxから移設してここに置く。
 // Feed.tsx側は 'lime-active-feed-tab-changed' イベントとこのlocalStorageキーを
 // 監視するだけで、実際の切り替えはこちら(Header)が起点になる。
-type FeedTabValue = 'all' | 'following' | 'trending';
+type FeedTabValue = 'all' | 'following' | 'recommended' | 'trending';
 
 const ACTIVE_FEED_TAB_STORAGE_KEY = 'lime_active_feed_tab';
 const ACTIVE_FEED_TAB_CHANGED_EVENT = 'lime-active-feed-tab-changed';
@@ -54,6 +54,7 @@ const ACTIVE_FEED_TAB_CHANGED_EVENT = 'lime-active-feed-tab-changed';
 const FEED_TABS: Array<{ value: FeedTabValue; label: string }> = [
   { value: 'all', label: '最新' },
   { value: 'following', label: 'フォロー中' },
+  { value: 'recommended', label: 'おすすめ' },
   { value: 'trending', label: 'トレンド' },
 ];
 
@@ -115,7 +116,7 @@ function readStoredSearchPageTab(): SearchPageTabValue {
 function readStoredActiveFeedTab(): FeedTabValue {
   if (typeof window === 'undefined') return 'all';
   const stored = localStorage.getItem(ACTIVE_FEED_TAB_STORAGE_KEY);
-  return stored === 'following' ? 'following' : stored === 'trending' ? 'trending' : 'all';
+  return stored === 'following' ? 'following' : stored === 'recommended' ? 'recommended' : stored === 'trending' ? 'trending' : 'all';
 }
 
 // --- 検索サジェスト(モバイル・ヘッダー検索バー用) ---------------------------------
@@ -3329,7 +3330,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
               アバターが右端に固定されるよう、枠自体は常に確保しておく)。 */}
           <div data-lime-desktop-feed-tabs className="hidden sm:order-2 sm:flex sm:min-w-0 sm:flex-1 sm:justify-center">
             {showFeedTabs && (
-              <TabsList className="grid w-full max-w-[300px] grid-cols-3 rounded-2xl bg-muted/50 p-1">
+              <TabsList className="grid w-full max-w-[360px] grid-cols-4 rounded-2xl bg-muted/50 p-1">
                 {FEED_TABS.map((tab) => (
                   <TabsTrigger
                     key={tab.value}
@@ -3380,7 +3381,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
                     value={tab.value}
                     onClick={() => handleFeedTabClick(tab.value)}
                     onDoubleClick={() => handleFeedTabDoubleClick(tab.value)}
-                    className="feed-tabs-trigger relative h-10 min-w-[86px] flex-1 rounded-none border-0 bg-transparent px-3 text-base leading-none shadow-none outline-none transition-colors duration-150 hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=inactive]:bg-transparent"
+                    className="feed-tabs-trigger relative h-10 min-w-0 flex-1 rounded-none border-0 bg-transparent px-0 text-base max-[360px]:text-sm leading-none shadow-none outline-none transition-colors duration-150 hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=inactive]:bg-transparent"
                   >
                     <span
                       ref={registerFeedTabLabelRef(tab.value)}

@@ -260,6 +260,7 @@ export const useCreateComment = (postId: string) => {
       return { prev, prevPost };
     },
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['posts', 'user'] });
       qc.invalidateQueries({ queryKey: commentsKey(postId) });
       qc.invalidateQueries({ queryKey: feedKey });
       qc.invalidateQueries({ queryKey: postKey(postId) });

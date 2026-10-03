@@ -1,4 +1,4 @@
-import { ArrowLeft, CalendarDays, Link2, MoreHorizontal, Radio, Search, Share2, UserCheck, UserPlus, X } from 'lucide-react';
+import { ArrowLeft, CalendarDays, MapPin, Link2, MoreHorizontal, Radio, Search, Share2, UserCheck, UserPlus, X } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import {
@@ -8,6 +8,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { FollowButton } from './FollowButton';
+import { useQuery } from '@tanstack/react-query';
+import { getProfileActivityCount } from '@/api/profile-activity';
 import { useFollowStats } from '@/hooks/useProfile';
 import { useAuth } from '@/hooks/useAuth';
 import { useJoinMembership, useLeaveMembership, useMembershipStatus } from '@/hooks/useMembership';
@@ -79,11 +81,17 @@ export function ProfileHeader({
   isBlueskyProfile = false,
 }: {
   user: User;
-  blueskyStats?: { following: number; followers: number };
+  blueskyStats?: { following: number; followers: number; posts?: number };
   isBlueskyProfile?: boolean;
 }) {
   const { user: me } = useAuth();
   const { data: stats } = useFollowStats(user.id);
+  const { data: activityCount } = useQuery({
+    queryKey: ['posts', 'user', user.id, 'activity-count', me?.id ?? null],
+    queryFn: () => getProfileActivityCount(user.id),
+    enabled: !isBlueskyProfile,
+    staleTime: 0,
+  });
   const isMe = me?.id === user.id;
   // 自分がこのユーザーをフォローしているか（通知ベルボタンの表示条件に使用）
   // FollowButton と同じく useFollowStats の followedByMe を参照する。
@@ -511,11 +519,17 @@ export function ProfileHeader({
             {renderContentWithMentions(user.bio)}
           </p>
         )}
-        <div className="mt-3 flex items-center gap-1.5 text-[13px] leading-5 text-muted-foreground">
-          <CalendarDays className="h-4 w-4 shrink-0" />
-          <span>{dayjs(user.createdAt).format('YYYY年M月')} から参加</span>
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] leading-5 text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5">
+            <CalendarDays className="h-4 w-4 shrink-0" />
+            <span>{dayjs(user.createdAt).format('YYYY年M月')} から参加</span>
+          </span>
+          {user.location?.trim() && <span className="inline-flex min-w-0 max-w-full items-center gap-1.5" data-lime-profile-location>
+            <MapPin className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <span className="break-words [overflow-wrap:anywhere]">{user.location}</span>
+          </span>}
         </div>
-        <div className="mt-4 flex items-center gap-5 text-sm">
+        <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
           {/* items-baseline に変更して数字とテキストの文字底を統一 */}
           <Link
             to={`/u/${user.username}/followers_following?tab=following`}
@@ -535,6 +549,12 @@ export function ProfileHeader({
             </span>
             <span className="text-muted-foreground">フォロワー</span>
           </Link>
+          <div className="flex items-baseline gap-1" data-lime-profile-activity-count>
+            <span className="font-display text-base font-bold tabular-nums text-foreground">
+              {(isBlueskyProfile ? blueskyStats?.posts : activityCount) == null ? '—' : formatDisplayCount(isBlueskyProfile ? blueskyStats?.posts ?? 0 : activityCount ?? 0)}
+            </span>
+            <span className="text-muted-foreground">投稿</span>
+          </div>
         </div>
       </div>
       </section>

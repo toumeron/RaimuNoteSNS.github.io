@@ -17,7 +17,7 @@ export function AnimatedCount({count}:{count:number}) {
     const timer=window.setTimeout(()=>setTransition(null),320);
     return ()=>window.clearTimeout(timer);
   },[transition]);
-  const format=(n:number)=> n>=10000 ? `${(n/10000).toFixed(1).replace(/\.0$/,'')}万` : n.toLocaleString();
+  const format=(n:number)=> n===0 ? '' : n>=10000 ? `${(n/10000).toFixed(1).replace(/\.0$/,'')}万` : n.toLocaleString();
   return <span aria-label={format(value)} className={`repost-count ${transition ? transition.value>transition.old ? 'is-up' : 'is-down' : ''}`}>
     {transition ? <span key={transition.version} className="repost-count-layers" aria-hidden="true"><span className="repost-count-old">{format(transition.old)}</span><span className="repost-count-new">{format(transition.value)}</span></span> : <span>{format(value)}</span>}
   </span>;

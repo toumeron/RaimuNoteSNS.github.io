@@ -1,3 +1,5 @@
+import type { PostWithAuthor } from '@/types';
+import { recordRecommendationLike } from '@/lib/recommendations';
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { Heart } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -13,6 +15,7 @@ import {
 } from '@/lib/bluesky';
 
 const formatDisplayCount = (count: number = 0) => {
+  if (count <= 0) return '';
   const n = Number(count) || 0; // 確実に数値に変換
   if (n >= 10000) return (n / 10000).toFixed(1).replace(/\.0$/, '') + '万';
   return n.toLocaleString();
@@ -277,6 +280,7 @@ const ensureTwitterLikeStyles = () => {
 // 常に失敗しトースト等も出ないため、UI自体を出し分けるのは呼び出し側の責務)。
 export interface LikeButtonBlueskyTarget {
   postUri: string;
+  preferencePost?: PostWithAuthor;
 }
 
 export function LikeButton({
@@ -377,6 +381,7 @@ export function LikeButton({
       }
 
       const currentLiked = Boolean(data);
+      if (type === 'post') recordRecommendationLike({ id: postId, content: '' } as PostWithAuthor, currentLiked, userId);
       setDisplayLiked(currentLiked);
       stateRef.current.liked = currentLiked;
       hasLocalStateRef.current = true;
@@ -404,6 +409,10 @@ export function LikeButton({
 
       if (!hasLocalStateRef.current) {
         const currentLiked = Boolean(state.likeUri);
+        if (currentLiked && bluesky.preferencePost) {
+          const post = bluesky.preferencePost;
+          void getCurrentUserId().then(viewerId => recordRecommendationLike(post, true, viewerId)).catch(() => {});
+        }
         setDisplayLiked(currentLiked);
         stateRef.current.liked = currentLiked;
         hasLocalStateRef.current = true;
@@ -621,6 +630,10 @@ export function LikeButton({
         await unlikeBlueskyPost(likeUri);
         blueskyLikeUriRef.current = null;
       }
+      if (bluesky.preferencePost) {
+        const post = bluesky.preferencePost;
+        void getCurrentUserId().then(viewerId => recordRecommendationLike(post, willBeLiked, viewerId)).catch(() => {});
+      }
     } catch (err) {
       console.error('Bluesky Like action failed:', err);
       stateRef.current.liked = wasLiked;
@@ -698,6 +711,8 @@ export function LikeButton({
 
         if (error) throw error;
       }
+
+      if (type === 'post') recordRecommendationLike({ id: postId, content: '' } as PostWithAuthor, willBeLiked, userId);
 
       // DB反映を待つ
       const latestCount = await syncLatestCount();

@@ -409,6 +409,9 @@ for (const width of [390, 1440]) {
     await page.goto('post/post-0');
     const row = page.locator('.post-detail-mobile-action-row');
     await expect(row).toBeVisible();
+    await expect(row.locator('.twitter-like-count-static')).toHaveText('');
+    await expect(row.locator('[data-lime-post-action="repost"]')).toHaveText('');
+    await expect(row.locator('.post-detail-mobile-reply-count')).toHaveText('');
     const buttons = row.locator('button');
     await expect(buttons.nth(0).locator('.twitter-like-heart')).toBeVisible();
     await expect(buttons.nth(1)).toHaveAttribute('aria-label', 'リポスト');
@@ -555,6 +558,11 @@ for (const width of [390,1440]) {
     await page.goto('./');
     const repost=page.getByRole('button',{name:'リポスト',exact:true});
     await expect(repost).toBeVisible();
+    await expect(repost).toHaveText('');
+    const externalCard=page.locator('[data-lime-post-card]').first();
+    await expect(externalCard.locator('svg.lucide-plus')).toHaveCount(0);
+    await expect(externalCard.locator('svg.lucide-heart').locator('..')).toHaveText('');
+    await expect(externalCard.locator('svg.lucide-message-circle').locator('..')).toHaveText('');
     await repost.click();
     await expect(page.getByRole('menuitem',{name:'リポストする',exact:true})).toBeEnabled();
     await page.getByRole('menuitem',{name:'引用リポスト',exact:true}).click();
@@ -673,5 +681,173 @@ for (const width of [390,1440]) {
     await expect(profileThread).toContainText(child.content);
     expect(selects).toContain('*,profiles:profiles!comments_user_id_fkey(*)');
     expect(errors).toEqual([]);
+  });
+}
+
+for(const width of [320,390,768,1024,1440]) {
+  test(`recommended tab mixes services and prioritizes the viewer interests at ${width}px`,async({page})=>{
+    await page.setViewportSize({width,height:900});
+    const candidates=[{...posts[0],id:'cat-lime',content:'猫の写真を投稿しました',imageUrls:[]},{...posts[1],id:'sports-lime',content:'サッカー速報',likesCount:50000}];
+    await page.route('**/src/api/posts.ts*',route=>route.fulfill({contentType:'application/javascript',body:`const posts=${JSON.stringify(candidates)};
+      export const getFeed=async()=>posts;export const getFollowingFeed=async()=>[posts[1]];export const getPostsByUser=getFeed;export const getProfilePosts=getFeed;export const getLikedPostsByUser=getFeed;export const searchPosts=getFeed;export const getPostById=async()=>posts[0];export const createPost=async()=>posts[0];export const toggleLike=async()=>({liked:true});export const toggleRepost=async()=>({reposted:true});export const deletePost=async()=>{};export const getPostLikers=async()=>[];`}));
+    await page.route('**/*.supabase.co/rest/v1/likes*',route=>{
+      const select=new URL(route.request().url()).searchParams.get('select') ?? '';
+      if(select.includes('posts:post_id(')) return route.fulfill({contentType:'application/json',body:JSON.stringify([{posts:{user_id:'cat-author',content:'猫の写真が好きです'}}])});
+      return route.fallback();
+    });
+    await page.route('**/public.api.bsky.app/**',route=>{
+      if(!route.request().url().includes('searchPosts')) return route.fulfill({contentType:'application/json',body:JSON.stringify({posts:[],feed:[],actors:[]})});
+      return route.fulfill({contentType:'application/json',body:JSON.stringify({posts:[{
+        uri:'at://did:plc:cats/app.bsky.feed.post/cat',cid:'cat-cid',author:{did:'did:plc:cats',handle:'cats.bsky.social',displayName:'Cats'},
+        record:{$type:'app.bsky.feed.post',text:'猫の写真をBlueskyから',createdAt:new Date().toISOString(),langs:['ja']},likeCount:1000,replyCount:0
+      }]})});
+    });
+    await page.goto('./');
+    const visibleTabs=page.getByRole('tab');
+    await expect(visibleTabs).toHaveText(['最新','フォロー中','おすすめ','トレンド']);
+    expect(await visibleTabs.evaluateAll(tabs=>tabs.every(tab=>{const label=tab.querySelector('span');return !label || label.getBoundingClientRect().width<=tab.getBoundingClientRect().width;}))).toBe(true);
+    await page.getByRole('tab',{name:'おすすめ',exact:true}).click();
+    await expect(page.getByRole('tab',{name:'おすすめ',exact:true})).toHaveAttribute('data-state','active');
+    const cards=page.locator('[data-lime-post-card]');
+    await expect(cards).toHaveCount(3);
+    await expect(cards.first()).toContainText('猫の写真');
+    await expect(page.getByText('猫の写真をBlueskyから',{exact:true})).toBeVisible();
+    await expect(page.getByText('猫の写真を投稿しました',{exact:true})).toBeVisible();
+    await expect(cards.last()).toContainText('サッカー速報');
+    await page.getByRole('tab',{name:'フォロー中',exact:true}).click();
+    await expect(cards).toHaveCount(1);await expect(cards).toContainText('サッカー速報');
+    await page.getByRole('tab',{name:'おすすめ',exact:true}).click();
+    await expect(cards).toHaveCount(3);
+    await page.reload();
+    await expect(page.getByRole('tab',{name:'おすすめ',exact:true})).toHaveAttribute('data-state','active');
+    await expect(cards).toHaveCount(3);
+    expect(await visibleTabs.evaluateAll(tabs=>tabs.every(tab=>{const bounds=tab.getBoundingClientRect();return bounds.left>=0 && bounds.right<=innerWidth;}))).toBe(true);
+    if(width>=390) expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  });
+}
+
+for(const width of [390,1440]) {
+  test(`recommendation scoring discovers low-like relevant posts beyond the popular pool at ${width}px`,async({page})=>{
+    await page.setViewportSize({width,height:900});
+    const cat={...posts[0],id:'niche-lime-cat',userId:'22222222-2222-2222-2222-222222222222',content:'猫の写真。まだいいねゼロのLimeNote投稿',imageUrls:[],likesCount:0,author:{...user,id:'22222222-2222-2222-2222-222222222222'}};
+    const sport={...posts[1],id:'general-sport',content:'サッカー速報。一般的な人気投稿',likesCount:50000};
+    await page.route('**/src/api/posts.ts*',route=>route.fulfill({contentType:'application/javascript',body:`const cat=${JSON.stringify(cat)},sport=${JSON.stringify(sport)};
+      export const getFeed=async()=>[sport];export const getFollowingFeed=getFeed;export const getPostsByUser=async()=>[];export const getProfilePosts=getFeed;export const getLikedPostsByUser=getFeed;
+      export const searchPosts=async(query)=>{window.__recommendationTopics=[...(window.__recommendationTopics??[]),query];return query==='猫'||query==='写真'?[cat]:[];};
+      export const getPostById=async()=>cat;export const createPost=async()=>cat;export const toggleLike=async()=>({liked:true});export const toggleRepost=async()=>({reposted:true});export const deletePost=async()=>{};export const getPostLikers=async()=>[];`}));
+    await page.route('**/*.supabase.co/rest/v1/likes*',route=>{
+      const select=new URL(route.request().url()).searchParams.get('select') ?? '';
+      if(select.includes('posts:post_id(')) return route.fulfill({contentType:'application/json',body:JSON.stringify([{created_at:new Date().toISOString(),posts:{user_id:cat.userId,content:'猫の写真'}}])});
+      return route.fallback();
+    });
+    await page.route('**/public.api.bsky.app/**',route=>{
+      const url=new URL(route.request().url());
+      if(!url.pathname.endsWith('searchPosts')) return route.fulfill({contentType:'application/json',body:'{"feed":[],"posts":[],"actors":[]}'});
+      const relevant=['猫','写真'].includes(url.searchParams.get('q') ?? '');
+      return route.fulfill({contentType:'application/json',body:JSON.stringify({posts:[{
+        uri:`at://did:plc:${relevant?'cats':'sport'}/app.bsky.feed.post/fixture`,cid:'cid',author:{did:`did:plc:${relevant?'cats':'sport'}`,handle:`${relevant?'cats':'sport'}.bsky.social`,displayName:relevant?'Cats':'Sports'},
+        record:{$type:'app.bsky.feed.post',text:relevant?'猫の写真。まだいいねゼロのBluesky投稿':'サッカー速報の人気Bluesky投稿',createdAt:new Date().toISOString(),langs:['ja']},likeCount:relevant?0:100000,replyCount:0
+      }]})});
+    });
+    await page.goto('./');await page.getByRole('tab',{name:'おすすめ',exact:true}).click();
+    const cards=page.locator('[data-lime-post-card]');
+    await expect(cards).toHaveCount(4);
+    await expect(cards.nth(0)).toContainText('猫の写真');await expect(cards.nth(1)).toContainText('猫の写真');
+    await expect(page.getByText('猫の写真。まだいいねゼロのBluesky投稿',{exact:true})).toBeVisible();
+    expect(await page.evaluate(()=>(window as any).__recommendationTopics)).toContain('猫');
+    await expect.poll(()=>page.evaluate(()=>Object.keys(JSON.parse(localStorage.getItem('lime_recommendation_impressions:11111111-1111-1111-1111-111111111111') ?? '{}')).length)).toBeGreaterThan(0);
+    await page.getByRole('tab',{name:'最新',exact:true}).click();
+    await expect(cards).toHaveCount(1);await expect(cards).toContainText('一般的な人気投稿');
+  });
+}
+
+for (const width of [390,1440]) {
+  test(`profile shows the aggregate activity count after followers at ${width}px`,async({page})=>{
+    await page.setViewportSize({width,height:900});
+    await page.route('**/*.supabase.co/rest/v1/rpc/get_profile_activity_count',route=>route.fulfill({contentType:'application/json',body:'15'}));
+    await page.goto('./u/lime');
+    const count=page.locator('[data-lime-profile-activity-count]');
+    await expect(count).toHaveText('15投稿');
+    const follower=page.getByRole('link',{name:/フォロワー/}).first();
+    const followerBounds=await follower.boundingBox(),countBounds=await count.boundingBox();
+    expect(countBounds!.x).toBeGreaterThan(followerBounds!.x);
+    expect(Math.abs(countBounds!.y-followerBounds!.y)).toBeLessThan(5);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  });
+  test(`recommendations exclude liked and three-times-viewed posts across reloads at ${width}px`,async({page})=>{
+    await page.setViewportSize({width,height:900});
+    await page.route('**/*.supabase.co/rest/v1/likes*',route=>{
+      const url=new URL(route.request().url());
+      if((url.searchParams.get('select') ?? '').includes('posts:post_id(')) return route.fulfill({contentType:'application/json',body:JSON.stringify([{created_at:new Date().toISOString(),posts:{id:'post-1',user_id:user.id,content:'フォロー中の投稿'}}])});
+      if(url.searchParams.get('post_id')==='eq.post-1' && (route.request().headers().accept ?? '').includes('vnd.pgrst.object')) return route.fulfill({contentType:'application/json',body:JSON.stringify({user_id:user.id})});
+      return route.fallback();
+    });
+    await page.addInitScript(({viewerId})=>{
+      const key=`lime_recommendation_impressions:${viewerId}`;
+      if(!localStorage.getItem(key)) localStorage.setItem(key,JSON.stringify({'post-0':{at:Date.now(),count:3}}));
+      localStorage.setItem(`lime_recommendation_likes:${viewerId}`,JSON.stringify([{id:'post-1',content:'テスト投稿 1'}]));
+    },{viewerId:user.id});
+    await page.goto('./');
+    await page.getByRole('tab',{name:'おすすめ',exact:true}).click();
+    await expect(page.getByRole('tab',{name:'おすすめ',exact:true})).toHaveAttribute('data-state','active');
+    await expect(page.getByText('画像付きの投稿',{exact:true})).toHaveCount(0);
+    await expect(page.getByText('フォロー中の投稿',{exact:true})).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByRole('tab',{name:'おすすめ',exact:true})).toHaveAttribute('data-state','active');
+    await expect(page.locator('[data-lime-post-card]')).toHaveCount(0);
+  });
+}
+
+for(const width of [390,1440]) {
+  test(`freeform profile location saves, survives reload and can be cleared at ${width}px`,async({page})=>{
+    await page.setViewportSize({width,height:900});
+    await page.route('**/src/lib/supabase.ts*',async route=>{
+      const response=await route.fetch();
+      await route.fulfill({response,body:(await response.text())+`\nsupabase.auth.getUser=async()=>({data:{user:{id:'${user.id}'}},error:null});`});
+    });
+    let location='';
+    const patches:Record<string,unknown>[]=[];
+    await page.route('**/*.supabase.co/rest/v1/profiles*',route=>{
+      if(route.request().method()==='PATCH') {const patch=route.request().postDataJSON();patches.push(patch);if('location' in patch) location=patch.location;}
+      const row={...profile,location};
+      const single=(route.request().headers().accept ?? '').includes('vnd.pgrst.object');
+      return route.fulfill({contentType:'application/json',body:JSON.stringify(single?row:[row])});
+    });
+    await page.route('**/*.supabase.co/rest/v1/rpc/get_profile_activity_count',route=>route.fulfill({contentType:'application/json',body:'15'}));
+    await page.goto('./u/lime');
+    await expect(page.locator('[data-lime-profile-activity-count]')).toHaveText('15投稿');
+    await expect(page.locator('[data-lime-profile-location]')).toHaveCount(0);
+    await page.goto('./settings');
+    await page.getByLabel('場所',{exact:true}).fill('ホットプレート');
+    await page.getByRole('button',{name:'保存する',exact:true}).click();
+    await expect.poll(()=>patches.at(-1)?.location).toBe('ホットプレート');
+    await page.goto('./u/lime');
+    const field=page.locator('[data-lime-profile-location]');
+    await expect(field).toHaveText('ホットプレート');
+    await expect(field.locator('svg.lucide-map-pin')).toBeVisible();
+    await expect(field.locator('script')).toHaveCount(0);
+    const joined=page.getByText('2026年10月 から参加',{exact:true});
+    await expect(joined).toBeVisible();
+    const joinedBox=await joined.boundingBox(),locationBox=await field.boundingBox();
+    expect(locationBox!.x).toBeGreaterThan(joinedBox!.x);
+    expect(Math.abs(locationBox!.y-joinedBox!.y)).toBeLessThan(5);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await page.reload();await expect(field).toHaveText('ホットプレート');
+    await page.goto('./settings');
+    await expect(page.getByLabel('場所',{exact:true})).toHaveValue('ホットプレート');
+    await page.getByLabel('場所',{exact:true}).fill('ホットプレート <script>text</script>');
+    await page.getByRole('button',{name:'保存する',exact:true}).click();
+    await expect.poll(()=>patches.at(-1)?.location).toBe('ホットプレート <script>text</script>');
+    await page.goto('./u/lime');
+    await expect(field).toHaveText('ホットプレート <script>text</script>');
+    await expect(field.locator('script')).toHaveCount(0);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await page.goto('./settings');
+    await expect(page.getByLabel('場所',{exact:true})).toHaveValue('ホットプレート <script>text</script>');
+    await page.getByLabel('場所',{exact:true}).fill('');
+    await page.getByRole('button',{name:'保存する',exact:true}).click();
+    await expect.poll(()=>patches.at(-1)?.location).toBe('');
+    await page.goto('./u/lime');
+    await expect(page.locator('[data-lime-profile-location]')).toHaveCount(0);
   });
 }

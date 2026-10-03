@@ -47,6 +47,7 @@ import {
 const schema = z.object({
   displayName: z.string().trim().min(1, '表示名を入力してください').max(30, '30文字以内で入力してください'),
   bio: z.string().max(160, '自己紹介は160文字以内で入力してください'),
+  location: z.string().trim().max(100, '場所は100文字以内で入力してください'),
 });
 
 interface CustomEmoji {
@@ -470,6 +471,8 @@ export default function Settings() {
 
   const [displayName, setDisplayName] = useState(user?.displayName ?? '');
   const [bio, setBio] = useState(user?.bio ?? '');
+  const [location, setLocation] = useState(user?.location ?? '');
+  const [isProfileLoading, setIsProfileLoading] = useState(true);
   const [avatarUrl, setAvatarUrl] = useState(user?.avatarUrl ?? '');
   const [coverUrl, setCoverUrl] = useState(user?.coverUrl ?? '');
   const [timelineBackgroundUrl, setTimelineBackgroundUrl] = useState(
@@ -564,6 +567,7 @@ export default function Settings() {
   };
 
   const fetchProfileForSettings = async () => {
+    setIsProfileLoading(true);
     try {
       // 設定画面だけを直接開いてもプロフィール画面の読み込み結果に依存しないよう、
       // Supabaseから現在ユーザーのプロフィールを直接取得する。
@@ -575,7 +579,7 @@ export default function Settings() {
 
       const { data, error } = await supabase
         .from('profiles')
-        .select('display_name, bio, avatar_url, cover_url, emoji_effect, bot_enabled, bot_prompt')
+        .select('display_name, bio, location, avatar_url, cover_url, emoji_effect, bot_enabled, bot_prompt')
         .eq('id', userId)
         .maybeSingle();
 
@@ -584,6 +588,7 @@ export default function Settings() {
 
       setDisplayName(data.display_name ?? '');
       setBio(data.bio ?? '');
+      setLocation(data.location ?? '');
       setAvatarUrl(data.avatar_url ?? '');
       setCoverUrl(data.cover_url ?? '');
       setBotEnabled(data.bot_enabled ?? false);
@@ -591,6 +596,8 @@ export default function Settings() {
       setEmojiEffect(data.emoji_effect ?? localStorage.getItem('lime_emoji_pref') ?? '');
     } catch (err) {
       console.error('Fetch Profile For Settings Error:', err);
+    } finally {
+      setIsProfileLoading(false);
     }
   };
 
@@ -637,6 +644,7 @@ export default function Settings() {
 
     setDisplayName(user.displayName ?? '');
     setBio(user.bio ?? '');
+    setLocation(user.location ?? '');
     setAvatarUrl(user.avatarUrl ?? '');
     setCoverUrl(user.coverUrl ?? '');
 
@@ -1189,7 +1197,7 @@ export default function Settings() {
   };
 
   const submit = async () => {
-    const parsed = schema.safeParse({ displayName, bio });
+    const parsed = schema.safeParse({ displayName, bio, location });
 
     if (!parsed.success) {
       const fe: Record<string, string> = {};
@@ -1212,6 +1220,7 @@ export default function Settings() {
       await mutateAsync({
         displayName,
         bio,
+        location: location.trim(),
         avatarUrl,
         coverUrl,
         emojiEffect,
@@ -1312,9 +1321,22 @@ export default function Settings() {
               {errors.bio && <p className="text-xs text-destructive">{errors.bio}</p>}
             </div>
 
+            <div className="space-y-1.5">
+              <Label htmlFor="profile-location">場所</Label>
+              <Input
+                id="profile-location"
+                disabled={isProfileLoading}
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                maxLength={100}
+                className="rounded-full"
+              />
+              {errors.location && <p className="text-xs text-destructive">{errors.location}</p>}
+            </div>
+
             <Button
               onClick={submit}
-              disabled={isPending}
+              disabled={isPending || isProfileLoading}
               className="w-full rounded-full bg-gradient-primary py-6 font-bold shadow-soft hover:shadow-pop"
             >
               {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : '保存する'}

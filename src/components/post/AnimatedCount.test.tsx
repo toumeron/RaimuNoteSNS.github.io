@@ -25,5 +25,5 @@ it('restarts the transition for rapid changes and retains the latest count',()=>
   act(()=>vi.advanceTimersByTime(120));
   expect(view.container.querySelector('.repost-count')).toHaveClass('is-down');
   act(()=>vi.advanceTimersByTime(200));
-  expect(view.container.textContent).toBe('0');
+  expect(view.container.textContent).toBe('');
 });

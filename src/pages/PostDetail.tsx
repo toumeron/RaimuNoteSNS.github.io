@@ -1885,7 +1885,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                     postId={data.id}
                     liked={data.likedByMe}
                     count={data.likesCount}
-                    bluesky={{ postUri: blueskyPostUri }}
+                    bluesky={{ postUri: blueskyPostUri, preferencePost: data as PostWithAuthor }}
                   />
                 ) : (
                   <button
@@ -1898,7 +1898,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                     className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"
                   >
                     <Heart className="h-5 w-5" />
-                    <span className="font-bold tabular-nums text-sm">{formatDisplayCount(data.likesCount)}</span>
+                    <span className="font-bold tabular-nums text-sm">{(data.likesCount) > 0 ? formatDisplayCount(data.likesCount) : ''}</span>
                   </button>
                 )
               ) : (
@@ -1921,17 +1921,17 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                 className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm text-muted-foreground transition-colors hover:text-accent ${useMobilePresentation ? 'post-detail-mobile-reply-count' : ''}`}
               >
                 <MessageCircle className="h-5 w-5" />
-                <span className="font-bold tabular-nums">{formatDisplayCount(data.commentsCount)}</span>
+                <span className="font-bold tabular-nums">{(data.commentsCount) > 0 ? formatDisplayCount(data.commentsCount) : ''}</span>
               </button>
             ) : (
               <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm text-muted-foreground ${useMobilePresentation ? 'post-detail-mobile-reply-count' : ''}`}>
                 <MessageCircle className="h-5 w-5" />
-                <span className="font-bold tabular-nums">{formatDisplayCount(data.commentsCount)}</span>
+                <span className="font-bold tabular-nums">{(data.commentsCount) > 0 ? formatDisplayCount(data.commentsCount) : ''}</span>
               </span>
             )}
 
             {/* --- プラスボタンエリア --- */}
-            <div className="relative inline-flex items-center h-full" onClick={(e) => e.stopPropagation()}>
+            {!isBlueskyPost && <div className="relative inline-flex items-center h-full" onClick={(e) => e.stopPropagation()}>
               <button
                 ref={buttonRef}
                 onClick={() => {
@@ -2129,7 +2129,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                   )}
                 </>
               )}
-            </div>
+            </div>}
 
             {/* --- 共有ボタンエリア --- */}
             <div className="relative ml-auto inline-flex items-center h-full shrink-0" onClick={(e) => e.stopPropagation()}>
@@ -2376,7 +2376,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                       postId={data.id}
                       liked={data.likedByMe}
                       count={data.likesCount}
-                      bluesky={{ postUri: blueskyPostUri }}
+                      bluesky={{ postUri: blueskyPostUri, preferencePost: data as PostWithAuthor }}
                     />
                   ) : (
                     <button
@@ -2389,7 +2389,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                       className="inline-flex items-center gap-2 text-white/90 hover:text-white transition-colors"
                     >
                       <Heart className="h-6 w-6" />
-                      <span className="font-bold tabular-nums text-lg">{formatDisplayCount(data.likesCount)}</span>
+                      <span className="font-bold tabular-nums text-lg">{(data.likesCount) > 0 ? formatDisplayCount(data.likesCount) : ''}</span>
                     </button>
                   )
                 ) : (
@@ -2402,7 +2402,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
               </div>
               <div className="inline-flex items-center gap-2 text-white/90">
                 <MessageCircle className="h-6 w-6" />
-                <span className="font-bold tabular-nums text-lg">{formatDisplayCount(data.commentsCount)}</span>
+                <span className="font-bold tabular-nums text-lg">{(data.commentsCount) > 0 ? formatDisplayCount(data.commentsCount) : ''}</span>
               </div>
             </div>
           </div>

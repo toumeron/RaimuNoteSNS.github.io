@@ -1150,7 +1150,7 @@ export function CommentCard({
                 className={`inline-flex items-center gap-1.5 rounded-full ${useMobilePresentation && !detail ? "px-2 text-[13px]" : "px-2.5 text-sm"} py-1 transition-colors hover:text-accent h-full ${detail && mobileFlat ? 'post-detail-mobile-reply-count' : ''}`}
               >
                 <MessageCircle className="h-5 w-5" />
-                <span className={`font-bold tabular-nums ${mobileFlat || isMobile ? "text-[15px]" : "text-sm"}`}>{formatDisplayCount(comment.commentsCount ?? 0)}</span>
+                <span className={`font-bold tabular-nums ${mobileFlat || isMobile ? "text-[15px]" : "text-sm"}`}>{(comment.commentsCount ?? 0) > 0 ? formatDisplayCount(comment.commentsCount ?? 0) : ''}</span>
               </Link>
 
               <div className="relative inline-flex items-center h-full" onClick={(e) => e.stopPropagation()}>

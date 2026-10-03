@@ -49,7 +49,10 @@ function mount(id = 'post-one', count = 0) {
   ) };
 }
 async function expectCount(count: number) {
-  await waitFor(() => expect(screen.getByRole('button').querySelector('.twitter-like-count-static')).toHaveTextContent(String(count)));
+  await waitFor(() => {
+    const text = screen.getByRole('button').querySelector('.twitter-like-count-static')?.textContent;
+    expect(text).toBe(count > 0 ? String(count) : '');
+  });
 }
 function event(table: string, payload: unknown = {}) {
   const handler = db.handlers.find(handler => handler.table === table);

@@ -2178,7 +2178,7 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
               className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full sm:px-2.5 sm:text-sm"
             >
               <Heart className="h-5 w-5" />
-              <span className="font-bold tabular-nums text-[15px] sm:text-sm">{formatDisplayCount(likesCount)}</span>
+              <span className="font-bold tabular-nums text-[15px] sm:text-sm">{(likesCount) > 0 ? formatDisplayCount(likesCount) : ''}</span>
             </button>
           ) : (
             <LikeButton postId={targetId} liked={liked} count={likesCount} />
@@ -2203,7 +2203,7 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
       >
         <MessageCircle className="h-5 w-5" />
         {typeof replyCount === 'number' && (
-          <span className="font-bold tabular-nums text-[15px] sm:text-sm">{formatDisplayCount(replyCount)}</span>
+          <span className="font-bold tabular-nums text-[15px] sm:text-sm">{(replyCount) > 0 ? formatDisplayCount(replyCount) : ''}</span>
         )}
       </button>
 
@@ -3280,6 +3280,7 @@ export default function Profile() {
         blueskyStats={isBlueskyProfile ? {
           following: blueskyProfile?.followingCount ?? 0,
           followers: blueskyProfile?.followersCount ?? 0,
+          posts: blueskyProfile?.postsCount ?? 0,
         } : undefined}
       />}
 
@@ -3543,7 +3544,7 @@ export default function Profile() {
                 <MessageCircle className="h-6 w-6" />
 
                 <span className="text-lg font-bold tabular-nums">
-                  {formatDisplayCount(selectedMedia.post.commentsCount)}
+                  {(selectedMedia.post.commentsCount) > 0 ? formatDisplayCount(selectedMedia.post.commentsCount) : ''}
                 </span>
               </button>
             </div>
@@ -3620,7 +3621,7 @@ export default function Profile() {
                 <MessageCircle className="h-6 w-6" />
                 {typeof selectedThreadImage.replyCount === 'number' && (
                   <span className="font-bold tabular-nums text-lg">
-                    {formatDisplayCount(selectedThreadImage.replyCount)}
+                    {(selectedThreadImage.replyCount) > 0 ? formatDisplayCount(selectedThreadImage.replyCount) : ''}
                   </span>
                 )}
               </button>

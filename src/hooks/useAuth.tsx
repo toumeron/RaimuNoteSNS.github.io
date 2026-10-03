@@ -55,7 +55,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const { data: profile, error } = await supabase
           .from('profiles')
           // bot_enabled, bot_prompt を select に追加
-          .select('username, display_name, avatar_url, bio, cover_url, emoji_effect, bot_enabled, bot_prompt')
+          .select('username, display_name, avatar_url, bio, location, cover_url, emoji_effect, bot_enabled, bot_prompt')
           .eq('id', supabaseUser.id)
           .single();
 
@@ -69,6 +69,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               displayName: profile.display_name ?? current.displayName,
               avatarUrl: profile.avatar_url ?? current.avatarUrl,
               bio: profile.bio ?? current.bio,
+              location: profile.location ?? '',
               coverUrl: profile.cover_url ?? current.coverUrl,
               emojiEffect: profile.emoji_effect ?? current.emojiEffect,
               bot_enabled: profile.bot_enabled ?? false, // DBから取得した値を反映

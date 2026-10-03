@@ -1511,7 +1511,7 @@ function SearchMediaGrid({ posts, blueskyIds }: SearchMediaGridProps) {
                 </div>
                 <span className="flex items-center gap-1 text-[13px] text-white/80">
                   <Heart className="h-4 w-4" />
-                  {current.post.likesCount || 0}
+                  {current.post.likesCount > 0 ? current.post.likesCount : ''}
                 </span>
                 {isBlueskyCurrent ? (
                   <span className="rounded-full bg-white/15 px-3 py-1 text-[12px] font-bold">Bluesky</span>

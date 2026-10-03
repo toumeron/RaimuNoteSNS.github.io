@@ -2650,7 +2650,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                       postId={post.id}
                       liked={post.likedByMe}
                       count={post.likesCount}
-                      bluesky={{ postUri: blueskyPostUri }}
+                      bluesky={{ postUri: blueskyPostUri, preferencePost: post }}
                     />
                   ) : (
                     <button
@@ -2663,7 +2663,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                       className={useMobilePresentation ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
                     >
                       <Heart className="h-5 w-5" />
-                      <span className={useMobilePresentation ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{formatDisplayCount(post.likesCount)}</span>
+                      <span className={useMobilePresentation ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{(post.likesCount) > 0 ? formatDisplayCount(post.likesCount) : ''}</span>
                     </button>
                   )
                 ) : (
@@ -2685,7 +2685,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                   className={useMobilePresentation ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
                 >
                   <MessageCircle className="h-5 w-5" />
-                  <span className={useMobilePresentation ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{formatDisplayCount(post.commentsCount)}</span>
+                  <span className={useMobilePresentation ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{(post.commentsCount) > 0 ? formatDisplayCount(post.commentsCount) : ''}</span>
                 </button>
               ) : (
                 <Link
@@ -2694,11 +2694,11 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                   className={useMobilePresentation ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
                 >
                   <MessageCircle className="h-5 w-5" />
-                  <span className={useMobilePresentation ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{formatDisplayCount(post.commentsCount)}</span>
+                  <span className={useMobilePresentation ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{(post.commentsCount) > 0 ? formatDisplayCount(post.commentsCount) : ''}</span>
                 </Link>
               )}
 
-              <div className="relative inline-flex items-center h-full" onClick={(e) => e.stopPropagation()}>
+              {!isBlueskyPost && <div className="relative inline-flex items-center h-full" onClick={(e) => e.stopPropagation()}>
                 <button
                   ref={buttonRef}
                   onClick={(e) => {
@@ -2881,7 +2881,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                     </div>
                   </>
                 )}
-              </div>
+              </div>}
 
               <div className="relative ml-auto inline-flex items-center h-full shrink-0" onClick={(e) => e.stopPropagation()}>
                 <button
@@ -3094,7 +3094,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                       postId={post.id}
                       liked={post.likedByMe}
                       count={post.likesCount}
-                      bluesky={{ postUri: blueskyPostUri }}
+                      bluesky={{ postUri: blueskyPostUri, preferencePost: post }}
                     />
                   ) : (
                     <button
@@ -3107,7 +3107,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                       className="inline-flex items-center gap-2 text-white/90 hover:text-white transition-colors"
                     >
                       <Heart className="h-6 w-6" />
-                      <span className="font-bold tabular-nums text-lg">{formatDisplayCount(post.likesCount)}</span>
+                      <span className="font-bold tabular-nums text-lg">{(post.likesCount) > 0 ? formatDisplayCount(post.likesCount) : ''}</span>
                     </button>
                   )
                 ) : (
@@ -3131,7 +3131,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                 className="inline-flex items-center gap-2 text-white/90 hover:text-white transition-colors"
               >
                 <MessageCircle className="h-6 w-6" />
-                <span className="font-bold tabular-nums text-lg">{formatDisplayCount(post.commentsCount)}</span>
+                <span className="font-bold tabular-nums text-lg">{(post.commentsCount) > 0 ? formatDisplayCount(post.commentsCount) : ''}</span>
               </button>
             </div>
           </div>

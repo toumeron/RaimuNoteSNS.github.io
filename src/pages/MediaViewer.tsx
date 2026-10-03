@@ -1684,7 +1684,7 @@ export default function MediaViewer() {
                 >
                   <MessageCircle className="h-5 w-5" />
                   <span className="font-bold tabular-nums">
-                    {formatDisplayCount(activeItem.commentsCount)}
+                    {(activeItem.commentsCount) > 0 ? formatDisplayCount(activeItem.commentsCount) : ''}
                   </span>
                 </button>
 
@@ -1786,7 +1786,7 @@ export default function MediaViewer() {
                 >
                   <MessageCircle className="h-5 w-5" />
                   <span className="font-bold tabular-nums">
-                    {formatDisplayCount(activeItem.commentsCount)}
+                    {(activeItem.commentsCount) > 0 ? formatDisplayCount(activeItem.commentsCount) : ''}
                   </span>
                 </button>
 

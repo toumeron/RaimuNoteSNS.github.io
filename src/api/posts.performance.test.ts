@@ -146,7 +146,7 @@ describe('bounded fresh post viewer state', () => {
      timeline_background_url: 'large-unused-background',
    }];
    expect(await getUserByUsername('author')).toEqual({
-     id: 'author', username: 'author', displayName: 'Author', bio: 'bio',
+     id: 'author', username: 'author', displayName: 'Author', bio: 'bio', location: '',
      avatarUrl: 'avatar', coverUrl: 'cover', createdAt: 'now', isOfficial: true,
      emojiEffect: 'effect', bot_enabled: true, bot_prompt: 'prompt',
    });

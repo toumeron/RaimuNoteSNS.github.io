@@ -4,7 +4,7 @@ import { getFeed, getFollowingFeed } from '@/api/posts';
 import { fetchBlueskyAuthorFeed, getConfiguredBlueskyHandles } from '@/lib/bluesky';
 import { createTimelineCursor, loadTimelinePage } from '@/lib/timelinePaging';
 
-export function useTimelineFeed(tab: 'all' | 'following') {
+export function useTimelineFeed(tab: 'all' | 'following', enabled = true) {
   const [handles, setHandles] = useState(getConfiguredBlueskyHandles);
   useEffect(() => {
     const update = () => setHandles(getConfiguredBlueskyHandles());
@@ -20,6 +20,7 @@ export function useTimelineFeed(tab: 'all' | 'following') {
   }, []);
 
   return useInfiniteQuery({
+    enabled,
     queryKey: ['feed', tab, 'timeline', handles],
     initialPageParam: createTimelineCursor(handles),
     queryFn: ({ pageParam, signal }) => loadTimelinePage(pageParam, {

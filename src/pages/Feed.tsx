@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { PostComposer } from '@/components/feed/PostComposer';
 import { PostCard } from '@/components/feed/PostCard';
 import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
+import { useRecommendedFeed } from '@/hooks/useRecommendedFeed';
 import { useTimelineFeed } from '@/hooks/useTimelineFeed';
 import { normalizeTimelineBlueskyPost } from '@/lib/timelinePaging';
 import { useIsPWA } from '@/hooks/useIsPWA';
@@ -65,9 +66,9 @@ type TimelineVisualDesignCache = {
 
 // 最新/フォロー中に加えて、Blueskyの日本語トレンド投稿(いいね500以上)を
 // ランダムに表示する「トレンド」タブを追加。
-type FeedTab = 'all' | 'following' | 'trending';
+type FeedTab = 'all' | 'following' | 'recommended' | 'trending';
 
-const FEED_TAB_ORDER: FeedTab[] = ['all', 'following', 'trending'];
+const FEED_TAB_ORDER: FeedTab[] = ['all', 'following', 'recommended', 'trending'];
 
 // 投稿の入口アニメーションは、ブラウザを再読み込みした直後の最初の表示だけ実行する。
 // SPA内のタブ切り替え・再訪では再実行しない。モジュール再評価はハードリロードで起こる。
@@ -92,7 +93,7 @@ const ACTIVE_FEED_TAB_STORAGE_KEY = 'lime_active_feed_tab';
 function readStoredActiveFeedTab(): FeedTab {
   if (typeof window === 'undefined') return 'all';
   const stored = localStorage.getItem(ACTIVE_FEED_TAB_STORAGE_KEY);
-  return stored === 'following' ? 'following' : stored === 'trending' ? 'trending' : 'all';
+  return stored === 'following' ? 'following' : stored === 'recommended' ? 'recommended' : stored === 'trending' ? 'trending' : 'all';
 }
 
 const insertPostAtLocalFeedHead = (current: PostWithAuthor[], post: PostWithAuthor) => {
@@ -234,6 +235,7 @@ export default function Feed() {
     all: [],
     following: [],
     trending: [],
+    recommended: [],
   });
   // --- トレンドタブ(Bluesky・日本語・いいね500以上・ランダム表示)用の状態 ---
   const [trendingPosts, setTrendingPosts] = useState<PostWithAuthor[]>([]);
@@ -244,6 +246,8 @@ export default function Feed() {
   const trendingCursorRef = useRef<string | null>(null);
   const trendingHasMoreRef = useRef(true);
 
+  const timelineFeed = useTimelineFeed(activeTab === 'following' ? 'following' : 'all', activeTab !== 'recommended');
+  const recommendedFeed = useRecommendedFeed(activeTab === 'recommended');
   const {
     data,
     isLoading,
@@ -253,7 +257,7 @@ export default function Feed() {
     isFetchingNextPage,
     isFetching,
     isFetchNextPageError,
-  } = useTimelineFeed(activeTab === 'following' ? 'following' : 'all');
+  } = activeTab === 'recommended' ? recommendedFeed : timelineFeed;
 
   const { ref, inView } = useInView({
     rootMargin: '300px 0px 500px 0px',
@@ -273,8 +277,9 @@ export default function Feed() {
   // (createdAt順に並び替えてしまうと「ランダム表示」の意図が崩れるため)。
   const allPosts = useMemo(() => {
     if (activeTab === 'trending') return trendingPosts;
+    if (activeTab === 'recommended') return fetchedPosts;
     return mergePostsByCreatedAt(limePosts);
-  }, [activeTab, limePosts, trendingPosts]);
+  }, [activeTab, limePosts, trendingPosts, fetchedPosts]);
 
   const normalizeBlueskyPostForFeed = useCallback(normalizeTimelineBlueskyPost, []);
 
@@ -1170,7 +1175,7 @@ export default function Feed() {
     const handleActiveFeedTabChanged = (event: Event) => {
       const detail = (event as CustomEvent<{ tab?: string }>).detail;
       const nextTab: FeedTab =
-        detail?.tab === 'following' ? 'following' : detail?.tab === 'trending' ? 'trending' : 'all';
+        detail?.tab === 'following' ? 'following' : detail?.tab === 'recommended' ? 'recommended' : detail?.tab === 'trending' ? 'trending' : 'all';
       const previousTab = activeFeedTabForScrollRef.current;
 
       // 切り替え前のタブの位置を確定保存。
@@ -1408,6 +1413,7 @@ export default function Feed() {
     () => allPosts.slice(virtualRange.start, virtualRange.end).map((post) => (
       <div
         key={`${activeTab}-${post.id}`}
+        data-lime-recommendation-post={activeTab === 'recommended' ? post.id : undefined}
         className={shouldPlayInitialFloatAnimation ? 'animate-float-up' : ''}
         ref={(element) => registerPostElement(post.id, element)}
       >
@@ -1439,7 +1445,7 @@ export default function Feed() {
       ? 'まだ投稿がありません'
       : activeTab === 'following'
         ? 'フォロー中の投稿はありません'
-        : 'トレンドの投稿がまだありません';
+        : activeTab === 'recommended' ? 'おすすめの投稿がまだありません' : 'トレンドの投稿がまだありません';
 
   return (
     <div

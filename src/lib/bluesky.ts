@@ -564,6 +564,7 @@ export type BlueskyProfile = BlueskyMappedPost['author'] & {
   coverUrl: string;
   followersCount: number;
   followingCount: number;
+  postsCount?: number;
 };
 
 export type BlueskyPostThread = {
@@ -643,6 +644,7 @@ type BlueskyActorProfile = {
   createdAt?: string;
   followersCount?: number;
   followsCount?: number;
+  postsCount?: number;
 };
 
 type BlueskyThreadView = {
@@ -666,6 +668,7 @@ function mapBlueskyActorProfile(profile: BlueskyActorProfile): BlueskyProfile | 
     isOfficial: false,
     followersCount: profile.followersCount ?? 0,
     followingCount: profile.followsCount ?? 0,
+    postsCount: profile.postsCount ?? 0,
   };
 }
 
@@ -1336,4 +1339,13 @@ export function mergePostsByCreatedAt<T extends { id: string; createdAt: string 
 
   merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   return merged;
+}
+/** Personalized discovery has no global trending like-count threshold. */
+export async function fetchBlueskyTopicPosts(options: {query:string;cursor?:string|null;limit?:number;signal?:AbortSignal}):Promise<BlueskyAuthorFeedPage> {
+  const params=new URLSearchParams({q:options.query,lang:'ja',sort:'latest',limit:String(options.limit ?? 20),since:new Date(Date.now()-30*86400000).toISOString()});
+  if(options.cursor) params.set('cursor',options.cursor);
+  const response=await fetchBlueskySearchEndpoint('app.bsky.feed.searchPosts',params,options.signal);
+  if(!response.ok) throw new Error(`Bluesky topic search failed: ${response.status}`);
+  const data=await response.json() as {posts?:BlueskyFeedItem['post'][];cursor?:string};
+  return {posts:(data.posts ?? []).map(post=>mapBlueskyFeedItemToPost({post})).filter((post):post is BlueskyMappedPost=>!!post),cursor:data.cursor ?? null};
 }

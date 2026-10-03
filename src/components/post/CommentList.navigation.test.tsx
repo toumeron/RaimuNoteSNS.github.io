@@ -33,7 +33,7 @@ describe('reply card interactions', () => {
     expect(screen.getByText('返信本文をクリック').parentElement?.parentElement).toHaveClass('col-span-2');
     expect(screen.getByTitle('2026/10/02 09:00')).toHaveClass('post-detail-mobile-meta');
     expect(screen.getByRole('link', { name: 'この返信に返信する' }).querySelector('span')).toHaveClass('font-bold', 'tabular-nums', 'text-[15px]');
-    expect(screen.getByRole('link', { name: 'この返信に返信する' })).toHaveTextContent('0');
+    expect(screen.getByRole('link', { name: 'この返信に返信する' })).not.toHaveTextContent('0');
   });
   it('shows the saved client alongside the selected reply timestamp', async () => {
     renderWithQuery(<MemoryRouter><CommentCard comment={{ ...comment, clientName: 'LimeNote for iPhone' }} currentUserId="author" mobileFlat thread detail /></MemoryRouter>);
