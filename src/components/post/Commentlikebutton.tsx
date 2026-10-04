@@ -11,6 +11,8 @@ interface CommentlikebuttonProps {
   liked: boolean;
   count: number;
   size?: 'sm' | 'md';
+  onChange?: (state: { liked: boolean; count: number }) => void;
+  syncState?: boolean;
 }
 
 const formatDisplayCount = (count: number = 0) => {
@@ -25,6 +27,8 @@ export function Commentlikebutton({
   liked: initialLiked,
   count: initialCount,
   size = 'md',
+  onChange,
+  syncState = false,
 }: CommentlikebuttonProps) {
   const queryClient = useQueryClient();
 
@@ -80,7 +84,7 @@ export function Commentlikebutton({
       hasLocalStateRef.current = false;
     }
 
-    if (targetChanged || !hasLocalStateRef.current) {
+    if (targetChanged || !hasLocalStateRef.current || syncState) {
       const safeCount = Number(initialCount) || 0;
       setDisplayLiked(initialLiked);
       setDisplayCount(safeCount);
@@ -89,7 +93,7 @@ export function Commentlikebutton({
       stateRef.current.liked = initialLiked;
       stateRef.current.count = safeCount;
     }
-  }, [commentId, initialLiked, initialCount]);
+  }, [commentId, initialLiked, initialCount, syncState]);
 
   // props の liked が false のまま来るケースに備えて、表示初期化時だけDB上の実状態を反映する。
   useEffect(() => {
@@ -200,6 +204,7 @@ export function Commentlikebutton({
       }
 
       // DB反映を待つ
+      onChange?.({ liked: willBeLiked, count: nextCount });
       await queryClient.invalidateQueries({ queryKey: ['comments'] });
     } catch (err: any) {
       console.error('Comment like action failed:', err);
@@ -210,7 +215,7 @@ export function Commentlikebutton({
       animateCount(nextCount, wasCount);
       setIsAnimating(false);
     }
-  }, [animateCount, commentId, queryClient]);
+  }, [animateCount, commentId, queryClient, onChange]);
 
   return (
     <>

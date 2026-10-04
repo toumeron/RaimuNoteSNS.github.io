@@ -63,8 +63,11 @@ describe('reply card interactions', () => {
     expect(screen.getAllByRole('button', { name: '返信を共有' })).toHaveLength(1);
     expect(screen.getByRole('button', { name: '返信を共有' }).closest('[data-lime-comment-actions]')).not.toBeNull();
     expect(screen.getByRole('button', { name: '削除' })).toBeInTheDocument();
+    const opened = vi.fn();
+    window.addEventListener('lime-open-media-viewer', opened);
     fireEvent.click(screen.getByAltText('返信画像'));
-    await waitFor(() => expect(screen.getByAltText('Expanded view')).toBeInTheDocument());
-    expect(screen.getByRole('dialog', { name: '返信画像を拡大表示' }).parentElement).toBe(document.body);
+    expect(opened).toHaveBeenCalledOnce();
+    expect((opened.mock.calls[0][0] as CustomEvent).detail).toMatchObject({url:comment.imageUrls[0],post:{id:'reply:reply-id',replyPostId:'original'}});
+    window.removeEventListener('lime-open-media-viewer', opened);
   });
 });

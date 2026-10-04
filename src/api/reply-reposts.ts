@@ -13,7 +13,7 @@ export function replyToPost(reply: any): PostWithAuthor {
     replyToUsername: reply.replying_to?.profiles?.username ?? reply.post?.profiles?.username ?? reply.replyToUsername,
     userId: reply.userId ?? reply.user_id ?? author.id,
     content: reply.content ?? '', imageUrls: reply.imageUrls ?? reply.image_urls ?? [],
-    createdAt: reply.createdAt ?? reply.created_at, visibility:'public',
+    createdAt: reply.createdAt ?? reply.created_at, clientName:reply.clientName ?? reply.client_name, visibility:'public',
     likesCount: Number(reply.likesCount ?? reply.likes_count ?? 0), likedByMe: Boolean(reply.likedByMe),
     commentsCount: Number(reply.commentsCount ?? reply.comments_count ?? 0),
     repostsCount: Number(reply.repostsCount ?? 0), repostedByMe: Boolean(reply.repostedByMe),

@@ -1,3 +1,4 @@
+import { openMediaViewer } from '@/components/media/openMediaViewer';
 import { useAuth } from '@/hooks/useAuth';
 import { getRecommendationPreferences } from '@/api/recommendations';
 import type { RecommendationPreferences } from '@/lib/recommendations';
@@ -7,7 +8,7 @@ import { SearchExploreContent } from '@/components/search/SearchExploreContent';
 import { SearchExploreTabs } from '@/components/search/SearchExploreTabs';
 import { SearchTabIndicator } from '@/components/search/SearchTabIndicator';
 import { useSearchExploreTab } from '@/hooks/useSearchExploreTab';
-import { getNewsSources, type SearchNewsItem, type NewsSources } from '@/api/search-news';
+import { getNewsSources, latestNewsPerSource, type SearchNewsItem, type NewsSources } from '@/api/search-news';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -672,9 +673,7 @@ interface SearchMediaGridProps {
 
 const youtubeThumb = (id: string) => `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
 
-function SearchMediaGrid({ posts, blueskyIds }: SearchMediaGridProps) {
-  const navigate = useNavigate();
-  const [selected, setSelected] = useState<number | null>(null);
+function SearchMediaGrid({ posts }: SearchMediaGridProps) {
 
   const tiles = useMemo<MediaTile[]>(() => {
     const result: MediaTile[] = [];
@@ -701,128 +700,6 @@ function SearchMediaGrid({ posts, blueskyIds }: SearchMediaGridProps) {
     return result;
   }, [posts]);
 
-  const close = useCallback(() => setSelected(null), []);
-  const move = useCallback(
-    (delta: number) =>
-      setSelected((current) => {
-        if (current === null) return current;
-        const next = current + delta;
-        return next < 0 || next >= tiles.length ? current : next;
-      }),
-    [tiles.length],
-  );
-
-  // 修正: 検索し直し・絞り込み変更などでタイルが減ったときに、範囲外のindexが残って
-  // ライトボックスが表示されないまま body のスクロールだけロックされ続けるのを防ぐ。
-  useEffect(() => {
-    setSelected((current) => (current !== null && current >= tiles.length ? null : current));
-  }, [tiles.length]);
-
-  useEffect(() => {
-    if (selected === null) return;
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close();
-      else if (event.key === 'ArrowLeft') move(-1);
-      else if (event.key === 'ArrowRight') move(1);
-    };
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    window.addEventListener('keydown', onKeyDown);
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [selected, close, move]);
-
-  const current = selected !== null ? tiles[selected] : null;
-  const isBlueskyCurrent = current
-    ? blueskyIds.has(current.post.id) || String(current.post.id).startsWith('bsky:')
-    : false;
-
-  const lightbox =
-    current && typeof document !== 'undefined'
-      ? createPortal(
-          <div className="fixed inset-0 z-[1000] flex flex-col bg-black/95 text-white" role="dialog" aria-modal="true">
-            <div className="flex items-center justify-between px-3 pt-[max(12px,env(safe-area-inset-top))] pb-2">
-              <span className="text-[13px] text-white/70">
-                {selected! + 1} / {tiles.length}
-              </span>
-              <button type="button" aria-label="閉じる" onClick={close} className="flex h-10 w-10 items-center justify-center rounded-full hover:bg-white/10">
-                <X className="h-6 w-6" />
-              </button>
-            </div>
-
-            <div className="relative flex min-h-0 flex-1 items-center justify-center px-2" onClick={close}>
-              <div className="flex max-h-full w-full max-w-4xl items-center justify-center" onClick={(e) => e.stopPropagation()}>
-                {current.type === 'image' ? (
-                  <img src={current.src} alt="" className="max-h-[70vh] max-w-full object-contain" />
-                ) : (
-                  <div className="aspect-video w-full max-w-3xl overflow-hidden rounded-xl bg-black">
-                    <iframe
-                      key={current.youtubeId}
-                      src={`https://www.youtube-nocookie.com/embed/${current.youtubeId}?autoplay=1&rel=0&playsinline=1`}
-                      title="YouTube"
-                      className="h-full w-full"
-                      allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-                      allowFullScreen
-                    />
-                  </div>
-                )}
-              </div>
-
-              {selected! > 0 && (
-                <button type="button" aria-label="前へ" onClick={(e) => { e.stopPropagation(); move(-1); }} className="absolute left-2 flex h-11 w-11 items-center justify-center rounded-full bg-black/50 hover:bg-black/70">
-                  <ChevronLeft className="h-6 w-6" />
-                </button>
-              )}
-              {selected! < tiles.length - 1 && (
-                <button type="button" aria-label="次へ" onClick={(e) => { e.stopPropagation(); move(1); }} className="absolute right-2 flex h-11 w-11 items-center justify-center rounded-full bg-black/50 hover:bg-black/70">
-                  <ChevronRight className="h-6 w-6" />
-                </button>
-              )}
-            </div>
-
-            <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 pt-3 pb-[max(16px,env(safe-area-inset-bottom))]">
-              <div className="flex items-center gap-3">
-                {current.post.author?.avatarUrl ? (
-                  <img src={current.post.author.avatarUrl} alt="" className="h-9 w-9 rounded-full object-cover" />
-                ) : (
-                  <div className="h-9 w-9 rounded-full bg-white/15" />
-                )}
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-[14px] font-bold">{current.post.author?.displayName}</div>
-                  <div className="truncate text-[12px] text-white/60">@{current.post.author?.username}</div>
-                </div>
-                <span className="flex items-center gap-1 text-[13px] text-white/80">
-                  <Heart className="h-4 w-4" />
-                  {current.post.likesCount > 0 ? current.post.likesCount : ''}
-                </span>
-                {isBlueskyCurrent ? (
-                  <span className="rounded-full bg-white/15 px-3 py-1 text-[12px] font-bold">Bluesky</span>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const id = current.post.id;
-                      close();
-                      navigate(`/post/${id}`);
-                    }}
-                    className="rounded-full bg-primary px-4 py-1.5 text-[13px] font-bold text-white hover:opacity-90"
-                  >
-                    投稿を開く
-                  </button>
-                )}
-              </div>
-              {current.post.content && (
-                <p className="line-clamp-3 whitespace-pre-wrap break-words text-[13px] text-white/80">{current.post.content}</p>
-              )}
-            </div>
-          </div>,
-          document.body,
-        )
-      : null;
 
   return (
     <>
@@ -831,7 +708,7 @@ function SearchMediaGrid({ posts, blueskyIds }: SearchMediaGridProps) {
           <button
             key={tile.key}
             type="button"
-            onClick={() => setSelected(index)}
+            onClick={() => openMediaViewer({ url: tiles[index].src, post: tiles[index].post, media: tiles.filter(tile => tile.post.id === tiles[index].post.id).map(tile => ({ src: tile.src, type: tile.type, youtubeId: tile.youtubeId })) })}
             className="group relative aspect-square overflow-hidden bg-black/5 dark:bg-white/10"
             aria-label={tile.type === 'youtube' ? '動画を開く' : '画像を開く'}
           >
@@ -856,7 +733,7 @@ function SearchMediaGrid({ posts, blueskyIds }: SearchMediaGridProps) {
           </button>
         ))}
       </div>
-      {lightbox}
+
     </>
   );
 }
@@ -1737,17 +1614,17 @@ export default function SearchPage() {
     async function fetchLatestNews() {
       setIsNewsLoading(true);
       try {
-        const { data, error } = await supabase
-          .from('news_summaries')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(5);
+        const results = await Promise.all(['limenote', 'bluesky'].map(source => supabase
+          .from('news_summaries').select('*').eq('source', source)
+          .eq('public_sources_verified', true).order('created_at', {ascending: false}).limit(1)));
+        const error = results.find(result => result.error)?.error;
+        const data = results.flatMap(result => result.data || []);
 
         if (error) throw error;
         if (cancelled) return;
         const newsItems = Array.isArray(data) ? data : [];
         setNewsItems(newsItems);
-        void getNewsSources(newsItems.slice(0, 1)).then(sources => { if (!cancelled) setNewsSources(sources); });
+        void getNewsSources(latestNewsPerSource(newsItems)).then(sources => { if (!cancelled) setNewsSources(sources); });
       } catch (err) {
         console.error('Failed to fetch news:', err);
       } finally {

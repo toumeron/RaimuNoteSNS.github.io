@@ -1,3 +1,13 @@
+import { ProfileVirtualizedListItem } from '@/components/profile/ProfileVirtualizedRow';
+import { openMediaViewer } from '@/components/media/openMediaViewer';
+import {getPostById} from '@/api/posts';
+import {getProfilePin,profilePinKey} from '@/api/profile-pins';
+import {PostLinkPreview} from '@/components/post/LinkPreviewCard';
+import { renderStickerText } from '@/components/stickers/renderStickerText';
+import { hasStickers } from '@/lib/stickers';
+import { profilePostIdentity } from '@/lib/profilePostIdentity';
+import { SpacePostCard } from '@/components/spaces/SpacePostCard';
+import { spaceLinkIn } from '@/lib/spaceLinks';
 import { BookmarkButton } from '@/components/post/BookmarkButton';
 import { ReplyShare } from '@/components/post/ReplyShare';
 import { useAuth } from '@/hooks/useAuth';
@@ -431,7 +441,7 @@ const usePullToRefresh = (onRefresh: () => Promise<void> | void, enabled: boolea
     };
 
     const handleTouchStart = (event: TouchEvent) => {
-      if (event.touches.length !== 1) return;
+      if (event.touches.length !== 1 || (event.target as HTMLElement)?.closest('.lime-media-lightbox')) return;
       beginDrag(event.touches[0].clientY);
     };
 
@@ -596,7 +606,8 @@ const renderProfileThreadTextWithHashtags = (text: string, navigate: (to: string
   });
 };
 
-const renderProfileThreadTextWithMentions = (text: string, navigate: (to: string) => void) => {
+const renderProfileThreadTextWithMentions = (text: string, navigate: (to: string) => void): React.ReactNode => {
+  if (hasStickers(text)) return renderStickerText(text, part=>renderProfileThreadTextWithMentions(part,navigate));
   if (!text) return null;
 
   const parts = text.split(/(@\w+)/g);
@@ -748,8 +759,9 @@ const uniquePostsById = (posts: any[]) => {
     const normalized = normalizePost(post);
     if (!normalized?.id) return;
 
-    if (!map.has(normalized.id)) {
-      map.set(normalized.id, normalized);
+    const key = profilePostIdentity(normalized);
+    if (!map.has(key)) {
+      map.set(key, normalized);
     }
   });
 
@@ -895,6 +907,8 @@ const ProfileThreadEmbeds = memo(function ProfileThreadEmbeds({
 
   return (
     <>
+      <SpacePostCard content={content} />
+      <PostLinkPreview content={content} />
       {youtubeId && (
         <div className="mt-3" onClick={(e) => e.stopPropagation()}>
           <YouTubeEmbed videoId={youtubeId} />
@@ -2257,7 +2271,8 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
   const parentAuthor = parent?.author ?? parent?.profiles ?? parent?.user ?? null;
   const comments = thread.comments?.length ? thread.comments : [thread.comment];
   const primaryComment = comments[0] ?? thread.comment;
-  const parentContent = stripPreviewUrls(parent?.content ?? '');
+  const parentRawContent = parent?.content ?? '';
+  const parentContent = stripPreviewUrls(spaceLinkIn(parentRawContent)?.text ?? parentRawContent);
   const parentDisplayName = parentAuthor?.displayName ?? parentAuthor?.display_name ?? parentAuthor?.username ?? 'ユーザー';
   const clippedParentContent = parentContent.length > 120 ? `${parentContent.slice(0, 120)}...` : parentContent;
   const threadAvatarClassName = "h-11 w-11 translate-y-1";
@@ -2376,7 +2391,8 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
 
       {comments.map((comment, commentIndex) => {
         const commentAuthor = comment.author;
-        const replyContent = stripPreviewUrls(comment.content ?? '');
+        const replyRawContent = comment.content ?? '';
+        const replyContent = stripPreviewUrls(spaceLinkIn(replyRawContent)?.text ?? replyRawContent);
         const commentDisplayName = commentAuthor?.displayName ?? commentAuthor?.display_name ?? commentAuthor?.username ?? 'ユーザー';
 
         return (
@@ -2466,79 +2482,6 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
 // に差し替える。見た目・レイアウト・スクロール位置は一切変わらず、
 // 再度画面に近づけば自動的に元の内容がそのまま復元される。
 const PROFILE_VIRTUALIZATION_ROOT_MARGIN = '1600px 0px 1600px 0px';
-
-const useProfileRowVisibility = (
-  rowKey: string,
-  heightCache: React.MutableRefObject<Map<string, number>>
-) => {
-  // initialInView: true にすることで、新しく読み込まれた（＝今まさに
-  // 画面付近にある）カードは今まで通り即座にフル描画される。実際に
-  // 遠くへスクロールされたと Observer が判定して初めて非表示化される
-  // ため、初回表示時のちらつき・見た目の変化は発生しない。
-  const { ref: inViewRef, inView } = useInView({
-    initialInView: true,
-    rootMargin: PROFILE_VIRTUALIZATION_ROOT_MARGIN,
-  });
-
-  const measureRef = useRef<HTMLDivElement>(null);
-  const [placeholderHeight, setPlaceholderHeight] = useState<number | undefined>(
-    () => heightCache.current.get(rowKey)
-  );
-
-  useEffect(() => {
-    if (!inView) return;
-
-    const node = measureRef.current;
-    if (!node) return;
-
-    const measure = () => {
-      const height = node.offsetHeight;
-      if (height > 0) {
-        heightCache.current.set(rowKey, height);
-        setPlaceholderHeight(height);
-      }
-    };
-
-    measure();
-
-    if (typeof ResizeObserver === 'undefined') {
-      return;
-    }
-
-    // 画像読み込み完了などでカードの高さが後から変わるケースに備え、
-    // 表示中は継続的に高さを追従してキャッシュを更新する。
-    const resizeObserver = new ResizeObserver(measure);
-    resizeObserver.observe(node);
-
-    return () => {
-      resizeObserver.disconnect();
-    };
-  }, [inView, rowKey, heightCache]);
-
-  return { inViewRef, measureRef, inView, placeholderHeight };
-};
-
-const ProfileVirtualizedListItem = memo(function ProfileVirtualizedListItem({
-  rowKey,
-  heightCache,
-  children,
-}: {
-  rowKey: string;
-  heightCache: React.MutableRefObject<Map<string, number>>;
-  children: React.ReactNode;
-}) {
-  const { inViewRef, measureRef, inView, placeholderHeight } = useProfileRowVisibility(rowKey, heightCache);
-
-  return (
-    <div ref={inViewRef}>
-      {inView ? (
-        <div ref={measureRef}>{children}</div>
-      ) : (
-        <div style={{ height: placeholderHeight ? `${placeholderHeight}px` : undefined }} aria-hidden="true" />
-      )}
-    </div>
-  );
-});
 
 // メディアタブは3列のCSS Gridなので、アイテム側に余計なラッパーを
 // 挟むとグリッドの列構成が崩れてしまう（＝見た目が変わってしまう）。
@@ -2672,8 +2615,6 @@ export default function Profile() {
   const [activeTab, setActiveTab] = useState<ProfileTabValue>('posts');
 
   // メディア拡大用のステート
-  const [selectedMedia, setSelectedMedia] = useState<{ url: string; post: any } | null>(null);
-  const [selectedThreadImage, setSelectedThreadImage] = useState<ProfileThreadImageSelection | null>(null);
   const [failedThreadImageUrls, setFailedThreadImageUrls] = useState<string[]>([]);
   const [isScrolled, setIsScrolled] = useState(false);
   const tabsSentinelRef = useRef<HTMLDivElement>(null);
@@ -2725,6 +2666,9 @@ export default function Profile() {
   // フック自体は常に同じ順序で呼び出し、アクティブなタブだけ userId を渡す。
   // これにより初回表示で4タブ分のデータを同時に保持する必要をなくす。
   const postsQuery = useUserPostsInfinite(activeTab === 'posts' ? user?.id : undefined);
+  const pinQuery=useQuery({queryKey:profilePinKey(user?.id??''),queryFn:()=>getProfilePin(user!.id),enabled:!!user?.id&&!isBlueskyProfile&&activeTab==='posts'});
+  const pinnedPostQuery=useQuery({queryKey:['profile-pinned-post',user?.id,pinQuery.data,viewer?.id],queryFn:()=>getPostById(pinQuery.data!),enabled:!!pinQuery.data&&!isBlueskyProfile&&activeTab==='posts'});
+  const pinnedPost=activeTab==='posts'&&pinnedPostQuery.data?.userId===user?.id?pinnedPostQuery.data:null;
   const likesQuery = useUserLikesInfinite(activeTab === 'likes' ? user?.id : undefined);
   const mediaQuery = useUserMediaInfinite(activeTab === 'media' ? user?.id : undefined);
   const reactionsQuery = useUserReactionsInfinite(activeTab === 'reactions' ? user?.id : undefined);
@@ -2843,7 +2787,7 @@ export default function Profile() {
   }, [isBlueskyProfile, refetchBlueskyFeed, refetchCurrentQuery, activeTab]);
 
   // モーダル表示中や初期ロード中はプルダウン更新を無効化する
-  const isPullToRefreshEnabled = !userLoading && !selectedMedia && !selectedThreadImage;
+  const isPullToRefreshEnabled = !userLoading;
   const { pullDistance, isRefreshing: isPullRefreshing, isPulling } = usePullToRefresh(
     handleProfilePullRefresh,
     isPullToRefreshEnabled
@@ -3092,34 +3036,10 @@ export default function Profile() {
   }, [user?.id, activeTab, isBlueskyProfile, profileRepliesRefreshKey]);
 
   // モーダル表示時にスクロールを固定
-  useEffect(() => {
-    if (selectedMedia || selectedThreadImage) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = 'unset';
-    }
 
-    return () => {
-      document.body.style.overflow = 'unset';
-    };
-  }, [selectedMedia, selectedThreadImage]);
 
   // 画像拡大表示中は Escape キーで閉じられるようにする
-  useEffect(() => {
-    if (!selectedMedia && !selectedThreadImage) return;
 
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      setSelectedMedia(null);
-      setSelectedThreadImage(null);
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [selectedMedia, selectedThreadImage]);
 
   // normalizeAuthor / normalizePost / uniquePostsById / groupReactionPosts は
   // props や state に依存しない純粋関数のため、ファイル先頭のモジュール
@@ -3196,9 +3116,9 @@ export default function Profile() {
   }, []);
 
   const profilePostsLoading = activeTab === 'posts'
-    ? contentLoading || !profileRepliesReady
+    ? contentLoading || !profileRepliesReady || (!isBlueskyProfile && (pinQuery.isPending || (!!pinQuery.data && pinnedPostQuery.isPending)))
     : contentLoading;
-  const profilePostsEmpty = !profilePostsLoading && !contentError && !isFetchingNextPage && items.length === 0;
+  const profilePostsEmpty = !profilePostsLoading && !contentError && !isFetchingNextPage && items.length === 0 && !pinnedPost;
 
   if (userLoading) {
     return (
@@ -3390,13 +3310,14 @@ export default function Profile() {
             </div>
           )}
 
+          {pinnedPost && <div className="animate-float-up"><PostCard post={pinnedPost} pinned/></div>}
           {!profilePostsLoading && (activeTab === 'media' ? (
             <div className="grid grid-cols-3 gap-1 px-0 md:gap-2">
               {items.map((p: any, idx: number) => (
                 <div
                   key={`media-${p.displayImageKey ?? `${p.post?.id ?? p.id}-${idx}`}`}
                   className="relative aspect-square cursor-pointer overflow-hidden rounded-md bg-muted animate-float-up md:rounded-xl"
-                  onClick={() => setSelectedMedia({ url: p.displayImageUrl, post: p.post })}
+                  onClick={() => openMediaViewer({ url: p.displayImageUrl, post: p.post })}
                 >
                   <ProfileVirtualizedMediaImage src={p.displayImageUrl} />
 
@@ -3418,7 +3339,7 @@ export default function Profile() {
                     <ProfileVirtualizedListItem rowKey={rowKey} heightCache={rowHeightCacheRef}>
                       <ProfileReplyThreadCard
                         thread={item.reply}
-                        onImageClick={setSelectedThreadImage}
+                        onImageClick={selection => openMediaViewer({ url: selection.url, postId: selection.targetType === 'comment' ? `reply:${selection.targetId}` : selection.postId })}
                         onImageError={handleThreadImageError}
                       />
                     </ProfileVirtualizedListItem>
@@ -3427,7 +3348,8 @@ export default function Profile() {
               }
 
               const p = activeTab === 'posts' && item?.__profileItemType === PROFILE_POST_ITEM ? item.post : item;
-              const rowKey = activeTab === 'posts' ? `profile-post-${p.id}` : activeTab === 'reactions' ? `reactions-${p.id}-${idx}` : `${activeTab}-${p.id}-${idx}`;
+              if(activeTab==='posts'&&pinnedPost?.id===p.id&&!p.profileRepostedBy)return null;
+              const rowKey = activeTab === 'posts' ? `profile-post-${profilePostIdentity(p)}` : activeTab === 'reactions' ? `reactions-${p.id}-${idx}` : `${activeTab}-${p.id}-${idx}`;
 
               return (
                 <div
@@ -3469,168 +3391,6 @@ export default function Profile() {
           </div>
         </div>
       </Tabs>
-
-      {/* メディア拡大オーバーレイ。
-          以前はページのDOMツリー内にそのまま描画していたため、親要素の
-          transform / animation / filter などの影響で position: fixed が
-          画面基準にならず、画面の一部しか覆えない・画像が見切れる・
-          下のタブバーが前面に出る、といった表示崩れが起きていた。
-          スレッド画像の拡大表示と同様に document.body 直下へ Portal で描画し、
-          100vh ではなく dvh を使ってモバイルのアドレスバー変動にも追従させる。 */}
-      {selectedMedia && typeof document !== 'undefined' && createPortal(
-        <div
-          className="fixed inset-0 flex flex-col items-center justify-center bg-black/95 backdrop-blur-sm animate-in fade-in duration-200"
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            width: '100vw',
-            height: '100dvh',
-            margin: 0,
-            padding: 0,
-            zIndex: 2147483647,
-            overflow: 'hidden',
-            touchAction: 'none',
-          }}
-          onClick={() => setSelectedMedia(null)}
-        >
-          <button
-            type="button"
-            className="absolute left-5 z-10 rounded-full bg-white/10 p-2 text-white transition-colors hover:bg-white/20"
-            style={{ top: 'calc(1.25rem + env(safe-area-inset-top))' }}
-            onClick={(event) => {
-              event.stopPropagation();
-              setSelectedMedia(null);
-            }}
-            aria-label="閉じる"
-          >
-            <X className="h-6 w-6" />
-          </button>
-
-          <div className="relative flex h-full w-full items-center justify-center p-4">
-            <img
-              src={selectedMedia.url}
-              alt="Expanded view"
-              className="max-h-[78dvh] max-w-[95vw] object-contain shadow-2xl animate-in zoom-in-95 duration-200"
-              decoding="async"
-              onClick={(e) => e.stopPropagation()}
-            />
-          </div>
-
-          <div
-            className="absolute bottom-0 left-0 right-0 flex items-center justify-center bg-gradient-to-t from-black/90 to-transparent pt-20"
-            style={{ paddingBottom: 'calc(2.5rem + env(safe-area-inset-bottom))' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-8 rounded-full border border-white/10 bg-black/60 px-8 py-4 shadow-xl backdrop-blur-md">
-              <div className="scale-125">
-                <LikeButton
-                  postId={selectedMedia.post.id}
-                  liked={selectedMedia.post.likedByMe}
-                  count={Number(selectedMedia.post.likesCount)}
-                />
-              </div>
-
-              <button
-                type="button"
-                onClick={() => {
-                  const targetPostId = selectedMedia.post.id;
-                  setSelectedMedia(null);
-                  navigate(getAppPostPath(targetPostId));
-                }}
-                className="inline-flex items-center gap-2 text-white/90 transition-colors hover:text-white"
-              >
-                <MessageCircle className="h-6 w-6" />
-
-                <span className="text-lg font-bold tabular-nums">
-                  {(selectedMedia.post.commentsCount) > 0 ? formatDisplayCount(selectedMedia.post.commentsCount) : ''}
-                </span>
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
-
-      {selectedThreadImage && typeof document !== 'undefined' && createPortal(
-        <div
-          className="fixed inset-0 flex flex-col items-center justify-center bg-black/95 backdrop-blur-sm animate-in fade-in duration-200"
-          style={{
-            zIndex: 2147483647,
-            height: '100dvh',
-            overflow: 'hidden',
-            touchAction: 'none',
-          }}
-          onClick={() => setSelectedThreadImage(null)}
-        >
-          <button
-            type="button"
-            className="absolute left-5 z-10 p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
-            style={{ top: 'calc(1.25rem + env(safe-area-inset-top))' }}
-            onClick={(event) => {
-              event.stopPropagation();
-              setSelectedThreadImage(null);
-            }}
-            aria-label="閉じる"
-          >
-            <X className="h-6 w-6" />
-          </button>
-
-          <div className="relative flex max-h-full max-w-full items-center justify-center p-4">
-            <img
-              src={selectedThreadImage.url}
-              alt="Expanded view"
-              className="max-h-[78dvh] max-w-[95vw] object-contain shadow-2xl animate-in zoom-in-95 duration-200"
-              decoding="async"
-              onClick={(event) => event.stopPropagation()}
-              onError={() => handleThreadImageError(selectedThreadImage.url)}
-            />
-          </div>
-
-          <div
-            className="absolute bottom-0 left-0 right-0 flex items-center justify-center bg-gradient-to-t from-black/80 to-transparent pt-10"
-            style={{ paddingBottom: 'calc(2rem + env(safe-area-inset-bottom))' }}
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="flex items-center gap-8 rounded-full bg-black/40 px-6 py-3 backdrop-blur-md border border-white/10">
-              <div className="scale-125">
-                {selectedThreadImage.targetType === 'post' ? (
-                  <LikeButton
-                    postId={selectedThreadImage.targetId}
-                    liked={selectedThreadImage.liked}
-                    count={selectedThreadImage.likesCount}
-                  />
-                ) : (
-                  <Commentlikebutton
-                    commentId={selectedThreadImage.targetId}
-                    liked={selectedThreadImage.liked}
-                    count={selectedThreadImage.likesCount}
-                  />
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  const postId = selectedThreadImage.postId;
-                  setSelectedThreadImage(null);
-                  navigate(getAppPostPath(postId));
-                }}
-                className="inline-flex items-center gap-2 text-white/90 hover:text-white transition-colors"
-              >
-                <MessageCircle className="h-6 w-6" />
-                {typeof selectedThreadImage.replyCount === 'number' && (
-                  <span className="font-bold tabular-nums text-lg">
-                    {(selectedThreadImage.replyCount) > 0 ? formatDisplayCount(selectedThreadImage.replyCount) : ''}
-                  </span>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
 
       {failedThreadImageUrls.length > 0 && (
         <div className="hidden" aria-hidden="true">

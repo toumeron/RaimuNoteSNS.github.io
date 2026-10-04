@@ -3,6 +3,7 @@ const viewer={id:'11111111-1111-1111-1111-111111111111',username:'viewer',displa
 const avatar=(color:string)=>'data:image/svg+xml,'+encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><circle cx="20" cy="20" r="20" fill="${color}"/></svg>`);
 const authors=[{...viewer,id:'source-a',displayName:'引用元A',avatarUrl:avatar('pink')},{...viewer,id:'source-b',displayName:'引用元B',avatarUrl:avatar('cyan')}];
 const news=[
+  {id:'bluesky',source:'bluesky',title:'Blueskyの人気ニュース',content:'人気ポストの要約',category:'社会',created_at:'2026-10-03T08:00:00Z',related_post_ids:['b']},
   {id:'general',title:'本日の注目ニュース',content:'引用元から作成した記事',category:'社会',created_at:'2026-10-03T08:00:00Z',related_post_ids:['a','b','hidden']},
   {id:'sports',title:'サッカー決勝のニュース',content:'決勝についての本文',category:'スポーツ',created_at:'2026-10-03T07:00:00Z',related_post_ids:['a']},
   {id:'entertainment',title:'アニメ新作のニュース',content:'新作の本文',category:'エンターテインメント',created_at:'2026-10-03T06:00:00Z',related_post_ids:['b']},
@@ -18,7 +19,7 @@ async function setup(page:Page){
     const req=r.request(),url=new URL(req.url());const single=(req.headers().accept??'').includes('vnd.pgrst.object');let data:unknown=single?null:[];
     if(url.pathname.endsWith('/profiles'))data=single?profiles[0]:profiles;
     if(url.pathname.includes('get-trends'))data=trends;
-    if(url.pathname.endsWith('/news_summaries'))data=news;
+    if(url.pathname.endsWith('/news_summaries'))data=url.searchParams.has('source')?news.filter(item=>(item.source||'limenote')===url.searchParams.get('source')?.slice(3)).slice(0,1):news;
     if(url.pathname.endsWith('/posts'))data=[{id:basePost.id,user_id:profiles[0].id,content:basePost.content,created_at:viewer.createdAt,image_urls:[],likes_count:0,comments_count:0,reposts_count:0,visibility:'public',profiles:profiles[0]}];
     return r.fulfill({contentType:'application/json',body:req.method()==='HEAD'?'':JSON.stringify(data),headers:{'content-range':'0-0/0'}});
   });
@@ -31,7 +32,7 @@ test('discovery tabs, quoted author avatars and flat sections match the new sear
   await expect(page.locator('[data-lime-search-tabs]')).toHaveCount(0);await expect(page.locator('[data-lime-search-result-tabs]')).toHaveCount(0);
   const source=page.getByRole('button',{name:/本日の注目ニュース/});await expect(source.locator('[data-lime-news-source-avatars] img')).toHaveCount(2);
   await expect(source.getByRole('img',{name:'引用元A'})).toHaveAttribute('src',authors[0].avatarUrl);await expect(source.getByRole('img',{name:'引用元B'})).toHaveAttribute('src',authors[1].avatarUrl);
-  await expect(source).toContainText('2件のポスト');await expect(page.getByText('おすすめのプロフィール本文',{exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'フォロー',exact:true})).toBeVisible();
+  await expect(source).toContainText('2件のポスト');await expect(page.locator('[data-lime-search-today-news] h3')).toHaveText(['本日の注目ニュース','Blueskyの人気ニュース']);await expect(page.getByText('おすすめのプロフィール本文',{exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'フォロー',exact:true})).toBeVisible();
   await page.evaluate(()=>window.scrollTo(0,0));await expect(page.getByRole('heading',{name:'本日のニュース',exact:true})).toBeInViewport();
   if(page.viewportSize()!.width<640){const newsBox=(await page.locator('[data-lime-search-today-news]').boundingBox())!;expect(newsBox.x).toBe(0);expect(newsBox.width).toBe(page.viewportSize()!.width);}
   await page.screenshot({path:info.outputPath('search-home.png'),animations:'disabled'});
@@ -49,7 +50,7 @@ test('rankings use search volume and category tabs show only automatically class
   await expect(rows).toHaveCount(3);await expect(rows.first()).toContainText('1 · エンターテインメント');await expect(rows.first()).toContainText('アニメ新作');await expect(rows.nth(1)).toContainText('2 · スポーツ');
   await tabs.getByRole('tab',{name:'スポーツ',exact:true}).click();await expect(page.locator('[data-lime-search-today-news]')).toHaveCount(0);await expect(rows).toHaveCount(1);await expect(rows.first()).toContainText('サッカー決勝');
   await tabs.getByRole('tab',{name:'エンターテインメント',exact:true}).click();await expect(page.locator('[data-lime-search-today-news]')).toHaveCount(0);await expect(rows).toHaveCount(1);await expect(rows.first()).toContainText('アニメ新作');
-  await tabs.getByRole('tab',{name:'話題を検索',exact:true}).click();await expect(page.locator('[data-lime-search-today-news] h3')).toHaveCount(1);
+  await tabs.getByRole('tab',{name:'話題を検索',exact:true}).click();await expect(page.locator('[data-lime-search-today-news] h3')).toHaveCount(2);
   await expect(page.getByRole('heading',{name:'ラジオ',exact:true})).toHaveCount(0);await expect(tabs.getByRole('tab',{name:'ニュース',exact:true})).toHaveCount(0);
   await page.getByRole('button',{name:/本日の注目ニュース/}).click();await expect(page).toHaveURL(/news\?story=general$/);await expect(page.getByRole('heading',{name:'本日の注目ニュース',exact:true})).toBeVisible();
 });

@@ -1,3 +1,9 @@
+import { openMediaViewer } from '@/components/media/openMediaViewer';
+import {useLayoutEffect} from 'react';
+import {PinPostMenuButton} from '@/components/post/PinPostMenuButton';
+import {LinkPreviewCard,useLinkPreview} from '@/components/post/LinkPreviewCard';
+import { renderStickerText } from '@/components/stickers/renderStickerText';
+import { hasStickers } from '@/lib/stickers';
 import { SpacePostCard } from '@/components/spaces/SpacePostCard';
 import { spaceLinkIn } from '@/lib/spaceLinks';
 import '@/components/post/post-actions.css';
@@ -237,7 +243,6 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
   const blueskyPostUrl = data ? getBlueskyPostUrl(data as unknown as { id?: string; blueskyUrl?: string; author?: { username?: string } }) : null;
   const blueskySession = useBlueskySession();
   const blueskyPostUri = isBlueskyPost ? getBlueskyUriFromPostId(id) : null;
-  const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null); // 拡大用
   const [failedUrls, setFailedUrls] = useState<string[]>([]); // 読み込み失敗URL管理
   const navigate = useNavigate();
 
@@ -280,6 +285,11 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const moreButtonMobileRef = useRef<HTMLButtonElement>(null); // モバイル専用ヘッダーの「もっと見る」ボタン用ref
   const moreMenuRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(()=>{
+    if(!showMenu||!moreMenuRef.current||!moreMenuPosition)return;
+    const top=Math.max(8,Math.min(moreMenuPosition.top,window.innerHeight-moreMenuRef.current.offsetHeight-8));
+    if(top!==moreMenuPosition.top)setMoreMenuPosition({...moreMenuPosition,top});
+  },[showMenu,moreMenuPosition]);
   let longPressTimer: NodeJS.Timeout;
 
   const defaultEmojis = ['👍', '❤️', '😆', '🤔', '😮', '🎉', '💢', '😢', '😇', '🍮'];
@@ -306,16 +316,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
 
   // 画像拡大時だけスクロールを固定する。
   // 既存の overflow を退避して、モーダルを閉じた後に元の状態へ戻す。
-  useEffect(() => {
-    if (!selectedImageUrl) return;
 
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [selectedImageUrl]);
 
   // --- 「もっと見る」メニューの外側クリック・スクロール/リサイズで閉じる処理（PostCardと同様） ---
   useEffect(() => {
@@ -685,7 +686,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
   const handleImageClick = (e: React.MouseEvent, url: string) => {
     e.preventDefault();
     e.stopPropagation();
-    setSelectedImageUrl(url);
+    if (data) openMediaViewer({ url, post: data as PostWithAuthor, media: allImageUrls.map(src => ({ src })) });
   };
 
   // --- URLをリンク化する関数 ---
@@ -715,7 +716,8 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
   };
 
   // --- メンションとハッシュタグをリンク化する関数 ---
-  const renderContentWithLinks = (text: string) => {
+  const renderContentWithLinks = (text: string): React.ReactNode => {
+    if (hasStickers(text)) return renderStickerText(text, renderContentWithLinks);
     if (!text) return null;
     
     // @username と #hashtag 形式にマッチさせる正規表現
@@ -763,6 +765,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
 
   // YouTube IDの抽出（画像URLの合体判定より先に算出しておく）
   const youtubeId = data ? getYouTubeId(data.content) : null;
+  const linkPreview=useLinkPreview(data?.content??'',true,data?.linkPreview);
 
   // 元々の画像配列と、本文から抽出した画像を合体させ、最大4枚に制限
   // ただし、BlueskyのYouTubeリンクは外部リンクカードのサムネイル画像が
@@ -772,7 +775,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
   const allImageUrls = data
     ? (isBlueskyPost && youtubeId)
       ? []
-      : [...(data.imageUrls || []), ...extractedImageUrls].slice(0, 4)
+      : [...(data.imageUrls || []).filter(url=>url!==linkPreview.preview?.image), ...extractedImageUrls].slice(0, 4)
     : [];
   const singleImageUrl = allImageUrls.length === 1 ? allImageUrls[0] : null;
 
@@ -1651,6 +1654,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                       style={{
                         top: moreMenuPosition?.top ?? 0,
                         right: moreMenuPosition?.right ?? 8,
+                          maxHeight: 'calc(100dvh - 16px)', overflowY: 'auto',
                         zIndex: 2147483647,
                       }}
                       onClick={(e) => e.stopPropagation()}
@@ -1663,6 +1667,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                         {isBlueskyPost ? 'Blueskyで見る' : 'ポストアクティビティー'}
                       </button>
 
+                      {isMyPost && !isBlueskyPost && !('replyId' in data && data.replyId) && <PinPostMenuButton userId={data.userId} postId={data.id} onClose={()=>setShowMenu(false)}/>}
                       {isMyPost && currentVisibility !== 'public' && (
                         <button
                           onClick={(e) => handleToggleVisibility(e, 'public')}
@@ -1712,9 +1717,9 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
 
           {/* 加工した本文を表示（メンション・ハッシュタグ・URL処理を適用） */}
           <SpacePostCard content={data.content || ''} />
-          {(spaceLinkIn(displayContent || '')?.text ?? displayContent) && (
+          {(linkPreview.text(spaceLinkIn(displayContent || '')?.text ?? displayContent??'')) && (
             <p className={`mt-4 whitespace-pre-wrap break-words text-base leading-relaxed text-foreground ${useMobileThreadLayout ? 'post-detail-mobile-content' : ''}`}>
-              {renderContentWithLinks(spaceLinkIn(displayContent || '')?.text ?? displayContent)}
+              {renderContentWithLinks(linkPreview.text(spaceLinkIn(displayContent || '')?.text ?? displayContent??''))}
             </p>
           )}
 
@@ -1737,6 +1742,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
             </div>
           )}
 
+          <LinkPreviewCard {...linkPreview} />
           {/* YouTube埋め込みを追加 */}
           {youtubeId && <YouTubeEmbed videoId={youtubeId} />}
 
@@ -2322,87 +2328,6 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
         document.body
       )}
 
-      {/* 画像拡大オーバーレイ（モーダル）
-          body 直下へ Portal して、親要素の transform / stacking context / z-index の影響を受けないようにする。
-          これによりモバイルの下部ナビゲーションまで確実に覆う。 */}
-      {selectedImageUrl && data && typeof document !== 'undefined' && createPortal(
-        <div
-          className="fixed inset-0 z-[2147483647] flex h-[100dvh] w-screen flex-col items-center justify-center bg-black/95 backdrop-blur-sm animate-in fade-in duration-200"
-          role="dialog"
-          aria-modal="true"
-          aria-label="画像を拡大表示"
-          onClick={() => setSelectedImageUrl(null)}
-        >
-          {/* 閉じるボタン */}
-          <button
-            type="button"
-            className="absolute left-5 top-5 z-[1] p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
-            onClick={(e) => {
-              e.stopPropagation();
-              setSelectedImageUrl(null);
-            }}
-            aria-label="画像を閉じる"
-          >
-            <X className="h-6 w-6" />
-          </button>
-
-          {/* 画像本体 */}
-          <div className="relative flex max-h-full max-w-full items-center justify-center p-4">
-            <img
-              src={selectedImageUrl}
-              alt="Expanded view"
-              className="max-h-[85dvh] max-w-[95vw] object-contain shadow-2xl animate-in zoom-in-95 duration-200"
-              onClick={(e) => e.stopPropagation()}
-              draggable={false}
-            />
-          </div>
-
-          {/* 下部アクションエリア */}
-          <div
-            className="absolute bottom-0 left-0 right-0 flex items-center justify-center bg-gradient-to-t from-black/80 to-transparent pb-[calc(2rem+env(safe-area-inset-bottom))] pt-10"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-8 rounded-full bg-black/40 px-6 py-3 backdrop-blur-md border border-white/10">
-              <div className="scale-125">
-                {isBlueskyPost ? (
-                  blueskySession && blueskyPostUri ? (
-                    <LikeButton
-                      postId={data.id}
-                      liked={data.likedByMe}
-                      count={data.likesCount}
-                      bluesky={{ postUri: blueskyPostUri, preferencePost: data as PostWithAuthor }}
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
-                      }}
-                      className="inline-flex items-center gap-2 text-white/90 hover:text-white transition-colors"
-                    >
-                      <Heart className="h-6 w-6" />
-                      <span className="font-bold tabular-nums text-lg">{(data.likesCount) > 0 ? formatDisplayCount(data.likesCount) : ''}</span>
-                    </button>
-                  )
-                ) : (
-                  <LikeButton
-                    postId={data.id}
-                    liked={data.likedByMe}
-                    count={data.likesCount}
-                  />
-                )}
-              </div>
-              <div className="inline-flex items-center gap-2 text-white/90">
-                <MessageCircle className="h-6 w-6" />
-                <span className="font-bold tabular-nums text-lg">{(data.commentsCount) > 0 ? formatDisplayCount(data.commentsCount) : ''}</span>
-              </div>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
       </div>
     </>
   );

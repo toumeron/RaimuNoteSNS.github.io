@@ -1,3 +1,4 @@
+import {isInstalledPwa} from '@/lib/pwa';
 import { useQueryClient } from '@tanstack/react-query';
 import { Fragment, createContext, useContext, useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
@@ -153,11 +154,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
+    // An installed app must be able to open its locally saved bookmarks even
+    // when an expired session cannot refresh until the network returns.
+    let offlineSession:Session|null=null;
+    if(isInstalledPwa() && !navigator.onLine){
+      try{
+        const project=new URL(import.meta.env.VITE_SUPABASE_URL).hostname.split('.')[0];
+        const stored=JSON.parse(localStorage.getItem(`sb-${project}-auth-token`)??'null');
+        if(stored?.user?.id && typeof stored.access_token==='string' && typeof stored.refresh_token==='string')offlineSession=stored;
+      }catch{/* No locally signed-in account. */}
+    }
+
     // Auth callbacks run while Supabase holds its session lock. Schedule DB work
     // after the callback returns; resubscribing on every user/loading update
     // causes repeated INITIAL_SESSION events and lock contention.
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    const applySession = (_event:string,newSession:Session|null) => {
       if (!alive) return;
+      if(!navigator.onLine && offlineSession && !newSession && _event!=='SIGNED_OUT')return;
       // Do not expose a transient failed-switch SIGNED_OUT to the router.
       if (switchInFlight.current && !newSession) { sessionRef.current = null; return; }
       sessionRef.current = newSession;
@@ -181,25 +194,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       const meta = supabaseUser.user_metadata;
+      const savedProfile=!navigator.onLine?readSavedAccounts().find(account=>account.id===supabaseUser.id):undefined;
       const emailName = supabaseUser.email?.split('@')[0] ?? 'user';
       setUser(current => {
         const next = current?.id === supabaseUser.id ? { ...current, ...supabaseUser } : {
         ...supabaseUser,
-        username: meta?.username ?? emailName,
-        displayName: meta?.display_name ?? meta?.displayName ?? emailName,
-        avatarUrl: meta?.avatar_url ?? meta?.avatarUrl ?? '',
+        username: savedProfile?.username ?? meta?.username ?? emailName,
+        displayName: savedProfile?.displayName ?? meta?.display_name ?? meta?.displayName ?? emailName,
+        avatarUrl: savedProfile?.avatarUrl ?? meta?.avatar_url ?? meta?.avatarUrl ?? '',
         bio: '', coverUrl: '', emojiEffect: '', bot_enabled: false, bot_prompt: '',
       };
         profileRef.current = next;
         return next;
       });
-      if (profileUserId !== supabaseUser.id) {
+      if (navigator.onLine && profileUserId !== supabaseUser.id) {
         profileUserId = supabaseUser.id;
         clearTimeout(profileTimer);
         profileTimer = setTimeout(() => { if (alive) void fetchProfile(supabaseUser); }, 0);
       }
-    });
+    };
+    if(offlineSession)applySession('INITIAL_SESSION',offlineSession);
+    const {data:{subscription}}=supabase.auth.onAuthStateChange(applySession);
+    const reconnect=()=>{void supabase.auth.getSession().then(({data})=>{if(alive)applySession('INITIAL_SESSION',data.session);}).catch(()=>{/* The SDK's auth listener will retry when connectivity returns. */});};
+    window.addEventListener('online',reconnect);
     return () => {
+      window.removeEventListener('online',reconnect);
       alive = false;
       clearTimeout(profileTimer);
       subscription.unsubscribe();

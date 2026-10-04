@@ -1,3 +1,6 @@
+import {DraftEmojiText} from '@/components/stickers/DraftEmojiText';
+import { StickerPicker, StickerDraft } from '@/components/stickers/Stickers';
+import { appendSticker, insertDraftEmoji, draftEmojiCharacter } from '@/lib/stickers';
 import { QuotedPost } from '@/components/feed/QuotedPost';
 import { memo, useCallback, useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type PointerEvent as ReactPointerEvent, type UIEvent as ReactUIEvent } from 'react';
 import { createPortal } from 'react-dom';
@@ -76,6 +79,7 @@ const getQuotedPostCached = async (postId: string, viewerId?: string) => {
 };
 
 interface PostComposerProps {
+  homeInline?:boolean;
   imageEditor?: { src: string; onApply: (url: string) => void; onClose: () => void };
   initialQuotedPost?: PostWithAuthor | null;
   initialContent?: string;
@@ -161,7 +165,7 @@ function getCaretCoordinates(element: HTMLTextAreaElement, position: number) {
   return coordinates;
 }
 
-function PostComposerComponent({ initialQuotedPost, initialContent = '', onSuccess, timelineGlass = false, imageEditor }: PostComposerProps) {
+function PostComposerComponent({ initialQuotedPost, initialContent = '', onSuccess, timelineGlass = false, homeInline = false, imageEditor }: PostComposerProps) {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const quoteId = imageEditor ? null : searchParams.get('quote');
@@ -173,6 +177,7 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
   const { mutateAsync, isPending } = useCreatePost();
   
   const [content, setContent] = useState(initialContent);
+  const [sticker,setSticker]=useState<string|null>(null);
   const [previews, setPreviews] = useState<string[]>([]);
   const [previewOriginals, setPreviewOriginals] = useState<string[]>([]);
   const [editingImageIndex, setEditingImageIndex] = useState<number | null>(null);
@@ -1142,7 +1147,8 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
   const handleContentChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     const pos = e.target.selectionStart;
-    setContent(val);
+    setContent(sticker && val.trim() ? val+draftEmojiCharacter(sticker) : val);
+    if(sticker && val.trim())setSticker(null);
     setCursorPosition(pos);
     resizeTextarea();
 
@@ -1241,7 +1247,7 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
   const submit = async () => {
     if (!user) return;
 
-    const trimmed = content.trim();
+    const trimmed = appendSticker(content,sticker);
     if (!trimmed) {
       toast.error('本文を入力してください');
       return;
@@ -1276,7 +1282,7 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
         });
       }
 
-      setContent('');
+      setContent(''); setSticker(null);
       const urls = new Set([...previewsRef.current, ...previewOriginalsRef.current]);
       urls.forEach((url) => URL.revokeObjectURL(url));
       setPreviews([]);
@@ -1303,7 +1309,7 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
     });
   };
 
-  const remaining = MAX_LEN - content.length;
+  const remaining = MAX_LEN - appendSticker(content,sticker).length;
   const overLimit = remaining < 0;
 
   const imageEditorDialog = editingImageSrc && typeof document !== 'undefined' && createPortal(
@@ -1471,7 +1477,7 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
               className="absolute inset-0 pointer-events-none whitespace-pre-wrap break-words px-0 py-2 text-[20px] leading-relaxed text-foreground z-0"
               style={{ transform: `translateY(-${scrollTop}px)` }}
             >
-              {renderHighlightedText(content)}
+              {<DraftEmojiText text={content} renderText={renderHighlightedText}/>}
               {content.endsWith('\n') ? <br /> : null}
             </div>
 
@@ -1547,6 +1553,7 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
             </div>
           )}
 
+          <StickerDraft inline={!!content.trim()} name={sticker} onRemove={()=>setSticker(null)} />
           {quotedPost && (
             <div className="relative">
               {!initialQuotedPost && (
@@ -1648,6 +1655,7 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
                   )}
                 </DropdownMenuContent>
               </DropdownMenu>
+              <StickerPicker disabled={isPending} onSelect={name=>{if(content.trim()){insertDraftEmoji(textareaRef.current,content,name,setContent);}else setSticker(name);}} />
 
               <span className={cn('text-xs tabular-nums', overLimit ? 'font-bold text-destructive' : 'text-muted-foreground')}>
                 {remaining}
@@ -1656,15 +1664,16 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
             <Button
               type="button"
               onClick={submit}
-              disabled={isPending || overLimit || !content.trim()}
-              className="rounded-full bg-gradient-primary px-5 font-bold shadow-soft transition hover:shadow-pop"
+              disabled={isPending || overLimit || !appendSticker(content,sticker)}
+              aria-label={quotedPost?'引用ポスト':'ポスト'}
+              className={cn("shrink-0 rounded-full bg-gradient-primary font-bold shadow-soft transition hover:shadow-pop",homeInline?"h-9 w-9 p-0 sm:h-10 sm:w-auto sm:px-5":"px-5")}
             >
               {isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <>
-                  <Send className="mr-1.5 h-4 w-4" />
-                  {quotedPost ? '引用ポスト' : 'ポスト'}
+                  <Send className={cn("h-4 w-4",homeInline?"sm:mr-1.5":"mr-1.5")} />
+                  <span className={homeInline?"hidden sm:inline":undefined}>{quotedPost ? '引用ポスト' : 'ポスト'}</span>
                 </>
               )}
             </Button>

@@ -1,3 +1,7 @@
+import { MediaLightboxRoot } from '@/components/media/MediaLightbox';
+import {DraftEmojiText} from '@/components/stickers/DraftEmojiText';
+import { StickerPicker, StickerDraft } from '@/components/stickers/Stickers';
+import { appendSticker, insertDraftEmoji, draftEmojiCharacter } from '@/lib/stickers';
 import { QuotedPost } from '@/components/feed/QuotedPost';
 import { PostOverlayContext } from '@/components/layout/PostOverlayContext';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -948,6 +952,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
   const { mutateAsync, isPending } = useCreatePost();
   
   const [content, setContent] = useState(initialContent);
+  const [sticker,setSticker]=useState<string|null>(null);
   const [previews, setPreviews] = useState<string[]>([]);
   const [previewOriginals, setPreviewOriginals] = useState<string[]>([]);
   const [editingImageIndex, setEditingImageIndex] = useState<number | null>(null);
@@ -1877,7 +1882,8 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
   const handleContentChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     const pos = e.target.selectionStart;
-    setContent(val);
+    setContent(sticker && val.trim() ? val+draftEmojiCharacter(sticker) : val);
+    if(sticker && val.trim())setSticker(null);
     setCursorPosition(pos);
 
     const lastAtIdx = val.lastIndexOf('@', pos - 1);
@@ -1973,7 +1979,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
   const submit = async () => {
     if (!user) return;
 
-    const trimmed = content.trim();
+    const trimmed = appendSticker(content,sticker);
     if (!trimmed) {
       toast.error('本文を入力してください');
       return;
@@ -2008,7 +2014,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
         });
       }
 
-      setContent('');
+      setContent(''); setSticker(null);
       const urls = new Set([...previewsRef.current, ...previewOriginalsRef.current]);
       urls.forEach((url) => URL.revokeObjectURL(url));
       setPreviews([]);
@@ -2034,7 +2040,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
     });
   };
 
-  const remaining = MAX_LEN - content.length;
+  const remaining = MAX_LEN - appendSticker(content,sticker).length;
   const overLimit = remaining < 0;
 
   if (!user) return null;
@@ -2104,7 +2110,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
         )}
         style={{ transform: `translateY(-${scrollTop}px)` }}
       >
-        {renderHighlightedText(content)}
+        {<DraftEmojiText text={content} renderText={renderHighlightedText}/>}
         {content.endsWith('\n') ? <br /> : null}
       </div>
 
@@ -2373,7 +2379,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
             <Button
               type="button"
               onClick={submit}
-              disabled={isPending || overLimit || !content.trim()}
+              disabled={isPending || overLimit || !appendSticker(content,sticker)}
               className="rounded-full bg-gradient-primary px-5 font-bold shadow-soft transition hover:shadow-pop"
             >
               {isPending ? (
@@ -2397,7 +2403,8 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
             {textareaBlock}
             {mentionPopup}
             {hashtagPopup}
-            {quotedBlock}
+            <StickerDraft inline={!!content.trim()} name={sticker} onRemove={()=>setSticker(null)} />
+          {quotedBlock}
             {imagesGrid}
           </div>
 
@@ -2431,9 +2438,12 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
                   <ImagePlus className="h-5 w-5" />
                 </Button>
               </div>
-              <span className={cn('text-xs tabular-nums', overLimit ? 'font-bold text-destructive' : 'text-muted-foreground')}>
+              <div className="flex items-center gap-2">
+                <span className={cn('text-xs tabular-nums', overLimit ? 'font-bold text-destructive' : 'text-muted-foreground')}>
                 {remaining}
               </span>
+                <StickerPicker iconOnly className="h-10 w-10" disabled={isPending} onSelect={name=>{if(content.trim()){insertDraftEmoji(textareaRef.current,content,name,setContent);}else setSticker(name);}} />
+              </div>
             </div>
           </div>
         </div>
@@ -2474,6 +2484,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
           {textareaBlock}
           {mentionPopup}
           {hashtagPopup}
+          <StickerDraft inline={!!content.trim()} name={sticker} onRemove={()=>setSticker(null)} />
           {quotedBlock}
           {imagesGrid}
 
@@ -2493,6 +2504,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
               </Button>
 
               {visibilityMenu}
+              <StickerPicker disabled={isPending} onSelect={name=>{if(content.trim()){insertDraftEmoji(textareaRef.current,content,name,setContent);}else setSticker(name);}} />
 
               <span className={cn('text-xs tabular-nums', overLimit ? 'font-bold text-destructive' : 'text-muted-foreground')}>
                 {remaining}
@@ -2501,7 +2513,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
             <Button
               type="button"
               onClick={submit}
-              disabled={isPending || overLimit || !content.trim()}
+              disabled={isPending || overLimit || !appendSticker(content,sticker)}
               className="rounded-full bg-gradient-primary px-5 font-bold shadow-soft transition hover:shadow-pop"
             >
               {isPending ? (
@@ -2682,6 +2694,7 @@ const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage |
         <SpaceProvider>
         <AccountOverlayReset onReset={resetAccountOverlays} />
         <NotificationWatcher />
+        <MediaLightboxRoot />
         <LimeDropReceiver />
         <EmojiRainEffect /> 
         

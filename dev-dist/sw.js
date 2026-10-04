@@ -67,7 +67,7 @@ if (!self.define) {
     });
   };
 }
-define(['./workbox-7e5eb42b'], (function (workbox) { 'use strict';
+define(['./workbox-afac4cd2'], (function (workbox) { 'use strict';
 
   importScripts("push-sw.js");
   self.skipWaiting();
@@ -79,11 +79,22 @@ define(['./workbox-7e5eb42b'], (function (workbox) { 'use strict';
    */
   workbox.precacheAndRoute([{
     "url": "/RaimuNoteSNS.github.io/index.html",
-    "revision": "0.gom70g18qlk"
+    "revision": "0.vh00t5ac1e4"
   }], {});
   workbox.cleanupOutdatedCaches();
   workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("/RaimuNoteSNS.github.io/index.html"), {
     allowlist: [/^\/$/]
   }));
+  workbox.registerRoute(({
+    url
+  }) => url.origin === self.location.origin && /\/RaimuNoteSNS\.github\.io\/(assets|decoders)\/.*\.(js|wasm)$/.test(url.pathname), new workbox.CacheFirst({
+    "cacheName": "lime-feature-assets-v1",
+    plugins: [new workbox.ExpirationPlugin({
+      maxEntries: 48,
+      maxAgeSeconds: 2592000
+    }), new workbox.CacheableResponsePlugin({
+      statuses: [200]
+    })]
+  }), 'GET');
 
 }));

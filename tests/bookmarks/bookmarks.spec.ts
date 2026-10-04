@@ -133,3 +133,43 @@ test('mobile account sheet uses the usual pink check',async({page},info)=>{
   test.skip((page.viewportSize()?.width??0)>=768,'Mobile-only presentation');await setup(page,info.project.name.includes('PWA'));await page.goto('./');await press(page,page.getByRole('button',{name:'メニューを開く',exact:true}));await press(page,page.getByRole('button',{name:'アカウント一覧を開く',exact:true}));
   const check=page.locator('[data-lime-mobile-account-sheet]').getByLabel('ログイン中',{exact:true});await expect(check).toBeVisible();await expect(check).toHaveClass(/bg-primary/);expect(await check.evaluate(el=>getComputedStyle(el).backgroundColor)).not.toBe('rgb(14, 165, 233)');
 });
+
+test('PWA downloads every bookmark page and images, then deletes only the offline copy',async({page,context},info)=>{
+ const pwa=info.project.name.includes('PWA');
+ const state=await setup(page,pwa);
+ const image='https://offline-media.example/photo.png';
+ await page.route('**/offline-media.example/**',route=>route.fulfill({contentType:'image/svg+xml',headers:{'access-control-allow-origin':'*'},body:'<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80" fill="pink"/></svg>'}));
+ state.extraPosts=Array.from({length:23},(_,i)=>({...base,id:`offline-${i}`,content:`オフライン投稿 ${i}`,imageUrls:[image],author:{...user,avatarUrl:image}}));
+ state.rows=state.extraPosts.map(post=>({id:`save-${post.id}`,user_id:user.id,post_id:post.id,comment_id:null,external_id:null,created_at:post.createdAt}));
+ await page.goto('./bookmarks');
+ const save=page.getByRole('button',{name:'ブックマークをすべてオフラインに保存'});
+ if(!pwa){await expect(save).toHaveCount(0);return;}
+ await expect(page.getByText('オフライン投稿 22',{exact:true})).toHaveCount(0);
+ await expect(save).toBeEnabled();await press(page,save);
+ const remove=page.getByRole('button',{name:'オフライン保存データを削除'});await expect(remove).toBeEnabled();
+ const stored=await page.evaluate(async(id)=>{const {readOfflineBookmarks}=await import('/RaimuNoteSNS.github.io/src/lib/offlineBookmarks.ts');const value=await readOfflineBookmarks(id);return {count:value?.posts.length,assets:value?.assets.length};},user.id);
+ expect(stored).toEqual({count:23,assets:1});
+ const blockNetwork=(route:import('@playwright/test').Route)=>/^https?:/.test(route.request().url())?route.abort():route.continue();
+ if(info.project.name.includes('WebKit')){await page.route('**/*',blockNetwork);await page.evaluate(()=>{Object.defineProperty(navigator,'onLine',{configurable:true,get:()=>false});window.dispatchEvent(new Event('offline'));});}else await context.setOffline(true);
+ await expect(page.getByText('オフライン投稿 22',{exact:true})).toBeVisible();
+ const photo=page.locator('[data-lime-post-card] img[src^="blob:"]').first();await expect(photo).toBeVisible();await expect.poll(()=>photo.evaluate((img:HTMLImageElement)=>img.naturalWidth)).toBeGreaterThan(0);
+ await press(page,page.getByRole('button',{name:'ブックマークを検索',exact:true}));await page.getByRole('textbox',{name:'ブックマークを検索'}).fill('投稿 22');await expect(page.locator('[data-lime-post-card]')).toHaveCount(1);
+ await press(page,page.getByRole('button',{name:'ブックマークの検索を閉じる'}));
+ await page.screenshot({path:info.outputPath('offline-bookmarks.png')});
+ await press(page,remove);await expect(page.getByText('オフライン保存したポストがありません。')).toBeVisible();
+ expect(state.rows).toHaveLength(23);
+ if(info.project.name.includes('WebKit')){await page.unroute('**/*',blockNetwork);await page.evaluate(()=>{delete (navigator as Navigator & {onLine?:boolean}).onLine;window.dispatchEvent(new Event('online'));});}else await context.setOffline(false);await expect(save).toBeEnabled();
+});
+
+test('failed offline media download leaves bookmarks intact and can be retried',async({page},info)=>{
+ test.skip(!info.project.name.includes('PWA'),'Installed apps only');
+ const state=await setup(page,true);let fail=true;
+ const image='https://offline-media.example/retry.png';
+ await page.route('**/offline-media.example/**',route=>route.fulfill(fail?{status:503,headers:{'access-control-allow-origin':'*'},body:''}:{contentType:'image/svg+xml',headers:{'access-control-allow-origin':'*'},body:'<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30"><rect width="30" height="30" fill="pink"/></svg>'}));
+ state.extraPosts=[{...base,id:'download-retry',content:'失敗しても消えないブックマーク',imageUrls:[image]}];
+ state.rows=[{id:'download-retry-bookmark',user_id:user.id,post_id:'download-retry',comment_id:null,external_id:null,created_at:user.createdAt}];
+ await page.goto('./bookmarks');const save=page.getByRole('button',{name:'ブックマークをすべてオフラインに保存'});await expect(save).toBeEnabled();await press(page,save);
+ await expect(page.getByText('画像を保存できませんでした。もう一度お試しください',{exact:true})).toBeVisible();
+ await expect(save).toBeEnabled();await expect(page.getByRole('button',{name:'オフライン保存データを削除'})).toHaveCount(0);expect(state.rows).toHaveLength(1);
+ fail=false;await press(page,save);await expect(page.getByRole('button',{name:'オフライン保存データを削除'})).toBeEnabled();
+});

@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { act, cleanup, fireEvent, render as baseRender, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -6,7 +7,11 @@ vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ user: { id: 'viewer', disp
 vi.mock('@/hooks/useComments', () => ({ useCreateComment: () => ({ mutateAsync: state.send, isPending: state.pending }) }));
 vi.mock('@/components/feed/PostComposer', () => ({ PostComposer: ({ imageEditor }: { imageEditor: { src: string; onApply: (url: string) => void; onClose: () => void } }) => <div role="dialog"><span>{imageEditor.src}</span><button onClick={() => { imageEditor.onApply('blob:cropped'); imageEditor.onClose(); }}>編集を保存</button></div> }));
 import { CommentForm } from './CommentForm';
-const render = (ui: React.ReactNode, options?: Parameters<typeof baseRender>[1]) => baseRender(ui, { wrapper: MemoryRouter, ...options });
+const render = (ui: React.ReactNode, options?: Parameters<typeof baseRender>[1]) => {
+  const client = new QueryClient({defaultOptions:{queries:{retry:false}}});
+  const Wrapper = ({children}:{children:React.ReactNode}) => <QueryClientProvider client={client}><MemoryRouter>{children}</MemoryRouter></QueryClientProvider>;
+  return baseRender(ui, {wrapper:Wrapper,...options});
+};
 
 beforeEach(() => {
   state.send.mockReset().mockResolvedValue({}); state.pending = false;
@@ -25,16 +30,19 @@ describe('reply composer', () => {
     const input = screen.getByPlaceholderText('返信をポスト');
     expect(input.tagName).toBe('INPUT');
     fireEvent.focus(input);
-    expect(input.parentElement).toContainElement(screen.getByRole('button', { name: '返信に画像を添付' }));
+    expect(input.closest(".reply-input-shell")).toContainElement(screen.getByRole('button', { name: '返信に画像を添付' }));
     expect(view.container.querySelector('[data-lime-reply-composer]')).toHaveAttribute('data-compact', 'true');
   });
-  it('hides the photo button until editing and folds an empty draft after blur', () => {
+  it('shows attachment tools only while replying and keeps their reserved space', () => {
     render(<CommentForm postId="post" variant="desktopReply" />);
-    expect(screen.queryByRole('button', { name: '返信に画像を添付' })).toBeNull();
-    const input = screen.getByPlaceholderText('返信をポスト'); fireEvent.focus(input);
+    expect(screen.queryByRole('button', { name: '返信に画像を添付' })).not.toBeInTheDocument();
+    const input = screen.getByPlaceholderText('返信をポスト');
+    expect(screen.queryByRole('button',{name:'スタンプを選ぶ'})).not.toBeInTheDocument();
+    fireEvent.focus(input);
     expect(screen.getByRole('button', { name: '返信に画像を添付' })).toBeInTheDocument();
+    fireEvent.change(input,{target:{value:'入力した返信'}});
     fireEvent.blur(input, { relatedTarget: document.body });
-    expect(screen.queryByRole('button', { name: '返信に画像を添付' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '返信に画像を添付' })).not.toBeInTheDocument();
   });
   it('shows images beneath the input with working edit and remove controls', async () => {
     const view = render(<CommentForm postId="post" />); attach(view.container);

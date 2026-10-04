@@ -1663,7 +1663,7 @@ export default function Feed() {
       </div>
 
       <div className="relative z-[1]">
-        <PostComposer timelineGlass={hasTimelineBackground} />
+        <PostComposer homeInline timelineGlass={hasTimelineBackground} />
       </div>
 
       <div

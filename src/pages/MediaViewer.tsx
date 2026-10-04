@@ -1,3 +1,6 @@
+import { openMediaViewer } from '@/components/media/openMediaViewer';
+import { renderStickerText } from '@/components/stickers/renderStickerText';
+import { hasStickers } from '@/lib/stickers';
 import {
   useCallback,
   useEffect,
@@ -1329,7 +1332,8 @@ export default function MediaViewer() {
     });
   };
 
-  const renderContentWithMentions = (text: string) => {
+  const renderContentWithMentions = (text: string): React.ReactNode => {
+    if (hasStickers(text)) return renderStickerText(text, renderContentWithMentions);
     if (!text) {
       return null;
     }
@@ -1557,6 +1561,7 @@ export default function MediaViewer() {
           >
             <img
               src={item.displayImageUrl}
+              onClick={() => openMediaViewer({ url: item.displayImageUrl, postId: item.id, media: item.imageUrls.map(src => ({ src })) })}
               alt=""
               loading="lazy"
               className="h-full w-full object-contain"

@@ -18,6 +18,7 @@ export type User = {
 };
 
 export type Post = {
+  linkPreview?: {url:string;domain:string;title:string;image:string};
   id: string;
   userId: string;
   authorId?: string; // DBの author_id をそのまま受け入れるために重要

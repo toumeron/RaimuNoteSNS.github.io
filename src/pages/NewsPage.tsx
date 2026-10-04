@@ -41,7 +41,7 @@ export default function NewsPage() {
             <div className="p-6 rounded-[32px] bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 mb-4">
               <div className="flex items-center gap-2 mb-4">
                 <span className="text-[10px] font-black px-1.5 py-0.5 bg-[#1d9bf0]/20 text-[#1d9bf0] rounded uppercase tracking-tighter">
-                  LimeNote
+                  {latest.source === 'bluesky' ? 'Bluesky' : 'LimeNote'}
                 </span>
                 <span className="text-xs text-gray-500 font-medium">
                   {formatRelative(latest.created_at)}
@@ -57,7 +57,7 @@ export default function NewsPage() {
               </div>
 
               <p className="text-[12px] leading-snug text-gray-500 dark:text-gray-600 mb-8">
-                このストーリーは、LimeNoteのポストの要約であり、時間の経過とともに新しくなります。AIは間違えることがあるため、アウトプットが事実かどうかを確認してください
+                このストーリーは、{latest.source === 'bluesky' ? 'Bluesky' : 'LimeNote'}のポストの要約であり、時間の経過とともに新しくなります。AIは間違えることがあるため、アウトプットが事実かどうかを確認してください
               </p>
 
               {/* 関連ポストセクション */}

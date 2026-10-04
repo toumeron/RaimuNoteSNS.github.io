@@ -1,4 +1,9 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { openMediaViewer } from '@/components/media/openMediaViewer';
+import {LinkPreviewCard,useLinkPreview} from '@/components/post/LinkPreviewCard';
+import {OfflineBookmarkContext} from '@/components/stickers/OfflineBookmarkContext';
+import { renderStickerText } from '@/components/stickers/renderStickerText';
+import { hasStickers } from '@/lib/stickers';
+import { useState, useContext, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { MoreHorizontal, ChartBarBig, Trash2, CalendarDays, X, Plus, MessageCircle } from 'lucide-react';
@@ -125,6 +130,10 @@ export function CommentCard({
   embedded = false,
   repostedByLabel,
   replyToUsername,
+  mediaPresentation,
+  onMediaReply,
+  onMediaLikeChange,
+  mediaDownload,
 }: {
   comment: Comment;
   currentUserId: string | null;
@@ -134,18 +143,22 @@ export function CommentCard({
   embedded?: boolean;
   repostedByLabel?: string;
   replyToUsername?: string;
+  mediaPresentation?: 'actions' | 'menu';
+  onMediaReply?:()=>void;
+  onMediaLikeChange?:(state:{liked:boolean;count:number})=>void;
+  mediaDownload?:()=>void;
 }) {
   const navigate = useNavigate();
 
   const [showMenu, setShowMenu] = useState(false);
   const [deleted, setDeleted] = useState(false);
   const [imageSize, setImageSize] = useState<{ url: string; width: number; height: number } | null>(null);
-  const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
   const [failedUrls, setFailedUrls] = useState<string[]>([]);
   const [, setTick] = useState(0);
 
   // カスタム絵文字・リアクション用
   const [showPicker, setShowPicker] = useState(false);
+  const offlineBookmark=useContext(OfflineBookmarkContext);
   const [customEmojis, setCustomEmojis] = useState<CustomEmoji[]>([]);
   const [reactions, setReactions] = useState<ReactionGroup[]>([]);
   const [recentEmojis, setRecentEmojis] = useState<string[]>([]);
@@ -219,11 +232,11 @@ export function CommentCard({
   }, [comment.id]);
 
   useEffect(() => {
-    if (!selectedImageUrl && !showPicker) return;
+    if (!showPicker) return;
     const previous = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = previous; };
-  }, [selectedImageUrl, showPicker]);
+  }, [showPicker]);
 
   const fetchReactions = async () => {
     try {
@@ -290,6 +303,7 @@ export function CommentCard({
   };
 
   const fetchCustomEmojis = async () => {
+    if(offlineBookmark){setCustomEmojis(offlineBookmark.emojis.map(emoji=>({...emoji,uploaded_by:''})));return;}
     try {
       const { data, error } = await supabase
         .from('custom_emojis')
@@ -475,6 +489,7 @@ export function CommentCard({
   });
 
   const youtubeId = getYouTubeId(comment.content);
+  const linkPreview=useLinkPreview(comment.content);
 
   const spotifyUrls = comment.content.match(spotifyRegex) || [];
   const extractedImageUrls = comment.content.match(imageRegex) || [];
@@ -484,7 +499,7 @@ export function CommentCard({
   displayContent = displayContent.replace(/(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|embed\/|shorts\/)?([a-zA-Z0-9_-]{11})([^?\s\n]*)?(\S+)?/g, '');
   displayContent = displayContent.replace(imageRegex, '');
   displayContent = displayContent.replace(spotifyRegex, '');
-  displayContent = displayContent.trim();
+  displayContent = linkPreview.text(displayContent.trim());
 
   const useMobilePresentation = mobileFlat || isMobile;
   const naturalSize = imageSize?.url === allImageUrls[0] ? imageSize : null;
@@ -593,7 +608,8 @@ export function CommentCard({
     });
   };
 
-  const renderContentWithMentions = (text: string) => {
+  const renderContentWithMentions = (text: string): React.ReactNode => {
+    if (hasStickers(text)) return renderStickerText(text, renderContentWithMentions);
     if (!text) return null;
 
     const parts = text.split(/(@\w+)/g);
@@ -636,7 +652,7 @@ export function CommentCard({
   const handleImageClick = (e: React.MouseEvent, url: string) => {
     e.preventDefault();
     e.stopPropagation();
-    setSelectedImageUrl(url);
+    openMediaViewer({ url, post: replyToPost(comment), offline: offlineBookmark, media: (comment.imageUrls ?? [url]).map(src => ({ src })) });
   };
 
   const handleCardClick = () => {
@@ -646,7 +662,9 @@ export function CommentCard({
   const HoverStats = ({ userId }: { userId: string }) => {
     const { data: stats } = useFollowStats(userId);
 
-    return (
+
+
+  return (
       <div className="mt-3 flex items-center gap-4 text-[14px]">
         <div className="flex items-center gap-1">
           <span className="font-bold text-foreground">
@@ -722,246 +740,7 @@ export function CommentCard({
 
   if (deleted) return null;
 
-  return (
-    <>
-      <style>{`
-        @keyframes misskeyRingExpand {
-          0% {
-            transform: translate(-50%, -50%) scale(0.6);
-            opacity: 1;
-            border-width: 5px;
-          }
-          40% {
-            opacity: 1;
-            border-width: 4px;
-          }
-          100% {
-            transform: translate(-50%, -50%) scale(1.15);
-            opacity: 0;
-            border-width: 1px;
-          }
-        }
-
-        @keyframes misskeyDotBurst {
-          0% {
-            transform: translate(-50%, -50%) rotate(var(--mk-angle)) translateY(0px) scale(0.2);
-            opacity: 0;
-          }
-          15% {
-            opacity: 1;
-            transform: translate(-50%, -50%) rotate(var(--mk-angle)) translateY(calc(var(--mk-dist) * 0.4)) scale(1.1);
-          }
-          60% {
-            opacity: 1;
-          }
-          100% {
-            transform: translate(-50%, -50%) rotate(var(--mk-angle)) translateY(var(--mk-dist)) scale(0);
-            opacity: 0;
-          }
-        }
-
-        @keyframes misskeyButtonElastic {
-          0% { transform: scale(1); }
-          20% { transform: scale(0.84); }
-          50% { transform: scale(1.16); }
-          75% { transform: scale(0.94); }
-          100% { transform: scale(1); }
-        }
-
-        .misskey-elastic-active {
-          animation: misskeyButtonElastic 420ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards !important;
-        }
-
-        @keyframes slideUpMobile {
-          0% {
-            transform: translate(-50%, 24px);
-            opacity: 0;
-          }
-          100% {
-            transform: translate(-50%, 0);
-            opacity: 1;
-          }
-        }
-
-        .animate-slide-up-mobile {
-          animation: slideUpMobile 240ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
-
-        @keyframes zoomInPc {
-          0% {
-            transform: scale(0.9) translateY(8px);
-            opacity: 0;
-          }
-          100% {
-            transform: scale(1) translateY(0);
-            opacity: 1;
-          }
-        }
-
-        .animate-zoom-in-pc {
-          animation: zoomInPc 160ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
-        }
-
-        @media (max-width: 639px) {
-          .comment-list-mobile-item {
-            max-width: none !important;
-            padding: 12px 16px !important;
-            border: 0 !important;
-            border-bottom: 1px solid hsl(var(--border) / 0.62) !important;
-            border-radius: 0 !important;
-            background: transparent !important;
-            box-shadow: none !important;
-          }
-
-          .comment-list-mobile-stack {
-            margin: 0 !important;
-          }
-
-          .comment-list-mobile-stack > li {
-            margin-top: 0 !important;
-          }
-
-          .comment-list-mobile-state {
-            border: 0 !important;
-            border-bottom: 1px solid hsl(var(--border) / 0.62) !important;
-            border-radius: 0 !important;
-            background: transparent !important;
-            box-shadow: none !important;
-          }
-
-          .comment-list-mobile-empty {
-            border: 0 !important;
-            border-radius: 0 !important;
-            background: transparent !important;
-            box-shadow: none !important;
-          }
-        }
-      `}</style>
-
-      {(activeRings.length > 0 || activeDots.length > 0) && (
-        <div className="fixed inset-0 pointer-events-none z-[9999] overflow-hidden">
-          {activeRings.map((r) => (
-            <div
-              key={r.id}
-              style={{
-                position: 'fixed',
-                left: r.x,
-                top: r.y,
-                width: `${r.width}px`,
-                height: `${r.height}px`,
-                borderRadius: '9999px',
-                border: '4px solid #d4f022',
-                backgroundColor: 'transparent',
-                transformOrigin: 'center center',
-                animation: 'misskeyRingExpand 460ms cubic-bezier(0.1, 0.8, 0.3, 1) forwards',
-              }}
-            />
-          ))}
-
-          {activeDots.map((d) => (
-            <div
-              key={d.id}
-              style={{
-                position: 'fixed',
-                left: d.x,
-                top: d.y,
-                width: `${d.size}px`,
-                height: `${d.size}px`,
-                backgroundColor: d.color,
-                borderRadius: '50%',
-                transformOrigin: 'center center',
-                ['--mk-angle' as any]: `${d.angle}deg`,
-                ['--mk-dist' as any]: `${d.distance}px`,
-                animation: 'misskeyDotBurst 480ms cubic-bezier(0.12, 0.85, 0.3, 1) forwards',
-                animationDelay: `${d.delay}ms`,
-              }}
-            />
-          ))}
-        </div>
-      )}
-
-      <article
-        data-lime-comment-card={comment.id}
-        data-lime-embedded={embedded || undefined}
-        data-lime-reply-detail={detail || undefined}
-        data-lime-thread-item={thread || undefined}
-        onClick={handleCardClick}
-        className={
-          embedded ? 'relative w-full cursor-pointer' : mobileFlat
-            ? 'comment-list-mobile-item relative mx-auto w-full max-w-[600px] px-0 py-3 cursor-pointer'
-            : isMobile
-              ? 'relative mx-auto w-full max-w-[600px] px-0 py-3 cursor-pointer'
-            : 'rounded-3xl border border-border/60 bg-card p-5 shadow-soft transition hover:shadow-card-soft relative cursor-pointer'
-        }
-      >
-        {isMobile && !thread && (
-          <div className="pointer-events-none absolute bottom-0 left-1/2 w-screen -translate-x-1/2 border-b border-border/60" />
-        )}
-
-        {repostedByLabel && !embedded && <div data-lime-repost-label className="mb-1 flex items-center gap-3 text-sm font-semibold text-muted-foreground"><span className="inline-flex w-11 shrink-0 justify-end"><RepostIcon className="h-4 w-4" /></span><span>{repostedByLabel}がリポストしました</span></div>}
-        <div data-lime-post-layout className={detail ? "grid grid-cols-[48px_minmax(0,1fr)] gap-x-3" : "flex items-start gap-3"}>
-          <HoverCard openDelay={300}>
-            <HoverCardTrigger asChild>
-              <Link
-                to={`/u/${comment.author.username}`}
-                className="shrink-0"
-                data-lime-thread-avatar={thread || undefined}
-                data-lime-post-avatar
-                onClick={(e) => e.stopPropagation()}
-              >
-                <Avatar userId={comment.author.id} className={detail ? 'h-12 w-12 border border-border/60 post-detail-mobile-avatar' : 'h-11 w-11 border-2 border-primary/30'}>
-                  <AvatarImage src={comment.author.avatarUrl} alt={comment.author.displayName} />
-                  <AvatarFallback>{comment.author.displayName.slice(0, 1)}</AvatarFallback>
-                </Avatar>
-              </Link>
-            </HoverCardTrigger>
-
-            <ProfileHoverContent />
-          </HoverCard>
-
-          <div data-lime-post-content className={detail ? "contents" : "min-w-0 flex-1"}>
-            <div data-lime-post-header className={detail ? "flex items-start justify-between mb-1" : "flex items-center justify-between mb-1"}>
-              <div className={detail ? "flex flex-wrap items-center w-full min-w-0" : "flex items-center overflow-hidden w-full min-w-0"}>
-                <HoverCard openDelay={300}>
-                  <HoverCardTrigger asChild>
-                    <Link
-                      to={`/u/${comment.author.username}`}
-                      className="flex items-center min-w-0 shrink font-display font-bold text-foreground hover:underline"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <div className="flex items-center gap-0.5 min-w-0">
-                        <span className={detail && mobileFlat ? 'truncate post-detail-mobile-name' : 'truncate text-base'}>
-                          {comment.author.displayName}
-                        </span>
-
-                        {comment.author.isOfficial && (
-                          <img
-                            src={`${import.meta.env.BASE_URL}verified.png`}
-                            alt="Official"
-                            className="h-4 w-4 shrink-0 transform translate-y-[0.5px]"
-                            loading="eager"
-                          />
-                        )}
-                      </div>
-                    </Link>
-                  </HoverCardTrigger>
-
-                  <ProfileHoverContent />
-                </HoverCard>
-
-                <span className={detail ? `w-full truncate text-xs text-muted-foreground ${mobileFlat ? 'post-detail-mobile-username' : ''}` : 'truncate text-base text-muted-foreground ml-1 opacity-80 shrink'}>
-                  @{comment.author.username}
-                </span>
-
-                {!detail && <span className="text-muted-foreground mx-1 shrink-0">·</span>}
-
-                {!detail && <span className={isMobile ? 'text-[16px] text-muted-foreground whitespace-nowrap shrink-0' : 'text-sm text-muted-foreground whitespace-nowrap shrink-0'}>
-                  {formatRelative(comment.createdAt)}
-                </span>}
-              </div>
-
-              {!embedded && (
-                <div className="relative ml-2 shrink-0">
+  const replyMenu = (                <div className="relative ml-2 shrink-0">
                   <button
                     onClick={(e) => {
                       e.preventDefault();
@@ -977,6 +756,7 @@ export function CommentCard({
                   {showMenu && (
                     <>
                       <div
+                        data-lime-media-sheet-backdrop={mediaPresentation || undefined}
                         className="fixed inset-0 z-10"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -985,9 +765,12 @@ export function CommentCard({
                       />
 
                       <div
+                        data-lime-media-sheet={mediaPresentation ? 'menu' : undefined}
                         className="absolute right-0 mt-1 w-44 rounded-xl border border-border bg-card p-1 shadow-lg z-20 overflow-hidden animate-in fade-in zoom-in duration-100"
                         onClick={(e) => e.stopPropagation()}
                       >
+                        {mediaPresentation && <button onClick={() => navigate(commentThreadUrl(comment.postId, comment.id))} className="flex w-full items-center rounded-lg px-3 py-2 text-sm font-bold hover:bg-muted">ポストに移動</button>}
+                        {mediaDownload && <button onClick={() => {setShowMenu(false);mediaDownload();}} className="flex w-full items-center rounded-lg px-3 py-2 text-sm font-bold hover:bg-muted">画像を保存</button>}
                         <button onClick={(event) => { event.stopPropagation(); navigate(`/post/${comment.postId}/activity?reply=${encodeURIComponent(comment.id)}`); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"><ChartBarBig className="h-4 w-4" />ポストアクティビティ</button>
                         {isMyComment && (
                         <button
@@ -1001,77 +784,8 @@ export function CommentCard({
                       </div>
                     </>
                   )}
-                </div>
-              )}
-            </div>
-
-            <div data-lime-post-body data-lime-post-has-images={allImageUrls.length > 0 || undefined} className={detail ? "col-span-2 min-w-0" : undefined}>
-              <div>
-                {replyToUsername && <p className="mb-1 text-sm text-muted-foreground">返信先: <Link className="text-primary hover:underline" to={`/u/${replyToUsername}`} onClick={event => event.stopPropagation()}>@{replyToUsername}</Link>さん</p>}
-                {displayContent && (
-                  <p className={detail ? `mt-4 whitespace-pre-wrap break-words text-lg leading-relaxed text-foreground ${mobileFlat ? 'post-detail-mobile-content' : ''}` : isMobile ? 'whitespace-pre-wrap break-words text-[16px] leading-normal text-foreground mt-1' : 'whitespace-pre-wrap break-words text-base leading-relaxed text-foreground mt-1'}>
-                    {renderContentWithMentions(displayContent)}
-                  </p>
-                )}
-
-                {failedUrls.length > 0 && (
-                  <div className="mt-2 space-y-1">
-                    {failedUrls.map((url, idx) => (
-                      <div key={`failed-${idx}`}>
-                        {renderContentWithLinks(url)}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {youtubeId && (
-                <div onClick={(e) => e.stopPropagation()} className="mt-3">
-                  <YouTubeEmbed videoId={youtubeId} />
-                </div>
-              )}
-
-              {spotifyUrls.length > 0 && (
-                <div onClick={(e) => e.stopPropagation()} className="space-y-2 mt-3">
-                  {spotifyUrls.map((url, idx) => (
-                    <SpotifyEmbed key={`spotify-${idx}`} url={url} />
-                  ))}
-                </div>
-              )}
-
-              {allImageUrls.length === 1 && !failedUrls.includes(allImageUrls[0]) ? (
-                <div className="mt-3 flex max-w-full justify-start" onClick={(e) => e.stopPropagation()}>
-                  <button type="button" data-lime-single-post-image aria-label="画像を拡大表示" className="block max-w-full cursor-zoom-in overflow-hidden rounded-2xl border border-border/50 bg-black/[0.025] text-left shadow-none dark:bg-white/[0.035]" style={singleImageFrameStyle} onClick={(e) => handleImageClick(e, allImageUrls[0])}>
-                    <img src={allImageUrls[0]} alt="返信画像" className="block select-none" style={{ width: '100%', height: 'auto', objectFit: 'contain' }} draggable={false} loading="lazy" decoding="async" onLoad={(e) => { const image = e.currentTarget; if (image.naturalWidth && image.naturalHeight) setImageSize({ url: allImageUrls[0], width: image.naturalWidth, height: image.naturalHeight }); }} onError={() => setFailedUrls((prev) => prev.includes(allImageUrls[0]) ? prev : [...prev, allImageUrls[0]])} />
-                  </button>
-                </div>
-              ) : allImageUrls.length > 1 && (
-                <div
-                  className="cursor-zoom-in"
-                  onClick={(e) => {
-                    const target = e.target as HTMLElement;
-
-                    if (target.tagName === 'IMG' && (target as HTMLImageElement).src) {
-                      handleImageClick(e, (target as HTMLImageElement).src);
-                    } else {
-                      handleCardClick();
-                    }
-                  }}
-                >
-                  <PostImages
-                    urls={allImageUrls}
-                    embedded={embedded}
-                    onImageError={(url) => {
-                      if (!failedUrls.includes(url)) {
-                        setFailedUrls((prev) => [...prev, url]);
-                      }
-                    }}
-                  />
-                </div>
-              )}
-            </div>
-
-            {!embedded && reactions.length > 0 && (
+                </div>);
+  const replyReactions = (<>            {!embedded && reactions.length > 0 && (
               <div className={`${detail ? "col-span-2 " : ""}mt-3 flex flex-wrap gap-1.5 relative`} onClick={(e) => e.stopPropagation()}>
                 {reactions.map((g) => {
                   const hasMyReaction = currentUserId ? g.user_ids.includes(currentUserId) : false;
@@ -1130,23 +844,21 @@ export function CommentCard({
                   );
                 })}
               </div>
-            )}
-
-            {detail && <p className={`col-span-2 mt-4 text-xs text-muted-foreground ${mobileFlat ? 'post-detail-mobile-meta' : ''}`} title={formatDate(comment.createdAt)}>{formatDate(comment.createdAt)} · {formatRelative(comment.createdAt)}{comment.clientName && <><span className="mx-1">·</span><span className="text-primary/80 font-medium">{comment.clientName}</span></>}</p>}
-            {!embedded && <div data-lime-comment-actions className={detail ? `col-span-2 mt-3 flex items-center gap-1 text-muted-foreground relative h-9 ${mobileFlat ? 'post-detail-mobile-action-row' : 'border-t border-border/60 pt-3'}` : isMobile ? 'mt-2 flex items-center gap-1 text-muted-foreground relative h-8' : 'mt-3 flex items-center gap-1 text-muted-foreground relative h-9'}>
+            )}</>);
+  const replyActions = (<>{mediaPresentation && replyReactions}            {!embedded && <div data-lime-comment-actions className={detail ? `col-span-2 mt-3 flex items-center gap-1 text-muted-foreground relative h-9 ${mobileFlat ? 'post-detail-mobile-action-row' : 'border-t border-border/60 pt-3'}` : isMobile ? 'mt-2 flex items-center gap-1 text-muted-foreground relative h-8' : 'mt-3 flex items-center gap-1 text-muted-foreground relative h-9'}>
               <div onClick={(e) => e.stopPropagation()} className={detail && mobileFlat ? "flex items-center h-full post-detail-mobile-action-hit" : "flex items-center h-full"}>
-                <div className="inline-flex"><Commentlikebutton
+                <div className="inline-flex"><Commentlikebutton syncState={!!onMediaLikeChange} onChange={onMediaLikeChange}
                   commentId={comment.id}
                   liked={comment.likedByMe}
                   count={comment.likesCount}
                 /></div>
               </div>
 
-              <RepostButton post={replyToPost({...comment,replyToUsername})} mobilePresentation={useMobilePresentation} />
+                <RepostButton post={replyToPost({...comment,replyToUsername})} mobilePresentation={useMobilePresentation} />
               <Link
                 to={commentThreadUrl(comment.postId, comment.id)}
                 aria-label="この返信に返信する"
-                onClick={(e) => e.stopPropagation()}
+                onClick={(e) => {e.stopPropagation();if(onMediaReply){e.preventDefault();onMediaReply();}}}
                 className={`inline-flex items-center gap-1.5 rounded-full ${useMobilePresentation && !detail ? "px-2 text-[13px]" : "px-2.5 text-sm"} py-1 transition-colors hover:text-accent h-full ${detail && mobileFlat ? 'post-detail-mobile-reply-count' : ''}`}
               >
                 <MessageCircle className="h-5 w-5" />
@@ -1332,60 +1044,325 @@ export function CommentCard({
                 )}
               </div>
               <ReplyShare comment={comment} currentUserId={currentUserId} className={detail && mobileFlat ? 'post-detail-mobile-share-button' : ''} />
-            </div>}
-          </div>
-        </div>
-      </article>
+            </div>}</>);
 
-      {selectedImageUrl && typeof document !== 'undefined' && createPortal(
-        <div
-          role="dialog"
-          aria-label="返信画像を拡大表示"
-          className="fixed inset-0 z-[2147483647] flex flex-col items-center justify-center bg-black/95 backdrop-blur-sm animate-in fade-in duration-200"
-          onClick={() => setSelectedImageUrl(null)}
-        >
-          <button
-            className="absolute top-5 left-5 z-[110] p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
-            onClick={() => setSelectedImageUrl(null)}
-          >
-            <X className="h-6 w-6" />
-          </button>
+  return (
+    <>
+      <style>{`
+        @keyframes misskeyRingExpand {
+          0% {
+            transform: translate(-50%, -50%) scale(0.6);
+            opacity: 1;
+            border-width: 5px;
+          }
+          40% {
+            opacity: 1;
+            border-width: 4px;
+          }
+          100% {
+            transform: translate(-50%, -50%) scale(1.15);
+            opacity: 0;
+            border-width: 1px;
+          }
+        }
 
-          <div className="relative flex max-h-full max-w-full items-center justify-center p-4">
-            <img
-              src={selectedImageUrl}
-              alt="Expanded view"
-              className="max-h-[85vh] max-w-[95vw] object-contain shadow-2xl animate-in zoom-in-95 duration-200"
-              onClick={(e) => e.stopPropagation()}
+        @keyframes misskeyDotBurst {
+          0% {
+            transform: translate(-50%, -50%) rotate(var(--mk-angle)) translateY(0px) scale(0.2);
+            opacity: 0;
+          }
+          15% {
+            opacity: 1;
+            transform: translate(-50%, -50%) rotate(var(--mk-angle)) translateY(calc(var(--mk-dist) * 0.4)) scale(1.1);
+          }
+          60% {
+            opacity: 1;
+          }
+          100% {
+            transform: translate(-50%, -50%) rotate(var(--mk-angle)) translateY(var(--mk-dist)) scale(0);
+            opacity: 0;
+          }
+        }
+
+        @keyframes misskeyButtonElastic {
+          0% { transform: scale(1); }
+          20% { transform: scale(0.84); }
+          50% { transform: scale(1.16); }
+          75% { transform: scale(0.94); }
+          100% { transform: scale(1); }
+        }
+
+        .misskey-elastic-active {
+          animation: misskeyButtonElastic 420ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards !important;
+        }
+
+        @keyframes slideUpMobile {
+          0% {
+            transform: translate(-50%, 24px);
+            opacity: 0;
+          }
+          100% {
+            transform: translate(-50%, 0);
+            opacity: 1;
+          }
+        }
+
+        .animate-slide-up-mobile {
+          animation: slideUpMobile 240ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        @keyframes zoomInPc {
+          0% {
+            transform: scale(0.9) translateY(8px);
+            opacity: 0;
+          }
+          100% {
+            transform: scale(1) translateY(0);
+            opacity: 1;
+          }
+        }
+
+        .animate-zoom-in-pc {
+          animation: zoomInPc 160ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+        }
+
+        @media (max-width: 639px) {
+          .comment-list-mobile-item {
+            max-width: none !important;
+            padding: 12px 16px !important;
+            border: 0 !important;
+            border-bottom: 1px solid hsl(var(--border) / 0.62) !important;
+            border-radius: 0 !important;
+            background: transparent !important;
+            box-shadow: none !important;
+          }
+
+          .comment-list-mobile-stack {
+            margin: 0 !important;
+          }
+
+          .comment-list-mobile-stack > li {
+            margin-top: 0 !important;
+          }
+
+          .comment-list-mobile-state {
+            border: 0 !important;
+            border-bottom: 1px solid hsl(var(--border) / 0.62) !important;
+            border-radius: 0 !important;
+            background: transparent !important;
+            box-shadow: none !important;
+          }
+
+          .comment-list-mobile-empty {
+            border: 0 !important;
+            border-radius: 0 !important;
+            background: transparent !important;
+            box-shadow: none !important;
+          }
+        }
+      `}</style>
+
+      {(activeRings.length > 0 || activeDots.length > 0) && (
+        <div className="fixed inset-0 pointer-events-none z-[9999] overflow-hidden">
+          {activeRings.map((r) => (
+            <div
+              key={r.id}
+              style={{
+                position: 'fixed',
+                left: r.x,
+                top: r.y,
+                width: `${r.width}px`,
+                height: `${r.height}px`,
+                borderRadius: '9999px',
+                border: '4px solid #d4f022',
+                backgroundColor: 'transparent',
+                transformOrigin: 'center center',
+                animation: 'misskeyRingExpand 460ms cubic-bezier(0.1, 0.8, 0.3, 1) forwards',
+              }}
             />
-          </div>
+          ))}
 
-          <div
-            className="absolute bottom-0 left-0 right-0 flex items-center justify-center bg-gradient-to-t from-black/80 to-transparent pb-8 pt-10"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-8 rounded-full bg-black/40 px-6 py-3 backdrop-blur-md border border-white/10">
-              <div className="scale-125">
-                <Commentlikebutton
-                  commentId={comment.id}
-                  liked={comment.likedByMe}
-                  count={comment.likesCount}
-                />
+          {activeDots.map((d) => (
+            <div
+              key={d.id}
+              style={{
+                position: 'fixed',
+                left: d.x,
+                top: d.y,
+                width: `${d.size}px`,
+                height: `${d.size}px`,
+                backgroundColor: d.color,
+                borderRadius: '50%',
+                transformOrigin: 'center center',
+                ['--mk-angle' as any]: `${d.angle}deg`,
+                ['--mk-dist' as any]: `${d.distance}px`,
+                animation: 'misskeyDotBurst 480ms cubic-bezier(0.12, 0.85, 0.3, 1) forwards',
+                animationDelay: `${d.delay}ms`,
+              }}
+            />
+          ))}
+        </div>
+      )}
+
+      {mediaPresentation ? <article data-lime-media-post-actions={mediaPresentation} className="relative w-full">{mediaPresentation==='menu'?replyMenu:replyActions}</article> : <article
+        data-lime-comment-card={comment.id}
+        data-lime-embedded={embedded || undefined}
+        data-lime-reply-detail={detail || undefined}
+        data-lime-thread-item={thread || undefined}
+        onClick={handleCardClick}
+        className={
+          embedded ? 'relative w-full cursor-pointer' : mobileFlat
+            ? 'comment-list-mobile-item relative mx-auto w-full max-w-[600px] px-0 py-3 cursor-pointer'
+            : isMobile
+              ? 'relative mx-auto w-full max-w-[600px] px-0 py-3 cursor-pointer'
+            : 'rounded-3xl border border-border/60 bg-card p-5 shadow-soft transition hover:shadow-card-soft relative cursor-pointer'
+        }
+      >
+        {isMobile && !thread && (
+          <div className="pointer-events-none absolute bottom-0 left-1/2 w-screen -translate-x-1/2 border-b border-border/60" />
+        )}
+
+        {repostedByLabel && !embedded && <div data-lime-repost-label className="mb-1 flex items-center gap-3 text-sm font-semibold text-muted-foreground"><span className="inline-flex w-11 shrink-0 justify-end"><RepostIcon className="h-4 w-4" /></span><span>{repostedByLabel}がリポストしました</span></div>}
+        <div data-lime-post-layout className={detail ? "grid grid-cols-[48px_minmax(0,1fr)] gap-x-3" : "flex items-start gap-3"}>
+          <HoverCard openDelay={300}>
+            <HoverCardTrigger asChild>
+              <Link
+                to={`/u/${comment.author.username}`}
+                className="shrink-0"
+                data-lime-thread-avatar={thread || undefined}
+                data-lime-post-avatar
+                onClick={(e) => e.stopPropagation()}
+              >
+                <Avatar userId={comment.author.id} className={detail ? 'h-12 w-12 border border-border/60 post-detail-mobile-avatar' : 'h-11 w-11 border-2 border-primary/30'}>
+                  <AvatarImage src={comment.author.avatarUrl} alt={comment.author.displayName} />
+                  <AvatarFallback>{comment.author.displayName.slice(0, 1)}</AvatarFallback>
+                </Avatar>
+              </Link>
+            </HoverCardTrigger>
+
+            <ProfileHoverContent />
+          </HoverCard>
+
+          <div data-lime-post-content className={detail ? "contents" : "min-w-0 flex-1"}>
+            <div data-lime-post-header className={detail ? "flex items-start justify-between mb-1" : "flex items-center justify-between mb-1"}>
+              <div className={detail ? "flex flex-wrap items-center w-full min-w-0" : "flex items-center overflow-hidden w-full min-w-0"}>
+                <HoverCard openDelay={300}>
+                  <HoverCardTrigger asChild>
+                    <Link
+                      to={`/u/${comment.author.username}`}
+                      className="flex items-center min-w-0 shrink font-display font-bold text-foreground hover:underline"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="flex items-center gap-0.5 min-w-0">
+                        <span className={detail && mobileFlat ? 'truncate post-detail-mobile-name' : 'truncate text-base'}>
+                          {comment.author.displayName}
+                        </span>
+
+                        {comment.author.isOfficial && (
+                          <img
+                            src={`${import.meta.env.BASE_URL}verified.png`}
+                            alt="Official"
+                            className="h-4 w-4 shrink-0 transform translate-y-[0.5px]"
+                            loading="eager"
+                          />
+                        )}
+                      </div>
+                    </Link>
+                  </HoverCardTrigger>
+
+                  <ProfileHoverContent />
+                </HoverCard>
+
+                <span className={detail ? `w-full truncate text-xs text-muted-foreground ${mobileFlat ? 'post-detail-mobile-username' : ''}` : 'truncate text-base text-muted-foreground ml-1 opacity-80 shrink'}>
+                  @{comment.author.username}
+                </span>
+
+                {!detail && <span className="text-muted-foreground mx-1 shrink-0">·</span>}
+
+                {!detail && <span className={isMobile ? 'text-[16px] text-muted-foreground whitespace-nowrap shrink-0' : 'text-sm text-muted-foreground whitespace-nowrap shrink-0'}>
+                  {formatRelative(comment.createdAt)}
+                </span>}
               </div>
 
-              <button
-                onClick={() => {
-                  setSelectedImageUrl(null);
-                  navigate(commentThreadUrl(comment.postId, comment.id));
-                }}
-                className="inline-flex items-center gap-2 text-white/90 hover:text-white transition-colors"
-              >
-                <MessageCircle className="h-6 w-6" />
-              </button>
+              {!embedded && replyMenu}
             </div>
+
+            <div data-lime-post-body data-lime-post-has-images={allImageUrls.length > 0 || undefined} className={detail ? "col-span-2 min-w-0" : undefined}>
+              <div>
+                {replyToUsername && <p className="mb-1 text-sm text-muted-foreground">返信先: <Link className="text-primary hover:underline" to={`/u/${replyToUsername}`} onClick={event => event.stopPropagation()}>@{replyToUsername}</Link>さん</p>}
+                {displayContent && (
+                  <p className={detail ? `mt-4 whitespace-pre-wrap break-words text-lg leading-relaxed text-foreground ${mobileFlat ? 'post-detail-mobile-content' : ''}` : isMobile ? 'whitespace-pre-wrap break-words text-[16px] leading-normal text-foreground mt-1' : 'whitespace-pre-wrap break-words text-base leading-relaxed text-foreground mt-1'}>
+                    {renderContentWithMentions(displayContent)}
+                  </p>
+                )}
+
+                {failedUrls.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {failedUrls.map((url, idx) => (
+                      <div key={`failed-${idx}`}>
+                        {renderContentWithLinks(url)}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <LinkPreviewCard {...linkPreview} />
+              {youtubeId && (
+                <div onClick={(e) => e.stopPropagation()} className="mt-3">
+                  <YouTubeEmbed videoId={youtubeId} />
+                </div>
+              )}
+
+              {spotifyUrls.length > 0 && (
+                <div onClick={(e) => e.stopPropagation()} className="space-y-2 mt-3">
+                  {spotifyUrls.map((url, idx) => (
+                    <SpotifyEmbed key={`spotify-${idx}`} url={url} />
+                  ))}
+                </div>
+              )}
+
+              {allImageUrls.length === 1 && !failedUrls.includes(allImageUrls[0]) ? (
+                <div className="mt-3 flex max-w-full justify-start" onClick={(e) => e.stopPropagation()}>
+                  <button type="button" data-lime-single-post-image aria-label="画像を拡大表示" className="block max-w-full cursor-zoom-in overflow-hidden rounded-2xl border border-border/50 bg-black/[0.025] text-left shadow-none dark:bg-white/[0.035]" style={singleImageFrameStyle} onClick={(e) => handleImageClick(e, allImageUrls[0])}>
+                    <img src={allImageUrls[0]} alt="返信画像" className="block select-none" style={{ width: '100%', height: 'auto', objectFit: 'contain' }} draggable={false} loading="lazy" decoding="async" onLoad={(e) => { const image = e.currentTarget; if (image.naturalWidth && image.naturalHeight) setImageSize({ url: allImageUrls[0], width: image.naturalWidth, height: image.naturalHeight }); }} onError={() => setFailedUrls((prev) => prev.includes(allImageUrls[0]) ? prev : [...prev, allImageUrls[0]])} />
+                  </button>
+                </div>
+              ) : allImageUrls.length > 1 && (
+                <div
+                  className="cursor-zoom-in"
+                  onClick={(e) => {
+                    const target = e.target as HTMLElement;
+
+                    if (target.tagName === 'IMG' && (target as HTMLImageElement).src) {
+                      handleImageClick(e, (target as HTMLImageElement).src);
+                    } else {
+                      handleCardClick();
+                    }
+                  }}
+                >
+                  <PostImages
+                    urls={allImageUrls}
+                    embedded={embedded}
+                    onImageError={(url) => {
+                      if (!failedUrls.includes(url)) {
+                        setFailedUrls((prev) => [...prev, url]);
+                      }
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+
+            {replyReactions}
+
+            {detail && <p className={`col-span-2 mt-4 text-xs text-muted-foreground ${mobileFlat ? 'post-detail-mobile-meta' : ''}`} title={formatDate(comment.createdAt)}>{formatDate(comment.createdAt)} · {formatRelative(comment.createdAt)}{comment.clientName && <><span className="mx-1">·</span><span className="text-primary/80 font-medium">{comment.clientName}</span></>}</p>}
+            {replyActions}
           </div>
-        </div>, document.body
-      )}
+        </div>
+      </article>}
+
+
     </>
   );
 }

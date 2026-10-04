@@ -5,7 +5,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import UserCard from './UserCard';
 import { useHiddenTrends } from '@/hooks/useHiddenTrends';
 import type { SearchExploreTab } from '@/hooks/useSearchExploreTab';
-import type { SearchNewsItem, NewsSources } from '@/api/search-news';
+import { latestNewsPerSource, type SearchNewsItem, type NewsSources } from '@/api/search-news';
 import type { User } from '@/types';
 
 import { prepareExploreTrends, rankPersonalTrends, type ExploreTrend } from '@/lib/search-trends';
@@ -18,7 +18,7 @@ export function SearchExploreContent({tab, preferences, viewerId, news, sources,
   const [hidden, hideTrend] = useHiddenTrends(viewerId);
   const preparedTrends = useMemo(() => prepareExploreTrends(trends, news), [trends, news]);
   const rankedTrends = useMemo(() => rankPersonalTrends(preparedTrends, preferences), [preparedTrends, preferences]);
-  const visibleNews = news.slice(0, 1);
+  const visibleNews = latestNewsPerSource(news);
   const category = tab === 'sports' ? 'スポーツ' : tab === 'entertainment' ? 'エンターテインメント' : null;
   const visibleTrends = (tab === 'explore' ? rankedTrends : preparedTrends).filter(item => !hidden.has(item.title) && (!category || item.category === category || item.categories?.includes(category))).slice(0, 20);
   const showNews = tab === 'explore';

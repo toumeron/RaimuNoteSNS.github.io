@@ -1,3 +1,4 @@
+import {singlePreviewUrl,type LinkPreview} from './linkPreview';
 import { ACTIVE_ACCOUNT_KEY } from './savedAccounts';
 // 初期状態ではBlueskyアカウントを1件も登録しない。
 // BSKY_AUTHOR_HANDLE は既存コードとの互換性のためだけに残し、既定の登録先には使用しない。
@@ -531,6 +532,7 @@ export async function unfollowBlueskyUser(followUri: string): Promise<void> {
 }
 
 export type BlueskyMappedPost = {
+  linkPreview?:LinkPreview;
   id: string;
   userId: string;
   content: string;
@@ -855,12 +857,18 @@ export function mapBlueskyFeedItemToPost(item: BlueskyFeedItem): BlueskyMappedPo
   }
 
   const content = [contentFromFacets.trim(), ...extras].filter(Boolean).join('\n\n');
+  const external=post.embed?.external??post.embed?.media?.external;
+  let linkPreview:LinkPreview|undefined;
+  if(external?.title&&external.thumb&&external.uri&&singlePreviewUrl(content)===external.uri&&/^https?:\/\//.test(external.thumb)){
+    try{linkPreview={url:external.uri,domain:new URL(external.uri).hostname.replace(/^www\./,''),title:external.title,image:external.thumb};}catch{/* Keep the text link. */}
+  }
 
   return {
     id: `bsky:${post.uri}`,
     userId: post.author.did,
     content,
     imageUrls,
+    linkPreview,
     createdAt: post.record?.createdAt || post.indexedAt || new Date().toISOString(),
     visibility: 'public',
     likedByMe: false,

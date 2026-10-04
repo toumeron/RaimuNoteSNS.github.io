@@ -290,6 +290,8 @@ export function LikeButton({
   size = 'md',
   type = 'post',
   bluesky,
+  onChange,
+  syncState = false,
 }: {
   postId: string;
   liked: boolean;
@@ -297,6 +299,8 @@ export function LikeButton({
   size?: 'sm' | 'md';
   type?: 'post' | 'comment';
   bluesky?: LikeButtonBlueskyTarget;
+  onChange?: (state: { liked: boolean; count: number }) => void;
+  syncState?: boolean;
 }) {
   const queryClient = useQueryClient();
 
@@ -493,10 +497,10 @@ export function LikeButton({
       void syncLatestCount();
     }
 
-    if (targetChanged || !hasLocalStateRef.current) {
+    if (targetChanged || !hasLocalStateRef.current || syncState) {
       setDisplayLiked(liked);
       stateRef.current.liked = liked;
-      if (!hasLiveCountRef.current) {
+      if (!hasLiveCountRef.current || syncState) {
         setDisplayCount(safeCount);
         setPreviousDisplayCount(safeCount);
         setIsCountAnimating(false);
@@ -514,7 +518,7 @@ export function LikeButton({
       stateRef.current.count = safeCount;
       animateCount(currentCount, safeCount);
     }
-  }, [animateCount, postId, type, liked, count, isBluesky, syncLatestCount]);
+  }, [animateCount, postId, type, liked, count, isBluesky, syncLatestCount, syncState]);
 
   // リアルタイム反映(Supabase Realtime)。Bluesky投稿はLimeのテーブルに
   // 行が存在しないため、この購読自体を行わない。
@@ -630,6 +634,7 @@ export function LikeButton({
         await unlikeBlueskyPost(likeUri);
         blueskyLikeUriRef.current = null;
       }
+      onChange?.({ liked: willBeLiked, count: nextCount });
       if (bluesky.preferencePost) {
         const post = bluesky.preferencePost;
         void getCurrentUserId().then(viewerId => recordRecommendationLike(post, willBeLiked, viewerId)).catch(() => {});
@@ -642,7 +647,7 @@ export function LikeButton({
       animateCount(nextCount, wasCount);
       setIsAnimating(false);
     }
-  }, [animateCount, bluesky]);
+  }, [animateCount, bluesky, onChange]);
 
   const handleClick = useCallback(async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.preventDefault();
@@ -728,6 +733,7 @@ export function LikeButton({
         });
       }
 
+      onChange?.({ liked: willBeLiked, count: latestCount ?? nextCount });
       await queryClient.invalidateQueries({ queryKey: [config.queryKey] });
     } catch (err: any) {
       console.error('Like action failed:', err);
@@ -738,7 +744,7 @@ export function LikeButton({
       animateCount(nextCount, wasCount);
       setIsAnimating(false);
     }
-  }, [animateCount, bluesky, handleBlueskyLikeToggle, postId, queryClient, syncLatestCount, type]);
+  }, [animateCount, bluesky, handleBlueskyLikeToggle, postId, queryClient, syncLatestCount, type, onChange]);
 
   return (
     <button

@@ -1,3 +1,9 @@
+import { openMediaViewer } from '@/components/media/openMediaViewer';
+import {PinPostMenuButton} from '@/components/post/PinPostMenuButton';
+import {LinkPreviewCard,useLinkPreview} from '@/components/post/LinkPreviewCard';
+import {OfflineBookmarkContext} from '@/components/stickers/OfflineBookmarkContext';
+import { renderStickerText } from '@/components/stickers/renderStickerText';
+import { hasStickers } from '@/lib/stickers';
 import { SpacePostCard } from '@/components/spaces/SpacePostCard';
 import { spaceLinkIn } from '@/lib/spaceLinks';
 import '@/components/post/post-actions.css';
@@ -6,10 +12,10 @@ import { RepostButton } from '@/components/feed/RepostButton';
 import { QuotedPost } from '@/components/feed/QuotedPost';
 import { RepostIcon } from '@/components/feed/RepostIcon';
 import { useDesktopLayout } from '@/components/layout/DesktopLayoutContext';
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
-import { MessageCircle, MoreHorizontal, Trash2, CalendarDays, ChartBarBig, X, Globe, Lock, Sparkles, Plus, Link as LinkIcon, Upload, Send, Heart, Users } from 'lucide-react';
+import { Download, MessageCircle, MoreHorizontal, Trash2, CalendarDays, ChartBarBig, X, Globe, Lock, Sparkles, Plus, Link as LinkIcon, Upload, Send, Heart, Users, Pin } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { LikeButton } from '@/components/post/LikeButton';
 import { PostImages } from './PostImages';
@@ -885,7 +891,7 @@ function getIsMobileViewport() {
   return typeof window !== 'undefined' && window.innerWidth < 640;
 }
 
-function PostCardComponent({ post, timelineGlass = false, thread = false, embedded = false, repostedByLabel }: { post: PostWithAuthor; timelineGlass?: boolean; thread?: boolean; embedded?: boolean; repostedByLabel?: string }) {
+function PostCardComponent({ post, timelineGlass = false, thread = false, embedded = false, repostedByLabel, pinned = false, mediaPresentation, onMediaReply, onMediaLikeChange, mediaDownload }: { post: PostWithAuthor; timelineGlass?: boolean; thread?: boolean; embedded?: boolean; repostedByLabel?: string; pinned?:boolean; mediaPresentation?: 'actions' | 'menu'; onMediaReply?: () => void; onMediaLikeChange?: (state:{liked:boolean;count:number})=>void; mediaDownload?:()=>void }) {
   const [showMenu, setShowMenu] = useState(false);
   const [moreMenuPosition, setMoreMenuPosition] = useState<{ top: number; right: number } | null>(null);
   const [showShareMenu, setShowShareMenu] = useState(false);
@@ -897,7 +903,6 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
   const [limeDropSendingUserId, setLimeDropSendingUserId] = useState<string | null>(null);
   const [limeDropFeedback, setLimeDropFeedback] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
   const [failedUrls, setFailedUrls] = useState<string[]>([]);
   const navigate = useNavigate();
   const [, setTick] = useState(0);
@@ -910,6 +915,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
   const blueskyPostUri = isBlueskyPost ? getBlueskyUriFromPostId(post.id) : null;
 
   const [showPicker, setShowPicker] = useState(false);
+  const offlineBookmark=useContext(OfflineBookmarkContext);
   const [customEmojis, setCustomEmojis] = useState<CustomEmoji[]>([]);
   const [reactions, setReactions] = useState<ReactionGroup[]>([]);
   const [recentEmojis, setRecentEmojis] = useState<string[]>([]);
@@ -949,6 +955,12 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
   const pickerPanelRef = useRef<HTMLDivElement>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
+  const moreMenuAnchorY=useRef<number|null>(null);
+  useLayoutEffect(()=>{
+    if(!showMenu||!moreMenuRef.current||!moreMenuPosition)return;
+    const top=Math.max(8,Math.min(moreMenuPosition.top,window.innerHeight-moreMenuRef.current.offsetHeight-8));
+    if(top!==moreMenuPosition.top)setMoreMenuPosition({...moreMenuPosition,top});
+  },[showMenu,moreMenuPosition]);
   const shareButtonRef = useRef<HTMLButtonElement>(null);
   const shareMenuRef = useRef<HTMLDivElement>(null);
   const limeDropPanelRef = useRef<HTMLDivElement>(null);
@@ -1116,7 +1128,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
   }, [post.id]);
 
   useEffect(() => {
-    const shouldKeepLiveWork = isCardActive || showMenu || showPicker || showShareMenu || showLimeDropPanel || Boolean(selectedImageUrl);
+    const shouldKeepLiveWork = !!mediaPresentation || isCardActive || showMenu || showPicker || showShareMenu || showLimeDropPanel;
     if (!shouldKeepLiveWork) return;
     if (isBlueskyPost) return;
 
@@ -1147,10 +1159,10 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
       cancelled = true;
       supabase.removeChannel(channels);
     };
-  }, [isBlueskyPost, isCardActive, showMenu, showPicker, showShareMenu, showLimeDropPanel, selectedImageUrl, post.id]);
+  }, [mediaPresentation, isBlueskyPost, isCardActive, showMenu, showPicker, showShareMenu, showLimeDropPanel, post.id]);
 
   useEffect(() => {
-    const shouldKeepLiveWork = isCardActive || showMenu || showPicker || showShareMenu || showLimeDropPanel || Boolean(selectedImageUrl);
+    const shouldKeepLiveWork = !!mediaPresentation || isCardActive || showMenu || showPicker || showShareMenu || showLimeDropPanel;
     if (!shouldKeepLiveWork) return;
 
     const unsubscribe = subscribeToSharedTick(() => {
@@ -1158,10 +1170,10 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
     });
 
     return unsubscribe;
-  }, [isCardActive, showMenu, showPicker, showShareMenu, showLimeDropPanel, selectedImageUrl]);
+  }, [mediaPresentation, isCardActive, showMenu, showPicker, showShareMenu, showLimeDropPanel]);
 
   useEffect(() => {
-    const shouldKeepStateWarm = isCardActive || showMenu || showPicker || showShareMenu || showLimeDropPanel || Boolean(selectedImageUrl);
+    const shouldKeepStateWarm = !!mediaPresentation || isCardActive || showMenu || showPicker || showShareMenu || showLimeDropPanel;
     if (shouldKeepStateWarm) return;
 
     const timer = window.setTimeout(() => {
@@ -1172,7 +1184,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
     return () => {
       window.clearTimeout(timer);
     };
-  }, [isCardActive, showMenu, showPicker, showShareMenu, showLimeDropPanel, selectedImageUrl, post.id]);
+  }, [mediaPresentation, isCardActive, showMenu, showPicker, showShareMenu, showLimeDropPanel, post.id]);
 
   useEffect(() => {
     if (!timelineGlass) return;
@@ -1213,16 +1225,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
     };
   }, [timelineGlass]);
 
-  useEffect(() => {
-    if (!selectedImageUrl) return;
 
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [selectedImageUrl]);
 
   useEffect(() => {
     if (!showMenu) return;
@@ -1253,7 +1256,11 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
   useEffect(() => {
     if (!showMenu) return;
 
-    const closeOnViewportChange = () => {
+    const closeOnViewportChange = (event:Event) => {
+      if(event.type==='scroll'){
+        if(event.target instanceof Node&&moreMenuRef.current?.contains(event.target))return;
+        if(moreMenuAnchorY.current!==null&&Math.abs((moreButtonRef.current?.getBoundingClientRect().bottom??0)-moreMenuAnchorY.current)<1)return;
+      }
       suppressCardClickAfterPopupClose();
       setShowMenu(false);
       setMoreMenuPosition(null);
@@ -1361,7 +1368,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
   };
 
   const fetchCustomEmojis = async () => {
-    const nextCustomEmojis = await ensureCustomEmojisCached();
+    const nextCustomEmojis = offlineBookmark ? offlineBookmark.emojis.map(emoji=>({...emoji,uploaded_by:''})) : await ensureCustomEmojisCached();
     setCustomEmojis(nextCustomEmojis);
     return nextCustomEmojis;
   };
@@ -1478,7 +1485,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
         : `custom_emojis/${customEmoji.public_id}`;
 
       const imageUrl = `https://res.cloudinary.com/dveiikhhw/image/upload/${cleanPublicId}.${customEmoji.format}`;
-      return <img src={imageUrl} alt={customEmoji.name} className={className} />;
+      return <img src={offlineBookmark?.media.get(imageUrl)??imageUrl} alt={customEmoji.name} className={className} />;
     }
     return <span className="text-lg leading-none select-none">{emojiStr}</span>;
   };
@@ -1525,6 +1532,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
 
   const isMembersOnlyPost = currentVisibility === 'members';
   const canViewMembersOnlyPost = !isMembersOnlyPost || isMyPost || isMember === true;
+  const linkPreview=useLinkPreview(post.content,canViewMembersOnlyPost,post.linkPreview);
   const isCheckingMembersOnlyAccess = isMembersOnlyPost && !isMyPost && isMember === undefined;
 
   const { youtubeId, spotifyUrls, allImageUrls, displayContent, singleImageUrl } = useMemo(() => {
@@ -1539,7 +1547,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
     // 埋め込み本体（YouTubeEmbed）だけを表示する。
     const nextAllImageUrls = (isBlueskyPost && nextYoutubeId)
       ? []
-      : [...(post.imageUrls || []), ...extractedImageUrls].slice(0, 4);
+      : [...(post.imageUrls || []).filter(url=>url!==linkPreview.preview?.image), ...extractedImageUrls].slice(0, 4);
 
     const nextDisplayContent = post.content
       .replace(youtubeUrlRegex, '')
@@ -1554,7 +1562,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
       displayContent: nextDisplayContent,
       singleImageUrl: nextAllImageUrls.length === 1 ? nextAllImageUrls[0] : null,
     };
-  }, [post.content, post.imageUrls, isBlueskyPost]);
+  }, [post.content, post.imageUrls, isBlueskyPost,linkPreview.preview?.image]);
 
   useEffect(() => {
     const cached = singleImageUrl ? getCachedNaturalSize(singleImageUrl) : null;
@@ -1654,7 +1662,8 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
     });
   };
 
-  const renderContentWithMentions = (text: string) => {
+  const renderContentWithMentions = (text: string): React.ReactNode => {
+    if (hasStickers(text)) return renderStickerText(text, renderContentWithMentions);
     if (!text) return null;
     const parts = text.split(/(@\w+)/g);
 
@@ -1763,7 +1772,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
   const handleImageClick = (e: React.MouseEvent, url: string) => {
     e.preventDefault();
     e.stopPropagation();
-    setSelectedImageUrl(url);
+    openMediaViewer({ url, post, offline: offlineBookmark, media: allImageUrls.map(src => ({ src })) });
   };
 
   const handleCardClick = () => {
@@ -1856,7 +1865,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
 
     const rect = e.currentTarget.getBoundingClientRect();
     setShareMenuPosition({
-      top: rect.bottom + 4,
+      top: Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - 160)),
       right: Math.max(8, window.innerWidth - rect.right),
     });
     setShowMenu(false);
@@ -2176,158 +2185,10 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
     ? `timeline-portal-picker timeline-portal-picker-${timelinePortalTheme}`
     : 'bg-white dark:bg-[#1e222b]';
 
-  return (
-    <>
-      {(activeRings.length > 0 || activeDots.length > 0) && (
-        <div className="fixed inset-0 pointer-events-none z-[9999] overflow-hidden">
-          {activeRings.map((r) => (
-            <div
-              key={r.id}
-              style={{
-                position: 'fixed',
-                left: r.x,
-                top: r.y,
-                width: `${r.width}px`,
-                height: `${r.height}px`,
-                borderRadius: '9999px',
-                border: '4px solid #d4f022',
-                backgroundColor: 'transparent',
-                transformOrigin: 'center center',
-                animation: 'misskeyRingExpand 460ms cubic-bezier(0.1, 0.8, 0.3, 1) forwards'
-              }}
-            />
-          ))}
-
-          {activeDots.map((d) => (
-            <div
-              key={d.id}
-              style={{
-                position: 'fixed',
-                left: d.x,
-                top: d.y,
-                width: `${d.size}px`,
-                height: `${d.size}px`,
-                backgroundColor: d.color,
-                borderRadius: '50%',
-                transformOrigin: 'center center',
-                ['--mk-angle' as any]: `${d.angle}deg`,
-                ['--mk-dist' as any]: `${d.distance}px`,
-                animation: `misskeyDotBurst 480ms cubic-bezier(0.12, 0.85, 0.3, 1) forwards`,
-                animationDelay: `${d.delay}ms`
-              }}
-            />
-          ))}
-        </div>
-      )}
-
-      <article
-        data-lime-post-card
-        data-lime-thread-item={thread || undefined}
-        data-lime-embedded={embedded || undefined}
-        style={embedded ? { width: '100%', maxWidth: '100%', margin: 0 } : undefined}
-        ref={cardRootRef}
-        onClickCapture={handleCardClickCapture}
-        onClick={handleCardClick}
-        className={
-          embedded ? "relative w-full cursor-pointer" : timelineGlass
-            ? useMobilePresentation
-              ? "timeline-mobile-readable px-5 py-4 cursor-pointer"
-              : "timeline-glass-card rounded-3xl p-5 transition relative cursor-pointer"
-            : useMobilePresentation
-              ? "relative mx-auto w-full max-w-[600px] px-0 py-3 cursor-pointer"
-              : "rounded-3xl border border-border/60 bg-card p-5 shadow-soft transition hover:shadow-card-soft relative cursor-pointer"
-        }
-      >
-        {isMobile && !timelineGlass && !thread && (
-          <div className="pointer-events-none absolute bottom-0 left-1/2 w-screen -translate-x-1/2 border-b border-border/60" />
-        )}
-
-        {repostedByLabel && !embedded && (
-          <div data-lime-repost-label className="mb-1 flex items-center gap-3 text-sm font-semibold text-muted-foreground">
-            <span className="inline-flex w-11 shrink-0 justify-end"><RepostIcon className="h-4 w-4" /></span>
-            <span>{repostedByLabel}がリポストしました</span>
-          </div>
-        )}
-        <div data-lime-post-layout className="flex items-start gap-3">
-          <HoverCard open={profileHoverTarget === 'avatar'} openDelay={300}>
-            <HoverCardTrigger asChild>
-              <Link
-                to={`/u/${post.author.username}`}
-                className="inline-flex h-11 w-11 shrink-0 items-center justify-center"
-                data-lime-thread-avatar={thread || undefined}
-                data-lime-post-avatar
-                onMouseEnter={() => openProfileHover('avatar')}
-                onMouseLeave={closeProfileHover}
-                onFocus={() => openProfileHover('avatar')}
-                onBlur={closeProfileHover}
-                onClick={handleAuthorNavigate}
-              >
-                <Avatar userId={post.author.id} className="h-11 w-11 translate-y-1">
-                  <AvatarImage src={post.author.avatarUrl} alt={post.author.displayName} />
-                  <AvatarFallback>{post.author.displayName.slice(0, 1)}</AvatarFallback>
-                </Avatar>
-              </Link>
-            </HoverCardTrigger>
-            <ProfileHoverContent />
-          </HoverCard>
-
-          <div data-lime-post-content className="min-w-0 flex-1">
-            <div data-lime-post-header className="flex items-center justify-between mb-1">
-              <div className="flex items-center w-full min-w-0">
-                <HoverCard open={profileHoverTarget === 'name'} openDelay={300}>
-                  <HoverCardTrigger asChild>
-                    <Link
-                      to={`/u/${post.author.username}`}
-                      className="inline-flex w-fit max-w-full shrink-0 items-center font-display font-bold text-foreground hover:underline"
-                      onMouseEnter={() => openProfileHover('name')}
-                      onMouseLeave={closeProfileHover}
-                      onFocus={() => openProfileHover('name')}
-                      onBlur={closeProfileHover}
-                      onClick={handleAuthorNavigate}
-                    >
-                      <div className="inline-flex w-fit max-w-full items-center gap-0.5">
-                        <span className={useMobilePresentation ? "truncate text-[16px]" : "truncate text-base"}>
-                          {post.author.displayName}
-                        </span>
-                        {post.author.isOfficial && (
-                          <img
-                            src={`${import.meta.env.BASE_URL}verified.png`}
-                            alt="Official"
-                            className="h-4 w-4 shrink-0 transform translate-y-[0.5px]"
-                            loading="eager"
-                          />
-                        )}
-                      </div>
-                    </Link>
-                  </HoverCardTrigger>
-                  <ProfileHoverContent />
-                </HoverCard>
-
-                <span className={useMobilePresentation ? "truncate text-[16px] text-muted-foreground ml-1 opacity-80 shrink" : "truncate text-base text-muted-foreground ml-1 opacity-80 shrink"}>
-                  @{post.author.username}
-                </span>
-
-                <span className="text-muted-foreground mx-1 shrink-0">·</span>
-                <span className={useMobilePresentation ? "text-[16px] text-muted-foreground whitespace-nowrap shrink-0" : "text-sm text-muted-foreground whitespace-nowrap shrink-0"}>
-                  {formatRelative(post.createdAt)}
-                </span>
-              </div>
-
-              <div className="flex items-center shrink-0 ml-2">
-                {currentVisibility === 'following' && (
-                  <span className={useMobilePresentation ? "text-[13px] font-bold text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-md whitespace-nowrap mr-1" : "text-[14px] font-bold text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-md whitespace-nowrap mr-1"}>
-                    限定
-                  </span>
-                )}
-                {currentVisibility === 'members' && (
-                  <span className={useMobilePresentation ? "text-[13px] font-bold text-violet-600 dark:text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded-md whitespace-nowrap mr-1" : "text-[14px] font-bold text-violet-600 dark:text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded-md whitespace-nowrap mr-1"}>
-                    メンバー限定
-                  </span>
-                )}
-
-                {!embedded && <div className="relative shrink-0">
+  const postMenu = (<>                {!embedded && <div className="relative shrink-0">
                   <button
                     ref={moreButtonRef}
+                    aria-label="ポストのメニュー"
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
@@ -2339,6 +2200,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                       }
 
                       const rect = e.currentTarget.getBoundingClientRect();
+                      moreMenuAnchorY.current=rect.bottom;
                       setMoreMenuPosition({
                         top: rect.bottom + 4,
                         right: Math.max(8, window.innerWidth - rect.right),
@@ -2356,6 +2218,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                   {showMenu && typeof document !== 'undefined' && createPortal(
                     <>
                       <div
+                        data-lime-media-sheet-backdrop={mediaPresentation || undefined}
                         className="fixed inset-0 bg-transparent"
                         style={{ zIndex: 2147483646 }}
                         onPointerDown={(e) => {
@@ -2372,14 +2235,18 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                       />
                       <div
                         ref={moreMenuRef}
+                        data-lime-media-sheet={mediaPresentation ? 'menu' : undefined}
                         className="fixed w-44 rounded-xl border border-border bg-card p-1 shadow-lg overflow-hidden animate-in fade-in zoom-in duration-100"
                         style={{
                           top: moreMenuPosition?.top ?? 0,
                           right: moreMenuPosition?.right ?? 8,
+                          maxHeight: 'calc(100dvh - 16px)', overflowY: 'auto',
                           zIndex: 2147483647,
                         }}
                         onClick={(e) => e.stopPropagation()}
                       >
+                        {mediaPresentation && <button onClick={event => { event.stopPropagation(); setShowMenu(false); navigate(`/post/${encodeURIComponent(post.id)}`); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold hover:bg-muted"><LinkIcon className="h-4 w-4" />ポストに移動</button>}
+                        {mediaDownload && <button onClick={(event)=>{event.stopPropagation();setShowMenu(false);mediaDownload();}} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold hover:bg-muted"><Download className="h-4 w-4" />画像を保存</button>}
                         <button
                           onClick={handleActivityClick}
                           className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
@@ -2388,6 +2255,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                           {isBlueskyPost ? 'Blueskyで見る' : 'ポストアクティビティー'}
                         </button>
 
+                        {isMyPost && !isBlueskyPost && !post.replyId && <PinPostMenuButton userId={post.userId} postId={post.id} onClose={()=>setShowMenu(false)}/>}
                         {isMyPost && currentVisibility !== 'public' && (
                           <button
                             onClick={(e) => handleToggleVisibility(e, 'public')}
@@ -2431,163 +2299,8 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                     </>,
                     document.body
                   )}
-                </div>}
-              </div>
-            </div>
-
-            <div data-lime-post-body data-lime-post-has-images={allImageUrls.length > 0 || undefined}>
-              <div
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (shouldSuppressCardNavigation()) return;
-                  if (isMembersOnlyPost && !canViewMembersOnlyPost) return;
-                  if (isBlueskyPost) {
-                    navigate(`/post/${encodeURIComponent(post.id)}`);
-                  } else {
-                    navigate(`/post/${post.id}`);
-                  }
-                }}
-              >
-                {isCheckingMembersOnlyAccess ? (
-                  <div className="mt-3 rounded-2xl border border-violet-500/20 bg-violet-500/[0.06] px-4 py-5">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-500/10 text-violet-500">
-                        <Lock className="h-5 w-5" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-black text-foreground">メンバー限定投稿</p>
-                        <p className="mt-1 text-xs text-muted-foreground">閲覧権限を確認しています…</p>
-                      </div>
-                    </div>
-                  </div>
-                ) : isMembersOnlyPost && !canViewMembersOnlyPost ? (
-                  <div className="mt-3 rounded-2xl border border-violet-500/20 bg-violet-500/[0.06] px-4 py-5">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-500/10 text-violet-500">
-                        <Lock className="h-5 w-5" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-black text-foreground">メンバー限定投稿</p>
-                        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                          この投稿は @{post.author.username} のメンバーだけが閲覧できます。
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <SpacePostCard content={post.content || ''} />
-                    {(spaceLinkIn(displayContent || '')?.text ?? displayContent) && (
-                      <p className={useMobilePresentation ? "whitespace-pre-wrap break-words text-[16px] leading-normal text-foreground mt-1" : "whitespace-pre-wrap break-words text-base leading-relaxed text-foreground mt-1"}>
-                        {renderContentWithMentions(spaceLinkIn(displayContent || '')?.text ?? displayContent)}
-                      </p>
-                    )}
-                    {failedUrls.length > 0 && (
-                      <div className="mt-2 space-y-1">
-                        {failedUrls.map((url, idx) => (
-                          <div key={`failed-${idx}`}>
-                            {renderContentWithLinks(url)}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-
-              {canViewMembersOnlyPost && ((post as any).is_bot || post.isBot) && (
-                <div className="flex items-center gap-1 mt-1.5 text-muted-foreground/70">
-                  <Sparkles className="h-3.5 w-3.5" />
-                  <span className={useMobilePresentation ? "text-[13px] font-medium" : "text-[15px] font-medium"}>AIで生成</span>
-                </div>
-              )}
-
-              {isBlueskyPost && (
-                <div className="flex items-center gap-1 mt-1.5 text-muted-foreground/70">
-                  <Globe className="h-3.5 w-3.5" />
-                  <span className={useMobilePresentation ? "text-[13px] font-medium" : "text-[15px] font-medium"}>Bluesky</span>
-                </div>
-              )}
-
-              {canViewMembersOnlyPost && youtubeId && (
-                <div onClick={(e) => e.stopPropagation()} className="mt-3">
-                  <YouTubeEmbed videoId={youtubeId} />
-                </div>
-              )}
-
-              {canViewMembersOnlyPost && spotifyUrls.length > 0 && (
-                <div onClick={(e) => e.stopPropagation()} className="space-y-2 mt-3">
-                  {spotifyUrls.map((url, idx) => (
-                    <SpotifyEmbed key={`spotify-${idx}`} url={url} />
-                  ))}
-                </div>
-              )}
-
-              {canViewMembersOnlyPost && (singleImageUrl ? (
-                <div className="mt-3 flex max-w-full justify-start" onClick={(e) => e.stopPropagation()}>
-                  <button
-                    type="button"
-                    className="block max-w-full cursor-zoom-in overflow-hidden rounded-2xl border border-border/50 bg-black/[0.025] text-left shadow-none dark:bg-white/[0.035]"
-                    data-lime-single-post-image
-                    style={singleImageFrameStyle}
-                    onClick={(e) => handleImageClick(e, singleImageUrl)}
-                    aria-label="画像を拡大表示"
-                  >
-                    <img
-                      src={singleImageUrl}
-                      alt="投稿画像"
-                      className="block select-none"
-                      style={SINGLE_IMAGE_DISPLAY_STYLE}
-                      draggable={false}
-                      loading="lazy"
-                      decoding="async"
-                      onLoad={(e) => {
-                        const img = e.currentTarget;
-                        if (img.naturalWidth && img.naturalHeight) {
-                          const nextNaturalSize = {
-                            width: img.naturalWidth,
-                            height: img.naturalHeight,
-                          };
-                          setCachedNaturalSize(singleImageUrl, nextNaturalSize);
-                          setSingleImageNaturalSize(nextNaturalSize);
-                        }
-                      }}
-                      onError={() => {
-                        setFailedUrls((prev) => (
-                          prev.includes(singleImageUrl) ? prev : [...prev, singleImageUrl]
-                        ));
-                      }}
-                    />
-                  </button>
-                </div>
-              ) : (
-                <div
-                  className="cursor-zoom-in"
-                  onClick={(e) => {
-                    const target = e.target as HTMLElement;
-                    if (target.tagName === 'IMG' && (target as HTMLImageElement).src) {
-                      handleImageClick(e, (target as HTMLImageElement).src);
-                    } else {
-                      handleCardClick();
-                    }
-                  }}
-                >
-                  <PostImages
-                    urls={allImageUrls}
-                    embedded={embedded}
-                    onImageError={(url) => {
-                      if (!failedUrls.includes(url)) {
-                        setFailedUrls(prev => [...prev, url]);
-                      }
-                    }}
-                  />
-                </div>
-              ))}
-            </div>
-
-            {post.isQuote && <QuotedPost post={post.parentPost} timelineGlass={timelineGlass} />}
-
-            {!embedded && canViewMembersOnlyPost && reactions.length > 0 && (
+                </div>}</>);
+  const postActions = (<>            {!embedded && canViewMembersOnlyPost && reactions.length > 0 && (
               <div data-lime-post-reactions className="mt-3 flex flex-wrap gap-1.5 relative" onClick={(e) => e.stopPropagation()}>
                 {reactions.map((g) => {
                   const hasMyReaction = currentUserId ? g.user_ids.includes(currentUserId) : false;
@@ -2650,7 +2363,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
               <div onClick={(e) => e.stopPropagation()} className="flex items-center h-full">
                 {isBlueskyPost ? (
                   blueskySession && blueskyPostUri ? (
-                    <LikeButton
+                    <LikeButton syncState={!!onMediaLikeChange} onChange={onMediaLikeChange}
                       postId={post.id}
                       liked={post.likedByMe}
                       count={post.likesCount}
@@ -2671,7 +2384,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                     </button>
                   )
                 ) : (
-                  <LikeButton
+                  <LikeButton syncState={!!onMediaLikeChange} onChange={onMediaLikeChange}
                     postId={post.id}
                     liked={post.likedByMe}
                     count={post.likesCount}
@@ -2684,7 +2397,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    navigate(`/post/${encodeURIComponent(post.id)}`);
+                    if (onMediaReply) onMediaReply(); else navigate(`/post/${encodeURIComponent(post.id)}`);
                   }}
                   className={useMobilePresentation ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
                 >
@@ -2694,7 +2407,8 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
               ) : (
                 <Link
                   to={`/post/${post.id}`}
-                  onClick={(e) => e.stopPropagation()}
+                  aria-label="返信"
+                  onClick={(e) => { e.stopPropagation(); if(onMediaReply){e.preventDefault();onMediaReply();} }}
                   className={useMobilePresentation ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
                 >
                   <MessageCircle className="h-5 w-5" />
@@ -2705,6 +2419,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
               {!isBlueskyPost && <div className="relative inline-flex items-center h-full" onClick={(e) => e.stopPropagation()}>
                 <button
                   ref={buttonRef}
+                  aria-label="リアクションを追加"
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -2909,6 +2624,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                 {showShareMenu && typeof document !== 'undefined' && createPortal(
                   <>
                     <div
+                      data-lime-media-sheet-backdrop={mediaPresentation || undefined}
                       className="fixed inset-0 bg-transparent"
                       style={{ zIndex: 2147483646 }}
                       onPointerDown={(e) => {
@@ -2923,6 +2639,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                     />
                     <div
                       ref={shareMenuRef}
+                      data-lime-media-sheet={mediaPresentation ? 'share' : undefined}
                       className="fixed w-[min(calc(100vw-16px),16rem)] rounded-xl border border-border bg-card p-1 shadow-lg overflow-hidden animate-in fade-in zoom-in duration-100"
                       style={{
                         top: shareMenuPosition?.top ?? 0,
@@ -2960,10 +2677,319 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                   document.body
                 )}
               </div>
-            </div>}
+            </div>}</>);
+
+  return (
+    <>
+      {(activeRings.length > 0 || activeDots.length > 0) && (
+        <div className="fixed inset-0 pointer-events-none z-[9999] overflow-hidden">
+          {activeRings.map((r) => (
+            <div
+              key={r.id}
+              style={{
+                position: 'fixed',
+                left: r.x,
+                top: r.y,
+                width: `${r.width}px`,
+                height: `${r.height}px`,
+                borderRadius: '9999px',
+                border: '4px solid #d4f022',
+                backgroundColor: 'transparent',
+                transformOrigin: 'center center',
+                animation: 'misskeyRingExpand 460ms cubic-bezier(0.1, 0.8, 0.3, 1) forwards'
+              }}
+            />
+          ))}
+
+          {activeDots.map((d) => (
+            <div
+              key={d.id}
+              style={{
+                position: 'fixed',
+                left: d.x,
+                top: d.y,
+                width: `${d.size}px`,
+                height: `${d.size}px`,
+                backgroundColor: d.color,
+                borderRadius: '50%',
+                transformOrigin: 'center center',
+                ['--mk-angle' as any]: `${d.angle}deg`,
+                ['--mk-dist' as any]: `${d.distance}px`,
+                animation: `misskeyDotBurst 480ms cubic-bezier(0.12, 0.85, 0.3, 1) forwards`,
+                animationDelay: `${d.delay}ms`
+              }}
+            />
+          ))}
+        </div>
+      )}
+
+      {mediaPresentation ? <article ref={cardRootRef} data-lime-media-post-actions={mediaPresentation} className="relative w-full">{mediaPresentation === 'menu' ? postMenu : postActions}</article> : <article
+        data-lime-post-card
+        data-lime-thread-item={thread || undefined}
+        data-lime-embedded={embedded || undefined}
+        style={embedded ? { width: '100%', maxWidth: '100%', margin: 0 } : undefined}
+        ref={cardRootRef}
+        onClickCapture={handleCardClickCapture}
+        onClick={handleCardClick}
+        className={
+          embedded ? "relative w-full cursor-pointer" : timelineGlass
+            ? useMobilePresentation
+              ? "timeline-mobile-readable px-5 py-4 cursor-pointer"
+              : "timeline-glass-card rounded-3xl p-5 transition relative cursor-pointer"
+            : useMobilePresentation
+              ? "relative mx-auto w-full max-w-[600px] px-0 py-3 cursor-pointer"
+              : "rounded-3xl border border-border/60 bg-card p-5 shadow-soft transition hover:shadow-card-soft relative cursor-pointer"
+        }
+      >
+        {isMobile && !timelineGlass && !thread && (
+          <div className="pointer-events-none absolute bottom-0 left-1/2 w-screen -translate-x-1/2 border-b border-border/60" />
+        )}
+
+        {pinned && !embedded && <div data-lime-pinned-label className="mb-1 flex items-center gap-3 text-sm font-semibold text-muted-foreground"><span className="inline-flex w-11 shrink-0 justify-end"><Pin className="h-4 w-4" fill="currentColor"/></span><span>固定されたポスト</span></div>}
+        {repostedByLabel && !embedded && (
+          <div data-lime-repost-label className="mb-1 flex items-center gap-3 text-sm font-semibold text-muted-foreground">
+            <span className="inline-flex w-11 shrink-0 justify-end"><RepostIcon className="h-4 w-4" /></span>
+            <span>{repostedByLabel}がリポストしました</span>
+          </div>
+        )}
+        <div data-lime-post-layout className="flex items-start gap-3">
+          <HoverCard open={profileHoverTarget === 'avatar'} openDelay={300}>
+            <HoverCardTrigger asChild>
+              <Link
+                to={`/u/${post.author.username}`}
+                className="inline-flex h-11 w-11 shrink-0 items-center justify-center"
+                data-lime-thread-avatar={thread || undefined}
+                data-lime-post-avatar
+                onMouseEnter={() => openProfileHover('avatar')}
+                onMouseLeave={closeProfileHover}
+                onFocus={() => openProfileHover('avatar')}
+                onBlur={closeProfileHover}
+                onClick={handleAuthorNavigate}
+              >
+                <Avatar userId={post.author.id} className="h-11 w-11 translate-y-1">
+                  <AvatarImage src={post.author.avatarUrl} alt={post.author.displayName} />
+                  <AvatarFallback>{post.author.displayName.slice(0, 1)}</AvatarFallback>
+                </Avatar>
+              </Link>
+            </HoverCardTrigger>
+            <ProfileHoverContent />
+          </HoverCard>
+
+          <div data-lime-post-content className="min-w-0 flex-1">
+            <div data-lime-post-header className="flex items-center justify-between mb-1">
+              <div className="flex items-center w-full min-w-0">
+                <HoverCard open={profileHoverTarget === 'name'} openDelay={300}>
+                  <HoverCardTrigger asChild>
+                    <Link
+                      to={`/u/${post.author.username}`}
+                      className="inline-flex w-fit max-w-full shrink-0 items-center font-display font-bold text-foreground hover:underline"
+                      onMouseEnter={() => openProfileHover('name')}
+                      onMouseLeave={closeProfileHover}
+                      onFocus={() => openProfileHover('name')}
+                      onBlur={closeProfileHover}
+                      onClick={handleAuthorNavigate}
+                    >
+                      <div className="inline-flex w-fit max-w-full items-center gap-0.5">
+                        <span className={useMobilePresentation ? "truncate text-[16px]" : "truncate text-base"}>
+                          {post.author.displayName}
+                        </span>
+                        {post.author.isOfficial && (
+                          <img
+                            src={`${import.meta.env.BASE_URL}verified.png`}
+                            alt="Official"
+                            className="h-4 w-4 shrink-0 transform translate-y-[0.5px]"
+                            loading="eager"
+                          />
+                        )}
+                      </div>
+                    </Link>
+                  </HoverCardTrigger>
+                  <ProfileHoverContent />
+                </HoverCard>
+
+                <span className={useMobilePresentation ? "truncate text-[16px] text-muted-foreground ml-1 opacity-80 shrink" : "truncate text-base text-muted-foreground ml-1 opacity-80 shrink"}>
+                  @{post.author.username}
+                </span>
+
+                <span className="text-muted-foreground mx-1 shrink-0">·</span>
+                <span className={useMobilePresentation ? "text-[16px] text-muted-foreground whitespace-nowrap shrink-0" : "text-sm text-muted-foreground whitespace-nowrap shrink-0"}>
+                  {formatRelative(post.createdAt)}
+                </span>
+              </div>
+
+              <div className="flex items-center shrink-0 ml-2">
+                {currentVisibility === 'following' && (
+                  <span className={useMobilePresentation ? "text-[13px] font-bold text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-md whitespace-nowrap mr-1" : "text-[14px] font-bold text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded-md whitespace-nowrap mr-1"}>
+                    限定
+                  </span>
+                )}
+                {currentVisibility === 'members' && (
+                  <span className={useMobilePresentation ? "text-[13px] font-bold text-violet-600 dark:text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded-md whitespace-nowrap mr-1" : "text-[14px] font-bold text-violet-600 dark:text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded-md whitespace-nowrap mr-1"}>
+                    メンバー限定
+                  </span>
+                )}
+
+                {postMenu}
+              </div>
+            </div>
+
+            <div data-lime-post-body data-lime-post-has-images={allImageUrls.length > 0 || undefined}>
+              <div
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (shouldSuppressCardNavigation()) return;
+                  if (isMembersOnlyPost && !canViewMembersOnlyPost) return;
+                  if (isBlueskyPost) {
+                    navigate(`/post/${encodeURIComponent(post.id)}`);
+                  } else {
+                    navigate(`/post/${post.id}`);
+                  }
+                }}
+              >
+                {isCheckingMembersOnlyAccess ? (
+                  <div className="mt-3 rounded-2xl border border-violet-500/20 bg-violet-500/[0.06] px-4 py-5">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-500/10 text-violet-500">
+                        <Lock className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-black text-foreground">メンバー限定投稿</p>
+                        <p className="mt-1 text-xs text-muted-foreground">閲覧権限を確認しています…</p>
+                      </div>
+                    </div>
+                  </div>
+                ) : isMembersOnlyPost && !canViewMembersOnlyPost ? (
+                  <div className="mt-3 rounded-2xl border border-violet-500/20 bg-violet-500/[0.06] px-4 py-5">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-500/10 text-violet-500">
+                        <Lock className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-black text-foreground">メンバー限定投稿</p>
+                        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                          この投稿は @{post.author.username} のメンバーだけが閲覧できます。
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <SpacePostCard content={post.content || ''} />
+                    {(linkPreview.text(spaceLinkIn(displayContent || '')?.text ?? displayContent)) && (
+                      <p className={useMobilePresentation ? "whitespace-pre-wrap break-words text-[16px] leading-normal text-foreground mt-1" : "whitespace-pre-wrap break-words text-base leading-relaxed text-foreground mt-1"}>
+                        {renderContentWithMentions(linkPreview.text(spaceLinkIn(displayContent || '')?.text ?? displayContent))}
+                      </p>
+                    )}
+                    {failedUrls.length > 0 && (
+                      <div className="mt-2 space-y-1">
+                        {failedUrls.map((url, idx) => (
+                          <div key={`failed-${idx}`}>
+                            {renderContentWithLinks(url)}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {canViewMembersOnlyPost && ((post as any).is_bot || post.isBot) && (
+                <div className="flex items-center gap-1 mt-1.5 text-muted-foreground/70">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span className={useMobilePresentation ? "text-[13px] font-medium" : "text-[15px] font-medium"}>AIで生成</span>
+                </div>
+              )}
+
+              {isBlueskyPost && (
+                <div className="flex items-center gap-1 mt-1.5 text-muted-foreground/70">
+                  <Globe className="h-3.5 w-3.5" />
+                  <span className={useMobilePresentation ? "text-[13px] font-medium" : "text-[15px] font-medium"}>Bluesky</span>
+                </div>
+              )}
+
+              {canViewMembersOnlyPost && <LinkPreviewCard {...linkPreview} />}
+              {canViewMembersOnlyPost && youtubeId && (
+                <div onClick={(e) => e.stopPropagation()} className="mt-3">
+                  <YouTubeEmbed videoId={youtubeId} />
+                </div>
+              )}
+
+              {canViewMembersOnlyPost && spotifyUrls.length > 0 && (
+                <div onClick={(e) => e.stopPropagation()} className="space-y-2 mt-3">
+                  {spotifyUrls.map((url, idx) => (
+                    <SpotifyEmbed key={`spotify-${idx}`} url={url} />
+                  ))}
+                </div>
+              )}
+
+              {canViewMembersOnlyPost && (singleImageUrl ? (
+                <div className="mt-3 flex max-w-full justify-start" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    className="block max-w-full cursor-zoom-in overflow-hidden rounded-2xl border border-border/50 bg-black/[0.025] text-left shadow-none dark:bg-white/[0.035]"
+                    data-lime-single-post-image
+                    style={singleImageFrameStyle}
+                    onClick={(e) => handleImageClick(e, singleImageUrl)}
+                    aria-label="画像を拡大表示"
+                  >
+                    <img
+                      src={singleImageUrl}
+                      alt="投稿画像"
+                      className="block select-none"
+                      style={SINGLE_IMAGE_DISPLAY_STYLE}
+                      draggable={false}
+                      loading="lazy"
+                      decoding="async"
+                      onLoad={(e) => {
+                        const img = e.currentTarget;
+                        if (img.naturalWidth && img.naturalHeight) {
+                          const nextNaturalSize = {
+                            width: img.naturalWidth,
+                            height: img.naturalHeight,
+                          };
+                          setCachedNaturalSize(singleImageUrl, nextNaturalSize);
+                          setSingleImageNaturalSize(nextNaturalSize);
+                        }
+                      }}
+                      onError={() => {
+                        setFailedUrls((prev) => (
+                          prev.includes(singleImageUrl) ? prev : [...prev, singleImageUrl]
+                        ));
+                      }}
+                    />
+                  </button>
+                </div>
+              ) : (
+                <div
+                  className="cursor-zoom-in"
+                  onClick={(e) => {
+                    const target = e.target as HTMLElement;
+                    if (target.tagName === 'IMG' && (target as HTMLImageElement).src) {
+                      handleImageClick(e, (target as HTMLImageElement).src);
+                    } else {
+                      handleCardClick();
+                    }
+                  }}
+                >
+                  <PostImages
+                    urls={allImageUrls}
+                    embedded={embedded}
+                    onImageError={(url) => {
+                      if (!failedUrls.includes(url)) {
+                        setFailedUrls(prev => [...prev, url]);
+                      }
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+
+            {post.isQuote && <QuotedPost post={post.parentPost} timelineGlass={timelineGlass} />}
+
+            {postActions}
           </div>
         </div>
-      </article>
+      </article>}
 
       {showLimeDropPanel && typeof document !== 'undefined' && createPortal(
         <div
@@ -3059,85 +3085,6 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                   })}
                 </div>
               )}
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
-
-      {selectedImageUrl && typeof document !== 'undefined' && createPortal(
-        <div
-          className="fixed inset-0 flex flex-col items-center justify-center bg-black/95 backdrop-blur-sm animate-in fade-in duration-200"
-          style={{ zIndex: 2147483647 }}
-          onClick={() => setSelectedImageUrl(null)}
-        >
-          <button
-            className="absolute top-5 left-5 z-10 p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
-            onClick={() => setSelectedImageUrl(null)}
-          >
-            <X className="h-6 w-6" />
-          </button>
-
-          <div className="relative flex max-h-full max-w-full items-center justify-center p-4">
-            <img
-              src={selectedImageUrl}
-              alt="Expanded view"
-              className="max-h-[85vh] max-w-[95vw] object-contain shadow-2xl animate-in zoom-in-95 duration-200"
-              onClick={(e) => e.stopPropagation()}
-            />
-          </div>
-
-          <div
-            className="absolute bottom-0 left-0 right-0 flex items-center justify-center bg-gradient-to-t from-black/80 to-transparent pb-8 pt-10"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-8 rounded-full bg-black/40 px-6 py-3 backdrop-blur-md border border-white/10">
-              <div className="scale-125">
-                {isBlueskyPost ? (
-                  blueskySession && blueskyPostUri ? (
-                    <LikeButton
-                      postId={post.id}
-                      liked={post.likedByMe}
-                      count={post.likesCount}
-                      bluesky={{ postUri: blueskyPostUri, preferencePost: post }}
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
-                      }}
-                      className="inline-flex items-center gap-2 text-white/90 hover:text-white transition-colors"
-                    >
-                      <Heart className="h-6 w-6" />
-                      <span className="font-bold tabular-nums text-lg">{(post.likesCount) > 0 ? formatDisplayCount(post.likesCount) : ''}</span>
-                    </button>
-                  )
-                ) : (
-                  <LikeButton
-                    postId={post.id}
-                    liked={post.likedByMe}
-                    count={post.likesCount}
-                  />
-                )}
-              </div>
-              <button
-                onClick={() => {
-                  setSelectedImageUrl(null);
-                  if (isBlueskyPost) {
-                    navigate(`/post/${encodeURIComponent(post.id)}`);
-                    return;
-                  }
-                  if (isMembersOnlyPost && !canViewMembersOnlyPost) return;
-                  navigate(`/post/${post.id}`);
-                }}
-                className="inline-flex items-center gap-2 text-white/90 hover:text-white transition-colors"
-              >
-                <MessageCircle className="h-6 w-6" />
-                <span className="font-bold tabular-nums text-lg">{(post.commentsCount) > 0 ? formatDisplayCount(post.commentsCount) : ''}</span>
-              </button>
             </div>
           </div>
         </div>,

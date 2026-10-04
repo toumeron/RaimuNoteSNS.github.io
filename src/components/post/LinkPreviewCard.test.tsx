@@ -1,0 +1,13 @@
+import {render,screen,fireEvent,waitFor} from '@testing-library/react';
+import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
+import {vi,it,expect,beforeEach} from 'vitest';
+import {PostLinkPreview,useLinkPreview,LinkPreviewCard} from './LinkPreviewCard';
+import {OfflineBookmarkContext} from '@/components/stickers/OfflineBookmarkContext';
+const invoke=vi.hoisted(()=>vi.fn());vi.mock('@/lib/supabase',()=>({supabase:{functions:{invoke}}}));
+const preview={url:'https://example.com/diary',domain:'example.com',title:'9月日記',image:'https://example.com/cover.jpg'};
+function mount(content:string){return render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><PostLinkPreview content={content}/></QueryClientProvider>);}
+beforeEach(()=>invoke.mockReset());
+it('renders a linked image and title only on success',async()=>{invoke.mockResolvedValue({data:{preview}});mount('日記 https://example.com/diary');expect(await screen.findByRole('link',{name:'9月日記'})).toHaveAttribute('href',preview.url);expect(document.querySelector('[data-link-preview] img')).toHaveAttribute('src',preview.image);});
+it('does not request multiple URLs or render failed previews',async()=>{mount('https://example.com/a https://example.com/b');expect(invoke).not.toHaveBeenCalled();invoke.mockResolvedValue({data:{preview:null}});mount('https://example.com/c');await waitFor(()=>expect(invoke).toHaveBeenCalledOnce());expect(document.querySelector('[data-link-preview]')).toBeNull();});
+it('restores the original text when the preview image fails',async()=>{invoke.mockResolvedValue({data:{preview}});function Body(){const state=useLinkPreview(`本文 ${preview.url}`);return <><p>{state.text(`本文 ${preview.url}`)}</p><LinkPreviewCard {...state}/></>;}render(<QueryClientProvider client={new QueryClient()}><Body/></QueryClientProvider>);await screen.findByRole('link',{name:preview.title});expect(screen.getByText('本文')).toBeInTheDocument();fireEvent.error(document.querySelector('[data-link-preview] img')!);expect(screen.getByText(`本文 ${preview.url}`)).toBeInTheDocument();expect(document.querySelector('[data-link-preview]')).toBeNull();});
+it('uses the offline snapshot without a metadata request',async()=>{render(<QueryClientProvider client={new QueryClient()}><OfflineBookmarkContext.Provider value={{bookmarkIds:[],emojis:[],spaces:{},media:new Map(),linkPreviews:{[preview.url]:{...preview,image:'blob:offline'}}}}><PostLinkPreview content={preview.url}/></OfflineBookmarkContext.Provider></QueryClientProvider>);expect(screen.getByRole('link',{name:preview.title})).toBeInTheDocument();expect(invoke).not.toHaveBeenCalled();});

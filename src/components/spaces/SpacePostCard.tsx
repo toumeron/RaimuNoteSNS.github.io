@@ -1,3 +1,4 @@
+import {OfflineBookmarkContext} from '@/components/stickers/OfflineBookmarkContext';
 import { useContext } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
@@ -7,16 +8,19 @@ import { useSpaces, SpaceAudioLevelContext, type LiveSpace } from './SpaceContex
 
 export function SpacePostCard({ content }: { content: string }) {
   const link = spaceLinkIn(content);
+  const offline=useContext(OfflineBookmarkContext);
   const { open, joinedId } = useSpaces();
-  const { data, isError, isPending } = useQuery({ queryKey: ['space-card', link?.id], queryFn: () => spaceRpc<LiveSpace & { is_active: boolean } | null>('get_space_card', { p_space_id: link!.id }), enabled: !!link, refetchInterval: query => query.state.data?.is_active ? 15000 : false });
+  const query = useQuery({ queryKey: ['space-card', link?.id], queryFn: () => spaceRpc<LiveSpace & { is_active: boolean } | null>('get_space_card', { p_space_id: link!.id }), enabled: !!link && !offline, refetchInterval: query => query.state.data?.is_active ? 15000 : false });
+  const {isError,isPending}=query;
+  const data=offline && link ? offline.spaces[link.id] : query.data;
   if (!link) return null;
-  if (!data && !isPending && !isError) return <div className="lime-space-post-card is-ended"><h3>スペース</h3><p>終了しました</p></div>;
+  if (!data && (offline || (!isPending && !isError))) return <div className="lime-space-post-card is-ended"><h3>スペース</h3><p>終了しました</p></div>;
   if (!data) return <a href={link ? `https://toumeron.github.io/RaimuNoteSNS.github.io/spaces/${link.id}` : '#'} onClick={event => event.stopPropagation()} className="mt-3 block text-primary">{isError ? 'スペースを開く' : 'スペースを読み込み中…'}</a>;
   const joined = joinedId === data.id;
   return <div className={`lime-space-post-card ${!data.is_active ? 'is-ended' : ''}`} onClick={event => event.stopPropagation()}>
     <div className="lime-space-post-host"><Avatar className="h-8 w-8 border border-white/70"><AvatarImage src={data.profiles.avatar_url} /><AvatarFallback>{data.profiles.display_name.slice(0, 1)}</AvatarFallback></Avatar><span className="truncate font-bold">{data.profiles.display_name}</span><span className="lime-space-post-role">ホスト</span></div>
     <h3>{data.title}</h3>
-    {!data.is_active ? <p>終了しました</p> : <button className={joined ? 'is-joined' : ''} onClick={() => open(data.id)}><SpaceVoiceIndicator id={data.id} />{joined ? '参加済み' : 'スペースを聞く'}</button>}
+    {!data.is_active ? <p>終了しました</p> : <button disabled={!!offline} className={joined ? 'is-joined' : ''} onClick={() => open(data.id)}><SpaceVoiceIndicator id={data.id} />{joined ? '参加済み' : 'スペースを聞く'}</button>}
   </div>;
 }
 

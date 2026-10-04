@@ -106,3 +106,15 @@ it('refreshes persisted tokens and logs out only the active session',async()=>{
   expect(mock.signOut).toHaveBeenCalledWith({scope:'local'});
   expect(readSavedAccounts().map(account=>account.id)).toEqual(['bob']);
 });
+
+it('opens an expired local session in an offline PWA without waiting for token refresh',()=>{
+ vi.spyOn(navigator,'onLine','get').mockReturnValue(false);
+ Object.defineProperty(navigator,'standalone',{configurable:true,value:true});
+ const project=new URL(import.meta.env.VITE_SUPABASE_URL).hostname.split('.')[0];
+ localStorage.setItem(`sb-${project}-auth-token`,JSON.stringify({...session,expires_at:1}));
+ render(<QueryClientProvider client={new QueryClient()}><AuthProvider><Probe /></AuthProvider></QueryClientProvider>);
+ expect(screen.getByText('Metadata Name')).toBeTruthy();expect(currentAuth.user?.id).toBe('test-user');
+ act(()=>mock.callback?.('INITIAL_SESSION',null));expect(currentAuth.user?.id).toBe('test-user');
+ act(()=>mock.callback?.('SIGNED_OUT',null));expect(currentAuth.user).toBeNull();
+ Object.defineProperty(navigator,'standalone',{configurable:true,value:false});vi.restoreAllMocks();
+});

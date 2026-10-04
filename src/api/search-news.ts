@@ -1,7 +1,7 @@
 import { getPostById } from './posts';
 import type { User } from '@/types';
 
-export type SearchNewsItem = {id: string; title: string; content: string; category: string; created_at: string; related_post_ids?: unknown; related_posts?: unknown};
+export type SearchNewsItem = {id: string; title: string; content: string; category: string; created_at: string; source?: 'limenote' | 'bluesky'; related_post_ids?: unknown; related_posts?: unknown};
 export type NewsSources = {authors: User[]; postsCount: number};
 function sourceIds(news: SearchNewsItem): string[] {
   const refs = [news.related_post_ids, news.related_posts].flatMap(value => Array.isArray(value) ? value : []);
@@ -22,4 +22,12 @@ export async function getNewsSources(news: SearchNewsItem[]): Promise<Record<str
     const visible = sourceIds(item).flatMap(id => authors.has(id) ? [authors.get(id)!] : []);
     return [item.id, {authors: [...new Map(visible.map(author => [author.id, author])).values()].slice(0, 3), postsCount: visible.length}];
   }));
+}
+
+export function latestNewsPerSource(news: SearchNewsItem[]): SearchNewsItem[] {
+  return ['limenote', 'bluesky'].flatMap(source => {
+    const latest = news.filter(item => (item.source || 'limenote') === source)
+      .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
+    return latest ? [latest] : [];
+  });
 }
