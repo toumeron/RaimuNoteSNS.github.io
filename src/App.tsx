@@ -2,7 +2,7 @@ import { QuotedPost } from '@/components/feed/QuotedPost';
 import { PostOverlayContext } from '@/components/layout/PostOverlayContext';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from 'react-router-dom';
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -17,7 +17,7 @@ import Feed from "./pages/Feed";
 import Bookmarks from "./pages/Bookmarks";
 import PostDetail from "./pages/PostDetail";
 import Profile from "./pages/Profile";
-import Settings from "./pages/Settings";
+const Settings = lazy(() => import("./pages/Settings"));
 import SearchPage from "./pages/SearchPage";
 import PostActivity from "./pages/PostActivity";
 import Share from "./pages/Share";
@@ -27,10 +27,16 @@ import FollowersFollowingPage from "./pages/FollowersFollowingPage";
 import SpacePage from "./pages/SpacePage";
 import { SpaceProvider } from '@/components/spaces/SpaceProvider';
 import NewsPage from './pages/NewsPage';
-import ChatPage from "./pages/ChatPage"; // AIチャットページのインポートを追加
+const ChatPage = lazy(() => import("./pages/ChatPage"));
 import TermsPage from "./pages/terms";
 import LimeProLanding from "./pages/LimePro";
-import MediaViewer from "./pages/MediaViewer.tsx"
+const MediaViewer = lazy(() => import("./pages/MediaViewer"));
+
+import { PostCardSkeleton } from "@/components/feed/PostCardSkeleton";
+
+function RouteLoading() {
+  return <div role="status" aria-label="読み込み中"><PostCardSkeleton /><PostCardSkeleton /><PostCardSkeleton /></div>;
+}
 
 // PostComposer 用のインポート群
 import { ImagePlus, Loader2, Send, X, AtSign, Hash, Globe, Users, PenSquare, ArrowLeft, ChevronDown } from 'lucide-react';
@@ -2687,18 +2693,18 @@ const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage |
             <Route path="/notifications" element={<Notifications />} />
             <Route path="/search" element={<SearchPage />} />
             <Route path="/news" element={<NewsPage />} />
-            <Route path="/chat" element={<ChatPage />} /> {/* AIチャットページのルーティングを追加 */}
+            <Route path="/chat" element={<Suspense fallback={<RouteLoading />}><ChatPage /></Suspense>} /> {/* AIチャットページのルーティングを追加 */}
             <Route path="/post/:id" element={<PostDetail />} />
             <Route path="/post/:postId/activity" element={<PostActivity />} />
             <Route path="/u/:username" element={<Profile />} />
             <Route path="/u/:username/followers_following" element={<FollowersFollowingPage />} />
-            <Route path="/settings" element={<Settings />} />
+            <Route path="/settings" element={<Suspense fallback={<RouteLoading />}><Settings /></Suspense>} />
             <Route path="/bookmarks" element={<Bookmarks />} />
             <Route path="/share" element={<Share />} />
             <Route path="/spaces/:id" element={<SpacePage />} />
             <Route path="/limepro" element={<LimeProLanding />} />
-            <Route path="/media" element={<MediaViewer />} />
-<Route path="/media/:username" element={<MediaViewer />} />
+            <Route path="/media" element={<Suspense fallback={<RouteLoading />}><MediaViewer /></Suspense>} />
+<Route path="/media/:username" element={<Suspense fallback={<RouteLoading />}><MediaViewer /></Suspense>} />
           </Route>
           <Route path="/index" element={<Navigate to="/" replace />} />
           <Route path="*" element={<NotFound />} />

@@ -1,3 +1,5 @@
+import { SpacePostCard } from '@/components/spaces/SpacePostCard';
+import { spaceLinkIn } from '@/lib/spaceLinks';
 import '@/components/post/post-actions.css';
 import { BookmarkButton } from '@/components/post/BookmarkButton';
 import { RepostButton } from '@/components/feed/RepostButton';
@@ -1641,10 +1643,10 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
             href={part}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-pink-500 hover:underline transition-colors"
+            className={embedded ? "inline-block max-w-full truncate align-bottom text-pink-500 hover:underline transition-colors" : "text-pink-500 hover:underline transition-colors"}
             onClick={(e) => e.stopPropagation()}
           >
-            {part}
+            {embedded ? (() => { const label = part.replace(/^https?:\/\//, ''); return label.length > 32 ? `${label.slice(0, 29)}…` : label; })() : part}
           </a>
         );
       }
@@ -1663,10 +1665,10 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
           <Link
             key={`mention-${index}`}
             to={`/u/${username}`}
-            className="text-pink-500 hover:underline transition-colors"
+            className={embedded ? "inline-block max-w-full truncate align-bottom text-pink-500 hover:underline transition-colors" : "text-pink-500 hover:underline transition-colors"}
             onClick={(e) => e.stopPropagation()}
           >
-            {part}
+            {embedded ? (() => { const label = part.replace(/^https?:\/\//, ''); return label.length > 32 ? `${label.slice(0, 29)}…` : label; })() : part}
           </Link>
         );
       }
@@ -2474,9 +2476,10 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                   </div>
                 ) : (
                   <>
-                    {displayContent && (
+                    <SpacePostCard content={post.content || ''} />
+                    {(spaceLinkIn(displayContent || '')?.text ?? displayContent) && (
                       <p className={useMobilePresentation ? "whitespace-pre-wrap break-words text-[16px] leading-normal text-foreground mt-1" : "whitespace-pre-wrap break-words text-base leading-relaxed text-foreground mt-1"}>
-                        {renderContentWithMentions(displayContent)}
+                        {renderContentWithMentions(spaceLinkIn(displayContent || '')?.text ?? displayContent)}
                       </p>
                     )}
                     {failedUrls.length > 0 && (
@@ -2582,8 +2585,10 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
               ))}
             </div>
 
+            {post.isQuote && <QuotedPost post={post.parentPost} timelineGlass={timelineGlass} />}
+
             {!embedded && canViewMembersOnlyPost && reactions.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-1.5 relative" onClick={(e) => e.stopPropagation()}>
+              <div data-lime-post-reactions className="mt-3 flex flex-wrap gap-1.5 relative" onClick={(e) => e.stopPropagation()}>
                 {reactions.map((g) => {
                   const hasMyReaction = currentUserId ? g.user_ids.includes(currentUserId) : false;
                   const isPopupOpen = activePopupEmoji === g.emoji;
@@ -2640,8 +2645,6 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                 })}
               </div>
             )}
-
-            {post.isQuote && <QuotedPost post={post.parentPost} timelineGlass={timelineGlass} />}
 
             {!embedded && <div data-lime-post-actions className={useMobilePresentation ? "mt-2 flex items-center gap-1 text-muted-foreground relative h-8" : "mt-3 flex items-center gap-1 text-muted-foreground relative h-9"}>
               <div onClick={(e) => e.stopPropagation()} className="flex items-center h-full">

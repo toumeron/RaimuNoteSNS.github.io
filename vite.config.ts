@@ -82,6 +82,24 @@ export default defineConfig(({ mode }) => ({
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg,webmanifest}"],
+        // Audio, document and 3D engines are cached only when the feature is opened.
+        // Do not download them all during installation on an iOS home-screen launch.
+        globIgnores: [
+          "decoders/**", "assets/AgoraRTC*", "assets/pdfjs*", "assets/three*",
+          "assets/*Loader-*", "assets/draco*", "assets/meshopt*",
+          "assets/mmdAvatar-*", "assets/avatarRuntime-*",
+          "assets/spaceMusicScore-*", "assets/ChatPage-*", "assets/Settings-*", "assets/MediaViewer-*",
+        ],
+        runtimeCaching: [{
+          urlPattern: ({ url }) => url.origin === self.location.origin &&
+            /\/RaimuNoteSNS\.github\.io\/(assets|decoders)\/.*\.(js|wasm)$/.test(url.pathname),
+          handler: "CacheFirst",
+          options: {
+            cacheName: "lime-feature-assets-v1",
+            expiration: { maxEntries: 48, maxAgeSeconds: 30 * 24 * 60 * 60 },
+            cacheableResponse: { statuses: [200] },
+          },
+        }],
         navigateFallback: "/RaimuNoteSNS.github.io/index.html",
         importScripts: ["push-sw.js"],
         // ビルドエラー回避のためキャッシュ許容サイズを5MBに拡大

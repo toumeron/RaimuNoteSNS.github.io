@@ -84,3 +84,9 @@
   overscroll-behavior: contain;
 }
 [data-lime-quoted-post] > [data-lime-embedded] { padding: 0 !important; border: 0; }
+/* Keep the avatar/header in the same row and start text immediately below. */
+[data-lime-embedded] > [data-lime-post-layout] { row-gap:4px; }
+[data-lime-embedded] [data-lime-post-avatar],
+[data-lime-embedded] [data-lime-post-content] > [data-lime-post-header] { grid-row:1; margin-bottom:0; }
+[data-lime-embedded] [data-lime-post-body] { grid-row:2; }
+[data-lime-embedded] [data-lime-post-body] > div:first-child > p { margin-top:0; }

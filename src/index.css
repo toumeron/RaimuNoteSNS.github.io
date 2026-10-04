@@ -156,6 +156,10 @@
     padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
   }
 
+  html:not(.dark) body {
+    background-image: none;
+  }
+
   h1, h2, h3, h4 {
     font-family: 'Zen Maru Gothic', 'M PLUS Rounded 1c', sans-serif;
     font-weight: 700;

@@ -2,7 +2,7 @@
 -- All temporary space writes roll back and are invisible to other connections.
 begin;
 do $$
-declare host_id uuid; listener_id uuid; room_id text; state jsonb; member jsonb; listener_member uuid;
+declare host_id uuid; listener_id uuid; room_id text; state jsonb; member jsonb; listener_member uuid; announcement uuid;
 begin
   assert has_table_privilege('service_role','public.spaces','select'),'Audio token service must be able to read the room policy';
   assert has_table_privilege('service_role','public.space_members','select'),'Audio token service must be able to authorize membership';
@@ -13,11 +13,31 @@ begin
   set local role authenticated;
   room_id:=public.create_live_space('Space authorization test','host');
   member:=public.join_live_space(room_id,false);
+  assert public.get_space_state(room_id)->>'waiting'='true','A new room must play waiting music';
+  perform public.set_space_microphone(room_id,true);
+  assert public.get_space_state(room_id)->>'waiting'='true','Muting must not end the initial waiting period';
   assert member->>'role'='host','Host role must be assigned by the server';
+  announcement:=public.announce_live_space(room_id,'LimeNote for iPhone');
+  assert public.announce_live_space(room_id)=announcement,'Repeated announcements must reuse the same post';
+  assert exists(select 1 from posts where id=announcement and user_id=host_id and client_name='LimeNote for iPhone' and content='https://toumeron.github.io/RaimuNoteSNS.github.io/spaces/'||room_id),'The announcement must belong to the host and contain the room link';
+  assert public.get_space_card(room_id)->>'is_active'='true','The announcement card must report the live state';
   perform set_config('request.jwt.claim.sub',listener_id::text,true);
+  begin
+    perform public.announce_live_space(room_id);
+    raise exception 'Listener unexpectedly announced the room';
+  exception when raise_exception then
+    if sqlerrm<>'開催中のホストのみ投稿できます' then raise; end if;
+  end;
   member:=public.join_live_space(room_id,true);
   state:=public.get_space_state(room_id);
   assert state->'me'->>'can_speak'='false','Anonymous listeners must never publish';
+  begin
+    perform public.set_space_microphone(room_id,false);
+    raise exception 'Anonymous listener unexpectedly stopped waiting music';
+  exception when raise_exception then
+    if sqlerrm<>'マイクを変更できません' then raise; end if;
+  end;
+  assert public.get_space_state(room_id)->>'waiting'='true','Listeners must not be able to end waiting music';
   assert state->>'anonymous_count'='1','Anonymous listeners must be counted';
   assert jsonb_array_length(state->'members')=1,'Only the visible host must appear in the roster';
   assert state::text not like '%'||listener_id::text||'%','Anonymous user ID must not be exposed';
@@ -62,6 +82,15 @@ begin
     if sqlerrm<>'ホストのみ変更できます' then raise; end if;
   end;
   perform set_config('request.jwt.claim.sub',host_id::text,true);
+  reset role;
+  update public.space_members set role='speaker' where id=listener_member;
+  set local role authenticated;
+  perform set_config('request.jwt.claim.sub',listener_id::text,true);
+  perform public.set_space_microphone(room_id,false);
+  assert public.get_space_state(room_id)->>'waiting'='false','A speaker must end waiting music for everyone';
+  perform public.set_space_microphone(room_id,true);
+  assert public.get_space_state(room_id)->>'waiting'='false','Waiting music must not resume after muting';
+  perform set_config('request.jwt.claim.sub',host_id::text,true);
   perform public.manage_space_speaker(room_id,listener_member,false);
   perform set_config('request.jwt.claim.sub',listener_id::text,true);
   assert public.get_space_state(room_id)->'me'->>'can_speak'='false','Revoked permission must no longer publish';
@@ -87,6 +116,7 @@ begin
   exception when raise_exception then
     if sqlerrm<>'このスペースは終了しました' then raise; end if;
   end;
+  assert public.get_space_card(room_id)->>'is_active'='false','The announcement must retain an ended card';
   reset role;
 end $$;
 rollback;

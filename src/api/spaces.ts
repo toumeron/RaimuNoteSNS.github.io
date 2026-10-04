@@ -7,7 +7,7 @@ export async function spaceRpc<T>(name: string, args: Record<string, unknown> = 
   return data as T;
 }
 export const getLiveSpaces = () => spaceRpc<LiveSpace[]>('list_live_spaces');
-export type SpaceState = { space: LiveSpace | null; members: SpaceMember[]; anonymous_count: number; reactions: { id: string; emoji: string; created_at: string }[]; me?: { can_speak: boolean; requested: boolean; role: 'host' | 'speaker' | 'listener' } | null };
+export type SpaceState = { waiting?: boolean; space: LiveSpace | null; members: SpaceMember[]; anonymous_count: number; reactions: { id: string; emoji: string; created_at: string }[]; me?: { can_speak: boolean; requested: boolean; role: 'host' | 'speaker' | 'listener' } | null };
 export const getSpaceState = (id: string) => spaceRpc<SpaceState>('get_space_state', { p_space_id: id });
 export async function getSpaceToken(id: string, uid: number, publishing: boolean) {
   const { data, error } = await supabase.functions.invoke('space-token', { body: { spaceId: id, uid, publishing } });

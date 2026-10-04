@@ -1,3 +1,5 @@
+import { SpacePostCard } from '@/components/spaces/SpacePostCard';
+import { spaceLinkIn } from '@/lib/spaceLinks';
 import '@/components/post/post-actions.css';
 import { RepostButton } from '@/components/feed/RepostButton';
 import { QuotedPost } from '@/components/feed/QuotedPost';
@@ -1709,9 +1711,10 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
           </div>
 
           {/* 加工した本文を表示（メンション・ハッシュタグ・URL処理を適用） */}
-          {displayContent && (
+          <SpacePostCard content={data.content || ''} />
+          {(spaceLinkIn(displayContent || '')?.text ?? displayContent) && (
             <p className={`mt-4 whitespace-pre-wrap break-words text-base leading-relaxed text-foreground ${useMobileThreadLayout ? 'post-detail-mobile-content' : ''}`}>
-              {renderContentWithLinks(displayContent)}
+              {renderContentWithLinks(spaceLinkIn(displayContent || '')?.text ?? displayContent)}
             </p>
           )}
 
@@ -1790,9 +1793,23 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
             </div>
           )}
 
+          {!isBlueskyPost && (data as PostWithAuthor).isQuote && <QuotedPost post={(data as PostWithAuthor).parentPost} />}
+
+          <p className={`mt-4 text-xs text-muted-foreground ${useMobileThreadLayout ? 'post-detail-mobile-meta' : ''}`} title={formatDate(data.createdAt)}>
+            {formatDate(data.createdAt)} · {formatRelative(data.createdAt)}
+            {!isBlueskyPost && (data as PostWithAuthor).clientName && (
+              <>
+                <span className="mx-1">·</span>
+                <span className="text-primary/80 font-medium">
+                  {(data as PostWithAuthor).clientName}
+                </span>
+              </>
+            )}
+          </p>
+
           {/* --- リアクションバッジエリア（本文・画像と日時表示の間に挿入） --- */}
           {reactions.length > 0 && (
-            <div className="mt-3 flex flex-wrap gap-1.5 relative" onClick={(e) => e.stopPropagation()}>
+            <div data-lime-post-reactions className="mt-3 flex flex-wrap gap-1.5 relative" onClick={(e) => e.stopPropagation()}>
               {reactions.map((g) => {
                 const hasMyReaction = currentUserId ? g.user_ids.includes(currentUserId) : false;
                 const isPopupOpen = activePopupEmoji === g.emoji;
@@ -1852,20 +1869,6 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
               })}
             </div>
           )}
-
-          {!isBlueskyPost && (data as PostWithAuthor).isQuote && <QuotedPost post={(data as PostWithAuthor).parentPost} />}
-
-          <p className={`mt-4 text-xs text-muted-foreground ${useMobileThreadLayout ? 'post-detail-mobile-meta' : ''}`} title={formatDate(data.createdAt)}>
-            {formatDate(data.createdAt)} · {formatRelative(data.createdAt)}
-            {!isBlueskyPost && (data as PostWithAuthor).clientName && (
-              <>
-                <span className="mx-1">·</span>
-                <span className="text-primary/80 font-medium">
-                  {(data as PostWithAuthor).clientName}
-                </span>
-              </>
-            )}
-          </p>
 
           <div data-lime-post-actions className={useMobilePresentation ? "mt-3 flex items-center gap-1 relative h-9 post-detail-mobile-action-row" : "mt-3 flex items-center gap-1 border-t border-border/60 pt-3 relative h-9"}>
             <div onClick={(e) => e.stopPropagation()} className={`flex items-center h-full ${useMobilePresentation ? 'post-detail-mobile-action-hit' : ''}`}>
