@@ -1597,10 +1597,10 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
                 size="sm"
                 variant="ghost"
                 className="h-9 rounded-full text-accent hover:bg-accent-soft hover:text-accent"
-                onClick={() => fileRef.current?.click()}
+                data-lime-attachment-tool onClick={() => fileRef.current?.click()}
                 disabled={previews.length >= MAX_IMAGES}
               >
-                <ImagePlus className="sm:mr-1.5 h-4 w-4" />
+                <ImagePlus className="sm:mr-1.5 h-5 w-5" />
                 <span className="hidden sm:inline">画像</span>
               </Button>
 

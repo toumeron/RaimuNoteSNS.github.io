@@ -765,7 +765,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
 
   // YouTube IDの抽出（画像URLの合体判定より先に算出しておく）
   const youtubeId = data ? getYouTubeId(data.content) : null;
-  const linkPreview=useLinkPreview(data?.content??'',true,data?.linkPreview);
+  const linkPreview=useLinkPreview(data?.content??'',true,data?.linkPreview,!isBlueskyPost);
 
   // 元々の画像配列と、本文から抽出した画像を合体させ、最大4枚に制限
   // ただし、BlueskyのYouTubeリンクは外部リンクカードのサムネイル画像が

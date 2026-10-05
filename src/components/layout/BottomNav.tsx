@@ -134,11 +134,11 @@ function useTimelineChrome(pathname: string) {
  *
  * window.visualViewport のサイズを監視し、実際に見えている高さが
  * window.innerHeight よりも大幅に小さくなった（＝キーボードが開いた）
- * と判定できる間は、このナビ自体を非表示にしてズレた見た目が
- * 出ないようにする。
+ * と判定できる間は、ナビリンクを隠す。返信フォームはアンマウントせず
+ * キーボード上へ移動し、入力のフォーカスを維持する。
  */
 function useIsMobileKeyboardOpen() {
-  const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
+  const [keyboardInset, setKeyboardInset] = useState(0);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -149,12 +149,12 @@ function useIsMobileKeyboardOpen() {
       const isMobileWidth = window.innerWidth < 768;
 
       if (!isMobileWidth || !viewport) {
-        setIsKeyboardOpen(false);
+        setKeyboardInset(0);
         return;
       }
 
       const heightDiff = window.innerHeight - viewport.height;
-      setIsKeyboardOpen(heightDiff > 120);
+      setKeyboardInset(heightDiff > 120 ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop) : 0);
     };
 
     update();
@@ -172,7 +172,7 @@ function useIsMobileKeyboardOpen() {
     };
   }, []);
 
-  return isKeyboardOpen;
+  return { isKeyboardOpen: keyboardInset > 0, keyboardInset };
 }
 
 export function BottomNav() {
@@ -182,7 +182,7 @@ export function BottomNav() {
   const timelineChrome = useTimelineChrome(location.pathname);
   const [mounted, setMounted] = useState(false);
   const navRef = useRef<HTMLElement | null>(null);
-  const isKeyboardOpen = useIsMobileKeyboardOpen();
+  const { isKeyboardOpen, keyboardInset } = useIsMobileKeyboardOpen();
   // 検索ボタンを最後にタップした時刻。ダブルタップ/ダブルクリック判定用。
   const lastSearchTapAtRef = useRef(0);
 
@@ -260,8 +260,8 @@ export function BottomNav() {
   if (!user) return null;
 
   // モバイルでソフトキーボードが開いている間は、ナビが画面中央に
-  // ズレて表示されるバグを避けるため、ナビ自体を描画しない
-  if (isKeyboardOpen) return null;
+  // 返信入力欄はアンマウントせず、キーボードの上に維持する。
+  if (isKeyboardOpen && !showPostCommentForm) return null;
 
   const useTimelineChromeDesign = timelineChrome.enabled;
   const isTimelineDark = timelineChrome.theme === 'dark';
@@ -321,7 +321,8 @@ export function BottomNav() {
         borderTop: hideTopBorder ? '0 solid transparent' : undefined,
         borderTopWidth: hideTopBorder ? 0 : undefined,
         borderTopColor: hideTopBorder ? 'transparent' : undefined,
-        paddingBottom: 'max(0px, env(safe-area-inset-bottom))',
+        bottom: isKeyboardOpen ? keyboardInset : 0,
+        paddingBottom: isKeyboardOpen ? 0 : 'max(0px, env(safe-area-inset-bottom))',
         // HeaderのモバイルDrawer開閉に合わせてBottomNavも同じだけ追従させる。
         // z-indexはDrawerより下、rootの通常stacking contextより上に置く。
         transform: 'translate3d(var(--lime-mobile-drawer-shift, 0px), 0, 0)',
@@ -349,7 +350,7 @@ export function BottomNav() {
         </div>
       )}
 
-      <ul className="mx-auto grid max-w-md grid-cols-5">
+      <ul hidden={isKeyboardOpen} className={cn("mx-auto max-w-md grid-cols-5", isKeyboardOpen ? "hidden" : "grid")}>
         {items.map((it) => (
           <li key={it.to}>
             <NavLink

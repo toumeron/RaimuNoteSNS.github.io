@@ -93,10 +93,10 @@ test('pinch and wheel zoom can reach image edges without page zoom; black paddin
  await stage.dispatchEvent('pointerdown',{pointerId:10,pointerType:'touch',clientX:cx-20,clientY:cy});
  await stage.dispatchEvent('pointerdown',{pointerId:11,pointerType:'touch',clientX:cx+20,clientY:cy});
  await stage.dispatchEvent('pointermove',{pointerId:11,pointerType:'touch',clientX:cx+400,clientY:cy});
- await expect(image).toHaveCSS('transform',/10.5/);
+ await expect.poll(()=>image.evaluate(el=>new DOMMatrix(getComputedStyle(el).transform).a)).toBeCloseTo(Math.pow(10.5,.7),4);
  await stage.dispatchEvent('pointerup',{pointerId:11,pointerType:'touch',clientX:cx+400,clientY:cy});
  await stage.dispatchEvent('pointermove',{pointerId:10,pointerType:'touch',clientX:cx-120,clientY:cy-100});
- await expect(image).not.toHaveCSS('transform',/matrix\(10.5, 0, 0, 10.5, 0, 0\)/);
+ await expect(image).not.toHaveCSS('transform',/matrix\([\d.]+, 0, 0, [\d.]+, 0, 0\)/);
  await stage.dispatchEvent('pointerup',{pointerId:10,pointerType:'touch',clientX:cx-120,clientY:cy-100});
  expect(await stage.evaluate(el=>!el.dispatchEvent(new WheelEvent('wheel',{ctrlKey:true,deltaY:1000,clientX:20,clientY:20,bubbles:true,cancelable:true})))).toBe(true);
  await expect(image).toHaveCSS('transform',/matrix\(1, 0, 0, 1, 0, 0\)/);
@@ -190,4 +190,84 @@ test('viewer keeps follow labels intact on mobile and uses full-width themed des
  const stage=viewer.locator('.lime-media-stage'), rect=(await stage.boundingBox())!;
  await expect.poll(()=>viewer.getByAltText('拡大画像 1').evaluate((el:HTMLImageElement)=>el.naturalWidth)).toBe(400);
  await page.mouse.click(rect.x+5,rect.y+rect.height/2);await expect(viewer).toHaveCount(0);
+});
+
+test('reply dock expands when idle and retains its input through keyboard viewport changes',async({page})=>{
+ test.skip((page.viewportSize()?.width??0)>=640,'Mobile reply dock');
+ await setup(page,false);await page.emulateMedia({reducedMotion:'no-preference'});await page.goto('post/native');
+ const composer=page.locator('[data-variant=bottomNav]'),input=composer.getByPlaceholder('返信をポスト');await expect(input).toBeVisible();
+ const idleWidth=(await input.boundingBox())!.width;
+ expect(await composer.evaluate(el=>getComputedStyle(el).transitionProperty)).toContain('grid-template-columns');
+ await input.evaluate(el=>{(window as any).__replyInput=el;});await input.focus();await input.fill('入力を維持');
+ await expect.poll(async()=> (await input.boundingBox())!.width).toBeLessThan(idleWidth-60);
+ const sizes=await composer.locator('[data-lime-attachment-tool] svg').evaluateAll(els=>els.map(el=>({width:el.getBoundingClientRect().width,height:el.getBoundingClientRect().height})));
+ expect(sizes.length).toBe(2);for(const size of sizes)expect(size).toEqual({width:20,height:20});
+ await page.evaluate(()=>{const viewport=window.visualViewport!;Object.defineProperty(viewport,'height',{configurable:true,value:window.innerHeight-280});viewport.dispatchEvent(new Event('resize'));});
+ await expect(input).toBeFocused();await expect(input).toHaveValue('入力を維持');expect(await input.evaluate(el=>el===(window as any).__replyInput)).toBe(true);
+ await expect.poll(()=>composer.evaluate(el=>getComputedStyle(el.closest('nav')!).bottom)).toBe('280px');
+ await input.evaluate(el=>(el as HTMLTextAreaElement).blur());await expect.poll(async()=> (await input.boundingBox())!.width).toBeGreaterThan(idleWidth-2);
+});
+
+test('short touch swipes do not switch images and reply source shares the post card and avatar line',async({page})=>{
+ test.skip((page.viewportSize()?.width??0)>=768,'Mobile touch controls');
+ await setup(page,false);await page.goto('./');await press(page,page.locator('[data-lime-post-card]').filter({hasText:'写真の投稿'}).first().locator('[data-lime-post-body] img').first());
+ const viewer=page.getByRole('dialog',{name:'メディアを拡大表示'}),stage=viewer.locator('.lime-media-stage');
+ await stage.dispatchEvent('pointerdown',{pointerId:70,pointerType:'touch',clientX:200,clientY:260});await stage.dispatchEvent('pointermove',{pointerId:70,pointerType:'touch',clientX:140,clientY:260});await stage.dispatchEvent('pointerup',{pointerId:70,pointerType:'touch',clientX:140,clientY:260});
+ await expect(viewer.getByAltText('拡大画像 1')).toBeVisible();await expect(viewer.locator('.lime-media-image-track')).toHaveCSS('transform','matrix(1, 0, 0, 1, 0, 0)');
+ await press(page,viewer.getByRole('button',{name:'返信を入力'}));const reply=page.getByRole('dialog',{name:'返信を作成',exact:true});
+ await expect(reply.locator('[data-lime-embedded] [data-lime-post-body]')).toContainText('写真の投稿');await expect(reply.locator('[data-lime-embedded] [data-lime-post-body] img')).toHaveCount(2);
+ const avatars=await reply.locator('[data-lime-thread-avatar]').evaluateAll(els=>els.map(el=>{const r=el.getBoundingClientRect();return{x:r.x+r.width/2,width:r.width,height:r.height};}));expect(avatars).toHaveLength(2);expect(avatars[0].x).toBe(avatars[1].x);for(const a of avatars){expect(a.width).toBe(40);expect(a.height).toBe(40);}
+ await expect(reply.locator('svg line')).toHaveCount(1);
+});
+
+test('mobile image action circles and glyphs align including the direct reply link',async({page},info)=>{
+ test.skip((page.viewportSize()?.width??0)>=768,'Mobile action circles');await setup(page,false);await page.goto('./');await press(page,page.locator('[data-lime-post-card]').filter({hasText:'写真の投稿'}).first().locator('[data-lime-post-body] img').first());
+ const row=page.locator('.lime-media-bottom [data-lime-post-actions]');const circles=await row.evaluate(el=>Array.from(el.children).slice(0,4).map(el=>{const rect=el.getBoundingClientRect(),svg=el.querySelector('svg:not(.twitter-like-effects)')!.getBoundingClientRect();return{width:rect.width,height:rect.height,center:rect.y+rect.height/2,svgWidth:svg.width,svgHeight:svg.height,svgCenter:svg.y+svg.height/2};}));
+ for(const circle of circles){expect(circle.width).toBe(40);expect(circle.height).toBe(40);expect(circle.center).toBe(circles[0].center);expect(circle.svgWidth).toBe(20);expect(circle.svgHeight).toBe(20);expect(circle.svgCenter).toBe(circle.center);}
+ await page.screenshot({path:info.outputPath('uniform-actions.png')});
+});
+
+test('saved LimeAI model displays across pages, supports placement and persists settings',async({page},info)=>{
+ test.skip(info.project.name==='small-mobile'||info.project.name==='WebKit-iPhone','Real WebGL verified in Chrome desktop and mobile');
+ await setup(page,false);await page.goto('./');
+ await expect(page.locator('[data-lime-page-companion]')).toHaveCount(0);
+ await page.evaluate(async()=>{const response=await fetch('/RaimuNoteSNS.github.io/models/robot-expressive.glb');const blob=await response.blob();await new Promise<void>((resolve,reject)=>{const req=indexedDB.open('limeai-avatar',1);req.onupgradeneeded=()=>req.result.createObjectStore('models',{keyPath:'id'});req.onsuccess=()=>{const db=req.result,tx=db.transaction('models','readwrite');tx.objectStore('models').put({id:'companion-test',name:'保存済みロボット',blob,createdAt:Date.now(),format:'glb'});tx.oncomplete=()=>{db.close();resolve();};tx.onerror=()=>reject(tx.error);};req.onerror=()=>reject(req.error);});});
+ await page.goto('settings');const settings=page.locator('[data-lime-companion-settings]');await expect(settings).toBeVisible();
+ await expect(settings.locator('select#companion-model option[value=companion-test]')).toHaveText('保存済みロボット');await settings.locator('#companion-model').selectOption('companion-test');await press(page,settings.getByRole('switch',{name:'全ページにキャラクターを表示'}));
+ const widget=page.getByRole('complementary',{name:'LimeAI キャラクター',exact:true});await expect(widget.locator('canvas')).toBeVisible({timeout:30000});await expect(widget.getByRole('status')).toHaveCount(0,{timeout:30000});await expect(widget.getByRole('alert')).toHaveCount(0);
+ expect(await widget.locator('canvas').evaluate(canvas=>(canvas as HTMLCanvasElement).width)).toBeGreaterThan(100);
+ await page.screenshot({path:info.outputPath('companion-settings.png')});
+ if(info.project.name==='desktop'){
+  const before=await widget.boundingBox();const bounds=await widget.locator('canvas').boundingBox();
+  await page.mouse.move(bounds!.x+bounds!.width/2,bounds!.y+bounds!.height/2);await page.mouse.down();await page.mouse.move(bounds!.x+bounds!.width/2-80,bounds!.y+bounds!.height/2-60,{steps:8});await page.mouse.up();
+  await expect.poll(async()=>Math.round((await widget.boundingBox())!.x)).toBe(Math.round(before!.x-80));
+ }
+
+ if(info.project.name==='mobile'){
+  const before=await widget.boundingBox(),bounds=await widget.locator('canvas').boundingBox(),cdp=await page.context().newCDPSession(page);
+  const x=bounds!.x+bounds!.width/2,y=bounds!.y+bounds!.height/2;
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y}]});
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:x-50,y:y-40}]});
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+  await expect.poll(async()=>Math.round((await widget.boundingBox())!.x)).toBe(Math.round(before!.x-50));await cdp.detach();
+ }
+
+ const canvas=await widget.locator('canvas').elementHandle();await page.evaluate(()=>{(window as any).__companionCanvas=document.querySelector('[data-lime-page-companion] canvas');});
+ if((page.viewportSize()?.width??0)>=768)await page.getByRole('button',{name:'検索',exact:true}).first().click();else await press(page,page.locator('a[href$="/search"]').first());await expect(page).toHaveURL(/search/);await expect(widget.locator('canvas')).toBeVisible();expect(await widget.locator('canvas').evaluate(el=>el===(window as any).__companionCanvas)).toBe(true);
+ await expect(widget.getByRole('button',{name:'キャラクターを移動'})).toHaveCount(0);const handle=widget.locator('canvas');await handle.dispatchEvent('pointerdown',{pointerId:50,clientX:300,clientY:300});await handle.dispatchEvent('pointermove',{pointerId:50,clientX:-1500,clientY:200});await handle.dispatchEvent('pointerup',{pointerId:50,clientX:-1500,clientY:200});
+ expect(await page.evaluate(()=>JSON.parse(localStorage.getItem('lime-companion:11111111-1111-1111-1111-111111111111')!).x)).toBeLessThan(0);
+ await handle.dispatchEvent('pointerdown',{pointerId:51,clientX:0,clientY:0});await handle.dispatchEvent('pointerup',{pointerId:51,clientX:1800,clientY:100});
+ await page.reload();await expect(widget.locator('canvas')).toBeVisible({timeout:30000});await widget.hover();await press(page,widget.getByRole('button',{name:'キャラクターを非表示'}));await expect(widget).toHaveCount(0);
+ await canvas?.dispose();
+});
+
+test('native URL cards restore saved metadata and image after reloading',async({page})=>{
+ const state=await setup(page,false);
+ state.extraPosts.push({id:'preview-native',userId:'11111111-1111-1111-1111-111111111111',content:'保存するカード https://preview.example/cache',createdAt:'2026-10-01T00:00:00Z',imageUrls:[],visibility:'public',likesCount:0,commentsCount:0,repostsCount:0,author:{id:'11111111-1111-1111-1111-111111111111',username:'lime',displayName:'Lime Note',avatarUrl:''}});
+ await page.route('https://preview.example/cover.svg',route=>route.fulfill({contentType:'image/svg+xml',headers:{'access-control-allow-origin':'*'},body:'<svg xmlns="http://www.w3.org/2000/svg" width="400" height="180"><rect width="400" height="180" fill="pink"/></svg>'}));
+ await page.goto('post/preview-native');const card=page.locator('[data-link-preview]').first();await expect(card).toBeVisible();
+ await expect.poll(()=>page.evaluate(async()=>{const {savedPreviewImage}=await import('/RaimuNoteSNS.github.io/src/lib/linkPreviewCache.ts');return !!await savedPreviewImage('https://preview.example/cover.svg');})).toBe(true);
+ const requests:string[]=[];page.on('request',request=>{if(request.url().includes('/functions/v1/link-preview')||request.url()==='https://preview.example/cover.svg')requests.push(request.url());});
+ await page.reload();await expect(card).toBeVisible();await expect(card.locator('img')).toHaveAttribute('src',/^blob:/);
+ expect(requests).toEqual([]);
 });

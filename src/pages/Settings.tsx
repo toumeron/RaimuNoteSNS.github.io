@@ -1,3 +1,4 @@
+import {CompanionSettings} from '@/components/ai/CompanionSettings';
 import { createPortal } from 'react-dom';
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import {
@@ -1897,6 +1898,8 @@ export default function Settings() {
           )}
         </div>
       </div>
+
+      <CompanionSettings userId={user.id} />
 
       <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
         <h2 className="font-display text-base font-bold">アカウント</h2>

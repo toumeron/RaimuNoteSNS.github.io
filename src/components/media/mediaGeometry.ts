@@ -12,3 +12,9 @@ export function focalPan(pan: Point, oldZoom: number, newZoom: number, focal: Po
   const ratio = newZoom / oldZoom;
   return { x: focal.x - (focal.x - pan.x) * ratio, y: focal.y - (focal.y - pan.y) * ratio };
 }
+
+// Ignore finger jitter and soften scaling while retaining the full zoom range.
+export function pinchZoom(startZoom: number, startDistance: number, distance: number) {
+  if (startDistance < 40 || Math.abs(distance - startDistance) < 6) return startZoom;
+  return Math.min(12, Math.max(1, startZoom * Math.pow(distance / startDistance, .7)));
+}

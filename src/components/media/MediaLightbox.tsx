@@ -9,6 +9,7 @@ import { getPostById } from '@/api/posts';
 import { getExternalPost, isExternalPostId } from '@/api/external-posts';
 import { getReplyPost } from '@/api/reply-reposts';
 import { useAuth } from '@/hooks/useAuth';
+import { postKey } from '@/hooks/useFeed';
 import { PostCard } from '@/components/feed/PostCard';
 import { CommentForm } from '@/components/post/CommentForm';
 import { CommentList, CommentCard } from '@/components/post/CommentList';
@@ -19,7 +20,7 @@ import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import type { PostWithAuthor } from '@/types';
 import { MEDIA_VIEWER_EVENT, type MediaViewerSelection } from './openMediaViewer';
 import './media-lightbox.css';
-import { containSize, clampPan, focalPan } from './mediaGeometry';
+import { containSize, clampPan, focalPan, pinchZoom } from './mediaGeometry';
 
 export function MediaLightboxRoot() {
   const [selection, setSelection] = useState<MediaViewerSelection | null>(null);
@@ -40,12 +41,12 @@ export function MediaLightbox({ selection, onClose }: { selection: MediaViewerSe
   const offline = useContext(OfflineBookmarkContext);
   const id = selection.post?.id ?? selection.postId ?? '';
   const postQuery = useQuery({
-    queryKey: ['media-viewer-post', id, user?.id],
+    queryKey: id.startsWith('reply:') ? ['media-viewer-post', id, user?.id] : postKey(id),
     queryFn: () => id.startsWith('reply:') ? getReplyPost(id) : isExternalPostId(id) ? getExternalPost(id) : getPostById(id),
-    enabled: !!id && !selection.post && navigator.onLine,
+    enabled: !!id && !offline && navigator.onLine,
     retry: 1,
   });
-  const sourcePost = selection.post ?? postQuery.data;
+  const sourcePost = postQuery.data ?? selection.post;
   const [likeState, setLikeState] = useState<{ liked: boolean; count: number } | null>(null);
   const post = useMemo(() => sourcePost && likeState ? { ...sourcePost, likedByMe: likeState.liked, likesCount: likeState.count } : sourcePost, [sourcePost, likeState]);
   const media = selection.media?.length ? selection.media : [...new Set([...(post?.imageUrls ?? []), selection.url])].map(src => ({ src, type: 'image' as const }));
@@ -227,12 +228,16 @@ export function MediaLightbox({ selection, onClose }: { selection: MediaViewerSe
           pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
           const points = [...pointers.current.values()], g = gesture.current;
           if (points.length === 2 && g.distance) {
-            const next = Math.min(12, Math.max(1, g.scale * Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y) / g.distance));
+            const distance = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+            const next = pinchZoom(g.scale, g.distance, distance);
             const rect = event.currentTarget.getBoundingClientRect();
             const focal = { x: (points[0].x + points[1].x) / 2 - rect.left - rect.width / 2, y: (points[0].y + points[1].y) / 2 - rect.top - rect.height / 2 };
+            if (g.distance < 40) {
+              g.distance = distance; g.focal = focal; return;
+            }
             const nextPan = focalPan({ x: g.panX, y: g.panY }, g.scale, next, g.focal);
             applyTransform(next, { x: nextPan.x + focal.x - g.focal.x, y: nextPan.y + focal.y - g.focal.y }); g.moved = true;
-          } else if (Math.hypot(event.clientX - g.x, event.clientY - g.y) > 8) {
+          } else if (Math.hypot(event.clientX - g.x, event.clientY - g.y) > (event.pointerType === 'touch' ? 12 : 8)) {
             g.moved = true;
             if (transform.current.zoom > 1) applyTransform(transform.current.zoom, { x: g.panX + event.clientX - g.x, y: g.panY + event.clientY - g.y });
             else if (Math.abs(event.clientX - g.x) > Math.abs(event.clientY - g.y)) {
@@ -250,8 +255,10 @@ export function MediaLightbox({ selection, onClose }: { selection: MediaViewerSe
           }
           if (g.pinched) return;
           const dx = event.clientX - g.x, dy = event.clientY - g.y;
-          if (transform.current.zoom === 1 && Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) move(dx < 0 ? 1 : -1);
-          else if (transform.current.zoom === 1 && Math.abs(dy) > 100 && Math.abs(dy) > Math.abs(dx)) close();
+          const touch = event.pointerType === 'touch';
+          const swipeThreshold = touch ? Math.min(110, Math.max(80, event.currentTarget.clientWidth * .22)) : 50;
+          if (transform.current.zoom === 1 && Math.abs(dx) > swipeThreshold && Math.abs(dx) > Math.abs(dy) * (touch ? 1.35 : 1)) move(dx < 0 ? 1 : -1);
+          else if (transform.current.zoom === 1 && Math.abs(dy) > (touch ? 160 : 100) && Math.abs(dy) > Math.abs(dx) * (touch ? 1.35 : 1)) close();
           else if (!g.moved) {
             if (!g.imageHit) close();
             else { clearTimeout(tapTimer.current); tapTimer.current = setTimeout(() => setControls(value => !value), 220); }

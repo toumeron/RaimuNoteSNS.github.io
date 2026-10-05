@@ -220,3 +220,6 @@
 body {
   padding: 0;
 }
+/* The two attachment tools share the same glyph size across composers. */
+[data-lime-attachment-tool] svg { width:20px; height:20px; flex-shrink:0; }
+@media(prefers-reduced-motion:reduce){[data-lime-reply-composer][data-compact="true"],[data-lime-reply-composer] .reply-attachment-tools,[data-lime-reply-composer] .reply-submit{transition:none!important}}

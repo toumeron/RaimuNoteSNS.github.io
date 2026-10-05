@@ -3,7 +3,8 @@ import { StickerPicker, StickerDraft } from '@/components/stickers/Stickers';
 import { appendSticker, insertDraftEmoji, hasDraftEmojis, draftEmojiCharacter } from '@/lib/stickers';
 import { createPortal } from 'react-dom';
 import type { PostWithAuthor } from '@/types';
-import { renderStickerText } from '@/components/stickers/renderStickerText';
+import { PostCard } from '@/components/feed/PostCard';
+import { ReplyChain } from '@/components/post/ReplyChain';
 import { Link } from 'react-router-dom';
 import { Input } from '@/components/ui/input';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -116,6 +117,8 @@ export function CommentForm({
         data-lime-reply-composer
         data-variant={variant}
         data-editing={expanded}
+        data-focused={editing}
+        data-lime-thread-item={isMediaViewer || undefined}
         data-compact={compactMobile}
         onFocusCapture={() => setEditing(true)}
         onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget) && !(event.relatedTarget instanceof Element && event.relatedTarget.closest("[data-lime-sticker-picker]"))) setEditing(false); }}
@@ -124,7 +127,7 @@ export function CommentForm({
           isMobileDock ? 'comment-form-mobile-dock' : ''
         } ${isBottomNav ? 'comment-form-bottom-nav' : ''} ${isDesktopReply ? 'comment-form-desktop-reply' : ''} ${isMediaViewer ? 'comment-form-media-viewer' : ''}`}
       >
-        <Link to={`/u/${user.username}`} aria-label="自分のプロフィールを開く" className="shrink-0">
+        <Link data-lime-thread-avatar={isMediaViewer || undefined} to={`/u/${user.username}`} aria-label="自分のプロフィールを開く" className="shrink-0">
         <Avatar
           className={`h-9 w-9 border border-primary/30 ${
             isMobileDock ? 'comment-form-mobile-dock-avatar' : ''
@@ -180,8 +183,8 @@ export function CommentForm({
         />
 )}
         </div>
-        <div className={`flex shrink-0 items-center ${editing?"":"invisible pointer-events-none"}`} aria-hidden={!editing}>
-        {<button type="button" onPointerDown={event=>event.preventDefault()} onClick={() => fileRef.current?.click()} disabled={isPending || !editing || images.length >= 4} aria-label="返信に画像を添付" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-accent hover:bg-accent-soft hover:text-accent disabled:opacity-50"><ImagePlus className="h-5 w-5" /></button>}
+        <div className={`reply-attachment-tools flex shrink-0 items-center ${editing?"":"invisible pointer-events-none"}`} aria-hidden={!editing}>
+        {<button type="button" onPointerDown={event=>event.preventDefault()} onClick={() => fileRef.current?.click()} disabled={isPending || !editing || images.length >= 4} data-lime-attachment-tool aria-label="返信に画像を添付" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-accent hover:bg-accent-soft hover:text-accent disabled:opacity-50"><ImagePlus className="h-5 w-5" /></button>}
         <StickerPicker iconOnly disabled={isPending || !editing} onSelect={name=>{if(text.trim())insertDraftEmoji(compactMobile?compactInputRef.current:textareaRef.current,text,name,setText);else setSticker(name);setEditing(true);}} />
         </div>
         <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addImages(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
@@ -236,6 +239,13 @@ export function CommentForm({
         }
         [data-lime-reply-composer][data-compact="true"] .reply-attachments { grid-column: 1 / -1; grid-row: 2; }
         @media (max-width: 639px) {
+          [data-lime-reply-composer][data-compact="true"] { grid-template-columns: 36px minmax(0, 1fr) 0px; transition: grid-template-columns .22s ease; }
+          [data-lime-reply-composer][data-compact="true"][data-focused="true"] { grid-template-columns: 36px minmax(0, 1fr) 36px; }
+          [data-lime-reply-composer][data-compact="true"] .reply-attachment-tools { width:0; opacity:0; overflow:hidden; transition:width .22s ease,opacity .18s ease; }
+          [data-lime-reply-composer][data-compact="true"][data-focused="true"] .reply-attachment-tools { width:72px; opacity:1; }
+          [data-lime-reply-composer][data-compact="true"] .reply-submit { width:0!important; padding:0!important; min-width:0; opacity:0; overflow:hidden; pointer-events:none; transition:width .22s ease,opacity .18s ease; }
+          [data-lime-reply-composer][data-compact="true"][data-focused="true"] .reply-submit { width:36px!important; opacity:1; pointer-events:auto; }
+
           .comment-form-mobile-dock {
             position: fixed;
             left: 0;
@@ -243,7 +253,6 @@ export function CommentForm({
             bottom: calc(var(--lime-bottom-nav-height, 58px));
             z-index: 120;
             display: grid !important;
-            grid-template-columns: 40px minmax(0, 1fr) 38px;
             align-items: center;
             gap: 9px;
             min-height: 58px;
@@ -259,7 +268,6 @@ export function CommentForm({
 
           .comment-form-bottom-nav {
             display: grid !important;
-            grid-template-columns: 38px minmax(0, 1fr) 36px;
             align-items: center;
             gap: 8px;
             width: 100%;
@@ -332,8 +340,10 @@ export function CommentForm({
         {mediaReplyOpen && createPortal(<div className="lime-media-reply-dialog dark" role="dialog" aria-modal="true" aria-label="返信を作成" data-lime-media-reply-dialog onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); setMediaReplyOpen(false); } }}>
           <header><button type="button" aria-label="返信入力を閉じる" onClick={() => setMediaReplyOpen(false)}><ArrowLeft /></button><button type="button" className="lime-media-reply-send" aria-label="コメントを送信" disabled={isPending || (!appendSticker(text, sticker) && images.length === 0)} onClick={submit}>{isPending ? <Loader2 className="animate-spin h-5 w-5" /> : '返信'}</button></header>
           <main>
-            {replyTo && <div className="lime-media-reply-source"><Avatar><AvatarImage src={replyTo.author.avatarUrl} /><AvatarFallback>{replyTo.author.displayName.slice(0, 1)}</AvatarFallback></Avatar><div><strong>{replyTo.author.displayName}</strong><span> @{replyTo.author.username}</span><p>{renderStickerText(replyTo.content, value => value)}</p><p className="lime-media-reply-recipient">返信先: <Link to={`/u/${replyTo.author.username}`} className="text-primary">@{replyTo.author.username}</Link>さん</p></div></div>}
-            {form}
+            <ReplyChain>
+              {replyTo && <div className="lime-media-reply-source"><PostCard post={replyTo} embedded thread /><p className="lime-media-reply-recipient">返信先: <Link to={`/u/${replyTo.author.username}`} className="text-primary">@{replyTo.author.username}</Link>さん</p></div>}
+              {form}
+            </ReplyChain>
           </main>
         </div>, document.body)}
       </> : form}

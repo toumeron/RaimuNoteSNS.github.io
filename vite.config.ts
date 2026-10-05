@@ -8,6 +8,7 @@ import { VitePWA } from "vite-plugin-pwa";
 export default defineConfig(({ mode }) => ({
   // GitHub Pages用のベースパス設定
   base: "/RaimuNoteSNS.github.io/",
+  build: { target: ["es2020", "safari16"] },
   server: {
     host: "::",
     port: 8080,
@@ -20,7 +21,7 @@ export default defineConfig(({ mode }) => ({
     mode === "development" && componentTagger(),
     VitePWA({
       registerType: "autoUpdate",
-      injectRegister: "auto",
+      injectRegister: false,
       includeAssets: ["favicon.ico", "apple-touch-icon.png", "mask-icon.svg", "push-sw.js"],
       manifest: {
         name: "LimeNote SNS",
@@ -81,6 +82,9 @@ export default defineConfig(({ mode }) => ({
         ]
       },
       workbox: {
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
         globPatterns: ["**/*.{js,css,html,ico,png,svg,webmanifest}"],
         // Audio, document and 3D engines are cached only when the feature is opened.
         // Do not download them all during installation on an iOS home-screen launch.
@@ -89,10 +93,14 @@ export default defineConfig(({ mode }) => ({
           "assets/*Loader-*", "assets/draco*", "assets/meshopt*",
           "assets/mmdAvatar-*", "assets/avatarRuntime-*",
           "assets/spaceMusicScore-*", "assets/ChatPage-*", "assets/Settings-*", "assets/MediaViewer-*",
+          "assets/PostDetail-*", "assets/Profile-*",
+          "assets/SearchPage-*", "assets/PostActivity-*", "assets/Share-*", "assets/Notifications-*",
+          "assets/FollowersFollowingPage-*", "assets/SpacePage-*", "assets/NewsPage-*",
+          "assets/terms-*", "assets/LimePro-*", "assets/NotFound-*",
         ],
         runtimeCaching: [{
           urlPattern: ({ url }) => url.origin === self.location.origin &&
-            /\/RaimuNoteSNS\.github\.io\/(assets|decoders)\/.*\.(js|wasm)$/.test(url.pathname),
+            /\/RaimuNoteSNS\.github\.io\/(assets|decoders)\/.*\.(js|css|wasm)$/.test(url.pathname),
           handler: "CacheFirst",
           options: {
             cacheName: "lime-feature-assets-v1",

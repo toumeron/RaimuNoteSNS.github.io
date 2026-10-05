@@ -7,6 +7,7 @@ import { CallSessionProvider } from '@/components/chat/CallSessionProvider';
 import { DesktopTimelineSidebar } from './DesktopSidebar';
 import './desktop-layout.css';
 import { DesktopLayoutContext } from './DesktopLayoutContext';
+import { PageCompanion } from '@/components/ai/PageCompanion';
 import { Skeleton } from '@/components/ui/skeleton';
 
 export function AppLayout() {
@@ -59,6 +60,7 @@ export function AppLayout() {
     const isEdgePage = isWorkspacePage || location.pathname === '/bookmarks' || location.pathname === '/' || location.pathname.startsWith('/u/') || isPostDetailPage;
     return (
       <CallSessionProvider>
+        <PageCompanion userId={user.id} />
         <DesktopLayoutContext.Provider value={true}>
         <div className="lime-app-shell" data-lime-page={location.pathname}
           data-lime-workspace={location.pathname === '/chat' || undefined}
@@ -80,6 +82,7 @@ export function AppLayout() {
   return (
     // LimeProページの場合はボトムナビゲーション用の余白(pb-20)を削除する
     <CallSessionProvider>
+        <PageCompanion userId={user.id} />
       <div className={`min-h-screen ${isLimeProPage ? 'pb-0' : 'pb-20 md:pb-0'}`}>
       
         {/* LimeProページ以外でのみヘッダーを表示する */}

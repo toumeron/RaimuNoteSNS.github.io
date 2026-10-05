@@ -1532,7 +1532,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
 
   const isMembersOnlyPost = currentVisibility === 'members';
   const canViewMembersOnlyPost = !isMembersOnlyPost || isMyPost || isMember === true;
-  const linkPreview=useLinkPreview(post.content,canViewMembersOnlyPost,post.linkPreview);
+  const linkPreview=useLinkPreview(post.content,canViewMembersOnlyPost,post.linkPreview,!isBlueskyPost);
   const isCheckingMembersOnlyAccess = isMembersOnlyPost && !isMyPost && isMember === undefined;
 
   const { youtubeId, spotifyUrls, allImageUrls, displayContent, singleImageUrl } = useMemo(() => {

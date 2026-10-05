@@ -54,15 +54,15 @@ export function useOfflineBookmarks(userId?:string) {
           if(page.next===undefined)break;offset=page.next;
         }
         const unique=[...new Map(posts.map(post=>[post.id,post])).values()];
-        const contents:string[]=[];
-        const visit=(post:typeof unique[number])=>{contents.push(post.content);if(post.parentPost)visit(post.parentPost);};unique.forEach(visit);
+        const contents:string[]=[],nativeContents:string[]=[];
+        const visit=(post:typeof unique[number])=>{contents.push(post.content);if(post.source!=='bluesky'&&!post.id.startsWith('bsky:'))nativeContents.push(post.content);if(post.parentPost)visit(post.parentPost);};unique.forEach(visit);
         const names=new Set(contents.flatMap(text=>[...splitStickers(text).flatMap(part=>part.name?[part.name]:[]),...[...text.matchAll(/:([\w-]+):/g)].map(match=>match[1])]));
         let emojis:CustomSticker[]=[];
         if(names.size){const {data,error}=await supabase.from('custom_emojis').select('*');if(error)throw error;emojis=(data??[]).filter(emoji=>names.has(emoji.name));}
         const spaces:Record<string,OfflineSpaceCard|null>={};
         for(const spaceId of new Set(contents.flatMap(text=>{const link=spaceLinkIn(text);return link?[link.id]:[];})))spaces[spaceId]=await spaceRpc<OfflineSpaceCard|null>('get_space_card',{p_space_id:spaceId});
         const linkPreviews:Record<string,LinkPreview|null>={};
-        const linkUrls=[...new Set(contents.flatMap(text=>{const url=singlePreviewUrl(text);return url?[url]:[];}))];
+        const linkUrls=[...new Set(nativeContents.flatMap(text=>{const url=singlePreviewUrl(text);return url?[url]:[];}))];
         for(let start=0;start<linkUrls.length;start+=4)await Promise.all(linkUrls.slice(start,start+4).map(async url=>{linkPreviews[url]=await fetchLinkPreview(url);}));
         const urls=[...new Set([...bookmarkAssetUrls([...unique,...Object.values(spaces).filter(Boolean),...Object.values(linkPreviews).filter(Boolean)] as typeof unique),...emojis.flatMap(emoji=>{const url=stickerUrl(emoji);return url?[url]:[];})])];
         const assets=await downloadBookmarkAssets(urls,(done,total)=>{if(current(id))setProgress(`画像 ${done}/${total}`);});

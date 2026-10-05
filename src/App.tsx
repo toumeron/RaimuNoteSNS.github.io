@@ -16,24 +16,24 @@ import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ThemeProvider } from "next-themes"; 
 import { useOSNotification } from "@/hooks/useOSNotification"; 
-import AuthPage from "./pages/Auth";
+const AuthPage = lazy(() => import("./pages/Auth"));
 import Feed from "./pages/Feed";
-import Bookmarks from "./pages/Bookmarks";
-import PostDetail from "./pages/PostDetail";
-import Profile from "./pages/Profile";
+const Bookmarks = lazy(() => import("./pages/Bookmarks"));
+const PostDetail = lazy(() => import("./pages/PostDetail"));
+const Profile = lazy(() => import("./pages/Profile"));
 const Settings = lazy(() => import("./pages/Settings"));
-import SearchPage from "./pages/SearchPage";
-import PostActivity from "./pages/PostActivity";
-import Share from "./pages/Share";
-import NotFound from "./pages/NotFound";
-import Notifications from "./pages/Notifications";
-import FollowersFollowingPage from "./pages/FollowersFollowingPage";
-import SpacePage from "./pages/SpacePage";
+const SearchPage = lazy(() => import("./pages/SearchPage"));
+const PostActivity = lazy(() => import("./pages/PostActivity"));
+const Share = lazy(() => import("./pages/Share"));
+const NotFound = lazy(() => import("./pages/NotFound"));
+const Notifications = lazy(() => import("./pages/Notifications"));
+const FollowersFollowingPage = lazy(() => import("./pages/FollowersFollowingPage"));
+const SpacePage = lazy(() => import("./pages/SpacePage"));
 import { SpaceProvider } from '@/components/spaces/SpaceProvider';
-import NewsPage from './pages/NewsPage';
+const NewsPage = lazy(() => import("./pages/NewsPage"));
 const ChatPage = lazy(() => import("./pages/ChatPage"));
-import TermsPage from "./pages/terms";
-import LimeProLanding from "./pages/LimePro";
+const TermsPage = lazy(() => import("./pages/terms"));
+const LimeProLanding = lazy(() => import("./pages/LimePro"));
 const MediaViewer = lazy(() => import("./pages/MediaViewer"));
 
 import { PostCardSkeleton } from "@/components/feed/PostCardSkeleton";
@@ -2431,7 +2431,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
                   size="sm"
                   variant="ghost"
                   className="h-10 w-10 rounded-full p-0 text-accent hover:bg-accent-soft hover:text-accent"
-                  onClick={() => fileRef.current?.click()}
+                  data-lime-attachment-tool onClick={() => fileRef.current?.click()}
                   disabled={previews.length >= MAX_IMAGES}
                   aria-label="画像を追加"
                 >
@@ -2496,10 +2496,10 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
                 size="sm"
                 variant="ghost"
                 className="h-9 rounded-full text-accent hover:bg-accent-soft hover:text-accent"
-                onClick={() => fileRef.current?.click()}
+                data-lime-attachment-tool onClick={() => fileRef.current?.click()}
                 disabled={previews.length >= MAX_IMAGES}
               >
-                <ImagePlus className="sm:mr-1.5 h-4 w-4" />
+                <ImagePlus className="sm:mr-1.5 h-5 w-5" />
                 <span className="hidden sm:inline">画像</span>
               </Button>
 
@@ -2699,28 +2699,28 @@ const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage |
         <EmojiRainEffect /> 
         
         <Routes>
-          <Route path="/auth" element={<AuthPage />} />
-          <Route path="/terms" element={<TermsPage />} />
+          <Route path="/auth" element={<Suspense fallback={<RouteLoading />}><AuthPage /></Suspense>} />
+          <Route path="/terms" element={<Suspense fallback={<RouteLoading />}><TermsPage /></Suspense>} />
           <Route element={<AppLayout />}>
             <Route path="/" element={<Feed />} />
-            <Route path="/notifications" element={<Notifications />} />
-            <Route path="/search" element={<SearchPage />} />
-            <Route path="/news" element={<NewsPage />} />
+            <Route path="/notifications" element={<Suspense fallback={<RouteLoading />}><Notifications /></Suspense>} />
+            <Route path="/search" element={<Suspense fallback={<RouteLoading />}><SearchPage /></Suspense>} />
+            <Route path="/news" element={<Suspense fallback={<RouteLoading />}><NewsPage /></Suspense>} />
             <Route path="/chat" element={<Suspense fallback={<RouteLoading />}><ChatPage /></Suspense>} /> {/* AIチャットページのルーティングを追加 */}
-            <Route path="/post/:id" element={<PostDetail />} />
-            <Route path="/post/:postId/activity" element={<PostActivity />} />
-            <Route path="/u/:username" element={<Profile />} />
-            <Route path="/u/:username/followers_following" element={<FollowersFollowingPage />} />
+            <Route path="/post/:id" element={<Suspense fallback={<RouteLoading />}><PostDetail /></Suspense>} />
+            <Route path="/post/:postId/activity" element={<Suspense fallback={<RouteLoading />}><PostActivity /></Suspense>} />
+            <Route path="/u/:username" element={<Suspense fallback={<RouteLoading />}><Profile /></Suspense>} />
+            <Route path="/u/:username/followers_following" element={<Suspense fallback={<RouteLoading />}><FollowersFollowingPage /></Suspense>} />
             <Route path="/settings" element={<Suspense fallback={<RouteLoading />}><Settings /></Suspense>} />
-            <Route path="/bookmarks" element={<Bookmarks />} />
-            <Route path="/share" element={<Share />} />
-            <Route path="/spaces/:id" element={<SpacePage />} />
-            <Route path="/limepro" element={<LimeProLanding />} />
+            <Route path="/bookmarks" element={<Suspense fallback={<RouteLoading />}><Bookmarks /></Suspense>} />
+            <Route path="/share" element={<Suspense fallback={<RouteLoading />}><Share /></Suspense>} />
+            <Route path="/spaces/:id" element={<Suspense fallback={<RouteLoading />}><SpacePage /></Suspense>} />
+            <Route path="/limepro" element={<Suspense fallback={<RouteLoading />}><LimeProLanding /></Suspense>} />
             <Route path="/media" element={<Suspense fallback={<RouteLoading />}><MediaViewer /></Suspense>} />
 <Route path="/media/:username" element={<Suspense fallback={<RouteLoading />}><MediaViewer /></Suspense>} />
           </Route>
           <Route path="/index" element={<Navigate to="/" replace />} />
-          <Route path="*" element={<NotFound />} />
+          <Route path="*" element={<Suspense fallback={<RouteLoading />}><NotFound /></Suspense>} />
         </Routes>
 
         <FloatingComposeButton hidden={shouldHideFAB} onOpen={() => openPostOverlay()} />

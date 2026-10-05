@@ -54,11 +54,11 @@ test('production voice settings: all built-ins, supported gestures, save and reo
   const errors: string[] = []; page.on('pageerror', (e) => errors.push(e.message));
   await open(page);
   await page.getByRole('button', { name: '設定', exact: true }).click();
-  await expect(page.getByText('VRM 1.0 · 口パク対応')).toBeVisible();
+  await expect(page.locator('[data-lime-avatar-stage]')).toHaveAttribute('data-lime-avatar-version','VRM 1.0');
   await page.getByRole('button', { name: /リナ（/ }).click();
-  await expect(page.getByText('VRM 0.x · 口パク対応')).toBeVisible();
+  await expect(page.locator('[data-lime-avatar-stage]')).toHaveAttribute('data-lime-avatar-version','VRM 0.x');
   await page.getByRole('button', { name: /ロボット（/ }).click();
-  await expect(page.getByText('GLB · 口パクなし')).toBeVisible();
+  await expect(page.locator('[data-lime-avatar-stage]')).toHaveAttribute('data-lime-avatar-format','glb');
   await expect(page.getByRole('button', { name: 'お辞儀', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: '手を振る', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: '手を振る', exact: true }).click();
@@ -66,7 +66,7 @@ test('production voice settings: all built-ins, supported gestures, save and reo
   await healthy(page);
   await page.reload();
   await page.getByRole('button', { name: '設定', exact: true }).click();
-  await expect(page.getByText('GLB · 口パクなし')).toBeVisible();
+  await expect(page.locator('[data-lime-avatar-stage]')).toHaveAttribute('data-lime-avatar-format','glb');
   expect(errors).toEqual([]);
 });
 
@@ -200,13 +200,13 @@ test('mobile settings, custom upload, persisted restore, delete and close/reopen
   await open(page);
   await page.getByRole('button', { name: '設定', exact: true }).click();
   await page.locator('input[type=file]').setInputFiles(path.join(fixtures, 'gltf-package.zip'));
-  await expect(page.getByText('GLTF · 口パクなし')).toBeVisible();
+  await expect(page.locator('[data-lime-avatar-stage]')).toHaveAttribute('data-lime-avatar-format','gltf');
   await page.reload();
   await page.getByRole('button', { name: '設定', exact: true }).click();
-  await expect(page.getByText('GLTF · 口パクなし')).toBeVisible();
+  await expect(page.locator('[data-lime-avatar-stage]')).toHaveAttribute('data-lime-avatar-format','gltf');
   await page.screenshot({ path: 'test-results/mobile-settings.png' });
   await page.getByRole('button', { name: '削除', exact: true }).click();
-  await expect(page.getByText('VRM 1.0 · 口パク対応')).toBeVisible();
+  await expect(page.locator('[data-lime-avatar-stage]')).toHaveAttribute('data-lime-avatar-version','VRM 1.0');
   await page.getByRole('button', { name: '閉じる', exact: true }).last().click();
   await page.getByRole('button', { name: '閉じる', exact: true }).click();
   await expect(page.locator('canvas')).toHaveCount(0);
@@ -232,13 +232,13 @@ test('full AI chat route opens the production voice overlay (isolated auth/API f
   await page.getByRole('button', { name: 'ボイスモード', exact: true }).first().click();
   await expect(page.getByRole('dialog', { name: 'ボイスモード' })).toBeVisible();
   await page.getByRole('button', { name: '設定', exact: true }).click();
-  await expect(page.getByText('VRM 1.0 · 口パク対応')).toBeVisible();
+  await expect(page.locator('[data-lime-avatar-stage]')).toHaveAttribute('data-lime-avatar-version','VRM 1.0');
   await page.screenshot({ path: 'test-results/full-chat-voice.png' });
   await page.getByRole('button', { name: /リナ（/ }).click();
-  await expect(page.getByText('VRM 0.x · 口パク対応')).toBeVisible();
+  await expect(page.locator('[data-lime-avatar-stage]')).toHaveAttribute('data-lime-avatar-version','VRM 0.x');
   await page.screenshot({ path: 'test-results/full-chat-lina.png' });
   await page.getByRole('button', { name: /ロボット（/ }).click();
-  await expect(page.getByText('GLB · 口パクなし')).toBeVisible();
+  await expect(page.locator('[data-lime-avatar-stage]')).toHaveAttribute('data-lime-avatar-format','glb');
   await page.screenshot({ path: 'test-results/full-chat-robot.png' });
 });
 
@@ -267,7 +267,7 @@ test('Fish AI audio starts lip sync, closes the mouth, and reports missing confi
   });
   await page.reload();
   await page.getByRole('button', { name: '設定', exact: true }).click();
-  await expect(page.getByText('VRM 1.0 · 口パク対応')).toBeVisible();
+  await expect(page.locator('[data-lime-avatar-stage]')).toHaveAttribute('data-lime-avatar-version','VRM 1.0');
   await expect(page.getByText('Fish Audio S2.1 Pro Free', { exact: true })).toBeVisible();
   await page.evaluate(() => {
     speechSynthesis.speak = () => { throw new Error('Browser TTS must not be used'); };

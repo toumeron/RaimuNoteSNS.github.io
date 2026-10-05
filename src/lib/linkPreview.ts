@@ -1,3 +1,4 @@
+import {readSavedPreview,savePreview} from './linkPreviewCache';
 import {supabase} from './supabase';
 import {spaceLinkIn} from './spaceLinks';
 export type LinkPreview={url:string;domain:string;title:string;image:string};
@@ -11,9 +12,19 @@ export function singlePreviewUrl(content:string):string|null {
     return url.href;
   }catch{return null;}
 }
-export async function fetchLinkPreview(url:string):Promise<LinkPreview|null> {
-  try{const {data,error}=await supabase.functions.invoke('link-preview',{body:{url}});const value=data?.preview;
-    if(error||!value||typeof value.title!=='string'||typeof value.image!=='string'||typeof value.domain!=='string'||!/^https?:\/\//.test(value.image))return null;
-    return {...value,url};
-  }catch{return null;}
+const pending=new Map<string,Promise<LinkPreview|null>>();
+export async function fetchLinkPreview(url:string,persist=true):Promise<LinkPreview|null> {
+  if(persist){const saved=readSavedPreview(url);if(saved)return saved.preview;}
+  const key=`${persist?'saved':'live'}:${url}`;
+  const active=pending.get(key);if(active)return active;
+  const request=(async()=>{
+    try{
+      const {data,error}=await supabase.functions.invoke('link-preview',{body:{url}});const value=data?.preview;
+      if(error)return null;
+      const preview=value&&typeof value.title==='string'&&typeof value.image==='string'&&typeof value.domain==='string'&&/^https?:\/\//.test(value.image)?{...value,url} as LinkPreview:null;
+      if(persist)savePreview(url,preview);
+      return preview;
+    }catch{return null;}
+  })().finally(()=>pending.delete(key));
+  pending.set(key,request);return request;
 }

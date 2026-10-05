@@ -54,3 +54,25 @@ test('installed app opens saved posts and image after an offline cold launch, is
  await fresh.getByRole('button',{name:'オフライン保存データを削除'}).click();await expect(fresh.getByText('オフライン保存したポストがありません。')).toBeVisible();
  await fresh.reload();await expect(fresh.getByText('オフライン保存したポストがありません。')).toBeVisible();
 });
+
+test('installed startup works without idle API and does not reload on worker takeover',async({page,context})=>{
+ const errors:string[]=[],requests:string[]=[];let crashed=false;
+ page.on('pageerror',error=>errors.push(error.message));page.on('crash',()=>{crashed=true;});page.on('request',request=>requests.push(request.url()));
+ await context.addInitScript(()=>{
+  Object.defineProperty(navigator,'standalone',{configurable:true,get:()=>true});
+  Object.defineProperty(window,'requestIdleCallback',{configurable:true,value:undefined});
+  sessionStorage.setItem('lime-test-start-count',String(Number(sessionStorage.getItem('lime-test-start-count')??0)+1));
+ });
+ await page.route('**/*.supabase.co/**',route=>route.fulfill({contentType:'application/json',body:'[]'}));
+ await page.route('**/public.api.bsky.app/**',route=>route.fulfill({contentType:'application/json',body:'{}'}));
+ await page.goto('./');
+ await expect(page.getByRole('button',{name:'ログインする',exact:true}).first()).toBeVisible();
+ await page.evaluate(async()=>{await navigator.serviceWorker.ready;});
+ await expect.poll(()=>page.evaluate(()=>!!navigator.serviceWorker.controller)).toBe(true);
+ await page.evaluate(()=>navigator.serviceWorker.dispatchEvent(new Event('controllerchange')));
+ // Allow the old auto-update handler's reload window to pass.
+ await page.waitForTimeout(1500);
+ expect(await page.evaluate(()=>sessionStorage.getItem('lime-test-start-count'))).toBe('1');
+ expect(crashed).toBe(false);expect(errors).toEqual([]);
+ expect(requests.some(url=>/\/assets\/(Settings|ChatPage|Profile|MediaViewer|AgoraRTC)-/.test(url))).toBe(false);
+});

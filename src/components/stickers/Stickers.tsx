@@ -29,11 +29,11 @@ export function StickerPicker({onSelect,disabled=false,iconOnly=false,className=
     document.addEventListener('keydown',onKey,true);
     return ()=>document.removeEventListener('keydown',onKey,true);
   },[open,mobile]);
-  const trigger=<Button type="button" disabled={disabled} variant="ghost" size="sm" aria-label="スタンプを選ぶ"
+  const trigger=<Button type="button" disabled={disabled} variant="ghost" size="sm" data-lime-attachment-tool aria-label="スタンプを選ぶ"
     onPointerDown={event=>event.preventDefault()}
     onClick={mobile?()=>setOpen(true):undefined}
-    className={`h-9 shrink-0 rounded-full text-primary hover:bg-primary/10 hover:text-primary ${iconOnly?'w-9 p-0':''} ${className}`}>
-    <Sticker className={iconOnly?'h-5 w-5':'h-4 w-4 sm:mr-1.5'}/>{!iconOnly&&<span className="hidden sm:inline">スタンプ</span>}
+    className={`h-9 [&_svg]:size-5 shrink-0 rounded-full text-primary hover:bg-primary/10 hover:text-primary ${iconOnly?'w-9 p-0':''} ${className}`}>
+    <Sticker className={iconOnly?'h-5 w-5':'h-5 w-5 sm:mr-1.5'}/>{!iconOnly&&<span className="hidden sm:inline">スタンプ</span>}
   </Button>;
   const contents=<>
     <input aria-label="スタンプを検索" placeholder="スタンプを検索" value={search} onChange={e=>setSearch(e.target.value)} className="mb-2 w-full rounded-full border border-border bg-background px-3 py-2 text-sm"/>
