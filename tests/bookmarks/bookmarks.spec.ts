@@ -173,3 +173,28 @@ test('failed offline media download leaves bookmarks intact and can be retried',
  await expect(save).toBeEnabled();await expect(page.getByRole('button',{name:'オフライン保存データを削除'})).toHaveCount(0);expect(state.rows).toHaveLength(1);
  fail=false;await press(page,save);await expect(page.getByRole('button',{name:'オフライン保存データを削除'})).toBeEnabled();
 });
+
+test('iOS PWA stores a CORS-blocked image through the authenticated image reader',async({page},info)=>{
+ test.skip(!info.project.name.includes('PWA'),'Installed app storage');
+ const state=await setup(page,true),image='https://cdn.bsky.app/image/cors-blocked';
+ await page.route(image,route=>route.abort('failed'));
+ await page.route('**/functions/v1/link-preview',route=>route.fulfill({contentType:'application/octet-stream',headers:{'access-control-allow-origin':'*','access-control-expose-headers':'x-lime-image-type','x-lime-image-type':'image/svg+xml'},body:'<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30"><rect width="30" height="30" fill="pink"/></svg>'}));
+ state.extraPosts=[{...base,id:'cors-post',content:'保存対象',imageUrls:[image]}];state.rows=[{id:'cors-bookmark',user_id:user.id,post_id:'cors-post',comment_id:null,external_id:null,created_at:user.createdAt}];
+ await page.goto('bookmarks');await press(page,page.getByRole('button',{name:'ブックマークをすべてオフラインに保存'}));
+ await expect(page.getByRole('button',{name:'オフライン保存データを削除'})).toBeEnabled();
+ const stored=await page.evaluate(async(id)=>{const {readOfflineBookmarks}=await import('/RaimuNoteSNS.github.io/src/lib/offlineBookmarks.ts');const value=await readOfflineBookmarks(id);return value?.assets.map(asset=>asset.url);},user.id);expect(stored).toContain(image);
+});
+
+test('installed iOS feed does not decode full images again just to measure post sizes',async({page},info)=>{
+ test.skip(!info.project.name.includes('WebKit'),'Installed iOS image path');
+ await setup(page,true);
+ await page.route('https://media.example/one.svg',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80" fill="pink"/></svg>'}));
+ await page.addInitScript(()=>{const Original=window.Image;window.__sizeProbes=0;window.Image=new Proxy(Original,{construct(target,args){const image=Reflect.construct(target,args);const src=Object.getOwnPropertyDescriptor(HTMLImageElement.prototype,'src');Object.defineProperty(image,'src',{get(){return src.get.call(this);},set(value){if(value==='https://media.example/one.svg')window.__sizeProbes++;src.set.call(this,value);}});return image;}});});
+ const post={...base,id:'ios-image',content:'画像サイズの確認',imageUrls:['https://media.example/one.svg']};
+ await page.route('**/src/api/posts.ts*',route=>route.fulfill({contentType:'application/javascript',body:`const posts=${JSON.stringify([post])};export const getFeed=async()=>posts,getFollowingFeed=getFeed,getPostsByUser=getFeed,getProfilePosts=getFeed,getLikedPostsByUser=getFeed,searchPosts=getFeed;export const getPostById=async()=>posts[0],createPost=async()=>posts[0],toggleLike=async()=>({liked:true}),toggleRepost=async()=>({reposted:true}),deletePost=async()=>{},getPostLikers=async()=>[];`}));
+ for(let launch=0;launch<3;launch++){
+  await page.goto('./');await expect(page.getByText('画像サイズの確認',{exact:true})).toBeVisible();
+  const image=page.locator('[data-lime-post-card] img').first();await expect.poll(()=>image.evaluate((img:HTMLImageElement)=>img.naturalWidth)).toBeGreaterThan(0);
+  expect(await page.evaluate(()=>window.__sizeProbes)).toBe(0);
+ }
+});

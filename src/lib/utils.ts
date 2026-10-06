@@ -11,3 +11,7 @@ export const getYouTubeId = (url: string) => {
   const match = url.match(regExp);
   return (match && match[1].length === 11) ? match[1] : null;
 };
+
+export const isInstalledPwa = () => typeof window !== 'undefined' && ((navigator as Navigator & {standalone?:boolean}).standalone === true || window.matchMedia?.('(display-mode: standalone)').matches === true);
+
+export const isIosPwa=()=>isInstalledPwa()&&(/iPhone|iPad|iPod/i.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1));

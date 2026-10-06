@@ -1,4 +1,5 @@
 import {afterEach,expect,it,vi} from 'vitest';
+const invoke=vi.hoisted(()=>vi.fn());vi.mock('./supabase',()=>({supabase:{functions:{invoke}}}));
 import {bookmarkAssetUrls,downloadBookmarkAssets,isInstalledPwa,openOfflineBookmarks,type OfflineBookmarks} from './offlineBookmarks';
 import type {PostWithAuthor} from '@/types';
 afterEach(()=>vi.unstubAllGlobals());
@@ -23,4 +24,13 @@ it('opens stored image blobs locally and releases every allocated URL',()=>{
 it('recognizes installed iOS apps while ordinary browser windows remain unchanged',()=>{
  vi.stubGlobal('navigator',{standalone:true});expect(isInstalledPwa()).toBe(true);
  vi.stubGlobal('navigator',{standalone:false});expect(isInstalledPwa()).toBe(false);
+});
+
+it('saves media through the authenticated reader when its host blocks browser fetch',async()=>{
+ vi.stubGlobal('fetch',vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+ const blob=new Blob(['image-bytes'],{type:'application/octet-stream'});Object.defineProperty(blob,'arrayBuffer',{value:async()=>new TextEncoder().encode('image-bytes').buffer});
+ invoke.mockResolvedValue({data:blob,error:null,response:{headers:new Headers({'x-lime-image-type':'image/png'})}});
+ const assets=await downloadBookmarkAssets(['https://cdn.bsky.app/image/a'],vi.fn());
+ expect(assets[0].type).toBe('image/png');expect(assets[0].bytes.byteLength).toBeGreaterThan(0);
+ expect(invoke).toHaveBeenCalledWith('link-preview',expect.objectContaining({body:{url:'https://cdn.bsky.app/image/a',mode:'image'}}));
 });

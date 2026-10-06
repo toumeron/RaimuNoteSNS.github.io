@@ -8,8 +8,20 @@ jobs:
   run-function:
     runs-on: ubuntu-latest
     steps:
-      - name: Call Supabase Function
+      - name: Generate and verify both news sources
+        env:
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          curl -X POST "https://wrxaayteittkjoblgauk.supabase.co/functions/v1/generate-news" \
-          -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
-          -H "Content-Type: application/json"
+          curl --fail-with-body --silent --show-error --max-time 240 -X POST "https://wrxaayteittkjoblgauk.supabase.co/functions/v1/generate-news" \
+          -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+          -H "Content-Type: application/json" -d '{}' -o "$RUNNER_TEMP/news-result.json"
+          python3 - "$RUNNER_TEMP/news-result.json" <<'PYTHON'
+          import json, sys
+          with open(sys.argv[1]) as response:
+              results = json.load(response).get('results', [])
+          for source in ('limenote', 'bluesky'):
+              result = next((item for item in results if item.get('source') == source), None)
+              if not result or result.get('error') or not result.get('sourcePostsCount'):
+                  raise SystemExit(f"{source}: " + (result.get('error', 'No generated article') if result else 'Missing result'))
+          print('LimeNote and Bluesky news generation succeeded')
+          PYTHON

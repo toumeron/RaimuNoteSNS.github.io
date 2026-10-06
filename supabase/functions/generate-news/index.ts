@@ -49,10 +49,10 @@ serve(async (): Promise<Response> => {
       const summary = validateSummary(await generate(focusedNewsPrompt(selection.topic, selection.posts)), selection.posts);
       // Recheck visibility after generation; the author may have restricted a post meanwhile.
       if (source === 'limenote') {
-        const check = await db.from('posts').select('id').in('id', posts.map(p => p.id)).eq('visibility', 'public');
-        if (check.error || check.data?.length !== posts.length) throw new Error('Source visibility changed');
+        const check = await db.from('posts').select('id').in('id', summary.related_post_ids).eq('visibility', 'public');
+        if (check.error || check.data?.length !== summary.related_post_ids.length) throw new Error('Source visibility changed');
       }
-      const saved = await db.from('news_summaries').insert({...summary, source, public_sources_verified: true, source_post_ids: posts.map(p => p.id)});
+      const saved = await db.from('news_summaries').insert({...summary, source, public_sources_verified: true, source_post_ids: summary.related_post_ids});
       if (saved.error) throw new Error(saved.error.message);
       return {source, sourcePostsCount: posts.length};
     }));

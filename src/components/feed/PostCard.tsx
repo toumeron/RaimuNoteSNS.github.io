@@ -1,3 +1,4 @@
+import {isIosPwa} from '@/lib/utils';
 import { openMediaViewer } from '@/components/media/openMediaViewer';
 import {PinPostMenuButton} from '@/components/post/PinPostMenuButton';
 import {LinkPreviewCard,useLinkPreview} from '@/components/post/LinkPreviewCard';
@@ -301,6 +302,9 @@ const pumpImageSizePreloadQueue = () => {
 const preloadImageNaturalSize = (url: string, priority: 'high' | 'low' = 'low') => {
   const cached = getCachedNaturalSize(url);
   if (cached) return Promise.resolve(cached);
+  // iOS must not decode a second full-size image merely to measure it.
+  // The visible image's onLoad supplies its dimensions.
+  if(isIosPwa())return Promise.resolve(null);
 
   const pending = imageSizePreloadPending.get(url);
   if (pending) {

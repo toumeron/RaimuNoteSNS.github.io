@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import type { PostWithAuthor } from '@/types';
 
 const db = vi.hoisted(() => ({
+  viewer:'account-one',
   handles: ['author'],
   lime: [] as PostWithAuthor[],
   blue: [] as PostWithAuthor[],
@@ -13,6 +14,7 @@ const db = vi.hoisted(() => ({
   initialBlue: null as Promise<{ posts: PostWithAuthor[]; cursor: string | null }> | null,
   limeCalls: vi.fn(), blueCalls: vi.fn(), followingCalls: vi.fn(),
 }));
+vi.mock('./useAuth',()=>({useAuth:()=>({user:{id:db.viewer},loading:false})}));
 vi.mock('@/api/posts', () => ({
   getFeed: async (page: number, limit: number, before?: { createdAt: string; id: string }) => {
     db.limeCalls(page);
@@ -47,7 +49,7 @@ function mount(tab: 'all' | 'following' = 'all') {
   return { ...renderHook(({ tab }) => ({ ...useTimelineFeed(tab) }), { wrapper, initialProps: { tab } }), client };
 }
 beforeEach(() => {
-  db.handles = ['author']; db.initialLime = null; db.initialBlue = null;
+  db.viewer='account-one';db.handles = ['author']; db.initialLime = null; db.initialBlue = null;
   db.lime = Array.from({ length: 80 }, (_, i) => post(`lime-${i}`, 200 - i * 2));
   db.blue = Array.from({ length: 80 }, (_, i) => post(`bsky-${i}`, 199 - i * 2));
   db.following = [post('followed-lime', 205)];
@@ -103,4 +105,13 @@ describe('timeline query publication', () => {
     await waitFor(() => expect(view.result.current.isFetchNextPageError).toBe(true));
     expect(view.result.current.data).toBe(previous);
   });
+});
+
+it('does not reuse another account timeline while switching accounts',async()=>{
+ const view=mount();await waitFor(()=>expect(view.result.current.isSuccess).toBe(true));
+ let release!:(posts:PostWithAuthor[])=>void;db.initialLime=new Promise(resolve=>{release=resolve;});
+ db.viewer='cat';view.rerender({tab:'all'});expect(view.result.current.data).toBeUndefined();
+ release([post('cat-only',300)]);await waitFor(()=>expect(view.result.current.isSuccess).toBe(true));
+ expect(view.result.current.data?.pages[0].posts[0].id).toBe('cat-only');
+ expect(view.client.getQueryData(['feed','all','timeline','cat',['author']])).toBeDefined();
 });

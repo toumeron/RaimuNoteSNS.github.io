@@ -19,7 +19,7 @@ async function setup(page:Page){
     const req=r.request(),url=new URL(req.url());const single=(req.headers().accept??'').includes('vnd.pgrst.object');let data:unknown=single?null:[];
     if(url.pathname.endsWith('/profiles'))data=single?profiles[0]:profiles;
     if(url.pathname.includes('get-trends'))data=trends;
-    if(url.pathname.endsWith('/news_summaries'))data=url.searchParams.has('source')?news.filter(item=>(item.source||'limenote')===url.searchParams.get('source')?.slice(3)).slice(0,1):news;
+    if(url.pathname.endsWith('/news_summaries'))data=url.searchParams.has('source')?news.filter(item=>(item.source||'limenote')===url.searchParams.get('source')?.slice(3)).slice(0,Number(url.searchParams.get('limit')??1)):news;
     if(url.pathname.endsWith('/posts'))data=[{id:basePost.id,user_id:profiles[0].id,content:basePost.content,created_at:viewer.createdAt,image_urls:[],likes_count:0,comments_count:0,reposts_count:0,visibility:'public',profiles:profiles[0]}];
     return r.fulfill({contentType:'application/json',body:req.method()==='HEAD'?'':JSON.stringify(data),headers:{'content-range':'0-0/0'}});
   });
@@ -147,4 +147,9 @@ test('timeline tabs are taller only on desktop and iPad and retain selection and
   for(const button of await buttons.all())await expect(button).toHaveCSS('height',`${height}px`);
   await tabs.getByRole('tab',{name:'フォロー中',exact:true}).click();await expect(tabs.getByRole('tab',{name:'フォロー中',exact:true})).toHaveAttribute('data-state','active');
   const underline=tabs.locator('span[aria-hidden="true"]');await expect(underline).toBeVisible();const bounds=(await tabs.boundingBox())!,line=(await underline.boundingBox())!;expect(line.y+line.height).toBeCloseTo(bounds.y+bounds.height,0);
+});
+
+test('missing LimeNote news is never replaced by another Bluesky article',async({page})=>{
+ await page.route('**/rest/v1/news_summaries*',route=>{const source=new URL(route.request().url()).searchParams.get('source');return route.fulfill({contentType:'application/json',body:JSON.stringify(source==='eq.bluesky'?[news.find(item=>item.source==='bluesky'),{...news.find(item=>item.source==='bluesky'),id:'second-bsky',title:'もう一つの注目ニュース',created_at:'2026-10-03T07:00:00Z'}]:[])});});
+ await page.goto('search');const section=page.locator('[data-lime-search-today-news]');await expect(section.locator('h3')).toHaveText(['Blueskyの人気ニュース']);await expect(section).not.toContainText('もう一つの注目ニュース');
 });

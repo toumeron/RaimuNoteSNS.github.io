@@ -78,12 +78,12 @@ export function MobileAccountSwitcher({ children, onDone }: { children: ReactEle
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const done = () => { setOpen(false); setEditing(false); onDone(); };
-  return <Drawer.Root open={open} onOpenChange={value => { setOpen(value); if (!value) setEditing(false); }} shouldScaleBackground={false}>
+  return <Drawer.Root open={open} onOpenChange={value => { setOpen(value); if (!value) setEditing(false); }} shouldScaleBackground={false} handleOnly>
     <Drawer.Trigger asChild>{children}</Drawer.Trigger>
     <Drawer.Portal>
       <Drawer.Overlay className="fixed inset-0 z-[2147483199] bg-black/60" />
       <Drawer.Content aria-describedby={undefined} data-lime-account-switcher data-lime-mobile-account-sheet className="fixed inset-x-0 bottom-0 z-[2147483200] flex h-[min(88dvh,850px)] flex-col overflow-hidden rounded-t-[28px] border-0 bg-popover dark:bg-black text-popover-foreground outline-none pb-[env(safe-area-inset-bottom)]">
-        <div className="mx-auto mt-2 h-1 w-11 shrink-0 rounded-full bg-muted-foreground/40" />
+        <Drawer.Handle aria-label="アカウント一覧を閉じる" className="mx-auto mt-2 h-1 w-11 shrink-0 bg-muted-foreground/40" />
         <div className="relative flex shrink-0 items-center justify-center px-5 py-4">
           <button type="button" disabled={switching} className="absolute left-5 text-sm disabled:opacity-50" onClick={() => setEditing(!editing)}>{editing ? '完了' : '編集'}</button>
           <Drawer.Title className="text-base font-bold">アカウント</Drawer.Title>

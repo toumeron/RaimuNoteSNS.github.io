@@ -28,11 +28,11 @@ export function useOfflineBookmarks(userId?:string) {
   useEffect(()=>{
     let live=true,opened:ReturnType<typeof openOfflineBookmarks>|null=null;
     setSaved(null);setChecking(!!(pwa&&userId));setBusy(false);setProgress('');
-    if(pwa&&userId)void readOfflineBookmarks(userId).then(value=>{
+    if(pwa&&userId)void readOfflineBookmarks(userId,!online).then(value=>{
       if(!live)return;if(value)opened=openOfflineBookmarks(value);setSaved(opened);
     }).catch(()=>{if(live)toast.error('オフライン保存データを読み込めませんでした');}).finally(()=>{if(live)setChecking(false);});
     return()=>{live=false;opened?.release();};
-  },[pwa,userId]);
+  },[pwa,userId,online]);
   // New downloads are owned by this mounted account; never publish a previous
   // account's snapshot into the next account's page.
   const visibleSaved=saved?.userId===userId?saved:null;
@@ -71,7 +71,7 @@ export function useOfflineBookmarks(userId?:string) {
         const value={userId:id,savedAt:new Date().toISOString(),posts:unique,emojis,spaces,linkPreviews,assets};
         await writeOfflineBookmarks(value);
         void navigator.storage?.persist?.().catch(()=>false);
-        if(current(id)){setSaved(openOfflineBookmarks(value));toast.success(`${unique.length}件のブックマークをオフラインに保存しました`);}
+        if(current(id)){setSaved(openOfflineBookmarks({...value,assets:[]}));toast.success(`${unique.length}件のブックマークをオフラインに保存しました`);}
       }
     }catch(error){if(current(id))toast.error(error instanceof Error?error.message:'オフライン保存に失敗しました');}
     finally{if(current(id)){setBusy(false);setProgress('');}}

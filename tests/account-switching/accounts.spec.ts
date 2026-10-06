@@ -143,3 +143,18 @@ test('account list remains scrollable with many accounts and preserves its actio
   await expect(list.getByAltText('認証済み')).toBeVisible();
   await page.screenshot({path:info.outputPath('account-list-dark.png'),animations:'disabled'});
 });
+
+// Drawer gestures must not capture the nested avatar/name that receives a tap.
+test('mobile account controls preserve touch targets for switching and adding',async({page},info)=>{
+ test.skip((page.viewportSize()?.width??0)>=768,'Touch sheet controls');
+ await setup(page,info.project.name.includes('PWA'));await page.goto('./');await expect(page.getByText('aliceのみの投稿',{exact:true})).toBeVisible();
+ await openAccounts(page);
+ await page.evaluate(()=>{const original=Element.prototype.setPointerCapture;window.__accountCaptures=0;Element.prototype.setPointerCapture=function(id){if(this.closest('[data-lime-mobile-account-sheet]'))window.__accountCaptures++;return original.call(this,id);};});
+ await press(page,page.getByRole('button',{name:'Bob @bobに切り替える',exact:true}).getByText('Bob',{exact:true}));
+ await expect(page.getByText('bobのみの投稿',{exact:true})).toBeVisible();
+ expect(await page.evaluate(()=>window.__accountCaptures)).toBe(0);
+ await openAccounts(page);await press(page,page.getByRole('button',{name:'既存のアカウントを追加',exact:true}).locator('svg'));
+ await expect(page.getByRole('heading',{name:'アカウントを追加',exact:true})).toBeVisible();
+ expect(await page.evaluate(()=>window.__accountCaptures)).toBe(0);
+ await page.getByLabel('メールアドレス',{exact:true}).tap();await expect(page.getByLabel('メールアドレス',{exact:true})).toBeFocused();
+});

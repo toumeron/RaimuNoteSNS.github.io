@@ -1,4 +1,4 @@
-import {isInstalledPwa} from '@/lib/pwa';
+import {isInstalledPwa} from '@/lib/utils';
 import { useQueryClient } from '@tanstack/react-query';
 import { Fragment, createContext, useContext, useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';

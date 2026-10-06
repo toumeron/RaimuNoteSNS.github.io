@@ -25,6 +25,7 @@ export async function getNewsSources(news: SearchNewsItem[]): Promise<Record<str
 }
 
 export function latestNewsPerSource(news: SearchNewsItem[]): SearchNewsItem[] {
+  // Each source owns one slot; never replace missing LimeNote news with Bluesky.
   return ['limenote', 'bluesky'].flatMap(source => {
     const latest = news.filter(item => (item.source || 'limenote') === source)
       .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
