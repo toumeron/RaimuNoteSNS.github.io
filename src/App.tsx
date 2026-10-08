@@ -27,6 +27,7 @@ const PostActivity = lazy(() => import("./pages/PostActivity"));
 const Share = lazy(() => import("./pages/Share"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const Notifications = lazy(() => import("./pages/Notifications"));
+const AccountAboutPage = lazy(() => import("./pages/AccountAboutPage"));
 const FollowersFollowingPage = lazy(() => import("./pages/FollowersFollowingPage"));
 const SpacePage = lazy(() => import("./pages/SpacePage"));
 import { SpaceProvider } from '@/components/spaces/SpaceProvider';
@@ -2710,6 +2711,7 @@ const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage |
             <Route path="/post/:id" element={<Suspense fallback={<RouteLoading />}><PostDetail /></Suspense>} />
             <Route path="/post/:postId/activity" element={<Suspense fallback={<RouteLoading />}><PostActivity /></Suspense>} />
             <Route path="/u/:username" element={<Suspense fallback={<RouteLoading />}><Profile /></Suspense>} />
+            <Route path="/u/:username/about" element={<Suspense fallback={<RouteLoading />}><AccountAboutPage /></Suspense>} />
             <Route path="/u/:username/followers_following" element={<Suspense fallback={<RouteLoading />}><FollowersFollowingPage /></Suspense>} />
             <Route path="/settings" element={<Suspense fallback={<RouteLoading />}><Settings /></Suspense>} />
             <Route path="/bookmarks" element={<Suspense fallback={<RouteLoading />}><Bookmarks /></Suspense>} />

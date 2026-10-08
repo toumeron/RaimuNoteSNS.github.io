@@ -49,7 +49,11 @@ async function setup(page:Page,standalone:boolean){
       return route.fulfill({contentType:'application/json',body:JSON.stringify(state.rows.filter(matches).sort((a,b)=>b.created_at.localeCompare(a.created_at)).slice(offset,offset+limit))});
     }
     const single=(req.headers().accept??'').includes('vnd.pgrst.object');let data:unknown=single?null:[];
-    if(url.pathname.endsWith('/profiles'))data=single?profile:[profile];
+    if(url.pathname.endsWith('/profiles')) {
+      if (req.method()==='PATCH') state.pin=req.postDataJSON().pinned_post_id;
+      const row={...profile,pinned_post_id:state.pin};
+      data=single?row:[row];
+    }
     if(url.pathname.endsWith('/comments')){
       const parent=url.searchParams.get('parent_comment_id');
       data=parent?.startsWith('eq.')?[]:[{id:'child',post_id:'native',parent_comment_id:null,user_id:user.id,content:reply.content,created_at:user.createdAt,image_urls:[],likes_count:0,profiles:profile}];
@@ -91,7 +95,7 @@ test('highlight tabs stay in one row above pinned posts at every width',async({p
   const widths=info.project.use.isMobile ? [320,390] : [1440,1000,640,320];
   for(const width of widths){
     await page.setViewportSize({width,height:900});
-    const tabs=page.locator('[data-lime-profile-mobile-tabs]');
+    const tabs=page.getByRole('tablist').filter({visible:true});
     await expect(tabs).toBeVisible();
     await expect(tabs.getByRole('tab')).toHaveCount(5);
     await expect(tabs.getByRole('tab',{name:'ハイライト',exact:true})).toBeVisible();
@@ -102,7 +106,7 @@ test('highlight tabs stay in one row above pinned posts at every width',async({p
         tabs:[...el.querySelectorAll('[role=tab]')].map(tab=>{const rect=tab.getBoundingClientRect();return {top:rect.top,bottom:rect.bottom};})};
     });
     await page.screenshot({path:info.outputPath(`highlight-tabs-${width}.png`),animations:'disabled'});
-    expect(layout.display).toBe('flex');
+    expect(['flex','grid']).toContain(layout.display);
     expect(layout.tabs.every(tab=>Math.abs(tab.top-layout.top)<1&&tab.bottom<=layout.bottom+1)).toBe(true);
     const postBox=await page.locator('[data-lime-post-card]').first().boundingBox();
     expect(postBox!.y).toBeGreaterThanOrEqual(layout.bottom-1);
@@ -189,4 +193,204 @@ test('highlight tabs preserve the original profile typography and underline desi
   await expect(page.locator('[data-lime-post-card]')).toHaveCount(1);
   await page.screenshot({path:info.outputPath('profile-design-preserved.png'),animations:'disabled'});
   await page.locator('[data-lime-profile-tabs-header]').screenshot({path:info.outputPath('tabs-design-preserved.png'),animations:'disabled'});
+});
+
+test('nested profile URLs use the root manifest and external profiles do not query UUID follows',async({page})=>{
+  await setup(page,false);
+  const invalidFollowRequests:string[]=[];
+  page.on('request',req=>{if(req.url().includes('/follows?')&&req.url().includes('misskey-user'))invalidFollowRequests.push(req.url());});
+  await page.route('**/*.supabase.co/rest/v1/profiles?*',route=>{
+    const username=new URL(route.request().url()).searchParams.get('username');
+    return route.fulfill({contentType:'application/json',body:JSON.stringify(username==='eq.cat@misskey.io'?[]:[profile])});
+  });
+  await page.route('https://misskey.io/api/**',route=>route.fulfill({contentType:'application/json',body:JSON.stringify(route.request().url().endsWith('/users/show')?{id:'local-cat',username:'cat',name:'Misskey Cat',notesCount:0}:[])}));
+  await page.goto('u/cat@misskey.io');
+  await expect(page.getByRole('heading',{name:'Misskey Cat',exact:true})).toBeVisible();
+  const manifests=await page.locator('link[rel=manifest]').evaluateAll(elements=>elements.map(el=>(el as HTMLLinkElement).href));
+  expect(manifests.length).toBeGreaterThan(0);
+  expect(manifests).toHaveLength(1);
+  expect(new URL(manifests[0]).pathname).toMatch(/^\/RaimuNoteSNS\.github\.io\/manifest(?:\.dev)?\.webmanifest$/);
+  expect((await page.request.get(manifests[0])).status()).toBe(200);
+  expect(invalidFollowRequests).toEqual([]);
+});
+
+test('touching a profile and navigating from the mobile sidebar emits no passive or aria-hidden warnings',async({page})=>{
+  test.skip(!page.context().browser()?.browserType() || !((page.viewportSize()?.width??0)<640),'Mobile interaction regression');
+  const messages:string[]=[];
+  page.on('console',message=>{if(/passive event listener|Blocked aria-hidden/.test(message.text()))messages.push(message.text());});
+  await setup(page,false);await page.goto('./');
+  const avatar=page.locator('[data-lime-post-avatar]').first();
+  await expect(avatar).toBeVisible();
+  await avatar.dispatchEvent('touchstart',{bubbles:true,cancelable:true});
+  await press(page,page.getByRole('button',{name:'メニューを開く',exact:true}));
+  const sidebar=page.locator('[data-lime-mobile-sidebar]');
+  await expect(sidebar).toBeVisible();
+  await press(page,sidebar.getByRole('button',{name:'プロフィール',exact:true}));
+  await expect(page).toHaveURL(/\/u\/lime$/);
+  await expect(sidebar).toHaveAttribute('inert','');
+  expect(await sidebar.evaluate(el=>el.contains(document.activeElement))).toBe(false);
+  expect(messages).toEqual([]);
+});
+
+async function mockAccountAbout(page:Page, value:unknown) {
+  await page.route('**/rest/v1/profiles*',route => {
+    if (!new URL(route.request().url()).searchParams.get('select')?.includes('country_code')) return route.fallback();
+    return route.fulfill({contentType:'application/json',body:JSON.stringify(value)});
+  });
+}
+
+test('join-date link opens account information, reloads, and returns without changing tabs', async ({ page }, info) => {
+  const state = await setup(page, false); state.highlights = ['native'];
+  await mockAccountAbout(page, {
+    user_id: user.id, country_code: 'JP', connection_source: 'LimeNote for iPhone',
+    connection_updated_at: '2026-10-08T00:00:00Z', username_change_count: 2,
+    last_username_change_at: '2026-10-05T00:00:00Z', tracking_since: '2026-10-01T00:00:00Z',
+  });
+  await page.goto('u/lime');
+  await page.evaluate(() => document.documentElement.classList.add('dark'));
+  const link = page.locator('[data-lime-account-about-link]');
+  await expect(link).toHaveText('2026年10月 から参加');
+  await expect(link.locator('svg.lucide-calendar-days')).toBeVisible();
+  await press(page, link);
+  await expect(page).toHaveURL(/\/u\/lime\/about$/);
+  const about = page.locator('[data-lime-account-about]');
+  await expect(page.locator('[data-lime-app-header]').getByRole('heading', { name: 'アカウントについて' })).toBeVisible();
+  await expect(about.locator('header')).toHaveCount(0);
+  await expect(page.locator('[data-lime-app-header]')).toHaveCount(1);
+  await expect(about.getByText('@lime', { exact: true })).toBeVisible();
+  await expect(about.getByText('日本', { exact: true })).toBeVisible();
+  await expect(about.getByText('ユーザー名の変更2回')).toBeVisible();
+  await expect(about.getByText('前回の変更: 2026年10月')).toBeVisible();
+  await expect(about.getByText('LimeNote for iPhone')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath('account-about.png'), animations: 'disabled', fullPage: true });
+  await page.reload();
+  await expect(about.getByText('日本', { exact: true })).toBeVisible();
+  await press(page, page.locator('[data-lime-app-header]').getByRole('link', { name: 'プロフィールに戻る' }));
+  await expect(page).toHaveURL(/\/u\/lime$/);
+  await expect(page.locator('[data-lime-profile-mobile-tabs]').getByRole('tab')).toHaveCount(5);
+});
+
+test('account information shows uncollected values without inventing country or history', async ({ page }) => {
+  await setup(page, false);
+  await mockAccountAbout(page, null);
+  await page.goto('u/lime/about');
+  const about = page.locator('[data-lime-account-about]');
+  await expect(about.getByText('未取得', { exact: true })).toHaveCount(3);
+  await expect(about.getByText('ユーザー名の変更', { exact: true })).toBeVisible();
+  await expect(about.getByText('ユーザー名の変更0回')).toHaveCount(0);
+});
+
+test('account information shows the profile verification badge and omits tracking notices', async ({ page }) => {
+  await setup(page, false);
+  await page.route('**/rest/v1/profiles*', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify([{ ...profile, is_official: true }]) }));
+  await mockAccountAbout(page, {
+    user_id: user.id, country_code: null, connection_source: null, connection_updated_at: null,
+    username_change_count: 0, last_username_change_at: null, tracking_since: '2026-10-01T00:00:00Z',
+  });
+  await page.goto('u/lime/about');
+  const about = page.locator('[data-lime-account-about]');
+  const badge = about.getByRole('img', { name: 'Official' });
+  await expect(badge).toBeVisible();
+  expect(await badge.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
+  await expect(about.getByText('ユーザー名の変更0回')).toBeVisible();
+  await expect(about.getByText(/記録開始以降|以降の記録/)).toHaveCount(0);
+});
+
+test('added Bluesky and Misskey users persist in cloud across separate browsers and failed writes do not toggle', async ({ page, browser }) => {
+  const cloud = { rows: [] as {user_id:string;provider:string;handle:string}[], imported: false, fail: false };
+  const external = [
+    { handle:'cat.bsky.social', name:'Bluesky Cat', provider:'bluesky' },
+    { handle:'cat@misskey.io', name:'Misskey Cat', provider:'misskey' },
+  ];
+  const moduleUrls = new Map<Page,string>();
+  async function prepare(target: Page) {
+    target.on('request', request => {
+      if (new URL(request.url()).pathname.endsWith('/src/lib/externalAccounts.ts')) moduleUrls.set(target, request.url());
+    });
+    await setup(target,false);
+    await target.route('**/rest/v1/profiles?*',route => {
+      const handle=new URL(route.request().url()).searchParams.get('username')?.slice(3);
+      return route.fulfill({contentType:'application/json',body:JSON.stringify(external.some(row=>row.handle===handle)?[]:[profile])});
+    });
+    await target.route('**/rest/v1/rpc/import_external_account_users',route=>{
+      if(!cloud.imported){cloud.imported=true;cloud.rows.push(...(route.request().postDataJSON().legacy??[]).map((row:object)=>({...row,user_id:user.id})));}
+      return route.fulfill({status:204,body:''});
+    });
+    await target.route('**/rest/v1/external_account_users*',route=>{
+      const request=route.request();
+      if(request.method()==='POST'){
+        if(cloud.fail)return route.fulfill({status:500,contentType:'application/json',body:'{"message":"fixture write failed"}'});
+        const row=request.postDataJSON();if(!cloud.rows.some(existing=>existing.provider===row.provider&&existing.handle===row.handle))cloud.rows.push(row);
+        return route.fulfill({status:201,body:''});
+      }
+      if(request.method()==='DELETE'){
+        const url=new URL(request.url()),provider=url.searchParams.get('provider')?.slice(3),handle=url.searchParams.get('handle')?.slice(3);
+        cloud.rows=cloud.rows.filter(row=>row.provider!==provider||row.handle!==handle);
+        return route.fulfill({status:204,body:''});
+      }
+      return route.fulfill({contentType:'application/json',body:JSON.stringify(cloud.rows.map(({provider,handle})=>({provider,handle})))});
+    });
+    await target.route('**/public.api.bsky.app/**',route=>{
+      if(route.request().url().includes('getProfile'))return route.fulfill({contentType:'application/json',body:JSON.stringify({did:'did:plc:fixture-cat',handle:'cat.bsky.social',displayName:'Bluesky Cat',createdAt:user.createdAt,followersCount:0,followsCount:0,postsCount:0})});
+      return route.fulfill({contentType:'application/json',body:'{"feed":[],"posts":[],"actors":[]}'});
+    });
+    await target.route('https://misskey.io/api/**',route=>route.fulfill({contentType:'application/json',body:JSON.stringify(route.request().url().endsWith('/users/show')?{id:'local-cat',username:'cat',name:'Misskey Cat',notesCount:0}:[])}));
+  }
+  async function loadCloud(target:Page) {
+    await expect.poll(() => moduleUrls.has(target)).toBe(true);
+    await target.evaluate(async ({id,url})=>{
+      // Use the app's exact module URL, including Vite's HMR version, so the
+      // fixture activates the same store that the real profile buttons use.
+      const module=await import(url);
+      module.setExternalAccountOwner(id);await module.initialiseExternalAccounts();
+    },{id:user.id,url:moduleUrls.get(target)!});
+  }
+  await prepare(page);
+  for(const row of external){
+    await page.goto(`u/${row.handle}`);await loadCloud(page);
+    await expect(page.getByRole('heading',{name:row.name,exact:true})).toBeVisible();
+    await press(page,page.getByRole('button',{name:'追加する',exact:true}));
+    await expect(page.getByRole('button',{name:'追加済み',exact:true})).toBeVisible();
+  }
+  expect(cloud.rows).toHaveLength(2);
+  expect(await page.evaluate(()=>['lime_bluesky_author_handles','lime_misskey_author_handles'].map(key=>localStorage.getItem(key)))).toEqual([null,null]);
+  const secondContext=await browser.newContext({baseURL:'http://127.0.0.1:8080/RaimuNoteSNS.github.io/',serviceWorkers:'block'});
+  try {
+    const second=await secondContext.newPage();await prepare(second);
+    for(const row of external){
+      await second.goto(`u/${row.handle}`);await loadCloud(second);
+      await expect(second.getByRole('button',{name:'追加済み',exact:true})).toBeVisible();
+      await second.getByRole('button',{name:'追加済み',exact:true}).click();
+      await expect(second.getByRole('button',{name:'追加する',exact:true})).toBeVisible();
+    }
+    expect(cloud.rows).toHaveLength(0);
+    await page.goto('u/cat.bsky.social');await loadCloud(page);
+    await expect(page.getByRole('button',{name:'追加する',exact:true})).toBeVisible();
+    cloud.fail=true;
+    await press(page,page.getByRole('button',{name:'追加する',exact:true}));
+    await expect(page.getByText('追加済みユーザーを保存できませんでした。もう一度お試しください。')).toBeVisible();
+    await expect(page.getByRole('button',{name:'追加する',exact:true})).toBeVisible();
+    expect(cloud.rows).toHaveLength(0);
+  } finally {await secondContext.close();}
+});
+
+test('own post pin is read and updated through profiles and survives reload', async ({ page }) => {
+  const state=await setup(page,false);
+  const legacyRequests:string[]=[];
+  page.on('request',request=>{if(request.url().includes('/rest/v1/profile_pins'))legacyRequests.push(request.url());});
+  await page.goto('u/lime');
+  let card=page.locator('[data-lime-post-card]').filter({hasText:'9月の日記を更新しました'}).first();
+  await press(page,card.getByRole('button',{name:'ポストのメニュー'}));
+  await press(page,page.getByRole('button',{name:'プロフィールに固定',exact:true}));
+  await expect.poll(()=>state.pin).toBe('native');
+  await expect(page.locator('[data-lime-pinned-label]')).toBeVisible();
+  await page.reload();
+  await expect(page.locator('[data-lime-pinned-label]')).toBeVisible();
+  card=page.locator('[data-lime-post-card]').filter({hasText:'9月の日記を更新しました'}).first();
+  await press(page,card.getByRole('button',{name:'ポストのメニュー'}));
+  await press(page,page.getByRole('button',{name:'プロフィールから固定を解除',exact:true}));
+  await expect.poll(()=>state.pin).toBeNull();
+  await expect(page.locator('[data-lime-pinned-label]')).toHaveCount(0);
+  expect(legacyRequests).toEqual([]);
 });

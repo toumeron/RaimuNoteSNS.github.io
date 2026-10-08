@@ -1,3 +1,4 @@
+import { cloudExternalHandles, saveExternalProviderHandles } from './externalAccounts';
 import {externalFetch, accountSearchScore} from './utils';
 import { searchMisskey, configuredMisskeyHandles, isMisskeyActor, isMisskeyId, misskeyFeed, misskeyProfile, misskeyThread, misskeyFollowList, misskeyRequest, mapMisskeyNote, type MisskeyNote, misskeyEnabled, misskeyViewer, likeMisskey, unlikeMisskey, misskeyFollowState, followMisskey, unfollowMisskey } from './misskey';
 import {singlePreviewUrl,type LinkPreview} from './linkPreview';
@@ -37,6 +38,8 @@ export function normalizeBlueskyHandle(value: string): string {
 }
 
 export function getConfiguredBlueskyHandles(): string[] {
+  const cloud = cloudExternalHandles('bluesky');
+  if (cloud !== null) return cloud;
   if (typeof window === 'undefined') {
     return [];
   }
@@ -60,21 +63,8 @@ export function getConfiguredBlueskyHandles(): string[] {
   }
 }
 
-export function saveConfiguredBlueskyHandles(handles: string[]): string[] {
-  const normalized = Array.from(
-    new Set(handles.map(normalizeBlueskyHandle).filter(Boolean))
-  );
-
-  if (typeof window !== 'undefined') {
-    window.localStorage.setItem(BSKY_HANDLES_STORAGE_KEY, JSON.stringify(normalized));
-    window.dispatchEvent(
-      new CustomEvent('lime-bluesky-handles-changed', {
-        detail: { handles: normalized },
-      })
-    );
-  }
-
-  return normalized;
+export async function saveConfiguredBlueskyHandles(handles: string[]): Promise<string[]> {
+  return saveExternalProviderHandles('bluesky', handles.map(normalizeBlueskyHandle).filter(Boolean));
 }
 
 // ------------------------------------------------------------------
@@ -992,6 +982,7 @@ async function searchBlueskyUncached(query: string, options?: { includePosts?: b
   const actorTypeaheadRequest = fetchBlueskySearchEndpoint(
     'app.bsky.actor.searchActorsTypeahead', new URLSearchParams({ q, limit: '25' }), options?.signal,
   ).catch((error) => {
+    if (options?.signal?.aborted || error?.name === 'AbortError') throw error;
     console.error('Bluesky actor typeahead search failed:', error);
     return null;
   });

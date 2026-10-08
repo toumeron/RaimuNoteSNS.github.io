@@ -102,3 +102,12 @@ Deno.test('Amazon product information falls back to its mobile storefront and ig
  assert(calls.length===3&&preview?.image==='https://m.media-amazon.com/images/I/cover.jpg');
  await rejects(()=>loadPreview('https://www.amazon.co.jp/dp/4832297554',async()=>({status:200,html:'<title>Amazon.co.jp</title>'})));
 });
+
+Deno.test('a missing exact Misskey user is an empty lookup while other upstream failures remain errors',async()=>{
+ const original=globalThis.fetch;
+ try {
+  globalThis.fetch=async()=>new Response('{}',{status:404});
+  assert(await loadMisskey('users/show',{username:'missing',host:null})===null);
+  await rejects(()=>loadMisskey('users/search',{query:'missing'}));
+ } finally {globalThis.fetch=original;}
+});

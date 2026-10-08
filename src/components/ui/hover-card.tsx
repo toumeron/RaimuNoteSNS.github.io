@@ -1,11 +1,32 @@
 import * as React from "react";
 import * as HoverCardPrimitive from "@radix-ui/react-hover-card";
+import { Slot } from "@radix-ui/react-slot";
 
 import { cn } from "@/lib/utils";
 
 const HoverCard = HoverCardPrimitive.Root;
 
-const HoverCardTrigger = HoverCardPrimitive.Trigger;
+const HoverCardTrigger = React.forwardRef<
+  React.ElementRef<typeof HoverCardPrimitive.Trigger>,
+  React.ComponentPropsWithoutRef<typeof HoverCardPrimitive.Trigger>
+>(({ asChild, ...props }, ref) => {
+  const [canHover, setCanHover] = React.useState(() =>
+    typeof window !== 'undefined' && window.matchMedia('(hover: hover)').matches,
+  );
+  React.useEffect(() => {
+    const media = window.matchMedia('(hover: hover)');
+    const update = () => setCanHover(media.matches);
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
+  // Radix's touchstart preventDefault runs in React's passive listener.
+  // Touch-only devices keep the original link/click behavior without hover.
+  if (!canHover) {
+    return asChild ? <Slot ref={ref} {...props} /> : <a ref={ref} {...props} />;
+  }
+  return <HoverCardPrimitive.Trigger ref={ref} asChild={asChild} {...props} />;
+});
+HoverCardTrigger.displayName = HoverCardPrimitive.Trigger.displayName;
 
 const HoverCardContent = React.forwardRef<
   React.ElementRef<typeof HoverCardPrimitive.Content>,

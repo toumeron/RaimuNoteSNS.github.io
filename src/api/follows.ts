@@ -15,6 +15,10 @@ export async function getFollowStats(userId: string): Promise<{
   following: number;
   followedByMe: boolean;
 }> {
+  // External provider IDs are not UUIDs in Lime's follows table.
+  if (userId.startsWith('misskey-user:') || userId.startsWith('did:')) {
+    return { followers: 0, following: 0, followedByMe: false };
+  }
   const currentId = await getCurrentUserId();
 
   const [followersRes, followingRes, followedByMeRes] = await Promise.all([
@@ -29,12 +33,12 @@ export async function getFollowStats(userId: string): Promise<{
       .select('*', { count: 'exact', head: true })
       .eq('follower_id', userId),
     // 自分が userId をフォロー済みか
-    supabase
+    currentId ? supabase
       .from('follows')
       .select('follower_id')
       .eq('follower_id', currentId)
       .eq('followee_id', userId)
-      .maybeSingle(),
+      .maybeSingle() : Promise.resolve({ data: null }),
   ]);
 
   return {

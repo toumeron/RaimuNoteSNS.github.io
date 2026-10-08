@@ -133,3 +133,14 @@ it('cancels queued readers before they start and shares a three-request budget',
   release();await Promise.all(first);
   await externalRead(read);expect(read).toHaveBeenCalledTimes(1);
 });
+
+it('does not log an aborted typeahead search as a provider failure',async()=>{
+ const {searchBluesky}=await import('./bluesky');
+ const controller=new AbortController();
+ const logger=vi.spyOn(console,'error').mockImplementation(()=>{});
+ vi.stubGlobal('fetch',vi.fn(async()=>{controller.abort();throw new DOMException('Cancelled','AbortError');}));
+ try {
+  await expect(searchBluesky('abort-typeahead-check',{includePosts:false,signal:controller.signal})).rejects.toMatchObject({name:'AbortError'});
+  expect(logger).not.toHaveBeenCalled();
+ } finally {logger.mockRestore();}
+});

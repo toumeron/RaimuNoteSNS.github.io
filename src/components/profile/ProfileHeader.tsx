@@ -1,5 +1,6 @@
+import { setExternalAccountAdded } from '@/lib/externalAccounts';
 import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
-import {configuredMisskeyHandles,changeMisskeySetting,MISSKEY_HANDLES_KEY} from '@/lib/misskey';
+import {configuredMisskeyHandles} from '@/lib/misskey';
 import { ArrowLeft, CalendarDays, MapPin, Link2, MoreHorizontal, Radio, Search, Share2, UserCheck, UserPlus, X } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -22,7 +23,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import type { User } from '@/types';
-import { getConfiguredBlueskyHandles, normalizeBlueskyHandle, saveConfiguredBlueskyHandles } from '@/lib/bluesky';
+import { getConfiguredBlueskyHandles, normalizeBlueskyHandle } from '@/lib/bluesky';
 
 // --- 通知ボタン用アイコン（X/Twitter の「ポストの通知」アイコンと同じ24x24パス） ---
 // currentColor なのでライト/ダーク両テーマで text-foreground に追従。背景は透明。
@@ -87,7 +88,7 @@ export function ProfileHeader({
   isBlueskyProfile?: boolean;
 }) {
   const { user: me } = useAuth();
-  const { data: stats } = useFollowStats(user.id);
+  const { data: stats } = useFollowStats(isBlueskyProfile ? undefined : user.id);
   const { data: activityCount } = useQuery({
     queryKey: ['posts', 'user', user.id, 'activity-count', me?.id ?? null],
     queryFn: () => getProfileActivityCount(user.id),
@@ -118,12 +119,20 @@ export function ProfileHeader({
   const [isCoverOpen, setIsCoverOpen] = useState(false);
   const [membershipError, setMembershipError] = useState<string | null>(null);
   const [isLinkCopied, setIsLinkCopied] = useState(false);
+  const [savingExternalAccount, setSavingExternalAccount] = useState(false);
   const [isBlueskyAdded, setIsBlueskyAdded] = useState(() =>
     (user.id.startsWith('misskey-user:') ? configuredMisskeyHandles(false) : getConfiguredBlueskyHandles()).includes(normalizeBlueskyHandle(user.username)),
   );
   useEffect(() => {
-    setIsBlueskyAdded((user.id.startsWith('misskey-user:') ? configuredMisskeyHandles(false) : getConfiguredBlueskyHandles()).includes(normalizeBlueskyHandle(user.username)));
-  }, [user.username]);
+    const sync = () => setIsBlueskyAdded((user.id.startsWith('misskey-user:') ? configuredMisskeyHandles(false) : getConfiguredBlueskyHandles()).includes(normalizeBlueskyHandle(user.username)));
+    sync();
+    window.addEventListener('lime-bluesky-handles-changed', sync);
+    window.addEventListener('lime-misskey-changed', sync);
+    return () => {
+      window.removeEventListener('lime-bluesky-handles-changed', sync);
+      window.removeEventListener('lime-misskey-changed', sync);
+    };
+  }, [user.id, user.username]);
   useEffect(() => {
     if (!isSubscriptionOpen && !isAvatarOpen && !isCoverOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -199,21 +208,14 @@ export function ProfileHeader({
       },
     });
   };
-  const handleToggleBlueskyUser = () => {
+  const handleToggleBlueskyUser = async () => {
     const handle = normalizeBlueskyHandle(user.username);
-    if (!handle) return;
-    if (user.id.startsWith('misskey-user:')) {
-      const current=configuredMisskeyHandles(false).filter(handle=>handle!=='misskey.io');
-      const next=isBlueskyAdded ? current.filter(item=>item!==handle) : [...current,handle];
-      changeMisskeySetting(MISSKEY_HANDLES_KEY,next);setIsBlueskyAdded(!isBlueskyAdded);return;
-    }
-    const configured = getConfiguredBlueskyHandles();
-    const saved = saveConfiguredBlueskyHandles(
-      isBlueskyAdded
-        ? configured.filter((item) => item !== handle)
-        : [...configured, handle],
-    );
-    setIsBlueskyAdded(saved.includes(handle));
+    if (!handle || savingExternalAccount) return;
+    setSavingExternalAccount(true);
+    try {
+      await setExternalAccountAdded(user.id.startsWith('misskey-user:') ? 'misskey' : 'bluesky', handle, !isBlueskyAdded);
+    } catch { toast.error('追加済みユーザーを保存できませんでした。もう一度お試しください。'); }
+    finally { setSavingExternalAccount(false); }
   };
   // --- ベルボタン: 新しい投稿の通知をON/OFFする ---
   // iOSでは通知許可のダイアログをタップ直後に出す必要があるため、onClickから直接呼ぶ。
@@ -475,6 +477,7 @@ export function ProfileHeader({
               <Button
                 type="button"
                 onClick={handleToggleBlueskyUser}
+                disabled={savingExternalAccount}
                 className={`rounded-full px-5 font-bold shadow-soft transition ${
                   isBlueskyAdded
                     ? 'bg-secondary text-secondary-foreground hover:bg-destructive/10 hover:text-destructive'
@@ -527,10 +530,13 @@ export function ProfileHeader({
           </p>
         )}
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] leading-5 text-muted-foreground">
-          <span className="inline-flex items-center gap-1.5">
+          {isBlueskyProfile ? <span className="inline-flex items-center gap-1.5">
             <CalendarDays className="h-4 w-4 shrink-0" />
             <span>{dayjs(user.createdAt).format('YYYY年M月')} から参加</span>
-          </span>
+          </span> : <Link to={`/u/${encodeURIComponent(user.username)}/about`} className="inline-flex items-center gap-1.5" data-lime-account-about-link>
+            <CalendarDays className="h-4 w-4 shrink-0" />
+            <span>{dayjs(user.createdAt).format('YYYY年M月')} から参加</span>
+          </Link>}
           {user.location?.trim() && <span className="inline-flex min-w-0 max-w-full items-center gap-1.5" data-lime-profile-location>
             <MapPin className="h-4 w-4 shrink-0" aria-hidden="true" />
             <span className="break-words [overflow-wrap:anywhere]">{user.location}</span>

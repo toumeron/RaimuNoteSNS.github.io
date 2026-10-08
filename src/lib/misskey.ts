@@ -1,3 +1,4 @@
+import { cloudExternalHandles, saveExternalProviderHandles } from './externalAccounts';
 import type { BlueskyMappedPost, BlueskyProfile } from './bluesky';
 import {supabase} from './supabase';
 import {externalRead, accountSearchScore} from './utils';
@@ -11,9 +12,15 @@ export const isMisskeyActor = (actor: string) => isMisskeyId(actor) || actor ===
 export function misskeyEnabled() { return true; }
 export function configuredMisskeyHandles(respectEnabled=true): string[] {
   if (respectEnabled && !misskeyEnabled()) return [];
+  const cloud = cloudExternalHandles('misskey');
+  if (cloud !== null) return cloud;
   try { return [...new Set<string>(JSON.parse(localStorage.getItem(MISSKEY_HANDLES_KEY) || '[]').filter((v:unknown) => typeof v === 'string' && /^[^@\s/]+@[^@\s/]+$/.test(v)))]; } catch { return []; }
 }
-export function changeMisskeySetting(key:string, value:unknown) {
+export async function changeMisskeySetting(key:string, value:unknown) {
+  if (key === MISSKEY_HANDLES_KEY) {
+    await saveExternalProviderHandles('misskey', Array.isArray(value) ? value : []);
+    return;
+  }
   localStorage.setItem(key, JSON.stringify(value));
   window.dispatchEvent(new Event('lime-misskey-changed'));
 }
@@ -29,14 +36,21 @@ export async function misskeyRequest<T>(endpoint:string, body:Record<string,unkn
   if(signal?.aborted) abort();else signal?.addEventListener('abort',abort,{once:true});
   const timer=setTimeout(()=>controller.abort(new DOMException('Misskey request timed out','TimeoutError')),10000);
   try {
+  const {data:{session}}=await supabase.auth.getSession();
+  const readRelay=async()=>{
+    const result=await externalRead(()=>supabase.functions.invoke('link-preview',{body:{mode:'misskey',endpoint,params},signal:controller.signal}),controller.signal);
+    if(result.error||!result.data||!('data' in result.data))throw new Error('Misskeyの取得に失敗しました');
+    return result.data.data as T;
+  };
+  // Signed-in readers use the existing authenticated relay before attempting
+  // browser requests that can fail CORS. Public, signed-out reads remain direct.
+  if(session)return await readRelay();
   let response:Response;
   try {if(relayRequired)throw new TypeError('Direct reader unavailable');response=await externalRead(()=>fetch(`${MISSKEY_ORIGIN}/api/${endpoint}`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(params),signal:controller.signal}),controller.signal);}
   catch(error){
     if(!(error instanceof TypeError)||signal?.aborted||controller.signal.aborted)throw error;
     relayRequired=true;
-    const result=await externalRead(()=>supabase.functions.invoke('link-preview',{body:{mode:'misskey',endpoint,params},signal:controller.signal}),controller.signal);
-    if(result.error||!result.data||!('data' in result.data))throw new Error('Misskeyの取得に失敗しました');
-    return result.data.data as T;
+    return await readRelay();
   }
   if (!response.ok) {
     const result=await response.json().catch(()=>null);
@@ -69,7 +83,9 @@ export async function misskeyProfile(actor:string,signal?:AbortSignal) {
   if(cached && cached.expires>Date.now())return cached.profile;
   const [username,host]=normalized.split('@');
   const body=actor.startsWith('misskey-user:') ? {userId:actor.slice('misskey-user:'.length)} : {username,host:!host || host==='misskey.io' ? null:host};
-  const profile=mapMisskeyUser(await misskeyRequest<MisskeyUser>('users/show',body,signal));
+  const row=await misskeyRequest<MisskeyUser|null>('users/show',body,signal);
+  if(!row)throw new Error('Misskeyのアカウントが見つかりません');
+  const profile=mapMisskeyUser(row);
   const entry={profile,expires:Date.now()+300000};
   profileCache.set(normalized.toLowerCase(),entry);profileCache.set(profile.username.toLowerCase(),entry);profileCache.set(profile.id,entry);
   if(profileCache.size>100)profileCache.delete(profileCache.keys().next().value!);

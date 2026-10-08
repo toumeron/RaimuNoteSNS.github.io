@@ -1,19 +1,24 @@
+vi.mock('@/lib/externalAccounts', () => ({ setExternalAccountOwner: vi.fn(), initialiseExternalAccounts: vi.fn().mockResolvedValue(undefined), refreshExternalAccounts: vi.fn().mockResolvedValue(undefined) }));
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { Session } from '@supabase/supabase-js';
 import { getSavedAccountTokens, readSavedAccounts, saveAccountSession } from '@/lib/savedAccounts';
 
+const connectionSync = vi.hoisted(() => vi.fn());
+vi.mock('@/api/account-about', () => ({ accountAboutKey: (id: string) => ['account-about', id], syncAccountConnection: connectionSync }));
 const mock = vi.hoisted(() => ({ callback: null as null | ((event: string, session: Session | null) => void), from: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn(), setSession: vi.fn(), signOut: vi.fn(), privatePrompt: vi.fn() }));
 vi.mock('@/lib/supabase', () => ({ supabase: {
   auth: { onAuthStateChange: mock.subscribe, signOut: mock.signOut, setSession: mock.setSession }, from: mock.from,
 } }));
 vi.mock('@/lib/privateProfile', () => ({getPrivateBotPrompt: mock.privatePrompt}));
 import { AuthProvider, useAuth } from './useAuth';
+import { setExternalAccountOwner, initialiseExternalAccounts } from '@/lib/externalAccounts';
 let currentAuth: ReturnType<typeof useAuth>;
 function Probe() { const auth = useAuth(); currentAuth=auth; return <><div>{auth.user?.displayName || 'signed out'}</div><input aria-label="draft" defaultValue="" /></>; }
 beforeEach(() => {
   localStorage.clear();
+  connectionSync.mockReset().mockResolvedValue(false);
   mock.privatePrompt.mockReset().mockResolvedValue('private prompt');
   vi.useFakeTimers();
   mock.subscribe.mockImplementation(callback => { mock.callback = callback; return { data: { subscription: { unsubscribe: mock.unsubscribe } } }; });
@@ -139,4 +144,34 @@ it('shows profile data without waiting for a slow private settings request', asy
   await act(async () => { await vi.advanceTimersByTimeAsync(0); });
   expect(screen.getByText('Profile Name')).toBeTruthy();
   expect(currentAuth.user?.username).toBe('profile');
+});
+
+it('refreshes country metadata in the background only for the signed-in account', async () => {
+  render(<QueryClientProvider client={new QueryClient()}><AuthProvider><Probe /></AuthProvider></QueryClientProvider>);
+  act(() => mock.callback?.('INITIAL_SESSION', session));
+  expect(connectionSync).not.toHaveBeenCalled();
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  expect(connectionSync).toHaveBeenCalledWith('test-user', expect.any(AbortSignal));
+  const firstSignal = connectionSync.mock.calls[0][1] as AbortSignal;
+  act(() => mock.callback?.('TOKEN_REFRESHED', session));
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  expect(connectionSync).toHaveBeenCalledOnce();
+  act(() => mock.callback?.('SIGNED_OUT', null));
+  expect(firstSignal.aborted).toBe(true);
+});
+
+it('switches the cloud external-user owner with auth and defers cloud reads outside the auth callback', async () => {
+  render(<QueryClientProvider client={new QueryClient()}><AuthProvider><Probe /></AuthProvider></QueryClientProvider>);
+  act(() => mock.callback?.('INITIAL_SESSION', session));
+  expect(setExternalAccountOwner).toHaveBeenLastCalledWith('test-user');
+  expect(initialiseExternalAccounts).not.toHaveBeenCalled();
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  expect(initialiseExternalAccounts).toHaveBeenCalledOnce();
+  const nextSession = { ...session, user: { ...session.user, id: 'other-user' } } as Session;
+  act(() => mock.callback?.('INITIAL_SESSION', nextSession));
+  expect(setExternalAccountOwner).toHaveBeenLastCalledWith('other-user');
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  expect(initialiseExternalAccounts).toHaveBeenCalledTimes(2);
+  act(() => mock.callback?.('SIGNED_OUT', null));
+  expect(setExternalAccountOwner).toHaveBeenLastCalledWith(null);
 });

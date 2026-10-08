@@ -29,7 +29,7 @@ export async function getUserByUsername(username: string): Promise<User | null> 
     .from('profiles')
     .select(USER_SELECT_COLUMNS)
     .eq('username', username)
-    .single();
+    .maybeSingle();
 
   if (error || !data) return null;
   return toUser(data);

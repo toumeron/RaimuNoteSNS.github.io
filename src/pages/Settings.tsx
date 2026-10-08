@@ -1,9 +1,10 @@
+import { setExternalAccountAdded } from '@/lib/externalAccounts';
 import { uploadProfileMedia } from '@/lib/uploadProfileMedia';
 import { getPrivateBotPrompt } from '@/lib/privateProfile';
 import {createAccountExport,checkExportAbort} from '@/lib/accountExport';
 import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription} from '@/components/ui/dialog';
 import {useQueryClient} from '@tanstack/react-query';
-import {configuredMisskeyHandles,MISSKEY_HANDLES_KEY,isMisskeyActor,changeMisskeySetting} from '@/lib/misskey';
+import {configuredMisskeyHandles,isMisskeyActor} from '@/lib/misskey';
 import {CompanionSettings} from '@/components/ai/CompanionSettings';
 import { createPortal } from 'react-dom';
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react';
@@ -46,7 +47,6 @@ import {
   fetchBlueskyProfile as fetchExternalProfile,
   getConfiguredBlueskyHandles,
   normalizeBlueskyHandle,
-  saveConfiguredBlueskyHandles,
   getStoredBlueskySession,
   loginToBluesky,
   logoutFromBluesky,
@@ -1015,8 +1015,7 @@ export default function Settings() {
       const profile=await fetchExternalProfile(normalized);
       if(!profile)throw new Error('アカウントが見つかりません');
       const handle=profile.username;
-      if(isMisskeyActor(handle)) changeMisskeySetting(MISSKEY_HANDLES_KEY,[...new Set([...misskeyHandles,handle])]);
-      else setBlueskyHandles(saveConfiguredBlueskyHandles([...blueskyHandles,handle]));
+      await setExternalAccountAdded(isMisskeyActor(handle) ? 'misskey' : 'bluesky',handle,true);
       setBlueskyProfiles(prev=>({...prev,[handle]:{handle,displayName:profile.displayName,avatar:profile.avatarUrl}}));
       setBlueskyHandleInput('');
       void queryClient.invalidateQueries({queryKey:['feed']});
@@ -1025,16 +1024,20 @@ export default function Settings() {
     finally {setAddingExternalAccount(false);}
   };
 
-  const handleRemoveBlueskyHandle = (handle: string) => {
-    if(isMisskeyActor(handle)) changeMisskeySetting(MISSKEY_HANDLES_KEY,misskeyHandles.filter(item=>item!==handle));
-    else setBlueskyHandles(saveConfiguredBlueskyHandles(blueskyHandles.filter(item=>item!==handle)));
-    void queryClient.invalidateQueries({queryKey:['feed']});
-    setBlueskyProfiles((prev) => {
-      const next = { ...prev };
-      delete next[handle];
-      return next;
-    });
-    toast.success(`@${handle} を削除しました`);
+  const handleRemoveBlueskyHandle = async (handle: string) => {
+    if (addingExternalAccount) return;
+    setAddingExternalAccount(true);
+    try {
+      await setExternalAccountAdded(isMisskeyActor(handle) ? 'misskey' : 'bluesky',handle,false);
+      void queryClient.invalidateQueries({queryKey:['feed']});
+      setBlueskyProfiles((prev) => {
+        const next = { ...prev };
+        delete next[handle];
+        return next;
+      });
+      toast.success(`@${handle} を削除しました`);
+    } catch { toast.error('追加済みユーザーを保存できませんでした。もう一度お試しください。'); }
+    finally { setAddingExternalAccount(false); }
   };
 
   const handleBlueskyLogin = async () => {
@@ -1412,7 +1415,8 @@ export default function Settings() {
                     </Link>
                     <button
                       type="button"
-                      onClick={() => handleRemoveBlueskyHandle(handle)}
+                      onClick={() => void handleRemoveBlueskyHandle(handle)}
+                      disabled={addingExternalAccount}
                       className="shrink-0 rounded-full p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
                       aria-label={`@${handle}を削除`}
                       title={`@${handle}を削除`}
@@ -1493,7 +1497,7 @@ export default function Settings() {
                 </button>
               </div>
               <p className="text-[10px] leading-relaxed text-muted-foreground">
-                通常のログインパスワードではなく、Blueskyが発行する
+※
                 <a
                   href="https://bsky.app/settings/app-passwords"
                   target="_blank"

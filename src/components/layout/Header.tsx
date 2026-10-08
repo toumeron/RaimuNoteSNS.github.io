@@ -24,6 +24,7 @@ import { supabase } from '@/lib/supabase';
 import { searchExternalUsers } from '@/lib/bluesky';
 import type { User } from '@/types';
 import {
+  ArrowLeft,
   LogOut,
   Settings as SettingsIcon,
   User as UserIcon,
@@ -2032,6 +2033,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
 
   const isSearchPage = normalizeAppPath(location.pathname) === '/u/LimeBiz';
   const isChatPage = normalizeAppPath(location.pathname) === '/chat';
+  const accountAboutMatch = normalizeAppPath(location.pathname).match(/^\/u\/([^/]+)\/about\/?$/);
   const hideHeaderOnMobileProfile = isGithubPagesProfilePath(location.pathname);
   // ポスト詳細ページはモバイルで専用ヘッダー(戻る・タイトル・もっと見る)を
   // PostDetail.tsx側が表示するため、共通のHeaderはモバイルでのみ非表示にする。
@@ -2696,7 +2698,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
         )}
         <aside
           ref={desktopAsideRef}
-          aria-hidden={desktopLayout ? false : !isMobileSidebarOpen}
+          {...(!desktopLayout && !isMobileSidebarOpen ? { inert: '' } : {})}
           data-lime-desktop-sidebar={desktopLayout || undefined}
           data-lime-mobile-sidebar="true"
           className={cn(
@@ -3311,6 +3313,13 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
               +設定歯車アイコンを配置する。ロゴはモバイルでは表示しない。
             - PC(sm以上): ロゴを左端、アバターを右端、その間(中央)にタブを配置。 */}
         <div data-lime-header-row className="relative mx-auto flex h-14 max-w-5xl items-center gap-2 px-3 sm:h-16 sm:px-4">
+          {accountAboutMatch ? <>
+            <Button asChild variant="ghost" size="icon" className="shrink-0 rounded-full">
+              <Link to={`/u/${accountAboutMatch[1]}`} aria-label="プロフィールに戻る"><ArrowLeft className="h-5 w-5" /></Link>
+            </Button>
+            <h1 className="ml-2 min-w-0 truncate text-xl font-bold">アカウントについて</h1>
+          </> : <>
+
           <div className="sm:order-3">
             <div className="sm:hidden">
               {renderMobileAccountControl()}
@@ -3354,6 +3363,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
               </TabsList>
             )}
           </div>
+          </>}
         </div>
 
         {/* タブ行(モバイルのみ)。ロゴ行のすぐ下に、画面幅に応じて間隔が変わる

@@ -28,6 +28,7 @@ export function AppLayout() {
     window.scrollTo(0, 0);
   }, [location.pathname]);
 
+  const isAccountAboutPage = /^\/u\/[^/]+\/about$/.test(location.pathname);
   const isPostDetailPage = /^\/post\/[^/]+$/.test(location.pathname);
   // 大文字小文字を区別せず /limepro または /LimePro にマッチさせる判定
   const isLimeProPage = /^\/limepro$/i.test(location.pathname);
@@ -44,6 +45,7 @@ export function AppLayout() {
 
   // ページのパスに応じてメインコンテナのクラス名を切り替える
   let mainClassName = 'mx-auto max-w-2xl px-4 py-6';
+  if (isAccountAboutPage) mainClassName = 'mx-auto max-w-2xl px-0 py-0';
   
   if (isLimeProPage) {
     // LimeProページの場合は最大幅制限を解除し、パディングもゼロにする（フルスクリーン対応）
@@ -56,7 +58,7 @@ export function AppLayout() {
 
   if (isDesktop) {
     const isWorkspacePage = location.pathname === '/chat' || location.pathname.startsWith('/media');
-    const hideHeader = location.pathname.startsWith('/u/') || ['/search', '/notifications', '/settings', '/chat', '/bookmarks'].includes(location.pathname) || location.pathname.startsWith('/media') || isPostDetailPage;
+    const hideHeader = (location.pathname.startsWith('/u/') && !isAccountAboutPage) || ['/search', '/notifications', '/settings', '/chat', '/bookmarks'].includes(location.pathname) || location.pathname.startsWith('/media') || isPostDetailPage;
     const showRightSidebar = !['/chat', '/settings'].includes(location.pathname);
     const isEdgePage = isWorkspacePage || location.pathname === '/bookmarks' || location.pathname === '/' || location.pathname.startsWith('/u/') || isPostDetailPage;
     return (

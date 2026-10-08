@@ -1,3 +1,5 @@
+import { setExternalAccountOwner, initialiseExternalAccounts, refreshExternalAccounts } from '@/lib/externalAccounts';
+import { accountAboutKey, syncAccountConnection } from '@/api/account-about';
 import { getPrivateBotPrompt } from '@/lib/privateProfile';
 import { clearPrivateMedia } from '@/lib/privateMediaFetch';
 import {isInstalledPwa} from '@/lib/utils';
@@ -192,6 +194,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const viewerId = newSession?.user.id ?? null;
       if (cachedViewerId !== viewerId) {
         activateAccountIntegrations(cachedViewerId, viewerId);
+        setExternalAccountOwner(viewerId);
         // Never reuse another account's cached restricted posts or quote parents.
         clearPrivateMedia();
         queryClient.clear();
@@ -238,6 +241,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       subscription.unsubscribe();
     };
   }, [queryClient]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const refresh = () => {
+      if (!navigator.onLine || document.visibilityState === 'hidden') return;
+      void refreshExternalAccounts().catch(() => { /* Retry on focus/reconnect; writes report failures to the user. */ });
+    };
+    const timer = setTimeout(() => { void initialiseExternalAccounts().catch(() => {}); }, 0);
+    const interval = setInterval(refresh, 30000);
+    window.addEventListener('focus', refresh);
+    window.addEventListener('online', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      clearTimeout(timer); clearInterval(interval);
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener('online', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const id = user.id;
+    const controller = new AbortController();
+    const sync = () => {
+      if (!navigator.onLine) return;
+      void syncAccountConnection(id, controller.signal).then(updated => {
+        if (updated && !controller.signal.aborted) void queryClient.invalidateQueries({ queryKey: accountAboutKey(id) });
+      }).catch(() => { /* Country lookup is optional; do not block sign-in. */ });
+    };
+    const timer = setTimeout(sync, 0);
+    window.addEventListener('online', sync);
+    return () => { clearTimeout(timer); controller.abort(); window.removeEventListener('online', sync); };
+  }, [user?.id, queryClient]);
 
   return (
     <AuthContext.Provider value={{ user, session, loading, logout, accounts, switching, switchAccount, forgetAccount }}>
