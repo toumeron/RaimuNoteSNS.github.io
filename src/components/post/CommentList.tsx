@@ -30,7 +30,8 @@ import {
   HoverCardTrigger,
 } from '@/components/ui/hover-card';
 import dayjs from 'dayjs';
-import { commentThreadUrl } from '@/lib/commentThread';
+import { commentThreadUrl, getAuthorReplyConversations } from '@/lib/commentThread';
+import { ReplyChain } from '@/components/post/ReplyChain';
 
 // ─── 型 ───────────────────────────────────────────────────────────────────────
 interface CommentAuthor {
@@ -130,6 +131,7 @@ export function CommentCard({
   embedded = false,
   repostedByLabel,
   replyToUsername,
+  flat = false,
   mediaPresentation,
   onMediaReply,
   onMediaLikeChange,
@@ -143,6 +145,7 @@ export function CommentCard({
   embedded?: boolean;
   repostedByLabel?: string;
   replyToUsername?: string;
+  flat?: boolean;
   mediaPresentation?: 'actions' | 'menu';
   onMediaReply?:()=>void;
   onMediaLikeChange?:(state:{liked:boolean;count:number})=>void;
@@ -1211,14 +1214,15 @@ export function CommentCard({
         data-lime-thread-item={thread || undefined}
         onClick={handleCardClick}
         className={
-          embedded ? 'relative w-full cursor-pointer' : mobileFlat
+          embedded ? 'relative w-full cursor-pointer' : flat
+            ? 'relative w-full py-3 cursor-pointer' : mobileFlat
             ? 'comment-list-mobile-item relative mx-auto w-full max-w-[600px] px-0 py-3 cursor-pointer'
             : isMobile
               ? 'relative mx-auto w-full max-w-[600px] px-0 py-3 cursor-pointer'
             : 'rounded-3xl border border-border/60 bg-card p-5 shadow-soft transition hover:shadow-card-soft relative cursor-pointer'
         }
       >
-        {isMobile && !thread && (
+        {isMobile && !thread && !flat && (
           <div className="pointer-events-none absolute bottom-0 left-1/2 w-screen -translate-x-1/2 border-b border-border/60" />
         )}
 
@@ -1372,14 +1376,19 @@ export function CommentList({
   postId,
   mobileFlat = false,
   parentCommentId = null,
+  threadAuthorId,
 }: {
   postId: string;
   mobileFlat?: boolean;
   parentCommentId?: string | null;
+  threadAuthorId?: string;
 }) {
   const { data, isLoading, isError } = useComments(postId);
+  const [expandedReplies, setExpandedReplies] = useState<ReadonlySet<string>>(new Set());
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [, setTick] = useState(0);
+
+  useEffect(() => { setExpandedReplies(new Set()); }, [postId, parentCommentId]);
 
   useEffect(() => {
     getCurrentUserId().then(setCurrentUserId);
@@ -1415,24 +1424,22 @@ export function CommentList({
     );
   }
 
-  const sortedComments = [...directReplies].sort((a, b) => {
-    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-  });
+  const conversations = getAuthorReplyConversations(data ?? [], threadAuthorId, parentCommentId, expandedReplies);
 
   return (
-    <ul className={`${mobileFlat ? 'comment-list-mobile-stack ' : ''}space-y-4`}>
-      {sortedComments.map((c) => (
-        <li key={c.id} className="animate-float-up">
-          <CommentCard
-            comment={{
-              ...c,
-              likedByMe: !!(c as any).likedByMe,
-            } as unknown as Comment}
-            currentUserId={currentUserId}
-            mobileFlat={mobileFlat}
-          />
+    <ul className="m-0 space-y-0" data-lime-detail-conversations>
+      {conversations.flatMap(({ root, branches, threadIds }) => branches.map(({ items, moreFor }) => (
+        <li key={`${root.id}:${items.at(-1)?.id}:${moreFor?.id ?? 'shown'}`} className="animate-float-up">
+          <div className="border-b border-border/60 px-4 sm:px-6">
+            <ReplyChain>
+              {items.map(c => <div key={c.id} data-lime-conversation-comment={c.id} data-lime-conversation-parent={c.parentCommentId ?? ''}>
+                <CommentCard flat comment={{ ...c, likesCount: Number(c.likesCount ?? c.likes_count ?? 0), likedByMe: !!c.likedByMe } as Comment} currentUserId={currentUserId} mobileFlat={mobileFlat} thread={threadIds.has(c.id)} />
+              </div>)}
+              {moreFor && <button type="button" data-lime-thread-more={moreFor.id} onClick={() => setExpandedReplies(previous => new Set([...previous, moreFor.id]))} className="ml-14 flex min-h-12 items-center py-3 text-base text-primary hover:underline">返信を表示</button>}
+            </ReplyChain>
+          </div>
         </li>
-      ))}
+      )))}
     </ul>
   );
 }

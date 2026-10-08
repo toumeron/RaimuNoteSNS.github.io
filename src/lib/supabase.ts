@@ -1,5 +1,6 @@
 // src/lib/supabase.ts
 import { createClient } from '@supabase/supabase-js';
+import { createPrivateMediaFetch } from './privateMediaFetch';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -10,6 +11,7 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
  * import して利用することが可能になります。
  */
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  global: { fetch: createPrivateMediaFetch(supabaseUrl) },
   auth: {
     persistSession: true,
     autoRefreshToken: true,

@@ -1,8 +1,9 @@
+import { getPrivateBotPrompt } from '@/lib/privateProfile';
 import type { User } from '@/types';
 import { supabase } from '@/lib/supabase';
 
 // Keep the fields returned by toUser; exclude unrelated profile settings.
-const USER_SELECT_COLUMNS = 'id, username, display_name, bio, location, avatar_url, cover_url, created_at, is_official, emoji_effect, bot_enabled, bot_prompt';
+const USER_SELECT_COLUMNS = 'id, username, display_name, bio, location, avatar_url, cover_url, created_at, is_official, emoji_effect, bot_enabled';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function toUser(row: any): User {
@@ -19,7 +20,7 @@ function toUser(row: any): User {
     emojiEffect: (row.emoji_effect ?? '') as string,
     // bot関連のプロパティを追加
     bot_enabled: (row.bot_enabled ?? false) as boolean,
-    bot_prompt: (row.bot_prompt ?? '') as string,
+    bot_prompt: undefined, // Private settings are fetched separately by their owner.
   };
 }
 
@@ -59,7 +60,13 @@ export async function updateProfile(
   if (patch.emojiEffect !== undefined) dbPatch.emoji_effect = patch.emojiEffect;
   // bot関連の値をDBのカラム名（スネークケース）にマッピングして追加
   if (patch.bot_enabled !== undefined) dbPatch.bot_enabled = patch.bot_enabled;
-  if (patch.bot_prompt !== undefined) dbPatch.bot_prompt = patch.bot_prompt;
+  if (patch.bot_prompt !== undefined) {
+    // Never write a private prompt into the legacy public column unless the
+    // server-side migration that redirects it to owner-only storage is present.
+    try { await getPrivateBotPrompt(id); }
+    catch { throw new Error('Bot設定の非公開保存先が利用できません。データベースの更新後に再試行してください。'); }
+    dbPatch.bot_prompt = patch.bot_prompt;
+  }
 
   // --- 画像アップロードの共通処理 ---
   const uploadImage = async (url: string, bucket: string) => {

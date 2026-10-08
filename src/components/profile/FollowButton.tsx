@@ -124,7 +124,7 @@ function FollowButtonLabel({
  * 念のためこのコンポーネント自身も未ログイン時はnullを返す)。
  */
 function BlueskyFollowButton({ did }: { did: string }) {
-  const session = useBlueskySession();
+  const session = useBlueskySession(did);
   const [followUri, setFollowUri] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isPending, setIsPending] = useState(false);
@@ -138,12 +138,14 @@ function BlueskyFollowButton({ did }: { did: string }) {
     }
 
     let cancelled = false;
+    setFollowUri(null);
     setIsLoading(true);
 
     fetchBlueskyActorViewerState(did)
       .then((state) => {
         if (!cancelled) setFollowUri(state.followUri);
       })
+      .catch(error=>{if(!cancelled) console.warn('External follow state unavailable',error);})
       .finally(() => {
         if (!cancelled) setIsLoading(false);
       });

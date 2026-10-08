@@ -8,6 +8,7 @@ export default defineConfig({
   plugins: [react()],
   test: {
     environment: "jsdom",
+    env: { BASE_URL: "/RaimuNoteSNS.github.io/" },
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.{test,spec}.{ts,tsx}"],

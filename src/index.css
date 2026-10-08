@@ -78,7 +78,7 @@
   }
 
   .dark {
-    /* Twitterのダーク（夜明け）を意識した深い紺色ベース */
+    /* ページの地色と、入力欄・カードの面を分けて視認性を保つ。 */
     --background: 0 0% 0%;
     --foreground: 210 20% 98%;
     
@@ -122,7 +122,7 @@
     --shadow-card: 0 8px 30px -8px rgba(0, 0, 0, 0.5);
 
     /* sidebar (dark) */
-    --sidebar-background: 210 20% 8%;
+    --sidebar-background: 0 0% 0%;
     --sidebar-foreground: 210 20% 98%;
     --sidebar-primary: 340 85% 65%;
     --sidebar-border: 210 20% 18%;
@@ -157,6 +157,10 @@
   }
 
   html:not(.dark) body {
+    background-image: none;
+  }
+
+  html.dark body {
     background-image: none;
   }
 

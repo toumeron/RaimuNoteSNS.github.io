@@ -7,7 +7,7 @@ export const SAVED_ACCOUNTS_KEY = `lime_saved_accounts:${project}:v1`;
 export const SAVED_ACCOUNTS_EVENT = 'lime-saved-accounts-changed';
 const integrationKey = (id: string) => `lime_account_integrations:${project}:${id}`;
 export const ACTIVE_ACCOUNT_KEY = `lime_active_account:${project}`;
-const integrationKeys = ['lime_bluesky_session', 'lime_bluesky_author_handles'] as const;
+const integrationKeys = ['lime_bluesky_session', 'lime_bluesky_author_handles', 'lime_misskey_author_handles'] as const;
 let fallback: StoredAccount[] = [];
 
 function readStoredAccounts(): StoredAccount[] {
@@ -86,6 +86,7 @@ export function activateAccountIntegrations(previousId: string | null | undefine
     // If restoring settings fails, never leave another account's credentials active.
     for (const key of integrationKeys) { try { localStorage.removeItem(key); } catch { /* Storage disabled. */ } }
   }
+  window.dispatchEvent(new Event('lime-misskey-changed'));
   window.dispatchEvent(new Event('lime-bluesky-session-changed'));
   window.dispatchEvent(new Event('lime-bluesky-handles-changed'));
 }

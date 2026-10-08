@@ -1,5 +1,5 @@
-/* Desktop adapts existing mobile components. No rules apply below 768px. */
-@media (min-width: 768px) {
+/* The desktop shell also serves iPad mini portrait and wider Split View panes. */
+@media (min-width: 640px) {
   .lime-app-shell {
     --desktop-line: hsl(var(--border) / .6);
     --desktop-header-height: 64px;
@@ -145,6 +145,11 @@
   .lime-app-shell [data-lime-profile-mobile-tabs] { display: grid; }
   /* Keep the original mobile indicator element and its sliding transition. */
   .lime-app-shell [data-lime-profile-mobile-tabs] { overflow: visible; isolation: isolate; }
+  .lime-app-shell [data-lime-profile-mobile-tabs][data-lime-profile-tabs-scrollable] {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
   .lime-app-shell [data-lime-profile-mobile-tabs] > .profile-tabs-underline {
     display: block !important; position: absolute; bottom: 8px; width: 64px; height: 4px;
     margin: 0; z-index: 3; opacity: 1 !important; visibility: visible !important;
@@ -446,7 +451,7 @@
   .lime-desktop-discover > div { position: sticky; top: 20px; }
   .lime-desktop-discover > div > div { background: transparent !important; }
 }
-@media (min-width: 768px) and (max-width: 1100px) {
+@media (min-width: 640px) and (max-width: 1100px) {
   .lime-app-shell [data-lime-media-viewport][class*="md:grid"] { grid-template-columns: minmax(0, 1fr); overflow-y: auto; }
   .lime-app-shell [data-lime-media-viewport][class*="md:grid"] > main { height: 55dvh; }
   .lime-app-shell [data-lime-media-viewport] > aside { height: auto; border-left: 0; border-top: 1px solid var(--desktop-line); }
@@ -457,7 +462,7 @@
   .lime-app-shell [data-lime-desktop-sidebar] nav button svg { width: 26px; height: 26px; }
   .lime-app-shell [data-lime-desktop-sidebar] nav button span { font-size: 19px; }
 }
-@media (min-width: 768px) and (max-width: 899px) {
+@media (min-width: 640px) and (max-width: 899px) {
   /* Photo controls stack as on mobile when the content column is narrow. */
   .lime-app-shell [data-lime-media-viewport][class*="md:grid"] { grid-template-columns: minmax(0, 1fr); overflow-y: auto; }
   .lime-app-shell [data-lime-media-viewport][class*="md:grid"] > main { height: 55dvh; }
@@ -467,7 +472,13 @@
 }
 
 /* Touch tablet layouts reserve the icon rail; desktop mouse layouts retain their columns. */
-@media (min-width: 768px) and (max-width: 1399px) and (hover: none) and (pointer: coarse) {
+@media (min-width: 640px) and (max-width: 1399px) and (hover: none) and (pointer: coarse) {
   .lime-app-shell:not([data-lime-workspace]) { grid-template-columns: 72px minmax(0, 1fr) clamp(210px, 25vw, 380px); }
   .lime-app-shell [data-lime-sidebar-logo] { display: none !important; }
+}
+
+/* An iPad retains its rail even when Dock/trackpad interaction changes pointer queries. */
+@media (min-width: 640px) and (max-width: 1399px) {
+  .lime-app-shell[data-lime-ipad]:not([data-lime-workspace]) { grid-template-columns: 72px minmax(0, 1fr) clamp(210px, 25vw, 380px); }
+  .lime-app-shell[data-lime-ipad] [data-lime-sidebar-logo] { display: none !important; }
 }

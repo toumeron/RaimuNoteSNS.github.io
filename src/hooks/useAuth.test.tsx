@@ -4,15 +4,17 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { Session } from '@supabase/supabase-js';
 import { getSavedAccountTokens, readSavedAccounts, saveAccountSession } from '@/lib/savedAccounts';
 
-const mock = vi.hoisted(() => ({ callback: null as null | ((event: string, session: Session | null) => void), from: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn(), setSession: vi.fn(), signOut: vi.fn() }));
+const mock = vi.hoisted(() => ({ callback: null as null | ((event: string, session: Session | null) => void), from: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn(), setSession: vi.fn(), signOut: vi.fn(), privatePrompt: vi.fn() }));
 vi.mock('@/lib/supabase', () => ({ supabase: {
   auth: { onAuthStateChange: mock.subscribe, signOut: mock.signOut, setSession: mock.setSession }, from: mock.from,
 } }));
+vi.mock('@/lib/privateProfile', () => ({getPrivateBotPrompt: mock.privatePrompt}));
 import { AuthProvider, useAuth } from './useAuth';
 let currentAuth: ReturnType<typeof useAuth>;
 function Probe() { const auth = useAuth(); currentAuth=auth; return <><div>{auth.user?.displayName || 'signed out'}</div><input aria-label="draft" defaultValue="" /></>; }
 beforeEach(() => {
   localStorage.clear();
+  mock.privatePrompt.mockReset().mockResolvedValue('private prompt');
   vi.useFakeTimers();
   mock.subscribe.mockImplementation(callback => { mock.callback = callback; return { data: { subscription: { unsubscribe: mock.unsubscribe } } }; });
   mock.signOut.mockImplementation(async()=>{mock.callback?.('SIGNED_OUT',null);return {error:null};});
@@ -117,4 +119,24 @@ it('opens an expired local session in an offline PWA without waiting for token r
  act(()=>mock.callback?.('INITIAL_SESSION',null));expect(currentAuth.user?.id).toBe('test-user');
  act(()=>mock.callback?.('SIGNED_OUT',null));expect(currentAuth.user).toBeNull();
  Object.defineProperty(navigator,'standalone',{configurable:true,value:false});vi.restoreAllMocks();
+});
+
+it('loads the public profile when the private settings table is not deployed', async () => {
+  mock.privatePrompt.mockRejectedValue({ code: 'PGRST205', message: 'Missing table' });
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  render(<QueryClientProvider client={new QueryClient()}><AuthProvider><Probe /></AuthProvider></QueryClientProvider>);
+  act(() => mock.callback?.('INITIAL_SESSION', session));
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  expect(screen.getByText('Profile Name')).toBeTruthy();
+  expect(currentAuth.user?.username).toBe('profile');
+  expect(currentAuth.user?.bot_prompt).toBe('');
+  warning.mockRestore();
+});
+it('shows profile data without waiting for a slow private settings request', async () => {
+  mock.privatePrompt.mockReturnValue(new Promise(() => {}));
+  render(<QueryClientProvider client={new QueryClient()}><AuthProvider><Probe /></AuthProvider></QueryClientProvider>);
+  act(() => mock.callback?.('INITIAL_SESSION', session));
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  expect(screen.getByText('Profile Name')).toBeTruthy();
+  expect(currentAuth.user?.username).toBe('profile');
 });

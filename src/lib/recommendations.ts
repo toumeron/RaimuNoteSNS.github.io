@@ -123,7 +123,10 @@ export function rankRecommendations(posts:PostWithAuthor[], preferences:Recommen
     let best=0,bestScore=-Infinity;
     candidates.forEach((candidate,index)=>{
       const sameAuthor=recent.filter(p=>p.userId===candidate.post.userId).length;
-      const sameService=recent.slice(-2).filter(p=>p.id.startsWith('bsky:')===candidate.post.id.startsWith('bsky:')).length;
+      // Preserve the LimeNote / external balance when another external provider
+      // is added; treating every provider as a new slot dilutes native posts.
+      const external=(post:PostWithAuthor)=>post.source==='bluesky' || post.source==='misskey' || post.id.startsWith('bsky:') || post.id.startsWith('misskey:');
+      const sameService=recent.slice(-2).filter(p=>external(p)===external(candidate.post)).length;
       const overlap=recent.slice(-3).reduce((max,p)=>{
         const terms=termCache.get(p.id) ?? [];
         const common=candidate.terms.filter(term=>terms.includes(term)).length;

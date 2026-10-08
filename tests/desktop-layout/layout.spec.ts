@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import {loadMisskey} from '../../supabase/functions/link-preview/load';
 
 const user = { id: '11111111-1111-1111-1111-111111111111', username: 'lime', displayName: 'Lime Note', avatarUrl: '', bio: '', coverUrl: '', createdAt: '2026-10-01T00:00:00Z' };
 const profile = { id: user.id, username: user.username, display_name: user.displayName, avatar_url: '', bio: '', cover_url: '', created_at: user.createdAt };
@@ -26,14 +27,212 @@ test.beforeEach(async ({ page }) => {
     if (url.pathname.includes('get-trends')) data = [{ title: 'テストのトレンド', traffic: '10' }];
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) });
   });
+  await page.route('https://misskey.io/api/**', route => route.fulfill({contentType:'application/json',body:'[]'}));
   await page.route('**/public.api.bsky.app/**', route => route.fulfill({ contentType: 'application/json', body: '{"feed":[],"posts":[],"actors":[]}' }));
 });
 
 const routes = ['', 'search', 'notifications', 'chat', 'media', 'media/lime', 'news', 'u/lime', 'u/lime/followers_following', 'post/post-0', 'post/post-0/activity', 'settings', 'share', 'spaces/room', 'limepro'];
+
+for (const width of [390,1440]) {
+  test(`Misskey posts work across home search profile media and bookmarks at ${width}px`,async({page})=>{
+    const note={id:'misskeynote1',text:'Misskeyからの猫の写真 @friend@misskey.io @nearby',createdAt:new Date().toISOString(),visibility:'public',user:{id:'misskeyauthor',username:'misskeycat',name:'Misskey Cat',avatarUrl:image},files:[{type:'image/png',url:image}],reactions:{'❤️':5},repliesCount:1};
+    const noteId='misskey:https://misskey.io/notes/misskeynote1';
+    await page.addInitScript(()=>localStorage.setItem('lime_misskey_author_handles','["misskeycat@misskey.io"]'));
+    let stored:Record<string,unknown>|null=null;
+    await page.route('https://misskey.io/api/**',route=>{
+      const endpoint=new URL(route.request().url()).pathname;
+      const data=endpoint.endsWith('/users/show') ? {...note.user,notesCount:1} : endpoint.endsWith('/notes/show') ? note : endpoint.endsWith('/users/search') ? [note.user] : endpoint.endsWith('/notes/children') ? [{...note,id:'replynote1',text:'Misskeyからの返信',files:[]}] : [note];
+      return route.fulfill({contentType:'application/json',body:JSON.stringify(data)});
+    });
+    await page.route('**/*.supabase.co/rest/v1/bookmarks*',async route=>{
+      if (route.request().method()==='POST') {stored={id:'saved-note',created_at:new Date().toISOString(),...route.request().postDataJSON()};return route.fulfill({status:201,body:''});}
+      return route.fulfill({contentType:'application/json',body:JSON.stringify(stored ? [stored]:[])});
+    });
+    await page.setViewportSize({width,height:900});await page.goto('./');
+    const card=page.locator('[data-lime-post-card]').filter({hasText:note.text}).first();
+    await expect(card).toBeVisible();await expect(card).toContainText('Misskey');
+    await expect(card.getByRole('link',{name:'@friend@misskey.io',exact:true})).toHaveAttribute('href',/u\/friend@misskey\.io$/);
+    await expect(card.getByRole('link',{name:'@nearby',exact:true})).toHaveAttribute('href',/u\/nearby@misskey\.io$/);
+    await card.getByRole('button',{name:'ブックマークに追加',exact:true}).click();
+    await expect.poll(()=>stored?.external_id).toBe(noteId);
+    expect(stored?.post_id).toBeUndefined();
+    await card.getByAltText('投稿画像').click();
+    const media=page.getByRole('dialog',{name:'メディアを拡大表示'});
+    await expect(media).toBeVisible();await expect(media).toContainText(note.text);
+    await media.getByRole('button',{name:'画像を閉じる'}).click();await expect(media).toBeHidden();
+    await page.goto('bookmarks');
+    await expect(page.locator('[data-lime-post-card]').filter({hasText:note.text})).toBeVisible();
+    await page.goto('search?q=猫');
+    await expect(page.locator('[data-lime-post-card]').filter({hasText:note.text}).first()).toBeVisible();
+    await page.goto('post/'+encodeURIComponent(noteId));
+    await expect(page.getByText('Misskeyからの返信',{exact:true})).toBeVisible();
+    await expect(page.getByRole('link',{name:'@friend@misskey.io',exact:true}).first()).toHaveAttribute('href',/u\/friend@misskey\.io$/);
+    await page.route('**/*.supabase.co/rest/v1/profiles*',route=>{
+      const url=new URL(route.request().url());
+      if (url.searchParams.get('username')?.includes('misskeycat')) return route.fulfill({contentType:'application/json',body:'null'});
+      return route.fallback();
+    });
+    await page.goto('u/misskeycat%40misskey.io');
+    await expect(page.locator('[data-lime-post-card]').filter({hasText:note.text}).first()).toBeVisible();
+    await page.screenshot({path:test.info().outputPath(`misskey-profile-${width}.png`),animations:'disabled'});
+  });
+}
+
+test('latest and following never request the server-wide Misskey timeline',async({page})=>{
+  const endpoints:string[]=[];
+  await page.route('https://misskey.io/api/**',route=>{
+    endpoints.push(new URL(route.request().url()).pathname);
+    return route.fulfill({contentType:'application/json',body:'[]'});
+  });
+  await page.goto('./');
+  await expect(page.locator('[data-lime-post-card]')).toHaveCount(2);
+  await page.getByRole('tab',{name:'フォロー中',exact:true}).click();
+  await expect(page.locator('[data-lime-post-card]')).toHaveCount(1);
+  expect(endpoints).toEqual([]);
+});
+
+test('search publishes LimeNote Bluesky and Misskey in one batch',async({page})=>{
+  const note={uri:'at://did:plc:cat/app.bsky.feed.post/photo',cid:'photo',author:{did:'did:plc:cat',handle:'cat.bsky.social',displayName:'Bluesky Cat'},record:{$type:'app.bsky.feed.post',text:'Blueskyの画像付きの投稿',createdAt:new Date().toISOString()},likeCount:5};
+  await page.route('**/public.api.bsky.app/**',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({posts:[note],actors:[]})}));
+  let release!:()=>void;
+  const pending=new Promise<void>(resolve=>{release=resolve;});
+  await page.route('https://misskey.io/api/**',async route=>{await pending;await route.fulfill({contentType:'application/json',body:'[]'});});
+  await page.goto('search?q=画像');
+  await expect.poll(()=>page.locator('[data-lime-post-card]').count()).toBe(0);
+  release();
+  await expect(page.locator('[data-lime-post-card]').filter({hasText:'Blueskyの画像付きの投稿'})).toBeVisible();
+  await expect(page.locator('[data-lime-post-card]').filter({hasText:posts[0].content}).first()).toBeVisible();
+});
+
+for(const width of [390,1440]){
+  test(`search suggestions include LimeNote Bluesky and Misskey and open the right profile at ${width}px`,async({page})=>{
+    const actor={id:'suggestauthor',username:'lime_suggest',name:'Lime Misskey Suggest',avatarUrl:image,description:'Misskeyのプロフィール'};
+    await page.route('https://misskey.io/api/**',route=>{
+      const path=new URL(route.request().url()).pathname;
+      return route.fulfill({contentType:'application/json',body:JSON.stringify(path.endsWith('/users/show')?actor:path.endsWith('/users/search')?[actor]:[])});
+    });
+    await page.route('**/public.api.bsky.app/**',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({actors:[{did:'did:plc:suggest',handle:'lime.bsky.social',displayName:'Lime Bluesky Suggest'}],posts:[]})}));
+    await page.route('**/*.supabase.co/rest/v1/profiles*',route=>{
+      if(new URL(route.request().url()).searchParams.get('username')?.includes('lime_suggest'))return route.fulfill({contentType:'application/json',body:'null'});
+      return route.fallback();
+    });
+    await page.setViewportSize({width,height:900});await page.goto('search');
+    const input=page.locator('input[placeholder="検索"]:visible').first();await input.fill('lime');
+    await expect(page.getByRole('button',{name:/Lime Misskey Suggest/})).toBeVisible();
+    await expect(page.getByRole('button',{name:/Lime Bluesky Suggest/})).toBeVisible();
+    await expect(page.getByRole('button',{name:/Lime Note @lime/})).toBeVisible();
+    await page.getByRole('button',{name:/Lime Misskey Suggest/}).click();
+    await expect.poll(()=>decodeURIComponent(page.url())).toContain('/u/lime_suggest@misskey.io');
+    await expect(page.getByText('Misskeyのプロフィール',{exact:true})).toBeVisible();
+    await page.evaluate(()=>localStorage.setItem('lime_search_exclude_bluesky','true'));
+    await page.goto('search');await page.locator('input[placeholder="検索"]:visible').first().fill('lime');
+    await expect(page.getByRole('button',{name:/Lime Misskey Suggest/})).toBeVisible();
+    await expect(page.getByRole('button',{name:/Lime Bluesky Suggest/})).toHaveCount(0);
+  });
+}
+
+test('search appends one combined page without inserting delayed providers above existing posts',async({page})=>{
+  const created=(index:number,source:number)=>new Date(Date.UTC(2026,9,7,12,0)-((index*3)+source)*60000).toISOString();
+  const native=Array.from({length:40},(_,i)=>({id:`batch-native-${i}`,user_id:user.id,content:`batchsearchlime-${i}`,image_urls:[],created_at:created(i,0),likes_count:0,visibility:'public'}));
+  const blue=Array.from({length:30},(_,i)=>({uri:`at://did:plc:batch/app.bsky.feed.post/${i}`,cid:String(i),author:{did:'did:plc:batch',handle:'batch.bsky.social'},record:{text:`batchsearchbsky-${i}`,createdAt:created(i,1)},likeCount:0}));
+  const misskey=Array.from({length:30},(_,i)=>({id:`batchmisskey${i}`,text:`batchsearchmisskey-${i}`,createdAt:created(i,2),visibility:'public',user:{id:'batchauthor',username:'batchauthor',name:'Batch author'},files:[],reactions:{}}));
+  await page.addInitScript(()=>localStorage.setItem('lime_search_page_tab','latest'));
+  await page.route('**/*.supabase.co/rest/v1/posts*',route=>{
+    const params=new URL(route.request().url()).searchParams;
+    const offset=Number(params.get('offset')||0),limit=Number(params.get('limit')||20);
+    return route.fulfill({contentType:'application/json',body:JSON.stringify(native.slice(offset,offset+limit))});
+  });
+  await page.route('**/public.api.bsky.app/**',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({posts:blue,actors:[]})}));
+  await page.route('https://misskey.io/api/**',route=>route.fulfill({contentType:'application/json',body:JSON.stringify(route.request().url().endsWith('notes/search') ? misskey:[])}));
+  await page.setViewportSize({width:1440,height:900});await page.goto('search?q=batchsearch');
+  const cards=page.locator('[data-lime-post-card]');
+  const texts=async()=> (await cards.allTextContents()).map(text=>text.match(/batchsearch(?:lime|bsky|misskey)-\d+/)?.[0]);
+  await expect(cards).toHaveCount(20);
+  const first=await texts();
+  expect(first.slice(0,3)).toEqual(['batchsearchlime-0','batchsearchbsky-0','batchsearchmisskey-0']);
+  for(const count of [40,60,80,100]) {
+    await page.evaluate(()=>window.scrollTo(0,document.body.scrollHeight));
+    await expect(cards).toHaveCount(count);
+    expect((await texts()).slice(0,20)).toEqual(first);
+  }
+  expect(new Set(await texts()).size).toBe(100);
+});
+
+test('external accounts share one registration list without a Misskey login',async({page})=>{
+  await page.addInitScript(()=>{localStorage.setItem('lime_misskey_enabled','false');localStorage.setItem('lime_misskey_author_handles','["cat@misskey.io","other@misskey.io"]');});
+  await page.route('https://misskey.io/api/users/show',route=>{const {username}=route.request().postDataJSON();return route.fulfill({contentType:'application/json',body:JSON.stringify({id:username,username,name:username})});});
+  await page.goto('settings');
+  await expect(page.getByRole('heading',{name:'Bluesky・Misskey'})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Misskey連携'})).toHaveCount(0);
+  await expect(page.getByLabel('アクセストークン',{exact:true})).toHaveCount(0);
+  await page.getByRole('button',{name:'@cat@misskey.ioを削除',exact:true}).click();
+  await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('lime_misskey_author_handles')!))).toEqual(['other@misskey.io']);
+  await page.getByLabel('追加する外部アカウント').fill('@support@misskey.io');
+  await page.getByRole('button',{name:'追加',exact:true}).click();
+  await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('lime_misskey_author_handles')!))).toEqual(['other@misskey.io','support@misskey.io']);
+});
+
+test('Misskey live public data reaches the browser through the reader when CORS blocks direct fetch',async({page})=>{
+  test.skip(process.env.MISSKEY_LIVE!=='1','Opt-in live read only API check');
+  const featured=await loadMisskey('notes/featured',{limit:10}) as {user:{username:string;host?:string|null}}[];
+  const author=featured[0].user;
+  await page.addInitScript(handle=>localStorage.setItem('lime_misskey_author_handles',JSON.stringify([handle])),`${author.username}@${author.host || 'misskey.io'}`);
+  // The UI test uses a fixture account; exercise the production server reader
+  // against real public data without creating or using a real user's session.
+  await page.route('https://misskey.io/api/**',route=>route.abort('failed'));
+  await page.route('**/*.supabase.co/functions/v1/link-preview',async route=>{
+    const input=route.request().postDataJSON();
+    if(input.mode!=='misskey')return route.fallback();
+    const data=await loadMisskey(input.endpoint,input.params);
+    return route.fulfill({contentType:'application/json',body:JSON.stringify({data})});
+  });
+  await page.setViewportSize({width:1440,height:900});
+  await page.goto('./');
+  const cards=page.locator('[data-lime-post-card]').filter({has:page.getByText('Misskey',{exact:true})});
+  await expect(cards.first()).toBeVisible({timeout:20000});
+  expect(await cards.count()).toBeGreaterThan(0);
+});
+
+for(const width of [390,1440]) {
+  test(`Misskey live exact official account appears in suggestions and search at ${width}px`,async({page})=>{
+    test.skip(process.env.MISSKEY_LIVE!=='1','Real public API check');
+    await page.route('https://misskey.io/api/**',route=>route.abort('failed'));
+    await page.route('**/*.supabase.co/functions/v1/link-preview',async route=>{
+      const input=route.request().postDataJSON();
+      if(input.mode!=='misskey')return route.fallback();
+      try {
+        const data=await loadMisskey(input.endpoint,input.params);
+        return route.fulfill({contentType:'application/json',body:JSON.stringify({data})});
+      } catch {return route.fulfill({status:502,contentType:'application/json',body:'{"error":"Misskey API failed"}'});}
+    });
+    await page.route('**/*.supabase.co/rest/v1/profiles*',route=>{
+      const params=new URL(route.request().url()).searchParams;
+      if(params.get('username')?.includes('system.proxy'))return route.fulfill({contentType:'application/json',body:'null'});
+      return route.fallback();
+    });
+    await page.setViewportSize({width,height:900});await page.goto('search');
+    await page.locator('input[placeholder="検索"]:visible').first().fill('Misskey.io');
+    await expect(page.getByRole('button',{name:/Misskey.io @system.proxy@misskey.io/})).toBeVisible({timeout:25000});
+    await page.locator('input[placeholder="検索"]:visible').first().press('Enter');
+    await page.getByRole(width<768 ? 'button':'tab',{name:'ユーザー',exact:true}).click();
+    await expect(page.getByText('@system.proxy@misskey.io',{exact:true}).first()).toBeVisible({timeout:25000});
+  });
+}
+
+test('Misskey failures retain the native timeline and local search results',async({page})=>{
+  await page.addInitScript(()=>localStorage.setItem('lime_misskey_author_handles','["misskeycat@misskey.io"]'));
+  await page.route('https://misskey.io/api/**',route=>route.abort('failed'));
+  await page.route('**/*.supabase.co/functions/v1/link-preview',route=>route.fulfill({status:503,contentType:'application/json',body:'{"error":"unavailable"}'}));
+  await page.goto('./');
+  await expect(page.locator('[data-lime-post-card]')).toHaveCount(2);
+  await page.goto('search?q=画像');
+  await expect(page.locator('[data-lime-post-card]').filter({hasText:posts[0].content}).first()).toBeVisible();
+});
+
 test('iPad keeps trends and expands content using the compact sidebar in both orientations',async({page},info)=>{
   test.skip(!info.project.name.startsWith('iPad'),'Touch iPad projects only');
   await page.goto('./');
-  for(const width of [768,820,1024,1180,1366,1376]){
+  for(const width of [700,744,768,820,1024,1180,1366,1376]){
     await page.setViewportSize({width,height:900});
     expect(await page.evaluate(()=>matchMedia('(hover: none) and (pointer: coarse)').matches)).toBe(true);
     await expect(page.locator('[data-lime-sidebar-logo]')).toBeHidden();
@@ -84,6 +283,9 @@ for (const width of [768, 1024, 1440]) {
     let rightX: number | undefined;
     for (const path of routes) {
       await page.goto(path || './');
+      // Space deep links intentionally open a modal. Close it before asserting
+      // that the underlying page navigation is available to pointer input.
+      if(path==='spaces/room')await page.getByRole('dialog').getByRole('button',{name:'閉じる',exact:true}).click();
       const sidebar = page.locator('[data-lime-desktop-sidebar]');
       await expect(sidebar).toBeVisible();
       const position = (await sidebar.boundingBox())!.x;
@@ -316,6 +518,25 @@ test('desktop sticky surfaces reuse mobile blur and reply composer matches the r
   await expect(button).toBeEnabled();
 });
 
+test('dark post composer keeps a visible surface and readable input on mobile and desktop', async ({page}) => {
+  for (const width of [390, 1440]) {
+    await page.setViewportSize({width,height:900});
+    await page.goto('./');
+    await page.evaluate(() => document.documentElement.classList.add('dark'));
+    const composer=page.locator('[data-lime-post-composer]').first();
+    await expect(composer).toBeVisible();
+    await expect.poll(() => composer.evaluate(el => {
+      const color=getComputedStyle(el).backgroundColor;
+      return color !== 'rgb(0, 0, 0)' && color !== 'rgba(0, 0, 0, 0)';
+    })).toBe(true);
+    await composer.locator('textarea').fill('ダークモードの投稿欄');
+    const renderedText=composer.locator('div').filter({hasText:/^ダークモードの投稿欄$/}).last();
+    await expect(renderedText).toBeVisible();
+    await expect(renderedText).toHaveCSS('color','rgb(249, 250, 251)');
+    await composer.screenshot({path:test.info().outputPath(`dark-composer-${width}.png`),animations:'disabled'});
+  }
+});
+
 
 test('LimeAI uses a compact rail and profile reuses mobile cover controls and account footer', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -466,7 +687,7 @@ test('normal repost appears only as a profile entry and can be undone', async ({
   await profileCard.getByRole('button', { name: 'リポスト', exact: true }).click();
   await page.getByRole('menuitem', { name: 'リポストを取り消す', exact: true }).click();
   await expect(page.getByText('あなたがリポストしました', { exact: true })).toHaveCount(0);
-  expect(await page.evaluate(()=>(window as any).__countAnimations)).toContain('repostCountOldDown');
+  await expect.poll(()=>page.evaluate(()=>(window as any).__repostRequests)).toEqual(['post-0','post-0']);
 });
 
 
@@ -918,3 +1139,156 @@ for(const width of [390,1440]) {
     await expect(page.locator('[data-lime-profile-location]')).toHaveCount(0);
   });
 }
+
+test('iPad sidebar survives scrolling, route changes and narrow viewport transitions',async({page},info)=>{
+ test.skip(!info.project.name.startsWith('iPad'),'iPad touch viewport');
+ await page.goto('./');
+ for(const width of [820,1180,744,700,620,820]){
+  await page.setViewportSize({width,height:900});
+  if(width>=640){
+   const sidebar=page.locator('[data-lime-desktop-sidebar]');await expect(sidebar).toBeVisible();
+   await expect(sidebar.getByRole('button',{name:'ホーム',exact:true})).toBeVisible();
+   await page.evaluate(()=>{const filler=document.createElement('div');filler.style.height='3000px';document.querySelector('main').append(filler);window.scrollTo(0,800);});
+   await expect.poll(()=>page.evaluate(()=>{window.scrollTo(0,800);return scrollY;})).toBeGreaterThan(500);
+   await expect(sidebar.getByRole('button',{name:'ホーム',exact:true})).toBeInViewport();
+   // OS UI changes height/focus without changing the application's column layout.
+   await page.setViewportSize({width,height:720});
+   await page.evaluate(()=>{window.dispatchEvent(new Event('blur'));document.dispatchEvent(new Event('visibilitychange'));window.dispatchEvent(new Event('focus'));});
+   await expect(sidebar).toBeVisible();await expect(page.locator('.lime-desktop-discover')).toBeVisible();
+   expect((await page.locator('.lime-desktop-menu').boundingBox())!.width).toBe(72);
+   await page.setViewportSize({width,height:900});
+   await sidebar.getByRole('button',{name:'検索',exact:true}).click();
+   await expect(sidebar).toBeVisible();await expect(page.locator('.lime-desktop-discover')).toBeVisible();
+   await sidebar.getByRole('button',{name:'ホーム',exact:true}).click();
+  }else{
+   await page.getByRole('button',{name:'メニューを開く',exact:true}).click();
+   await expect(page.locator('[data-lime-mobile-sidebar]').getByRole('button',{name:'設定',exact:true})).toBeVisible();
+  }
+ }
+});
+
+test('account export is above logout and always requests a password',async({page})=>{
+ await page.goto('settings');
+ const exportButton=page.getByRole('button',{name:'データをエクスポート',exact:true});
+ await expect(exportButton).toBeVisible();
+ const logout=page.getByRole('button',{name:'ログアウト',exact:true}).last();
+ expect((await exportButton.boundingBox())!.y).toBeLessThan((await logout.boundingBox())!.y);
+ await exportButton.click();
+ const dialog=page.getByRole('dialog');await expect(dialog).toBeVisible();
+ const input=dialog.getByLabel('パスワードを入力してください');await expect(input).toHaveAttribute('type','password');
+ await expect(dialog.getByRole('button',{name:'確認してダウンロード'})).toBeDisabled();
+ await input.fill('not-a-real-password');await expect(dialog.getByRole('button',{name:'確認してダウンロード'})).toBeEnabled();
+});
+
+test('offline export browses posts replies attachments and history without any network',async({page,context})=>{
+ await page.goto('./');
+ const html=await page.evaluate(async()=>{const module=await import('/RaimuNoteSNS.github.io/src/lib/accountExport.ts');return module.offlineArchiveHtml();});
+ const archive={version:1,userId:user.id,createdAt:user.createdAt,tables:{profiles:[profile],posts:[{id:'own-post',user_id:user.id,content:'保存したポスト [[stamp:cat]] <script>window.bad=true</script>',image_urls:['https://asset.test/picture.png'],created_at:user.createdAt}],comments:[{id:'reply',post_id:'own-post',user_id:user.id,content:'オフラインで返信を閲覧',created_at:user.createdAt}],bookmarks:[{post_id:'own-post'}],custom_emojis:[{id:'cat',name:'cat',public_id:'cat',format:'png'}],profile_pins:[{post_id:'own-post'}],chat_sessions:[{id:'chat',title:'保存したチャット',messages:[{role:'user',content:'過去の会話'}]}]},related:{},local:{'search:recent':['猫']},assets:{'https://asset.test/picture.png':'assets/picture.svg','https://res.cloudinary.com/dveiikhhw/image/upload/custom_emojis/cat.png':'assets/picture.svg'}};
+ let unexpected=0;
+ await page.route('https://archive.test/**',route=>{const path=new URL(route.request().url()).pathname;return route.fulfill(path==='/index.html'?{contentType:'text/html',body:html}:path==='/data.js'?{contentType:'text/javascript',body:`window.LIME_ARCHIVE=${JSON.stringify(archive).replace(/</g,'\\u003c')};`}:{contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="pink"/></svg>'});});
+ await page.route('https://asset.test/**',route=>{unexpected++;return route.abort();});
+ await context.setOffline(true);await page.goto('https://archive.test/index.html');
+ await expect(page.getByText('固定されたポスト',{exact:false})).toBeVisible();
+ await expect(page.locator('img.stamp')).toBeVisible();await expect(page.locator('.photos img')).toBeVisible();
+ await page.getByRole('button',{name:'返信 1',exact:true}).click();await expect(page.getByText('オフラインで返信を閲覧',{exact:true})).toBeVisible();
+ await page.locator('#more-nav').click();await page.locator('#details').getByRole('button',{name:'ブックマーク',exact:true}).click();await expect(page.locator('article')).toHaveCount(1);
+ await page.getByRole('button',{name:'LimeAI',exact:true}).click();await expect(page.getByText('過去の会話',{exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'履歴・設定',exact:true}).click();await expect(page.getByText('検索履歴',{exact:true}).first()).toBeVisible();
+ expect(await page.evaluate(()=>Boolean((window as any).bad))).toBe(false);expect(unexpected).toBe(0);
+});
+
+test('export viewer opens directly from local files with its adjacent data script',async({page})=>{
+ const {mkdtemp,writeFile,rm}=await import('node:fs/promises');const {tmpdir}=await import('node:os');const {join}=await import('node:path');const {pathToFileURL}=await import('node:url');
+ await page.goto('./');const html=await page.evaluate(async()=>{const module=await import('/RaimuNoteSNS.github.io/src/lib/accountExport.ts');return module.offlineArchiveHtml();});
+ const folder=await mkdtemp(join(tmpdir(),'lime-export-viewer-'));
+ try {
+  await writeFile(join(folder,'index.html'),html);await writeFile(join(folder,'data.js'),`window.LIME_ARCHIVE=${JSON.stringify({userId:user.id,createdAt:user.createdAt,tables:{profiles:[profile],posts:[{id:'local-file-post',user_id:user.id,content:'展開したファイルを直接閲覧',created_at:user.createdAt}]},related:{},assets:{},local:{}})};`);
+  await page.goto(pathToFileURL(join(folder,'index.html')).href);
+  await expect(page.getByText('展開したファイルを直接閲覧',{exact:true})).toBeVisible();await expect(page.getByRole('heading',{name:profile.display_name,exact:true,level:1})).toBeVisible();
+ }finally{await rm(folder,{recursive:true,force:true});}
+});
+
+test('development PWA worker endpoint serves JavaScript rather than the application HTML',async({request})=>{
+ const response=await request.get('dev-sw.js?dev-sw');
+ expect(response.status()).toBe(200);expect(response.headers()['content-type']).toMatch(/(?:java|ecma)script/i);
+ expect(await response.text()).not.toMatch(/<!doctype html>/i);
+});
+
+test('account export caches ZIP only on device, verifies every reuse, and expires after seven days',async({page})=>{
+ await page.goto('./');
+ const actions:string[]=[];let deny=false;let directImages=0;let uploads=0;
+ const imageUrl='https://cdn.bsky.app/img/feed_fullsize/plain/did:plc:example/image';
+ await page.route('**/functions/v1/account-export',route=>{
+  const input=route.request().postDataJSON();actions.push(input.action);
+  if(deny)return route.fulfill({status:403,json:{error:'パスワードが正しくありません'}});
+  if(input.action==='verify')return route.fulfill({json:{verified:true,userId:user.id}});
+  const createdAt=new Date().toISOString(),expiresAt=new Date(Date.now()+7*86400000).toISOString();
+  return route.fulfill({json:{userId:user.id,createdAt,expiresAt,snapshot:{version:1,userId:user.id,createdAt,expiresAt,account:{},tables:{posts:[{id:'export-post',content:'保存用の画像',image_urls:[imageUrl]}]},related:{},uploads:[],unavailable:[]}}});
+ });
+ await page.route('**/functions/v1/link-preview',route=>route.request().postDataJSON()?.mode==='image'?route.fulfill({contentType:'application/octet-stream',headers:{'X-Lime-Image-Type':'image/png','Access-Control-Expose-Headers':'X-Lime-Image-Type'},body:Buffer.from('local-image-bytes')}):route.fulfill({json:{preview:null}}));
+ await page.route('https://cdn.bsky.app/**',route=>{directImages++;return route.abort();});
+ page.on('request',request=>{if(/\/storage\/v1\//.test(request.url())&&['POST','PUT'].includes(request.method()))uploads++;});
+ await page.evaluate(async(id)=>{
+  const {supabase}=await import('/RaimuNoteSNS.github.io/src/lib/supabase.ts');
+  supabase.auth.getSession=async()=>({data:{session:{user:{id},access_token:'test-session'}},error:null}) as any;
+ },user.id);
+ const generate=()=>page.evaluate(async(id)=>{
+  const module=await import('/RaimuNoteSNS.github.io/src/lib/accountExport.ts');
+  const result=await module.createAccountExport(id,'confirmation',()=>{},new AbortController().signal);
+  return {cached:result.cached,expiresAt:result.expiresAt,warning:result.cacheWarning,zipBytes:new TextDecoder().decode(await result.zip.arrayBuffer())};
+ },user.id);
+ const first=await generate();expect(first.cached).toBe(false);expect(first.warning).toBeUndefined();expect(first.zipBytes).toContain('local-image-bytes');expect(first.zipBytes).toMatch(/assets\/media-\d+\.png/);
+ const second=await generate();expect(second.cached).toBe(true);expect(second.expiresAt).toBe(first.expiresAt);expect(second.zipBytes).toBe(first.zipBytes);expect(actions).toEqual(['collect','verify']);
+ deny=true;await expect(generate()).rejects.toThrow('パスワードが正しくありません');deny=false;
+ await page.evaluate(async(id)=>{
+  const module=await import('/RaimuNoteSNS.github.io/src/lib/accountExport.ts');const saved=await module.localAccountExport(id);
+  await module.localAccountExport(id,{...saved!,expiresAt:new Date(Date.now()-1).toISOString()});
+ },user.id);
+ expect((await generate()).cached).toBe(false);expect(actions).toEqual(['collect','verify','verify','collect']);expect(uploads).toBe(0);expect(directImages).toBe(0);
+ await page.goto('./settings');
+ await page.evaluate(async(id)=>{
+  const {supabase}=await import('/RaimuNoteSNS.github.io/src/lib/supabase.ts');
+  supabase.auth.getSession=async()=>({data:{session:{user:{id},access_token:'test-session'}},error:null}) as any;
+ },user.id);
+ await page.getByRole('button',{name:'データをエクスポート',exact:true}).click();
+ const dialog=page.getByRole('dialog');await dialog.getByLabel('パスワードを入力してください').fill('confirmation');
+ const downloadPromise=page.waitForEvent('download');await dialog.getByRole('button',{name:'確認してダウンロード'}).click();
+ const download=await downloadPromise;expect(download.suggestedFilename()).toBe('LimeNote-export.zip');
+ const {readFile}=await import('node:fs/promises');const bytes=await readFile((await download.path())!);
+ expect(bytes.readUInt32LE(0)).toBe(0x04034b50);expect(bytes.toString()).toContain('local-image-bytes');expect(actions.at(-1)).toBe('verify');expect(uploads).toBe(0);
+});
+
+for(const width of [390,820,1440])test(`offline LimeNote iPad keeps private spaces and a stable layout at ${width}px`,async({page,context},info)=>{
+ await page.setViewportSize({width,height:900});await page.goto('./');
+ const html=await page.evaluate(async()=>{const m=await import('/RaimuNoteSNS.github.io/src/lib/accountExport.ts');return m.offlineArchiveHtml();});
+ const localImage='assets/picture.svg';const url='https://asset.test/picture.png';
+ const archive={userId:user.id,createdAt:user.createdAt,tables:{profiles:[{...profile,display_name:'長い名前のLimeNoteユーザー',bio:'保存したプロフィールです。',cover_url:url}],posts:[{id:'main',user_id:user.id,content:'本文とスタンプ [[emoji:cat]] と長いURL https://example.com/'+('long-path-'.repeat(14)),image_urls:[url],created_at:user.createdAt},{id:'quoted',user_id:user.id,content:'引用したポスト',parent_id:'main',created_at:user.createdAt}],profile_pins:[{post_id:'main'}],comments:[{id:'first',user_id:user.id,post_id:'main',content:'親ポストへの返信',created_at:user.createdAt},{id:'nested',user_id:user.id,post_id:'main',parent_comment_id:'first',content:'返信への返信',created_at:user.createdAt}],spaces:[{id:'mine',host_id:user.id,title:'自分が作成したスペース',created_at:user.createdAt,is_active:false,heartbeat_at:'INTERNAL_HEARTBEAT'},{id:'other',host_id:'another-user',title:'他人のスペースをコピーしない',heartbeat_at:'PRIVATE_LOG'}],custom_emojis:[{id:'cat',name:'cat',public_id:'cat',format:'png'}]},related:{spaces:[{id:'joined',host_id:'another-user',title:'参加した他人のスペース'}]},local:{theme:'light','search:recent':['猫']},assets:{[url]:localImage,'https://res.cloudinary.com/dveiikhhw/image/upload/custom_emojis/cat.png':localImage}};
+ const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
+ const {mkdtemp,writeFile,mkdir,rm}=await import('node:fs/promises');const {tmpdir}=await import('node:os');const {join}=await import('node:path');const {pathToFileURL}=await import('node:url');
+ const folder=await mkdtemp(join(tmpdir(),'lime-offline-layout-'));
+ try{
+ await mkdir(join(folder,'assets'));await writeFile(join(folder,'index.html'),html);await writeFile(join(folder,'data.js'),'window.LIME_ARCHIVE='+JSON.stringify(archive)+';');
+ await writeFile(join(folder,'assets','picture.svg'),'<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500"><rect width="800" height="500" fill="#f7dce7"/><circle cx="400" cy="240" r="140" fill="#f65392"/></svg>');
+ if(info.project.name==='iPad-WebKit'){
+  // WebKit's synthetic offline mode blocks the initial file navigation itself.
+  // Load the same saved bytes first, then disable networking for all UI actions.
+  await page.route('https://offline-ui.test/**',async route=>{const pathname=new URL(route.request().url()).pathname;const relative=pathname==='/index.html'?'index.html':pathname==='/data.js'?'data.js':'assets/picture.svg';const {readFile}=await import('node:fs/promises');return route.fulfill({contentType:relative.endsWith('.html')?'text/html':relative.endsWith('.js')?'text/javascript':'image/svg+xml',body:await readFile(join(folder,relative))});});
+  await page.goto('https://offline-ui.test/index.html');await expect(page.locator('#feed .photos img').first()).toBeVisible();
+  await context.setOffline(true);
+ }else{
+  await context.setOffline(true);await page.goto(pathToFileURL(join(folder,'index.html')).href);
+ }
+ await expect(page.locator('#feed .post-layout').first()).toBeVisible();await expect(page.locator('#feed .quote')).toBeVisible();await expect(page.locator('#feed .emoji').first()).toBeVisible();
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ const sizes=await page.locator('#feed article').first().locator('.actions .icon').evaluateAll(nodes=>nodes.map(n=>({width:n.getBoundingClientRect().width,height:n.getBoundingClientRect().height})));expect(sizes).toHaveLength(6);expect(sizes.every(s=>s.width===20&&s.height===20)).toBe(true);
+ if(width>=640){await expect(page.locator('.sidebar')).toBeVisible();await expect(page.locator('.discover')).toBeVisible();}
+ else{for(const label of ['ホーム','検索','プロフ','チャット','設定'])await expect(page.locator('#bottom').getByRole('button',{name:label,exact:true})).toBeInViewport();}
+ await expect(page.locator('#back')).toBeHidden();
+ await page.screenshot({path:'/tmp/lime-offline-'+width+'-'+info.project.name+'-light.png'});
+ await page.locator('#theme').click();expect(await page.locator('html').getAttribute('class')).toContain('dark');await page.screenshot({path:'/tmp/lime-offline-'+width+'-'+info.project.name+'-dark.png'});
+ await page.locator('#feed article').first().getByRole('button',{name:'返信 1',exact:true}).click();await expect(page.getByText('親ポストへの返信',{exact:true})).toBeVisible();await expect(page.getByText('返信への返信',{exact:true})).toBeVisible();await expect(page.locator('.reply-thread')).toHaveCount(2);
+ if(width<640)await page.getByRole('button',{name:'メニューを開く',exact:true}).click();
+ if(width>=640){await page.locator('#more-nav').click();await page.locator('#details').getByRole('button',{name:'スペース',exact:true}).click();}else await page.locator('#nav').getByRole('button',{name:'スペース',exact:true}).click();await expect(page.getByText('自分が作成したスペース',{exact:true})).toBeVisible();await expect(page.getByText('他人のスペースをコピーしない',{exact:true})).toHaveCount(0);await expect(page.getByText('参加した他人のスペース',{exact:true})).toHaveCount(0);
+ expect(await page.locator('#feed').textContent()).not.toContain('INTERNAL_HEARTBEAT');expect(await page.locator('#feed').textContent()).not.toContain('host_id');expect(await page.locator('pre')).toHaveCount(0);expect(errors).toEqual([]);
+ }finally{await rm(folder,{recursive:true,force:true});}
+});

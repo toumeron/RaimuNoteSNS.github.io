@@ -1,3 +1,4 @@
+import {searchMisskey,misskeyEnabled} from '@/lib/misskey';
 import { openMediaViewer } from '@/components/media/openMediaViewer';
 import { useAuth } from '@/hooks/useAuth';
 import { getRecommendationPreferences } from '@/api/recommendations';
@@ -20,7 +21,7 @@ import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
 import { PostCard } from '@/components/feed/PostCard';
 import UserCard from '@/components/search/UserCard';
 import { supabase } from '@/lib/supabase';
-import { searchBluesky } from '@/lib/bluesky';
+import { searchBluesky, searchExternalUsers } from '@/lib/bluesky';
 import type { User, PostWithAuthor } from '@/types';
 import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 
@@ -77,7 +78,7 @@ export const normalizeText = (s: string): string => {
 // パース結果
 // ---------------------------------------------------------------------------
 export type MediaFilter = 'any' | 'image' | 'video';
-export type SearchSource = 'all' | 'lime' | 'bluesky';
+export type SearchSource = 'all' | 'lime' | 'bluesky' | 'misskey';
 
 export interface SearchChip {
   label: string;
@@ -263,7 +264,8 @@ function applyOperator(p: ParsedSearch, key: string, value: string, neg: boolean
       if (neg) return warn('は否定できません');
       if (v === 'lime' || v === 'local' || v === 'limenote') p.source = 'lime';
       else if (v === 'bluesky' || v === 'bsky') p.source = 'bluesky';
-      else return warn('は未対応です(lime / bluesky)');
+      else if (v === 'misskey') p.source = 'misskey';
+      else return warn('は未対応です(lime / bluesky / misskey)');
       p.chips.push(chip);
       return;
     }
@@ -443,7 +445,7 @@ export function getPostMedia(post: {
   // Bluesky投稿にYouTubeリンクが含まれると、Bluesky側の外部リンクカードの
   // サムネイルが imageUrls に入ってくる。PostCard と同様に、その場合は画像として数えず
   // YouTube 埋め込みだけを対象にする。
-  const isBlueskyPost = String(post.id || '').startsWith('bsky:');
+  const isBlueskyPost = /^(bsky:|misskey:)/.test(String(post.id || ''));
   if (isBlueskyPost && youtubeIds.length > 0) {
     return { images: [], youtubeIds };
   }
@@ -536,7 +538,7 @@ export interface AdvancedForm {
   minLikes: string;
   maxLikes: string;
   minReposts: string;
-  source: '' | 'lime' | 'bluesky';
+  source: '' | 'lime' | 'bluesky' | 'misskey';
 }
 
 export const EMPTY_FORM: AdvancedForm = {
@@ -761,6 +763,8 @@ type MediaKind = 'all' | 'image' | 'video';
 
 interface FeedState {
   items: PostWithAuthor[];
+  remaining:PostWithAuthor[];
+  localHasMore:boolean;
   page: number;
   hasMore: boolean;
   loading: boolean;
@@ -768,7 +772,7 @@ interface FeedState {
   error: string | null;
 }
 
-const EMPTY_FEED: FeedState = { items: [], page: 0, hasMore: true, loading: false, loaded: false, error: null };
+const EMPTY_FEED: FeedState = { items: [], remaining:[], localHasMore:true,page: 0, hasMore: true, loading: false, loaded: false, error: null };
 const createFeeds = (): Record<FeedMode, FeedState> => ({
   top: EMPTY_FEED,
   latest: EMPTY_FEED,
@@ -792,11 +796,6 @@ function sortPosts(posts: PostWithAuthor[], mode: FeedMode): PostWithAuthor[] {
       ? (a, b) => (b.likesCount || 0) - (a.likesCount || 0) || timeOf(b) - timeOf(a)
       : (a, b) => timeOf(b) - timeOf(a),
   );
-}
-
-function dedupe(posts: PostWithAuthor[]): PostWithAuthor[] {
-  const seen = new Set<string>();
-  return posts.filter((p) => (seen.has(p.id) ? false : (seen.add(p.id), true)));
 }
 
 const withMediaKind = (p: ParsedSearch, kind: MediaKind): ParsedSearch => {
@@ -868,34 +867,52 @@ function SearchResults({
   const keyBase = `${searchQuery}\u0000${excludeBlueskyPosts}\u0000${refreshKey}`;
 
   const [feeds, setFeeds] = useState<Record<FeedMode, FeedState>>(createFeeds);
+  const feedsRef=useRef(feeds);
+  feedsRef.current=feeds;
   const [feedsKey, setFeedsKey] = useState('');
   const [mediaKind, setMediaKind] = useState<MediaKind>('all');
   const [blueskyUsers, setBlueskyUsers] = useState<User[]>([]);
 
   const tokenRef = useRef<Record<FeedMode, number>>({ top: 0, latest: 0, media: 0 });
+  const searchControllerRef=useRef(new AbortController());
   const blueskyCacheRef = useRef<Map<string, Promise<BlueskyResult>>>(new Map());
   const blueskyIdsRef = useRef<Set<string>>(new Set());
   const visibilityRef = useRef<Promise<{ conditions: string[]; currentUserId: string | null }> | null>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(()=>{
+    searchControllerRef.current.abort();
+    searchControllerRef.current=new AbortController();
+    (Object.keys(tokenRef.current) as FeedMode[]).forEach(mode=>{tokenRef.current[mode]+=1;});
+    blueskyCacheRef.current.clear();
+    setFeeds(prev=>Object.fromEntries(Object.entries(prev).map(([mode,feed])=>[mode,{...feed,loading:false}])) as Record<FeedMode,FeedState>);
+    return ()=>searchControllerRef.current.abort();
+  },[keyBase,activeTab]);
 
   const usersById = useMemo(() => new Map(allUsers.map((u) => [u.id, u])), [allUsers]);
   const usersByUsername = useMemo(() => new Map(allUsers.map((u) => [u.username.toLowerCase(), u])), [allUsers]);
 
   // Bluesky検索は同じ検索語なら結果を使い回す(タブ切り替えで再リクエストしない)
   const getBluesky = useCallback((text: string, includePosts: boolean): Promise<BlueskyResult> => {
-    const key = `${text}\u0000${includePosts}`;
+    const key = `${text}\u0000${includePosts}\u0000${parsed.source}\u0000${excludeBlueskyPosts}`;
     const cached = blueskyCacheRef.current.get(key);
     if (cached) return cached;
 
-    const promise = (searchBluesky(text.trim().replace(/^@+/, ''), { includePosts }) as unknown as Promise<BlueskyResult>).catch(
-      (error) => {
-        console.error('Bluesky search failed:', error);
-        return { posts: [], users: [] } as BlueskyResult;
-      },
-    );
+    const query=text.trim().replace(/^@+/, '');
+    const jobs:Promise<BlueskyResult>[]=[];
+    if (parsed.source!=='misskey' && !(includePosts && excludeBlueskyPosts)) jobs.push(searchBluesky(query,{includePosts,signal:searchControllerRef.current.signal}) as unknown as Promise<BlueskyResult>);
+    if (parsed.source!=='bluesky' && misskeyEnabled()) jobs.push(searchMisskey(query,includePosts,searchControllerRef.current.signal) as unknown as Promise<BlueskyResult>);
+    const signal=searchControllerRef.current.signal;
+    const promise=Promise.allSettled(jobs).then(results=>{
+      if(signal.aborted){blueskyCacheRef.current.delete(key);throw signal.reason;}
+      return results.reduce<BlueskyResult>((merged,result)=>{
+      if (result.status==='fulfilled') { merged.posts.push(...result.value.posts);merged.users.push(...result.value.users); }
+      else {blueskyCacheRef.current.delete(key);console.warn('External search failed',result.reason);}
+      return merged;
+    },{posts:[],users:[]});});
     blueskyCacheRef.current.set(key, promise);
     return promise;
-  }, []);
+  }, [parsed.source,excludeBlueskyPosts]);
 
   // 公開範囲の条件(自分の投稿・自分をフォローしている人の限定公開投稿)。同じ検索の間は使い回す。
   const getVisibility = useCallback(() => {
@@ -932,7 +949,7 @@ function SearchResults({
   const fetchLocalPosts = useCallback(
     async (p: ParsedSearch, page: number, mode: FeedMode): Promise<{ items: PostWithAuthor[]; hasMore: boolean }> => {
       const empty = { items: [] as PostWithAuthor[], hasMore: false };
-      if (p.source === 'bluesky') return empty;
+      if (p.source === 'bluesky' || p.source === 'misskey') return empty;
 
       const resolveIds = (names: string[]) =>
         names.map((n) => usersByUsername.get(n.toLowerCase())?.id).filter((id): id is string => !!id);
@@ -1008,7 +1025,7 @@ function SearchResults({
           ? q.order('likes_count', { ascending: false }).order('created_at', { ascending: false })
           : q.order('created_at', { ascending: false });
 
-      const { data, error } = await q.range(rangeFrom, rangeTo);
+      const { data, error } = await q.range(rangeFrom, rangeTo).abortSignal(searchControllerRef.current.signal);
       if (error) throw error;
       const rows: any[] = data || [];
 
@@ -1067,19 +1084,17 @@ function SearchResults({
   // ---- Bluesky の投稿取得(1ページ目だけ) ------------------------------------
   const fetchBlueskyPosts = useCallback(
     async (p: ParsedSearch): Promise<PostWithAuthor[]> => {
-      if (excludeBlueskyPosts || p.source === 'lime') return [];
+      if (p.source === 'lime') return [];
       const text = getPostSearchText(p);
       if (!text) return []; // 語句のない検索(演算子のみ)はLimeNoteだけを検索する
 
-      const result = await getBluesky(text, true);
-      const posts = result.posts.map((post: any) => ({
-        ...post,
-        repostsCount: 0,
-        repostedByMe: false,
-        author: { ...post.author, coverUrl: '' },
-      })) as PostWithAuthor[];
-      posts.forEach((post) => blueskyIdsRef.current.add(post.id));
-      return posts.filter((post) => postMatchesSearch(post, p, { trustServerTerms: true }));
+      const normalize=(result:BlueskyResult)=>{
+        const posts=result.posts.map((post)=>({...post,repostsCount:0,repostedByMe:false,author:{...post.author,coverUrl:''}})) as PostWithAuthor[];
+        posts.forEach(post=>blueskyIdsRef.current.add(post.id));
+        return posts.filter(post=>postMatchesSearch(post,p,{trustServerTerms:post.source!=='misskey'}));
+      };
+      const result=await getBluesky(text,true);
+      return normalize(result);
     },
     [excludeBlueskyPosts, getBluesky],
   );
@@ -1096,8 +1111,9 @@ function SearchResults({
         // 次のページを読み進める。以前は0件のまま「見つかりません」を表示し、
         // 無限スクロール用の要素も出なくなるため、続きが永久に読み込まれなかった
         // (メディアタブでBlueskyを除外すると、LimeNoteの画像投稿があっても何も出ない原因)。
+        const extraRequest=(page===0 ? fetchBlueskyPosts(effective):Promise.resolve([] as PostWithAuthor[])).catch(error=>{if(!searchControllerRef.current.signal.aborted)console.warn('External search failed',error);return [] as PostWithAuthor[];});
         let currentPage = page;
-        let local = await fetchLocalPosts(effective, currentPage, mode);
+        let local = page===0 || feedsRef.current[mode].localHasMore ? await fetchLocalPosts(effective,currentPage,mode):{items:[] as PostWithAuthor[],hasMore:false};
         let scanned = 0;
         while (local.items.length === 0 && local.hasMore && scanned < MAX_EMPTY_PAGE_SCAN) {
           if (token !== tokenRef.current[mode]) return;
@@ -1106,25 +1122,23 @@ function SearchResults({
           local = await fetchLocalPosts(effective, currentPage, mode);
         }
 
-        const extra = page === 0 ? await fetchBlueskyPosts(effective) : [];
+        const extra = await extraRequest;
         if (token !== tokenRef.current[mode]) return;
 
-        setFeeds((prev) => ({
-          ...prev,
-          [mode]: {
-            items:
-              page === 0
-                ? sortPosts([...local.items, ...extra], mode)
-                : dedupe([...prev[mode].items, ...local.items]),
-            page: currentPage,
-            hasMore: local.hasMore,
-            loading: false,
-            loaded: true,
-            error: null,
-          },
-        }));
+        setFeeds(prev=>{
+          const previous=prev[mode];
+          const shown=new Set(page===0 ? []:previous.items.map(post=>post.id));
+          const candidates=sortPosts([...(page===0 ? []:previous.remaining),...local.items,...extra],mode).filter(post=>!shown.has(post.id));
+          const batch=candidates.slice(0,PAGE_SIZE),remaining=candidates.slice(PAGE_SIZE);
+          return {...prev,[mode]:{
+            items:page===0 ? batch:[...previous.items,...batch],
+            remaining,localHasMore:local.hasMore,
+            page:currentPage,hasMore:local.hasMore || remaining.length>0,
+            loading:false,loaded:true,error:null,
+          }};
+        });
       } catch (err: any) {
-        if (token !== tokenRef.current[mode]) return;
+        if (token !== tokenRef.current[mode] || searchControllerRef.current.signal.aborted) return;
         console.error('Search query failed:', err);
         setFeeds((prev) => ({
           ...prev,
@@ -1189,21 +1203,22 @@ function SearchResults({
 
   useEffect(() => {
     let cancelled = false;
+    if(activeTab!=='users')return;
     if (!userText || parsed.source === 'lime') {
       setBlueskyUsers([]);
       return;
     }
     getBluesky(userText, false).then((result) => {
       if (!cancelled) setBlueskyUsers(result.users.map(toUser));
-    });
+    }).catch(error=>{if(!cancelled)console.warn('Account search failed',error);});
     return () => {
       cancelled = true;
     };
-  }, [userText, parsed.source, refreshKey, getBluesky]);
+  }, [activeTab,userText, parsed.source, refreshKey, getBluesky]);
 
   const searchableUsers = useMemo(() => {
     const byId = new Map<string, User>();
-    const list = parsed.source === 'bluesky' ? blueskyUsers : [...allUsers, ...blueskyUsers];
+    const list = (parsed.source === 'bluesky' || parsed.source === 'misskey') ? blueskyUsers : [...allUsers, ...blueskyUsers];
     list.forEach((u) => byId.set(u.id, u));
     return Array.from(byId.values());
   }, [allUsers, blueskyUsers, parsed.source]);
@@ -1245,7 +1260,7 @@ function SearchResults({
       .sort((a, b) => b.score - a.score)
       .map((x) => x.u);
 
-    return [...blueskyUsers, ...matching.filter((u) => !blueskyIds.has(u.id))].filter(
+    return [...matching, ...blueskyUsers.filter(u=>!matching.some(match=>match.id===u.id))].filter(
       (u, i, arr) => arr.findIndex((c) => c.id === u.id) === i,
     );
   }, [userText, searchableUsers, searchableUsersIndex, blueskyUsers]);
@@ -1548,44 +1563,21 @@ export default function SearchPage() {
     return () => { cancelled = true; };
   }, [user?.id]);
 
-  // PC版の検索バー: 入力中のBlueskyユーザーサジェストを取得する。
-  // 演算子(from: など)は除き、検索語だけを渡す。
+  // Both external providers share the same suggestion slots and cancellation.
   useEffect(() => {
-    const query = getSearchFreeText(inputValue).trim();
-    if (!query || excludeBlueskyPosts) {
-      setBlueskySuggestionUsers([]);
-      return;
-    }
-
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      searchBluesky(normalizeBlueskyQuery(query), { includePosts: false })
-        .then((result) => {
-          if (cancelled) return;
-          setBlueskySuggestionUsers(result.users.slice(0, 3).map((user) => ({
-            id: user.id,
-            username: user.username,
-            displayName: user.displayName,
-            avatarUrl: user.avatarUrl,
-            coverUrl: user.coverUrl,
-            createdAt: user.createdAt,
-            bio: user.bio,
-            isOfficial: false,
-          })));
-        })
-        .catch((error) => {
-          if (!cancelled) {
-            console.error('Bluesky suggestion search failed:', error);
-            setBlueskySuggestionUsers([]);
-          }
-        });
-    }, 250);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
+    const query=getSearchFreeText(inputValue).trim();
+    setBlueskySuggestionUsers([]);
+    if(!query || !desktopLayout)return;
+    const controller=new AbortController();
+    const publish=(users:Awaited<ReturnType<typeof searchExternalUsers>>)=>{
+      if(!controller.signal.aborted)setBlueskySuggestionUsers(users.map(user=>({...user,isOfficial:false})));
     };
-  }, [inputValue, excludeBlueskyPosts]);
+    const timer=window.setTimeout(()=>{
+      void searchExternalUsers(normalizeBlueskyQuery(query),{includeBluesky:!excludeBlueskyPosts,signal:controller.signal})
+        .then(publish).catch(error=>{if(!controller.signal.aborted)console.warn('External suggestions unavailable',error);});
+    },250);
+    return()=>{controller.abort();window.clearTimeout(timer);};
+  },[inputValue, excludeBlueskyPosts,desktopLayout]);
 
   // PC版の検索バー: スクロールに応じた背景のぼかし表示切り替え。
   useEffect(() => {

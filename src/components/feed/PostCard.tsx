@@ -1,5 +1,7 @@
+import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
 import {isIosPwa} from '@/lib/utils';
 import { openMediaViewer } from '@/components/media/openMediaViewer';
+import {HighlightPostMenuButton} from '@/components/post/HighlightPostMenuButton';
 import {PinPostMenuButton} from '@/components/post/PinPostMenuButton';
 import {LinkPreviewCard,useLinkPreview} from '@/components/post/LinkPreviewCard';
 import {OfflineBookmarkContext} from '@/components/stickers/OfflineBookmarkContext';
@@ -108,19 +110,20 @@ const formatDisplayCount = (count: number) => {
 };
 
 type BlueskyPostFields = {
-  source?: 'lime' | 'bluesky';
+  source?: 'lime' | 'bluesky' | 'misskey';
   blueskyUrl?: string;
   blueskyUri?: string;
 };
 
 const isBlueskyPostLike = (post: { id?: string; source?: string }) => (
-  post.source === 'bluesky' || String(post.id || '').startsWith('bsky:')
+  post.source === 'bluesky' || (String(post.id || '').startsWith('bsky:') || String(post.id || '').startsWith('misskey:'))
 );
 
 const getBlueskyPostUrl = (post: Pick<BlueskyPostFields, 'blueskyUrl'> & { author?: { username?: string }; id?: string }) => {
   if (post.blueskyUrl) return post.blueskyUrl;
 
   const id = String(post.id || '');
+  if (id.startsWith('misskey:')) return id.slice('misskey:'.length);
   if (!id.startsWith('bsky:')) return null;
 
   const uri = id.slice('bsky:'.length);
@@ -913,9 +916,9 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
   const isBlueskyPost = isBlueskyPostLike(post);
   const blueskyPostUrl = getBlueskyPostUrl(post as { blueskyUrl?: string; author?: { username?: string }; id?: string });
   const blueskyProfileUrl = isBlueskyPost
-    ? `https://bsky.app/profile/${post.author.username}`
+    ? post.id.startsWith('misskey:') ? `https://misskey.io/@${post.author.username.replace(/@misskey\.io$/, '')}` : `https://bsky.app/profile/${post.author.username}`
     : null;
-  const blueskySession = useBlueskySession();
+  const blueskySession = useBlueskySession(post.id);
   const blueskyPostUri = isBlueskyPost ? getBlueskyUriFromPostId(post.id) : null;
 
   const [showPicker, setShowPicker] = useState(false);
@@ -1669,11 +1672,11 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
   const renderContentWithMentions = (text: string): React.ReactNode => {
     if (hasStickers(text)) return renderStickerText(text, renderContentWithMentions);
     if (!text) return null;
-    const parts = text.split(/(@\w+)/g);
+    const parts = splitMentionText(text);
 
     return parts.map((part, index) => {
       if (part.startsWith('@')) {
-        const username = part.substring(1);
+        const username = mentionProfileHandle(part,post.author);
         return (
           <Link
             key={`mention-${index}`}
@@ -2256,10 +2259,11 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                           className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
                         >
                           <ChartBarBig className="h-4 w-4" />
-                          {isBlueskyPost ? 'Blueskyで見る' : 'ポストアクティビティー'}
+                          {isBlueskyPost ? (post.id.startsWith('misskey:') ? 'Misskeyで見る' : 'Blueskyで見る') : 'ポストアクティビティー'}
                         </button>
 
                         {isMyPost && !isBlueskyPost && !post.replyId && <PinPostMenuButton userId={post.userId} postId={post.id} onClose={()=>setShowMenu(false)}/>}
+                        {isMyPost && !isBlueskyPost && !post.replyId && <HighlightPostMenuButton userId={post.userId} postId={post.id} onClose={()=>setShowMenu(false)}/>}
                         {isMyPost && currentVisibility !== 'public' && (
                           <button
                             onClick={(e) => handleToggleVisibility(e, 'public')}
@@ -2907,7 +2911,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
               {isBlueskyPost && (
                 <div className="flex items-center gap-1 mt-1.5 text-muted-foreground/70">
                   <Globe className="h-3.5 w-3.5" />
-                  <span className={useMobilePresentation ? "text-[13px] font-medium" : "text-[15px] font-medium"}>Bluesky</span>
+                  <span className={useMobilePresentation ? "text-[13px] font-medium" : "text-[15px] font-medium"}>{post.id.startsWith('misskey:') ? 'Misskey' : 'Bluesky'}</span>
                 </div>
               )}
 

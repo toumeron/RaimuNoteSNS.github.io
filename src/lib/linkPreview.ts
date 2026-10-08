@@ -1,7 +1,7 @@
 import {readSavedPreview,savePreview} from './linkPreviewCache';
 import {supabase} from './supabase';
 import {spaceLinkIn} from './spaceLinks';
-export type LinkPreview={url:string;domain:string;title:string;image:string};
+export type LinkPreview={url:string;domain:string;title:string;image:string;description?:string};
 export function singlePreviewUrl(content:string):string|null {
   const urls=content.match(/https?:\/\/[^\s<>"\u3000]+/gi)??[];
   if(urls.length!==1)return null;
@@ -20,8 +20,8 @@ export async function fetchLinkPreview(url:string,persist=true):Promise<LinkPrev
   const request=(async()=>{
     try{
       const {data,error}=await supabase.functions.invoke('link-preview',{body:{url}});const value=data?.preview;
-      if(error)return null;
-      const preview=value&&typeof value.title==='string'&&typeof value.image==='string'&&typeof value.domain==='string'&&/^https?:\/\//.test(value.image)?{...value,url} as LinkPreview:null;
+      if(error||data?.retryable)return null;
+      const preview=value&&typeof value.title==='string'&&typeof value.image==='string'&&typeof value.domain==='string'&&(value.title.trim()||typeof value.description==='string'&&value.description.trim())&&(!value.image||/^https?:\/\//.test(value.image))?{...value,url} as LinkPreview:null;
       if(persist)savePreview(url,preview);
       return preview;
     }catch{return null;}

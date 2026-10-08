@@ -29,7 +29,7 @@ vi.mock('@/api/posts', () => ({
   },
 }));
 vi.mock('@/lib/bluesky', () => ({
-  getConfiguredBlueskyHandles: () => db.handles,
+  getConfiguredExternalHandles: () => db.handles,
   fetchBlueskyAuthorFeed: async ({ cursor, limit }: { cursor?: string | null; limit: number }) => {
     db.blueCalls(cursor);
     if (db.initialBlue) { const pending = db.initialBlue; db.initialBlue = null; return pending; }
@@ -114,4 +114,17 @@ it('does not reuse another account timeline while switching accounts',async()=>{
  release([post('cat-only',300)]);await waitFor(()=>expect(view.result.current.isSuccess).toBe(true));
  expect(view.result.current.data?.pages[0].posts[0].id).toBe('cat-only');
  expect(view.client.getQueryData(['feed','all','timeline','cat',['author']])).toBeDefined();
+});
+
+it.each(['all','following'] as const)('%s does not fetch server-wide external posts when no users are registered',async(tab)=>{
+  db.handles=[];
+  const view=mount(tab);await waitFor(()=>expect(view.result.current.isSuccess).toBe(true));
+  expect(db.blueCalls).not.toHaveBeenCalled();
+  expect(view.result.current.data!.pages[0].posts.every(post=>!post.id.startsWith('bsky-'))).toBe(true);
+});
+it.each(['all','following'] as const)('%s retains native posts when a registered Misskey user fails',async(tab)=>{
+  db.handles=['cat@misskey.io'];db.initialBlue=new Promise((_,reject)=>setTimeout(()=>reject(new Error('Misskey unavailable')),0));
+  const view=mount(tab);await waitFor(()=>expect(view.result.current.isSuccess).toBe(true));
+  expect(view.result.current.data!.pages[0].posts.length).toBeGreaterThan(0);
+  expect(view.result.current.data!.pages[0].posts.every(post=>!post.id.startsWith('bsky-'))).toBe(true);
 });

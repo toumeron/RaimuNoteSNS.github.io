@@ -10,7 +10,7 @@ const state = vi.hoisted(() => ({
   uploads: vi.fn(), updates: vi.fn(),
 }));
 vi.mock('@/lib/currentUser', () => ({ getCurrentUserId: async () => state.userId }));
-vi.mock('@/lib/uploadCommentImages', () => ({ uploadCommentImages: state.uploads }));
+vi.mock('@/lib/uploadPostMedia', () => ({ uploadPostMedia: state.uploads }));
 vi.mock('@/lib/supabase', () => ({ supabase: { from: (table: string) => {
   let operation = 'read', head = false;
   const row = () => ({ id: 'reply', ...state.inserted, created_at: '2026-10-02T00:00:00Z', profiles: { id: 'viewer', username: 'viewer', display_name: 'Viewer' } });
@@ -25,7 +25,7 @@ vi.mock('@/lib/supabase', () => ({ supabase: { from: (table: string) => {
     single: () => builder,
     then: (resolve: (value: unknown) => void) => Promise.resolve({
       error: operation === 'insert' ? state.error : null,
-      data: table === 'comments' ? operation === 'insert' ? { id: 'reply' } : head ? null : state.pages ? state.pages.shift() : row() : null,
+      data: table === 'comments' ? operation === 'insert' ? { id: 'reply' } : head ? null : state.pages ? state.pages.shift() : row() : table === 'posts' ? { visibility: 'public' } : null,
       count: state.count,
     }).then(resolve),
   };
@@ -53,7 +53,7 @@ describe('reply persistence', () => {
   });
   it('stores the original post and selected reply parent separately', async () => {
     const result = await createComment('original', { content: ' reply ', parentCommentId: 'parent-reply', imageUrls: ['blob:preview'] });
-    expect(state.inserted).toEqual({ post_id: 'original', user_id: 'viewer', content: 'reply', parent_comment_id: 'parent-reply', image_urls: ['https://example.com/image.png'], client_name: 'LimeNote for Web' });
+    expect(state.inserted).toEqual({ id: expect.any(String), post_id: 'original', user_id: 'viewer', content: 'reply', parent_comment_id: 'parent-reply', image_urls: ['https://example.com/image.png'], client_name: 'LimeNote for Web' });
     expect(result).toMatchObject({ postId: 'original', parentCommentId: 'parent-reply', imageUrls: ['https://example.com/image.png'], clientName: 'LimeNote for Web' });
   });
   it('records the posting device and returns it for the detail display', async () => {

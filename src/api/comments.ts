@@ -3,7 +3,7 @@ import type { CommentWithAuthor } from '@/types';
 import type { User } from '@/types';
 import { supabase } from '@/lib/supabase';
 import { getCurrentUserId } from '@/lib/currentUser';
-import { uploadCommentImages } from '@/lib/uploadCommentImages';
+import { uploadPostMedia } from '@/lib/uploadPostMedia';
 
 export type CommentInput = { content: string; imageUrls?: string[]; parentCommentId?: string | null };
 
@@ -58,13 +58,16 @@ export async function createComment(postId: string, input: string | CommentInput
   const payload = typeof input === 'string' ? { content: input } : input;
   const content = payload.content.trim();
   if ((!content && !payload.imageUrls?.length) || content.length > 280) throw new Error('返信は280文字以内、または画像を添付してください');
-  const imageUrls = await uploadCommentImages(payload.imageUrls ?? []);
+  const id = crypto.randomUUID();
+  const { data: parent, error: parentError } = await supabase.from('posts').select('visibility').eq('id', postId).single();
+  if (parentError || !parent) throw new Error('返信先の投稿を閲覧できません');
+  const imageUrls = await uploadPostMedia(payload.imageUrls ?? [], userId, id, parent.visibility !== 'public');
 
   // INSERT直後に profiles(*) を含む select を連鎖させると環境によっては
   // PostgREST エラーが発生するため、INSERT では id のみ取得して別途 SELECT する。
   const { data, error } = await supabase
     .from('comments')
-    .insert({ post_id: postId, user_id: userId, content, parent_comment_id: payload.parentCommentId ?? null, image_urls: imageUrls, client_name: getClientName() })
+    .insert({ id, post_id: postId, user_id: userId, content, parent_comment_id: payload.parentCommentId ?? null, image_urls: imageUrls, client_name: getClientName() })
     .select('id')
     .single();
 

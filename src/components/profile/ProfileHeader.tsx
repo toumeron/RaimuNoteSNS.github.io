@@ -1,3 +1,5 @@
+import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
+import {configuredMisskeyHandles,changeMisskeySetting,MISSKEY_HANDLES_KEY} from '@/lib/misskey';
 import { ArrowLeft, CalendarDays, MapPin, Link2, MoreHorizontal, Radio, Search, Share2, UserCheck, UserPlus, X } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -117,10 +119,10 @@ export function ProfileHeader({
   const [membershipError, setMembershipError] = useState<string | null>(null);
   const [isLinkCopied, setIsLinkCopied] = useState(false);
   const [isBlueskyAdded, setIsBlueskyAdded] = useState(() =>
-    getConfiguredBlueskyHandles().includes(normalizeBlueskyHandle(user.username)),
+    (user.id.startsWith('misskey-user:') ? configuredMisskeyHandles(false) : getConfiguredBlueskyHandles()).includes(normalizeBlueskyHandle(user.username)),
   );
   useEffect(() => {
-    setIsBlueskyAdded(getConfiguredBlueskyHandles().includes(normalizeBlueskyHandle(user.username)));
+    setIsBlueskyAdded((user.id.startsWith('misskey-user:') ? configuredMisskeyHandles(false) : getConfiguredBlueskyHandles()).includes(normalizeBlueskyHandle(user.username)));
   }, [user.username]);
   useEffect(() => {
     if (!isSubscriptionOpen && !isAvatarOpen && !isCoverOpen) return;
@@ -200,6 +202,11 @@ export function ProfileHeader({
   const handleToggleBlueskyUser = () => {
     const handle = normalizeBlueskyHandle(user.username);
     if (!handle) return;
+    if (user.id.startsWith('misskey-user:')) {
+      const current=configuredMisskeyHandles(false).filter(handle=>handle!=='misskey.io');
+      const next=isBlueskyAdded ? current.filter(item=>item!==handle) : [...current,handle];
+      changeMisskeySetting(MISSKEY_HANDLES_KEY,next);setIsBlueskyAdded(!isBlueskyAdded);return;
+    }
     const configured = getConfiguredBlueskyHandles();
     const saved = saveConfiguredBlueskyHandles(
       isBlueskyAdded
@@ -276,10 +283,10 @@ export function ProfileHeader({
   const renderContentWithMentions = (text: string) => {
     if (!text) return null;
     // @username 形式にマッチさせる正規表現
-    const parts = text.split(/(@\w+)/g);
+    const parts = splitMentionText(text);
     return parts.map((part, index) => {
       if (part.startsWith('@')) {
-        const username = part.substring(1);
+        const username = mentionProfileHandle(part,user);
         return (
           <Link
             key={`mention-${index}`}

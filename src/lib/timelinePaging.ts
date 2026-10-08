@@ -25,6 +25,7 @@ export function createTimelineCursor(handles: string[]): TimelineCursor {
 
 export function normalizeTimelineBlueskyPost(post: BlueskyAuthorFeedPage['posts'][number]): PostWithAuthor {
   return {
+    ...post,
     id: post.id, userId: post.userId, content: post.content, imageUrls: post.imageUrls,
     createdAt: post.createdAt, visibility: post.visibility,
     likedByMe: post.likedByMe, likesCount: post.likesCount, commentsCount: post.commentsCount,
@@ -56,9 +57,9 @@ export async function loadTimelinePage(previous: TimelineCursor, sources: Timeli
   const seen = new Set<string>();
 
   while (posts.length < TIMELINE_PAGE_SIZE) {
-    const requests: Promise<void>[] = [];
+    const requests: Array<()=>Promise<void>> = [];
     if (!lime.done && lime.posts.length === 0) {
-      requests.push(sources.lime(lime.page, SOURCE_PAGE_SIZE, lime.before).then(rows => {
+      requests.push(()=>sources.lime(lime.page, SOURCE_PAGE_SIZE, lime.before).then(rows => {
         lime.page += 1;
         lime.done = rows.length < SOURCE_PAGE_SIZE;
         const ordered = [...rows].sort(newestFirst);
@@ -69,7 +70,7 @@ export async function loadTimelinePage(previous: TimelineCursor, sources: Timeli
     }
     for (const [handle, state] of Object.entries(bluesky)) {
       if (state.done || state.posts.length > 0) continue;
-      requests.push(sources.bluesky(handle, state.cursor, SOURCE_PAGE_SIZE).then(page => {
+      requests.push(()=>sources.bluesky(handle, state.cursor, SOURCE_PAGE_SIZE).then(page => {
         if (page.cursor && page.cursor === state.cursor) throw new Error(`Bluesky cursor did not advance for ${handle}`);
         state.cursor = page.cursor;
         // A filtered/empty page can still have another page. Only the cursor
@@ -79,7 +80,11 @@ export async function loadTimelinePage(previous: TimelineCursor, sources: Timeli
       }));
     }
     // Independent reads start together; neither source is published early.
-    await Promise.all(requests);
+    // One page is committed atomically, with only two source pages in flight.
+    let nextRequest=0;
+    await Promise.all(Array.from({length:Math.min(2,requests.length)},async()=>{
+      while(nextRequest<requests.length)await requests[nextRequest++]();
+    }));
     if (states.some(state => !state.done && state.posts.length === 0)) continue;
     const available = states.filter(state => state.posts.length > 0);
     if (available.length === 0) break;

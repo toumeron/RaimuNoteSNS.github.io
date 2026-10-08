@@ -1,7 +1,14 @@
+import { uploadProfileMedia } from '@/lib/uploadProfileMedia';
+import { getPrivateBotPrompt } from '@/lib/privateProfile';
+import {createAccountExport,checkExportAbort} from '@/lib/accountExport';
+import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription} from '@/components/ui/dialog';
+import {useQueryClient} from '@tanstack/react-query';
+import {configuredMisskeyHandles,MISSKEY_HANDLES_KEY,isMisskeyActor,changeMisskeySetting} from '@/lib/misskey';
 import {CompanionSettings} from '@/components/ai/CompanionSettings';
 import { createPortal } from 'react-dom';
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import {
+  Download,
   ImagePlus,
   Loader2,
   LogOut,
@@ -36,6 +43,7 @@ import { Switch } from '@/components/ui/switch';
 import { User } from '@/types';
 import { supabase } from '@/lib/supabase';
 import {
+  fetchBlueskyProfile as fetchExternalProfile,
   getConfiguredBlueskyHandles,
   normalizeBlueskyHandle,
   saveConfiguredBlueskyHandles,
@@ -66,27 +74,13 @@ interface BlueskyProfileInfo {
   avatar?: string;
 }
 
-const BLUESKY_PUBLIC_PROFILE_API = 'https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile';
-
-// Blueskyの本家プロフィールではなく、サイト内のユーザーページ（/u/handle）へ遷移させる
-const getInternalProfilePath = (handle: string) => `/u/${handle}`;
-
-const fetchBlueskyProfile = async (handle: string): Promise<BlueskyProfileInfo> => {
+const getInternalProfilePath = (handle:string) => `/u/${encodeURIComponent(handle)}`;
+const fetchBlueskyProfile = async (handle:string):Promise<BlueskyProfileInfo> => {
   try {
-    const res = await fetch(`${BLUESKY_PUBLIC_PROFILE_API}?actor=${encodeURIComponent(handle)}`);
-    if (!res.ok) {
-      return { handle };
-    }
-    const data = await res.json();
-    return {
-      handle,
-      displayName: data?.displayName || undefined,
-      avatar: data?.avatar || undefined,
-    };
-  } catch (err) {
-    console.error('Fetch Bluesky Profile Error:', err);
-    return { handle };
-  }
+    const profile=await fetchExternalProfile(handle);
+    if(!profile)return {handle};
+    return {handle:profile.username,displayName:profile.displayName,avatar:profile.avatarUrl};
+  } catch { return {handle}; }
 };
 
 type ProfileImageCropTarget = 'avatar' | 'cover';
@@ -459,8 +453,33 @@ function ProfileImageCropper({ src, target, onApply, onClose }: ProfileImageCrop
 }
 
 export default function Settings() {
+  const queryClient=useQueryClient();
+  const [exportOpen,setExportOpen]=useState(false);
+  const [exportPassword,setExportPassword]=useState('');
+  const [exportStatus,setExportStatus]=useState('');
+  const [exportError,setExportError]=useState('');
+  const [exportBusy,setExportBusy]=useState(false);
+  const exportController=useRef<AbortController|null>(null);
+
   const { user: authUser, logout } = useAuth();
   const user = (authUser as unknown) as User | null;
+  useEffect(()=>()=>{exportController.current?.abort();},[authUser?.id]);
+  const startExport=async()=>{
+    if(!authUser?.id||exportBusy)return;
+    const controller=new AbortController();exportController.current=controller;
+    const password=exportPassword;setExportPassword('');setExportError('');setExportBusy(true);
+    try {
+      const result=await createAccountExport(authUser.id,password,setExportStatus,controller.signal);
+      checkExportAbort(controller.signal);
+      const link=document.createElement('a');const downloadUrl=URL.createObjectURL(result.zip);link.href=downloadUrl;link.download='LimeNote-export.zip';link.rel='noopener';document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(downloadUrl),60000);
+      if(result.cacheWarning)setExportError(result.cacheWarning);
+      setExportStatus(`${result.cached?'保存済みのデータ':'エクスポート'}をダウンロードしました。端末内の保存期限：${new Date(result.expiresAt).toLocaleString('ja-JP')}`);
+      if(result.missingCount)setExportError(`取得できなかった添付データが${result.missingCount}件あります。ZIP内のdata.jsonに一覧を保存しました。`);
+      toast.success('データエクスポートをダウンロードしました');
+    }catch(error){if(!controller.signal.aborted)setExportError(error instanceof Error?error.message:'エクスポートできませんでした');}
+    finally{setExportBusy(false);exportController.current=null;}
+  };
+
   const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
   const { mutateAsync, isPending } = useUpdateProfile(user?.id ?? '');
@@ -490,6 +509,7 @@ export default function Settings() {
   const [emojiEffect, setEmojiEffect] = useState(getInitialEmoji());
   const [botEnabled, setBotEnabled] = useState(user?.bot_enabled ?? false);
   const [botPrompt, setBotPrompt] = useState(user?.bot_prompt ?? '');
+  const [botPromptLoaded, setBotPromptLoaded] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const avatarRef = useRef<HTMLInputElement>(null);
   const coverRef = useRef<HTMLInputElement>(null);
@@ -512,8 +532,16 @@ export default function Settings() {
   const [hasLimePro, setHasLimePro] = useState(false);
   const [isLimeProPurchasing, setIsLimeProPurchasing] = useState(false);
 
+  const [misskeyHandles,setMisskeyHandles]=useState(()=>configuredMisskeyHandles(false));
+  useEffect(()=>{
+    const sync=()=>setMisskeyHandles(configuredMisskeyHandles(false));
+    window.addEventListener('lime-misskey-changed',sync);window.addEventListener('storage',sync);
+    return ()=>{window.removeEventListener('lime-misskey-changed',sync);window.removeEventListener('storage',sync);};
+  },[]);
   const [blueskyHandles, setBlueskyHandles] = useState<string[]>(getConfiguredBlueskyHandles);
   const [blueskyHandleInput, setBlueskyHandleInput] = useState('');
+  const [addingExternalAccount,setAddingExternalAccount]=useState(false);
+  const externalHandles=[...blueskyHandles,...misskeyHandles];
   const [blueskyProfiles, setBlueskyProfiles] = useState<Record<string, BlueskyProfileInfo>>({});
   const [blueskyProfilesLoading, setBlueskyProfilesLoading] = useState<Record<string, boolean>>({});
 
@@ -569,6 +597,7 @@ export default function Settings() {
 
   const fetchProfileForSettings = async () => {
     setIsProfileLoading(true);
+    setBotPromptLoaded(false);
     try {
       // 設定画面だけを直接開いてもプロフィール画面の読み込み結果に依存しないよう、
       // Supabaseから現在ユーザーのプロフィールを直接取得する。
@@ -580,7 +609,7 @@ export default function Settings() {
 
       const { data, error } = await supabase
         .from('profiles')
-        .select('display_name, bio, location, avatar_url, cover_url, emoji_effect, bot_enabled, bot_prompt')
+        .select('display_name, bio, location, avatar_url, cover_url, emoji_effect, bot_enabled')
         .eq('id', userId)
         .maybeSingle();
 
@@ -593,7 +622,11 @@ export default function Settings() {
       setAvatarUrl(data.avatar_url ?? '');
       setCoverUrl(data.cover_url ?? '');
       setBotEnabled(data.bot_enabled ?? false);
-      setBotPrompt(data.bot_prompt ?? '');
+      // Apply all ordinary fields even when private Bot settings are unavailable.
+      void getPrivateBotPrompt(userId).then(prompt => {
+        setBotPrompt(prompt);
+        setBotPromptLoaded(true);
+      }).catch(err => console.warn('Private Bot settings unavailable:', err));
       setEmojiEffect(data.emoji_effect ?? localStorage.getItem('lime_emoji_pref') ?? '');
     } catch (err) {
       console.error('Fetch Profile For Settings Error:', err);
@@ -716,7 +749,7 @@ export default function Settings() {
 
   // 登録済みのBlueskyハンドルに対応するプロフィール（アイコン・表示名）を取得する
   useEffect(() => {
-    const handlesToFetch = blueskyHandles.filter(
+    const handlesToFetch = [...blueskyHandles,...misskeyHandles].filter(
       (handle) => !blueskyProfiles[handle] && !blueskyProfilesLoading[handle]
     );
 
@@ -737,7 +770,7 @@ export default function Settings() {
       });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [blueskyHandles]);
+  }, [blueskyHandles,misskeyHandles]);
 
   if (!user) return null;
 
@@ -818,29 +851,7 @@ export default function Settings() {
     setIsTimelineBackgroundUploading(true);
 
     try {
-      const cloudinaryCloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
-      const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
-
-      if (!cloudinaryCloudName || !uploadPreset) {
-        throw new Error('Cloudinaryの環境設定が不足しています');
-      }
-
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('upload_preset', uploadPreset);
-      formData.append('folder', `timeline_backgrounds/${user.id}`);
-
-      const clRes = await fetch(
-        `https://api.cloudinary.com/v1_1/${cloudinaryCloudName}/image/upload`,
-        {
-          method: 'POST',
-          body: formData,
-        }
-      );
-
-      if (!clRes.ok) throw new Error('Cloudinaryへのアップロードに失敗しました');
-
-      const clData = await clRes.json();
+      const clData = await uploadProfileMedia(file, 'timeline-background');
       const uploadedUrl = clData.secure_url as string;
       const uploadedPublicId = clData.public_id as string;
 
@@ -937,29 +948,7 @@ export default function Settings() {
     setIsEmojiUploading(true);
 
     try {
-      const cloudinaryCloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
-      const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
-
-      if (!cloudinaryCloudName || !uploadPreset) {
-        throw new Error('Cloudinaryの環境設定が不足しています');
-      }
-
-      const formData = new FormData();
-      formData.append('file', emojiFile);
-      formData.append('upload_preset', uploadPreset);
-      formData.append('folder', 'custom_emojis');
-
-      const clRes = await fetch(
-        `https://api.cloudinary.com/v1_1/${cloudinaryCloudName}/image/upload`,
-        {
-          method: 'POST',
-          body: formData,
-        }
-      );
-
-      if (!clRes.ok) throw new Error('Cloudinaryへのアップロードに失敗しました');
-
-      const clData = await clRes.json();
+      const clData = await uploadProfileMedia(emojiFile, 'emoji');
 
       const { error: dbError } = await supabase
         .from('custom_emojis')
@@ -1016,36 +1005,36 @@ export default function Settings() {
     }
   };
 
-  const handleAddBlueskyHandle = () => {
-    const normalized = normalizeBlueskyHandle(blueskyHandleInput);
-    if (!normalized) {
-      toast.error('Blueskyのユーザー名を入力してください');
-      return;
-    }
-
-    if (blueskyHandles.includes(normalized)) {
-      toast.info(`@${normalized} はすでに登録されています`);
+  const handleAddBlueskyHandle = async () => {
+    const input=blueskyHandleInput.trim().replace(/^https:\/\/misskey\.io\/@/,'').replace(/^@+/, '');
+    const normalized=isMisskeyActor(input) ? input : normalizeBlueskyHandle(input);
+    if(!normalized || normalized==='handle.invalid') {toast.error('追加するユーザー名を入力してください');return;}
+    if(externalHandles.includes(normalized)) {toast.info(`@${normalized} はすでに登録されています`);return;}
+    setAddingExternalAccount(true);
+    try {
+      const profile=await fetchExternalProfile(normalized);
+      if(!profile)throw new Error('アカウントが見つかりません');
+      const handle=profile.username;
+      if(isMisskeyActor(handle)) changeMisskeySetting(MISSKEY_HANDLES_KEY,[...new Set([...misskeyHandles,handle])]);
+      else setBlueskyHandles(saveConfiguredBlueskyHandles([...blueskyHandles,handle]));
+      setBlueskyProfiles(prev=>({...prev,[handle]:{handle,displayName:profile.displayName,avatar:profile.avatarUrl}}));
       setBlueskyHandleInput('');
-      return;
-    }
-
-    const nextHandles = [...blueskyHandles, normalized];
-    const savedHandles = saveConfiguredBlueskyHandles(nextHandles);
-    setBlueskyHandles(savedHandles);
-    setBlueskyHandleInput('');
-    toast.success(`@${normalized} をBluesky連携に追加しました`);
+      void queryClient.invalidateQueries({queryKey:['feed']});
+      toast.success(`@${handle} を追加しました`);
+    } catch(error) {toast.error(error instanceof Error ? error.message : '追加できませんでした');}
+    finally {setAddingExternalAccount(false);}
   };
 
   const handleRemoveBlueskyHandle = (handle: string) => {
-    const nextHandles = blueskyHandles.filter((item) => item !== handle);
-    const savedHandles = saveConfiguredBlueskyHandles(nextHandles);
-    setBlueskyHandles(savedHandles);
+    if(isMisskeyActor(handle)) changeMisskeySetting(MISSKEY_HANDLES_KEY,misskeyHandles.filter(item=>item!==handle));
+    else setBlueskyHandles(saveConfiguredBlueskyHandles(blueskyHandles.filter(item=>item!==handle)));
+    void queryClient.invalidateQueries({queryKey:['feed']});
     setBlueskyProfiles((prev) => {
       const next = { ...prev };
       delete next[handle];
       return next;
     });
-    toast.success(`@${handle} をBluesky連携から削除しました`);
+    toast.success(`@${handle} を削除しました`);
   };
 
   const handleBlueskyLogin = async () => {
@@ -1162,7 +1151,7 @@ export default function Settings() {
         coverUrl,
         emojiEffect,
         bot_enabled: botEnabled,
-        bot_prompt: botPrompt,
+        ...(botPromptLoaded ? { bot_prompt: botPrompt } : {}),
       });
       localStorage.setItem('lime_emoji_pref', emojiEffect);
       toast.success('エフェクト設定を更新しました');
@@ -1183,7 +1172,7 @@ export default function Settings() {
         coverUrl,
         emojiEffect,
         bot_enabled: targetEnabled,
-        bot_prompt: botPrompt,
+        ...(botPromptLoaded ? { bot_prompt: botPrompt } : {}),
       });
     } catch (err) {
       console.error('Bot Update Error:', err);
@@ -1226,7 +1215,7 @@ export default function Settings() {
         coverUrl,
         emojiEffect,
         bot_enabled: botEnabled,
-        bot_prompt: botPrompt,
+        ...(botPromptLoaded ? { bot_prompt: botPrompt } : {}),
       });
       localStorage.setItem('lime_emoji_pref', emojiEffect);
       toast.success('プロフィールを更新しました');
@@ -1351,7 +1340,7 @@ export default function Settings() {
       <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
         <div className="flex items-center gap-2">
           <Sparkles className="h-4 w-4 text-primary" />
-          <h2 className="font-display text-base font-bold">Bluesky連携</h2>
+          <h2 className="font-display text-base font-bold">その他のSNS連携</h2>
         </div>
 
         <div className="mt-4 flex flex-col gap-2 sm:flex-row">
@@ -1364,13 +1353,14 @@ export default function Settings() {
                 handleAddBlueskyHandle();
               }
             }}
-            placeholder="例: @nakkar7.bsky.social"
+            placeholder="@nakkar7.bsky.social..."
             className="h-11 rounded-full bg-background"
-            aria-label="追加するBlueskyユーザー"
+            aria-label="追加する外部アカウント"
           />
           <Button
             type="button"
             onClick={handleAddBlueskyHandle}
+            disabled={addingExternalAccount}
             className="h-11 rounded-full bg-gradient-primary font-bold shadow-soft"
           >
             <Plus className="mr-1.5 h-4 w-4" />
@@ -1379,14 +1369,14 @@ export default function Settings() {
         </div>
 
         <div className="mt-4 space-y-2">
-          <Label>登録済みアカウント（{blueskyHandles.length}）</Label>
-          {blueskyHandles.length === 0 ? (
+          <Label>登録済みアカウント（{externalHandles.length}）</Label>
+          {externalHandles.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-border/60 bg-background/50 px-4 py-4 text-sm text-muted-foreground">
-              登録されているBlueskyユーザーはありません。
+              登録済みのアカウントはありません。
             </div>
           ) : (
             <div className="flex flex-wrap gap-2">
-              {blueskyHandles.map((handle) => {
+              {externalHandles.map((handle) => {
                 const profile = blueskyProfiles[handle];
                 const isProfileLoading = !!blueskyProfilesLoading[handle];
                 const profilePath = getInternalProfilePath(handle);
@@ -1903,8 +1893,13 @@ export default function Settings() {
 
       <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
         <h2 className="font-display text-base font-bold">アカウント</h2>
-        <p className="mt-1 text-sm text-muted-foreground">ログアウトすると認証画面に戻ります</p>
+        <div className="mt-4">
+          <Button variant="outline" className="rounded-full" onClick={()=>{setExportOpen(true);setExportPassword('');setExportError('');setExportStatus('');}}>
+            <Download className="mr-2 h-4 w-4" />データをエクスポート
+          </Button>
+        </div>
         <Button
+          disabled={exportBusy}
           variant="outline"
           className="mt-4 rounded-full border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
           onClick={async () => {
@@ -1915,6 +1910,20 @@ export default function Settings() {
           <LogOut className="mr-1.5 h-4 w-4" /> ログアウト
         </Button>
       </div>
+      <Dialog open={exportOpen} onOpenChange={open=>{if(!exportBusy){setExportOpen(open);setExportPassword('');}}}>
+        <DialogContent className="sm:max-w-md" onInteractOutside={event=>{if(exportBusy)event.preventDefault();}} onEscapeKeyDown={event=>{if(exportBusy)event.preventDefault();}}>
+          <DialogHeader><DialogTitle>データをエクスポート</DialogTitle><DialogDescription>
+          </DialogDescription></DialogHeader>
+          <form onSubmit={event=>{event.preventDefault();void startExport();}} className="space-y-4">
+            <div className="space-y-2"><Label htmlFor="export-password">パスワードを入力してください</Label>
+              <Input id="export-password" type="password" autoComplete="current-password" value={exportPassword} onChange={event=>setExportPassword(event.target.value)} disabled={exportBusy} required />
+            </div>
+            {exportStatus&&<p role="status" aria-live="polite" className="text-sm text-muted-foreground">{exportStatus}</p>}
+            {exportError&&<p role="alert" className="text-sm text-destructive">{exportError}</p>}
+            <Button type="submit" disabled={exportBusy||!exportPassword} className="w-full rounded-full">{exportBusy?<Loader2 className="mr-2 h-4 w-4 animate-spin"/>:<Download className="mr-2 h-4 w-4"/>}{exportBusy?'保存中…':'確認してダウンロード'}</Button>
+          </form>
+        </DialogContent>
+      </Dialog>
       {profileCropTarget && profileCropSrc && (
         <ProfileImageCropper
           src={profileCropSrc}

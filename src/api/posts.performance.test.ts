@@ -36,7 +36,7 @@ vi.mock('@/lib/supabase', () => ({
 }));
 
 import { getUserByUsername } from './users';
-import { getFeed, getFollowingFeed, getPostsByUser, getLikedPostsByUser, searchPosts, getProfilePosts, getPostById } from './posts';
+import { getFeed, getFollowingFeed, getPostsByUser, getLikedPostsByUser, searchPosts, getProfilePosts, getPostById, getHighlightedPosts } from './posts';
 
 const post = (id: string, parent?: string) => ({
   id, user_id: 'author', content: 'post', image_urls: ['https://example.com/image.png'],
@@ -148,11 +148,12 @@ describe('bounded fresh post viewer state', () => {
    expect(await getUserByUsername('author')).toEqual({
      id: 'author', username: 'author', displayName: 'Author', bio: 'bio', location: '',
      avatarUrl: 'avatar', coverUrl: 'cover', createdAt: 'now', isOfficial: true,
-     emojiEffect: 'effect', bot_enabled: true, bot_prompt: 'prompt',
+     emojiEffect: 'effect', bot_enabled: true, bot_prompt: undefined,
    });
    const call = db.calls.find(c => c.table === 'profiles');
    expect(call?.select).not.toBe('*');
    expect(call?.select).not.toContain('timeline_background_url');
+   expect(call?.select).not.toContain('bot_prompt');
  });
 
  it.each([getFeed, getFollowingFeed])('retains visibility checks while paging from a timestamp/ID boundary', async load => {
@@ -254,5 +255,31 @@ describe('restricted post follow direction', () => {
     db.rows.posts = [{ ...post('quote'), parent_post: { ...post('restricted'), visibility: 'following' } }];
     db.rows.follows = [{ follower_id: 'viewer', followee_id: 'author' }];
     expect((await getFeed())[0].parentPost).toBeNull();
+  });
+});
+
+describe('profile highlights feed', () => {
+  it('preserves post cards, quoted parents and viewer reactions with a bounded batch', async () => {
+    db.rows.profile_highlights = [
+      { user_id: 'author', posts: post('one', 'quoted') },
+      { user_id: 'author', posts: post('two') },
+    ];
+    const rows = await getHighlightedPosts('author');
+    expect(rows.map(row => row.id)).toEqual(['one', 'two']);
+    expect(rows[0].likedByMe).toBe(true);
+    expect(rows[0].parentPost?.likedByMe).toBe(true);
+    expect(rows[1].repostedByMe).toBe(true);
+    expect(db.calls.find(call => call.table === 'profile_highlights')?.select).toContain('posts!inner');
+    expect(db.calls.filter(call => call.table === 'posts')).toHaveLength(0);
+  });
+  it('pages highlighted records and skips reactions for an empty page', async () => {
+    db.rows.profile_highlights = [{ user_id: 'author', posts: post('one') }];
+    expect(await getHighlightedPosts('author', 1, 10)).toEqual([]);
+    expect(db.calls.find(call => call.table === 'profile_highlights')?.filters).toEqual({ user_id: 'author', range: [10, 19] });
+    expect(db.calls.some(call => ['likes', 'reposts'].includes(call.table))).toBe(false);
+  });
+  it('propagates feed errors instead of treating them as an empty profile', async () => {
+    db.errors.profile_highlights = new Error('unavailable');
+    await expect(getHighlightedPosts('author')).rejects.toThrow('unavailable');
   });
 });

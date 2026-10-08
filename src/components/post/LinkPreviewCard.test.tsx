@@ -9,7 +9,7 @@ function mount(content:string){return render(<QueryClientProvider client={new Qu
 beforeEach(()=>{invoke.mockReset();localStorage.clear();});
 it('renders a linked image and title only on success',async()=>{invoke.mockResolvedValue({data:{preview}});mount('日記 https://example.com/diary');expect(await screen.findByRole('link',{name:'9月日記'})).toHaveAttribute('href',preview.url);await waitFor(()=>expect(document.querySelector('[data-link-preview] img')).toHaveAttribute('src',preview.image));});
 it('does not request multiple URLs or render failed previews',async()=>{mount('https://example.com/a https://example.com/b');expect(invoke).not.toHaveBeenCalled();invoke.mockResolvedValue({data:{preview:null}});mount('https://example.com/c');await waitFor(()=>expect(invoke).toHaveBeenCalledOnce());expect(document.querySelector('[data-link-preview]')).toBeNull();});
-it('restores the original text when the preview image fails',async()=>{invoke.mockResolvedValue({data:{preview}});function Body(){const state=useLinkPreview(`本文 ${preview.url}`);return <><p>{state.text(`本文 ${preview.url}`)}</p><LinkPreviewCard {...state}/></>;}render(<QueryClientProvider client={new QueryClient()}><Body/></QueryClientProvider>);await screen.findByRole('link',{name:preview.title});expect(screen.getByText('本文')).toBeInTheDocument();fireEvent.error(document.querySelector('[data-link-preview] img')!);expect(screen.getByText(`本文 ${preview.url}`)).toBeInTheDocument();expect(document.querySelector('[data-link-preview]')).toBeNull();});
+it('keeps text metadata when the preview image fails',async()=>{invoke.mockResolvedValue({data:{preview}});function Body(){const state=useLinkPreview(`本文 ${preview.url}`);return <><p>{state.text(`本文 ${preview.url}`)}</p><LinkPreviewCard {...state}/></>;}render(<QueryClientProvider client={new QueryClient()}><Body/></QueryClientProvider>);await screen.findByRole('link',{name:preview.title});expect(screen.getByText('本文')).toBeInTheDocument();fireEvent.error(document.querySelector('[data-link-preview] img')!);expect(screen.getByText('本文')).toBeInTheDocument();expect(screen.getByRole('link',{name:preview.title})).toBeInTheDocument();expect(document.querySelector('[data-link-preview] img')).toBeNull();});
 it('uses the offline snapshot without a metadata request',async()=>{render(<QueryClientProvider client={new QueryClient()}><OfflineBookmarkContext.Provider value={{bookmarkIds:[],emojis:[],spaces:{},media:new Map(),linkPreviews:{[preview.url]:{...preview,image:'blob:offline'}}}}><PostLinkPreview content={preview.url}/></OfflineBookmarkContext.Provider></QueryClientProvider>);expect(screen.getByRole('link',{name:preview.title})).toBeInTheDocument();expect(invoke).not.toHaveBeenCalled();});
 
 it('restores native metadata after remount without requesting it again',async()=>{
@@ -33,4 +33,13 @@ it('does not persist fetched Bluesky metadata',async()=>{
  function Bluesky(){const state=useLinkPreview(preview.url,true,undefined,false);return <LinkPreviewCard {...state}/>;}
  render(<QueryClientProvider client={new QueryClient()}><Bluesky/></QueryClientProvider>);
  await screen.findByRole('link',{name:preview.title});expect(localStorage.getItem('lime-link-previews-v1')).toBeNull();
+});
+
+it('renders and reuses title and description without an image',async()=>{
+ invoke.mockResolvedValue({data:{preview:{...preview,image:'',description:'画像なしの説明'}}});const first=mount(preview.url);
+ expect(await screen.findByRole('link',{name:preview.title})).toBeInTheDocument();expect(screen.getByText('画像なしの説明')).toBeInTheDocument();expect(document.querySelector('[data-link-preview] img')).toBeNull();
+ first.unmount();invoke.mockClear();mount(preview.url);expect(screen.getByRole('link',{name:preview.title})).toBeInTheDocument();expect(invoke).not.toHaveBeenCalled();
+});
+it('retries negative metadata cached before the server request path was repaired',async()=>{
+ localStorage.setItem('lime-link-previews-v1',JSON.stringify({[preview.url]:{preview:null,savedAt:Date.now(),version:2}}));invoke.mockResolvedValue({data:{preview:{...preview,image:''}}});mount(preview.url);await screen.findByRole('link',{name:preview.title});expect(invoke).toHaveBeenCalledOnce();
 });

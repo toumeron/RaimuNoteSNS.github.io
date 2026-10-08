@@ -18,6 +18,10 @@ export type User = {
 };
 
 export type Post = {
+  source?: 'lime' | 'bluesky' | 'misskey';
+  blueskyUrl?: string;
+  blueskyUri?: string;
+  cid?: string;
   linkPreview?: {url:string;domain:string;title:string;image:string};
   id: string;
   userId: string;

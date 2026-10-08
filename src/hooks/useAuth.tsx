@@ -1,3 +1,5 @@
+import { getPrivateBotPrompt } from '@/lib/privateProfile';
+import { clearPrivateMedia } from '@/lib/privateMediaFetch';
 import {isInstalledPwa} from '@/lib/utils';
 import { useQueryClient } from '@tanstack/react-query';
 import { Fragment, createContext, useContext, useEffect, useRef, useState } from 'react';
@@ -120,8 +122,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const { data: profile, error } = await supabase
           .from('profiles')
-          // bot_enabled, bot_prompt を select に追加
-          .select('username, display_name, avatar_url, is_official, bio, location, cover_url, emoji_effect, bot_enabled, bot_prompt')
+          // 公開プロフィールの取得を非公開Bot設定の取得から独立させる。
+          .select('username, display_name, avatar_url, is_official, bio, location, cover_url, emoji_effect, bot_enabled')
           .eq('id', supabaseUser.id)
           .single();
 
@@ -143,11 +145,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               coverUrl: profile.cover_url ?? current.coverUrl,
               emojiEffect: profile.emoji_effect ?? current.emojiEffect,
               bot_enabled: profile.bot_enabled ?? false, // DBから取得した値を反映
-              bot_prompt: profile.bot_prompt ?? '',      // DBから取得した値を反映
+              bot_prompt: current.bot_prompt, // 非公開設定の取得結果だけを反映
             };
             profileRef.current = updated;
             return updated;
           });
+          // Missing migrations or a slow private-settings request must not
+          // prevent the public profile from appearing in the composer/settings.
+          void getPrivateBotPrompt(supabaseUser.id).then(prompt => {
+            if (!alive || profileUserId !== supabaseUser.id) return;
+            setUser(current => {
+              if (!current || current.id !== supabaseUser.id) return current;
+              const updated = { ...current, bot_prompt: prompt };
+              profileRef.current = updated;
+              return updated;
+            });
+          }).catch(err => console.warn('AuthProvider: Private Bot settings unavailable', err));
         }
       } catch (err) {
         console.error("AuthProvider: Background profile fetch failed", err);
@@ -180,6 +193,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (cachedViewerId !== viewerId) {
         activateAccountIntegrations(cachedViewerId, viewerId);
         // Never reuse another account's cached restricted posts or quote parents.
+        clearPrivateMedia();
         queryClient.clear();
         cachedViewerId = viewerId;
       }

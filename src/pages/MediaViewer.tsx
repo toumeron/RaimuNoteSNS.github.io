@@ -1,3 +1,4 @@
+import {splitMentionText} from '@/lib/utils';
 import { openMediaViewer } from '@/components/media/openMediaViewer';
 import { renderStickerText } from '@/components/stickers/renderStickerText';
 import { hasStickers } from '@/lib/stickers';
@@ -1338,7 +1339,7 @@ export default function MediaViewer() {
       return null;
     }
 
-    const parts = text.split(/(@[a-zA-Z0-9_]+)/g);
+    const parts = splitMentionText(text);
 
     return parts.map((part, index) => {
       if (part.startsWith("@")) {

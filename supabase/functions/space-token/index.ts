@@ -1,15 +1,18 @@
+import { quota, boundedBody } from '../_shared/security.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import * as AccessToken from 'https://esm.sh/agora-access-token@2.0.4';
-const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Content-Type': 'application/json' };
+const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
 Deno.serve(async req => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers });
+  if (req.method !== 'POST') return Response.json({error: 'Method not allowed'}, {status: 405, headers});
   const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), { headers, status });
   try {
     const auth = req.headers.get('Authorization') || '';
     const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
     const { data: { user } } = await db.auth.getUser(auth.replace(/^Bearer\s+/i, ''));
     if (!user) return reply({ error: 'ログインしてください' }, 401);
-    const { spaceId, uid, publishing = false } = await req.json();
+    const limited = await quota(user.id, 'token', headers); if (limited) return limited;
+    const { spaceId, uid, publishing = false } = JSON.parse(await boundedBody(req, 4096));
     if (typeof spaceId !== 'string' || !Number.isInteger(uid) || uid < 1) return reply({ error: 'Invalid session' }, 400);
     const { data: space, error: spaceError } = await db.from('spaces').select('host_id,is_active,heartbeat_at,speaker_policy').eq('id', spaceId).maybeSingle();
     const { data: member, error: memberError } = await db.from('space_members').select('id,rtc_uid,anonymous,heartbeat_at').eq('space_id', spaceId).eq('user_id', user.id).maybeSingle();

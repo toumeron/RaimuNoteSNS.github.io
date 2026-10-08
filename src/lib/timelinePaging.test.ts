@@ -115,3 +115,19 @@ describe('paired chronological timeline pagination', () => {
     expect(second.posts.some(post => first.posts.some(previous => previous.id === post.id))).toBe(false);
   });
 });
+
+it('bounds supplementary reads while publishing a single chronological page',async()=>{
+  let active=0,maximum=0;
+  const sources:TimelineSources={
+    lime:async()=>[],
+    bluesky:async(handle)=>{
+      active++;maximum=Math.max(maximum,active);
+      await new Promise(resolve=>setTimeout(resolve,5));active--;
+      return {posts:mapped([post(handle,Number(handle))]),cursor:null};
+    },
+  };
+  const result=await loadTimelinePage(createTimelineCursor(Array.from({length:12},(_,i)=>String(i))),sources);
+  expect(maximum).toBeLessThanOrEqual(2);
+  expect(result.posts).toHaveLength(12);
+  expect(result.posts.map(post=>post.id)).toEqual(Array.from({length:12},(_,i)=>String(11-i)));
+});

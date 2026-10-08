@@ -9,7 +9,10 @@ export function registerPwa() {
   let idle: number | undefined;
   const register = () => {
     if (cancelled) return;
-    void navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`, {
+    // Vite's development worker is served at a different URL. /sw.js
+    // falls back to index.html in dev and cannot be registered as a worker.
+    const script = import.meta.env.DEV ? 'dev-sw.js?dev-sw' : 'sw.js';
+    void navigator.serviceWorker.register(`${import.meta.env.BASE_URL}${script}`, {
       scope: import.meta.env.BASE_URL,
       updateViaCache: 'none',
     }).catch(error => console.warn('PWA registration failed', error));

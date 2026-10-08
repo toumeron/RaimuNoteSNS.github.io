@@ -1,3 +1,4 @@
+import { quota, boundedRequest } from '../_shared/security.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const cors = {
@@ -19,12 +20,16 @@ Deno.serve(async (req: Request) => {
   });
   const { data, error } = await client.auth.getUser();
   if (error || !data.user) return json({ error: 'ログインが必要です。' }, 401);
+    const limited = await quota(data.user.id, 'voice', cors); if (limited) return limited;
   const key = Deno.env.get('GROQ_API_KEY');
   if (!key) return json({ error: '音声認識のサーバー設定が完了していません。' }, 503);
   const length = Number(req.headers.get('content-length'));
   if (length > 5 * 1024 * 1024) return json({ error: '録音が長すぎます。短く区切って話してください。' }, 413);
   try {
-    const form = await req.formData();
+    let bounded: Request;
+    try { bounded = await boundedRequest(req, 5 * 1024 * 1024 + 65536); }
+    catch { return json({ error: "録音データが大きすぎます" }, 413); }
+    const form = await bounded.formData();
     const audio = form.get('audio');
     if (!(audio instanceof File) || audio.size === 0 || audio.size > 5 * 1024 * 1024) {
       return json({ error: '録音データが無効です。' }, 400);

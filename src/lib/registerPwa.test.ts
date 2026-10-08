@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { registerPwa } from './registerPwa';
 
 describe('PWA startup registration', () => {
-  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+  beforeEach(()=>vi.stubEnv('DEV',false));
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals();vi.unstubAllEnvs(); });
   function worker() {
     const register = vi.fn().mockResolvedValue({});
     vi.stubGlobal('navigator', { serviceWorker: { register } });
@@ -21,6 +22,12 @@ describe('PWA startup registration', () => {
     idleCallback!({ didTimeout: false, timeRemaining: () => 50 });
     expect(register).toHaveBeenCalledWith('/RaimuNoteSNS.github.io/sw.js', { scope: '/RaimuNoteSNS.github.io/', updateViaCache: 'none' });
     cancel();
+  });
+  it('uses the actual Vite development worker URL instead of the HTML fallback',()=>{
+    vi.stubEnv('DEV',true);vi.useFakeTimers();const register=worker();
+    vi.spyOn(document,'readyState','get').mockReturnValue('complete');vi.stubGlobal('requestIdleCallback',undefined);
+    registerPwa();vi.runAllTimers();
+    expect(register).toHaveBeenCalledWith('/RaimuNoteSNS.github.io/dev-sw.js?dev-sw',{scope:'/RaimuNoteSNS.github.io/',updateViaCache:'none'});
   });
   it('cancels registration and uses a delayed fallback without idle support', () => {
     vi.useFakeTimers();

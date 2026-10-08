@@ -52,7 +52,7 @@ export async function getRecommendationPage(previous:RecommendationCursor,viewer
   const preferences=cursor.preferences ?? await getRecommendationPreferences(viewerId);
   cursor.preferences=preferences;
   const favoriteBlueskyAuthors = Object.entries(preferences.authors)
-    .filter(([id]) => id.startsWith('did:'))
+    .filter(([id]) => (id.startsWith('did:') || id.startsWith('misskey-user:')))
     .sort((a,b) => b[1]-a[1]).slice(0,3);
   for (const [actor] of favoriteBlueskyAuthors) {
     if (!cursor.authors[actor]) cursor.authors[actor]={cursor:null,done:false};
@@ -97,7 +97,16 @@ export async function getRecommendationPage(previous:RecommendationCursor,viewer
     for(const [author,state] of Object.entries(cursor.nativeAuthors)) if(!state.done) jobs.push({load:async()=>{
       const rows=await getPostsByUser(author,state.page,20);state.page++;state.done=rows.length<20;return rows;
     }});
-    const results=await Promise.allSettled(jobs.map(job=>job.load()));
+    const results:PromiseSettledResult<PostWithAuthor[]>[]=new Array(jobs.length);
+    let nextJob=0;
+    await Promise.all(Array.from({length:Math.min(2,jobs.length)},async()=>{
+      while(nextJob<jobs.length) {
+        if(signal?.aborted)throw signal.reason;
+        const index=nextJob++;
+        try {results[index]={status:'fulfilled',value:await jobs[index].load()};}
+        catch(reason) {results[index]={status:'rejected',reason};}
+      }
+    }));
     const successful=results.filter(result=>result.status==='fulfilled');
     const failed=results.find((result):result is PromiseRejectedResult=>result.status==='rejected');
     if(failed && !cursor.remaining.length && successful.every(result=>result.status==='fulfilled' && !result.value.length)) throw failed.reason;

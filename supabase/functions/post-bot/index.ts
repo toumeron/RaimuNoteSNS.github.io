@@ -1,7 +1,12 @@
+import { secretMatches } from '../_shared/security.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 // 使っていない引数 req を _req に変更して警告を解消
-Deno.serve(async (_req) => {
+Deno.serve(async (req) => {
+  if (req.method !== 'POST') return Response.json({error: 'Method not allowed'}, {status: 405});
+  if (!await secretMatches(req.headers.get('x-bot-secret'), Deno.env.get('BOT_CRON_SECRET'))) {
+    return Response.json({error: 'Unauthorized'}, {status: 401});
+  }
   const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY')
   const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ""
   const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ""
@@ -11,9 +16,9 @@ Deno.serve(async (_req) => {
   // 1. Bot機能が有効で、かつプロンプトが設定されているユーザーを全員取得
   const { data: botUsers, error: userError } = await supabase
     .from('profiles')
-    .select('id, bot_prompt')
+    .select('id, private_settings:profile_private_settings(bot_prompt)')
     .eq('bot_enabled', true)
-    .not('bot_prompt', 'is', null)
+
 
   if (userError) {
     return new Response(JSON.stringify({ error: "ユーザー取得失敗: " + userError.message }), { status: 500 })
@@ -27,6 +32,8 @@ Deno.serve(async (_req) => {
 
   // 2. 各ユーザーごとにループして投稿を生成・挿入
   for (const user of botUsers) {
+    const privateSettings = Array.isArray(user.private_settings) ? user.private_settings[0] : user.private_settings;
+    if (!privateSettings?.bot_prompt) continue;
     try {
       // Google AI Studio の Gemma 4 (31B モデル) エンドポイントを使用
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemma-4-31b-it:generateContent?key=${GEMINI_API_KEY}`, {
@@ -52,7 +59,7 @@ Deno.serve(async (_req) => {
               一文または二文で出力、改行なし、ハッシュタグなし、絵文字は自由。
 
               【ユーザー設定】
-              ${user.bot_prompt}`
+              ${privateSettings.bot_prompt}`
               }
             ]
           },

@@ -1,3 +1,4 @@
+import { uploadPostMedia } from '@/lib/uploadPostMedia';
 import { getClientName } from '@/lib/clientName';
 import type { PostWithAuthor } from '@/types';
 import type { User } from '@/types';
@@ -326,6 +327,20 @@ export async function searchPosts(query: string, page: number = 0, limit: number
   return rows.map((row: any) => rowToPost(row, likedIds, repostedIds));
 }
 
+export async function getHighlightedPosts(userId: string, page = 0, limit = 10): Promise<PostWithAuthor[]> {
+  const viewerId = await getCurrentUserId();
+  const { data, error } = await supabase.from('profile_highlights')
+    .select(`post_id, posts!inner (${POST_SELECT_QUERY})`)
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .order('post_id', { ascending: false })
+    .range(page * limit, (page + 1) * limit - 1);
+  if (error) throw error;
+  const rows = ((data ?? []) as unknown as { posts: ViewerPostRow }[]).map(row => row.posts).filter(Boolean);
+  const { likedIds, repostedIds } = await getViewerReactions(viewerId, rows);
+  return rows.map(row => rowToPost(row, likedIds, repostedIds));
+}
+
 export async function getPostById(id: string): Promise<PostWithAuthor | null> {
   if (isReplyPostId(id)) return getReplyPost(id);
   if (isExternalPostId(id)) return getExternalPost(id);
@@ -386,26 +401,8 @@ export async function createPost(input: {
   const replyParent = input.parentId && isReplyPostId(input.parentId) ? await getReplyPost(input.parentId) : null;
   if (input.parentId && isReplyPostId(input.parentId) && !replyParent) throw new Error('引用元の返信を閲覧できません');
 
-  const uploadedUrls = await Promise.all(
-    input.imageUrls.map(async (url) => {
-      if (url.startsWith('http')) return url;
-      try {
-        const response = await fetch(url);
-        const blob = await response.blob();
-        const formData = new FormData();
-        formData.append('file', blob);
-        formData.append('upload_preset', import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET);
-        const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
-        const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, { method: 'POST', body: formData });
-        const data = await res.json();
-        return data.secure_url;
-      } catch (err) { return null; }
-    })
-  );
-
-  const finalImageUrls = Array.from(new Set([
-    ...uploadedUrls.filter((url): url is string => url !== null),
-  ]));
+  if (!userId) throw new Error('ログインしてください');
+  const finalImageUrls = await uploadPostMedia(input.imageUrls, userId, newId, input.visibility === 'following');
 
   const MENTION_PATTERN = /@(\w+)/g;
   const mentionedUsernames = Array.from(new Set([...input.content.matchAll(MENTION_PATTERN)].map(match => match[1])));

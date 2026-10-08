@@ -1,3 +1,4 @@
+import { createSandboxWorker, sandboxDocument, type SandboxWorker } from '@/lib/sandboxExecution';
 import {LipSync, type Emotion} from '@/lib/avatarLipSync';
 import {VrmStage, createBus, triggerGesture, type GestureName, type AvatarBus, type CameraPreset, type StageStatus, type ModelInfo} from '@/components/ai/AvatarStage';
 import {listModels, putModel, deleteModel, type StoredModel} from '@/lib/avatarModelStore';
@@ -850,12 +851,10 @@ self.onmessage = async (e) => {
 };`;
 
 function makeWorker(src: string) {
-  const url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
-  const w = new Worker(url);
-  return { w, url };
+  return { w: createSandboxWorker(src), url: "" };
 }
 
-let pyWorker: { w: Worker; url: string } | null = null;
+let pyWorker: { w: SandboxWorker; url: string } | null = null;
 
 function normalizeLang(lang: string): "js" | "py" | null {
   const l = lang.toLowerCase();
@@ -867,7 +866,7 @@ function normalizeLang(lang: string): "js" | "py" | null {
 function runCode(kind: "js" | "py", code: string, onLine: (l: RunLine) => void, timeoutMs = 20000): RunHandle {
   let cancel = () => {};
   const promise = new Promise<void>((resolve) => {
-    let wk: { w: Worker; url: string };
+    let wk: { w: SandboxWorker; url: string };
     if (kind === "py") {
       pyWorker = pyWorker || makeWorker(PY_WORKER);
       wk = pyWorker;
@@ -1716,8 +1715,10 @@ function ArtifactPanel({ artifacts, activeId, streaming, onSelect, onClose }: Ar
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   };
   const openNew = () => {
-    const blob = new Blob([toSrcDoc(active)], { type: "text/html;charset=utf-8" });
-    window.open(URL.createObjectURL(blob), "_blank");
+    const blob = new Blob([sandboxDocument(toSrcDoc(active))], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank", "noopener,noreferrer");
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
   };
   const run = () => {
     if (!kind) return;

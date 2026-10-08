@@ -2,7 +2,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 const lookup = vi.hoisted(() => vi.fn());
 vi.mock('./posts', () => ({getPostById: lookup}));
 import { getNewsSources, latestNewsPerSource, type SearchNewsItem } from './search-news';
-import {selectPopularPosts,validateSummary} from '../../supabase/functions/generate-news/sources';
+import {selectPopularPosts,validateSummary,selectNewsTopic} from '../../supabase/functions/generate-news/sources';
 const news = (id: string, refs: unknown): SearchNewsItem => ({id, title: 'ニュース', content: '', category: 'ニュース', created_at: '', related_post_ids: refs});
 beforeEach(() => {lookup.mockReset();});
 it('uses quoted originals, deduplicates requests and authors, and counts visible posts', async () => {
@@ -61,4 +61,23 @@ it('never fills a missing source slot with a second article from the other sourc
  expect(latestNewsPerSource([item('older',1),item('latest',3),item('next',2)]).map(item=>item.id)).toEqual(['latest']);
  expect(latestNewsPerSource([item('older',1),item('latest',3)].map(item=>({...item,source:'limenote' as const}))).map(item=>item.id)).toEqual(['latest']);
  expect(latestNewsPerSource([])).toEqual([]);
+});
+
+it('retains ten relevant sources from a broader pool instead of truncating citations to five',()=>{
+ const candidates=Array.from({length:200},(_,i)=>({id:String(i),content:i<10?'映画の公開発表':'別の話題'}));
+ const picked=selectNewsTopic({topic:'映画の公開発表',post_ids:candidates.slice(0,10).map(p=>p.id)},candidates,5);
+ expect(picked.posts).toHaveLength(10);
+ expect(()=>selectNewsTopic({topic:'映画',post_ids:['0','1','invented']},candidates,5)).toThrow('too few');
+ const article={title:'映画の公開日が決定',content:'制作会社は映画の公開日を発表しました。',related_post_ids:picked.posts.map(p=>p.id)};
+ expect(validateSummary(article,picked.posts,5).related_post_ids).toHaveLength(10);
+ expect(()=>validateSummary({...article,related_post_ids:['0','0','1','invented']},picked.posts,5)).toThrow('too few');
+ expect(()=>validateSummary({...article,content:'投稿の傾向を分析しました。'},picked.posts,5)).toThrow('post analysis');
+});
+
+it('collects a broad popular candidate pool without allowing stale or restricted sources',()=>{
+ const input=Array.from({length:240},(_,i)=>post(i+1));
+ input.push({...post(999,10000),labels:[{val:'!hide'}]} as typeof input[number]);
+ expect(selectPopularPosts(input,now,200)).toHaveLength(200);
+ expect(selectPopularPosts(input,now,200)[0].id).toContain('/240');
+ expect(selectPopularPosts(input,now)).toHaveLength(10);
 });

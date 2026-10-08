@@ -1,3 +1,4 @@
+import { secretMatches } from '../_shared/security.ts';
 type NotificationRecord = {
   id: string;
   user_id: string;
@@ -395,7 +396,12 @@ const sendWebPush = async ({
     auth: subscription.auth,
   });
 
-  const response = await fetch(subscription.endpoint, {
+  const endpoint = new URL(subscription.endpoint);
+  const pushHosts = ['fcm.googleapis.com', 'updates.push.services.mozilla.com', 'web.push.apple.com'];
+  if (endpoint.protocol !== 'https:' || endpoint.port || endpoint.username || endpoint.password || !(pushHosts.includes(endpoint.hostname) || /^(?:[a-z0-9-]+\.)?notify\.windows\.com$/i.test(endpoint.hostname))) throw new Error('Unsupported push endpoint');
+  const response = await fetch(endpoint, {
+    redirect: 'error',
+    signal: AbortSignal.timeout(15000),
     method: 'POST',
     headers: {
       TTL: '2419200',
@@ -429,7 +435,7 @@ Deno.serve(async (req: Request) => {
     const authHeader = req.headers.get('authorization') || '';
     const pushSecretHeader = req.headers.get('x-push-secret') || '';
 
-    if (webhookSecret && authHeader !== `Bearer ${webhookSecret}` && pushSecretHeader !== webhookSecret) {
+    if (!await secretMatches(authHeader.replace(/^Bearer\s+/i, ''), webhookSecret) && !await secretMatches(pushSecretHeader, webhookSecret)) {
       return jsonResponse({ error: 'Unauthorized' }, 401);
     }
 
@@ -454,6 +460,20 @@ Deno.serve(async (req: Request) => {
 
     if (!record?.id || !record.user_id) {
       return jsonResponse({ error: 'notification not found' }, 404);
+    }
+
+    if (record.post_id) {
+      const posts = await selectRows<{user_id: string; visibility: string}>(config,
+        `posts?select=user_id,visibility&id=eq.${encodeURIComponent(record.post_id)}&limit=1`);
+      const post = posts[0];
+      let allowed = !!post && (post.visibility === 'public' || post.user_id === record.user_id);
+      if (post && !allowed && post.visibility === 'following') {
+        allowed = (await selectRows(config, `follows?select=follower_id&follower_id=eq.${encodeURIComponent(post.user_id)}&followee_id=eq.${encodeURIComponent(record.user_id)}&limit=1`)).length > 0;
+      }
+      if (post && !allowed && post.visibility === 'members') {
+        allowed = (await selectRows(config, `memberships?select=member_id&creator_id=eq.${encodeURIComponent(post.user_id)}&member_id=eq.${encodeURIComponent(record.user_id)}&limit=1`)).length > 0;
+      }
+      if (!allowed) return jsonResponse({ok: true, sent: 0, skipped: true});
     }
 
     const subscriptions = await getPushSubscriptions(config, record.user_id);
@@ -526,6 +546,6 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ ok: true, sent, deleted, failed });
   } catch (error) {
     console.error('send-push failed:', error);
-    return jsonResponse({ error: String(error instanceof Error ? error.message : error) }, 500);
+    return jsonResponse({ error: 'Notification delivery failed' }, 500);
   }
 });

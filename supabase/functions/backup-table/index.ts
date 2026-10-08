@@ -1,3 +1,4 @@
+import { secretMatches } from '../_shared/security.ts';
 const BACKUP_TABLES = [
   "active_bot_users",
   "chat_sessions",
@@ -285,7 +286,7 @@ Deno.serve(async (req) => {
     const expectedSecret = env("BACKUP_CRON_SECRET");
     const actualSecret = req.headers.get("x-backup-secret");
 
-    if (!actualSecret || actualSecret !== expectedSecret) {
+    if (!await secretMatches(actualSecret, expectedSecret)) {
       return jsonResponse({ error: "unauthorized" }, 401);
     }
 
@@ -326,7 +327,7 @@ Deno.serve(async (req) => {
     return jsonResponse(
       {
         ok: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: "Backup failed",
       },
       500,
     );

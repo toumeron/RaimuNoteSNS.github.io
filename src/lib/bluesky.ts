@@ -1,3 +1,5 @@
+import {externalFetch, accountSearchScore} from './utils';
+import { searchMisskey, configuredMisskeyHandles, isMisskeyActor, isMisskeyId, misskeyFeed, misskeyProfile, misskeyThread, misskeyFollowList, misskeyRequest, mapMisskeyNote, type MisskeyNote, misskeyEnabled, misskeyViewer, likeMisskey, unlikeMisskey, misskeyFollowState, followMisskey, unfollowMisskey } from './misskey';
 import {singlePreviewUrl,type LinkPreview} from './linkPreview';
 import { ACTIVE_ACCOUNT_KEY } from './savedAccounts';
 // 初期状態ではBlueskyアカウントを1件も登録しない。
@@ -25,6 +27,7 @@ const TRENDING_MAX_AGE_DAYS = 5;
 
 export function normalizeBlueskyHandle(value: string): string {
   const trimmed = value.trim();
+  if(trimmed.startsWith('did:'))return trimmed;
   const profileMatch = trimmed.match(/^https?:\/\/(?:www\.)?bsky\.app\/profile\/([^/?#]+)/i);
   const normalized = (profileMatch?.[1] ?? trimmed)
     .replace(/^@+/, '')
@@ -333,6 +336,7 @@ export async function fetchBlueskyPostViewerState(
   uri: string,
   signal?: AbortSignal
 ): Promise<BlueskyPostViewerState> {
+  if (uri.startsWith('https://misskey.io/notes/')) return misskeyViewer(uri,signal);
   const session = getStoredBlueskySession();
   if (!session) return { likeUri: null, cid: null };
 
@@ -392,6 +396,7 @@ export async function fetchBlueskyActorViewerState(
   did: string,
   signal?: AbortSignal
 ): Promise<BlueskyActorViewerState> {
+  if (isMisskeyId(did)) return misskeyFollowState(did,signal);
   const session = getStoredBlueskySession();
   if (!session) return { followUri: null };
 
@@ -420,6 +425,7 @@ export async function fetchBlueskyActorViewerState(
  * cidが分からない場合は事前に fetchBlueskyPostViewerState で取得しておくこと。
  */
 export async function likeBlueskyPost(uri: string, cid: string): Promise<string> {
+  if (uri.startsWith('https://misskey.io/notes/')) return likeMisskey(uri);
   const session = getStoredBlueskySession();
   if (!session) throw new Error('Blueskyにログインしていません');
   if (!uri) throw new Error('投稿のuriが取得できませんでした');
@@ -453,6 +459,7 @@ export async function likeBlueskyPost(uri: string, cid: string): Promise<string>
  * (at://did/app.bsky.feed.like/rkey 形式)。
  */
 export async function unlikeBlueskyPost(likeUri: string): Promise<void> {
+  if (likeUri.startsWith('misskey-reaction:')) return unlikeMisskey(likeUri);
   const session = getStoredBlueskySession();
   if (!session) throw new Error('Blueskyにログインしていません');
 
@@ -479,6 +486,7 @@ export async function unlikeBlueskyPost(likeUri: string): Promise<void> {
  * 成功時は作成された app.bsky.graph.follow レコードのuriを返す。
  */
 export async function followBlueskyUser(did: string): Promise<string> {
+  if (isMisskeyId(did)) return followMisskey(did);
   const session = getStoredBlueskySession();
   if (!session) throw new Error('Blueskyにログインしていません');
   if (!did) throw new Error('フォロー対象のDIDが不明です');
@@ -510,6 +518,7 @@ export async function followBlueskyUser(did: string): Promise<string> {
  * fetchBlueskyActorViewerState で取得した app.bsky.graph.follow レコードのuri。
  */
 export async function unfollowBlueskyUser(followUri: string): Promise<void> {
+  if (followUri.startsWith('misskey-follow:')) return unfollowMisskey(followUri);
   const session = getStoredBlueskySession();
   if (!session) throw new Error('Blueskyにログインしていません');
 
@@ -556,7 +565,10 @@ export type BlueskyMappedPost = {
     bio: string;
     createdAt: string;
   };
-  source: 'bluesky';
+  source: 'bluesky' | 'misskey';
+  isQuote?: boolean;
+  parentId?: string | null;
+  parentPost?: import('@/types').PostWithAuthor | null;
   blueskyUrl: string;
   blueskyUri: string;
 };
@@ -661,12 +673,14 @@ type BlueskyThreadView = {
 const uniqueStrings = (values: Array<string | null | undefined>) =>
   Array.from(new Set(values.filter((value): value is string => Boolean(value))));
 
+const validBlueskyHandle = (handle:string | undefined, did:string) => handle && handle !== 'handle.invalid' ? handle : did;
+
 function mapBlueskyActorProfile(profile: BlueskyActorProfile): BlueskyProfile | null {
-  if (!profile.did || !profile.handle) return null;
+  if (!profile.did) return null;
   return {
     id: profile.did,
-    username: profile.handle,
-    displayName: profile.displayName || profile.handle,
+    username: validBlueskyHandle(profile.handle, profile.did),
+    displayName: profile.displayName || validBlueskyHandle(profile.handle, profile.did),
     avatarUrl: profile.avatar || '',
     coverUrl: profile.banner || '',
     bio: profile.description || '',
@@ -689,7 +703,7 @@ async function fetchBlueskySearchEndpoint(
     // まずこちらを使う。CDN/CORS などで一方が失敗しても、もう一方を試す。
     for (const baseUrl of [BSKY_PUBLIC_API, BSKY_SEARCH_API]) {
       try {
-        const response = await fetch(`${baseUrl}/${endpoint}?${params.toString()}`, {
+        const response = await externalFetch(`${baseUrl}/${endpoint}?${params.toString()}`, {
           method: 'GET',
           headers: { Accept: 'application/json' },
           signal,
@@ -813,15 +827,17 @@ function applyLinkFacets(
   return chunks.join("");
 }
 
+// Legacy shared UI guard: both providers must bypass native UUID mutations.
 export function isBlueskyPost(post: { id?: string; source?: string } | null | undefined): boolean {
   if (!post) return false;
-  return post.source === 'bluesky' || String(post.id || '').startsWith('bsky:');
+  return post.source === 'bluesky' || String(post.id || '').startsWith('bsky:') || isMisskeyId(post.id);
 }
 
 export function getBlueskyPostUrl(
   post: { blueskyUrl?: string; author?: { username?: string }; id?: string } | null | undefined,
 ): string | null {
   if (!post) return null;
+  if (post.id?.startsWith('misskey:')) return post.id.slice('misskey:'.length);
   if (post.blueskyUrl) return post.blueskyUrl;
 
   const id = String(post.id || '');
@@ -836,7 +852,7 @@ export function getBlueskyPostUrl(
 
 export function mapBlueskyFeedItemToPost(item: BlueskyFeedItem): BlueskyMappedPost | null {
   const post = item?.post;
-  if (!post?.uri || !post.author?.did || !post.author?.handle) return null;
+  if (!post?.uri || !post.author?.did) return null;
   if (item.reason) return null;
 
   const rkey = post.uri.split('/').pop();
@@ -859,8 +875,8 @@ export function mapBlueskyFeedItemToPost(item: BlueskyFeedItem): BlueskyMappedPo
   const content = [contentFromFacets.trim(), ...extras].filter(Boolean).join('\n\n');
   const external=post.embed?.external??post.embed?.media?.external;
   let linkPreview:LinkPreview|undefined;
-  if(external?.title&&external.thumb&&external.uri&&singlePreviewUrl(content)===external.uri&&/^https?:\/\//.test(external.thumb)){
-    try{linkPreview={url:external.uri,domain:new URL(external.uri).hostname.replace(/^www\./,''),title:external.title,image:external.thumb};}catch{/* Keep the text link. */}
+  if((external?.title||external?.description)&&external.uri&&singlePreviewUrl(content)===external.uri&&(!external.thumb||/^https?:\/\//.test(external.thumb))){
+    try{linkPreview={url:external.uri,domain:new URL(external.uri).hostname.replace(/^www\./,''),title:external.title||new URL(external.uri).hostname,image:external.thumb||'',description:external.description};}catch{/* Keep the text link. */}
   }
 
   return {
@@ -878,8 +894,8 @@ export function mapBlueskyFeedItemToPost(item: BlueskyFeedItem): BlueskyMappedPo
     cid: post.cid || '',
     author: {
       id: post.author.did,
-      username: post.author.handle,
-      displayName: post.author.displayName || post.author.handle,
+      username: validBlueskyHandle(post.author.handle, post.author.did),
+      displayName: post.author.displayName || validBlueskyHandle(post.author.handle, post.author.did),
       avatarUrl: post.author.avatar || '',
       // Blueskyから取得したユーザーをLimeの公式ユーザーとして扱わない。
       // Lime側の公式認証情報がない限り、認証バッジは表示しない。
@@ -888,7 +904,7 @@ export function mapBlueskyFeedItemToPost(item: BlueskyFeedItem): BlueskyMappedPo
       createdAt: post.author.createdAt || post.record?.createdAt || new Date().toISOString(),
     },
     source: 'bluesky',
-    blueskyUrl: `https://bsky.app/profile/${post.author.handle}/post/${rkey}`,
+    blueskyUrl: `https://bsky.app/profile/${validBlueskyHandle(post.author.handle, post.author.did)}/post/${rkey}`,
     blueskyUri: post.uri,
   };
 }
@@ -901,11 +917,13 @@ export const getBlueskyUriFromPostId = (postId: string) => {
       return postId;
     }
   })();
+  if (decodedId.startsWith('misskey:')) return decodedId.slice('misskey:'.length);
   const uri = decodedId.startsWith('bsky:') ? decodedId.slice('bsky:'.length) : decodedId;
   return uri.startsWith('at://') ? uri : null;
 };
 
 export async function fetchBlueskyPostThread(postId: string, signal?: AbortSignal): Promise<BlueskyPostThread> {
+  if (isMisskeyId(postId)) return misskeyThread(postId, signal);
   const uri = getBlueskyUriFromPostId(postId);
   if (!uri) return { post: null, replies: [] };
 
@@ -935,11 +953,12 @@ export async function fetchBlueskyPost(postId: string, signal?: AbortSignal): Pr
 }
 
 export async function fetchBlueskyProfile(actor: string, signal?: AbortSignal): Promise<BlueskyProfile | null> {
+  if (isMisskeyActor(actor)) return misskeyProfile(actor, signal);
   const normalizedActor = normalizeBlueskyHandle(actor);
   if (!normalizedActor) return null;
 
   const params = new URLSearchParams({ actor: normalizedActor });
-  const response = await fetch(
+  const response = await externalFetch(
     `${BSKY_PUBLIC_API}/app.bsky.actor.getProfile?${params.toString()}`,
     { method: 'GET', headers: { Accept: 'application/json' }, signal },
   );
@@ -979,16 +998,16 @@ async function searchBlueskyUncached(query: string, options?: { includePosts?: b
   const postRequest = options?.includePosts === false
     ? Promise.resolve(null)
     : fetchBlueskySearchEndpoint(
-      'app.bsky.feed.searchPosts', new URLSearchParams({ q, limit: '50' }), options?.signal,
+      'app.bsky.feed.searchPosts', new URLSearchParams({ q, limit: '30' }), options?.signal,
     );
   const [actorOutcome, typeaheadOutcome, postOutcome] = await Promise.allSettled([actorRequest, actorTypeaheadRequest, postRequest]);
-  if (actorOutcome.status === 'rejected') throw actorOutcome.reason;
-  const actorResponse = actorOutcome.value;
+  if(options?.signal?.aborted)throw options.signal.reason;
+  const actorResponse = actorOutcome.status==='fulfilled' ? actorOutcome.value:null;
   const typeaheadResponse = typeaheadOutcome.status === 'fulfilled' ? typeaheadOutcome.value : null;
   const postResponse = postOutcome.status === 'fulfilled' ? postOutcome.value : null;
-  if (!actorResponse.ok) throw new Error(`Bluesky actor search failed: ${actorResponse.status}`);
+  if (!actorResponse?.ok && !typeaheadResponse?.ok && !postResponse?.ok) throw new Error('Bluesky検索を取得できませんでした');
 
-  const actorPayload = (await actorResponse.json()) as { actors?: BlueskyActorProfile[] };
+  const actorPayload = (actorResponse?.ok ? await actorResponse.json() : {}) as { actors?: BlueskyActorProfile[] };
   const searchActorsUsers = (actorPayload.actors || [])
     .map(mapBlueskyActorProfile)
     .filter((user): user is BlueskyProfile => Boolean(user));
@@ -1029,7 +1048,7 @@ async function searchBlueskyUncached(query: string, options?: { includePosts?: b
 
   if (posts.length === 0 && options?.includePosts !== false && taglessQuery && taglessQuery !== q) {
     const taglessResponse = await fetchBlueskySearchEndpoint(
-      'app.bsky.feed.searchPosts', new URLSearchParams({ q: taglessQuery, limit: '50' }), options?.signal,
+      'app.bsky.feed.searchPosts', new URLSearchParams({ q: taglessQuery, limit: '30' }), options?.signal,
     );
     if (taglessResponse.ok) {
       const taglessPayload = (await taglessResponse.json()) as { posts?: BlueskyFeedItem['post'][] };
@@ -1040,21 +1059,13 @@ async function searchBlueskyUncached(query: string, options?: { includePosts?: b
   }
 
   if (posts.length === 0 && options?.includePosts !== false) {
-    // app.bsky.feed.searchPosts(投稿本文の全文検索API)は、未認証アクセスに対して
-    // CDN/WAF側でブロックされており(実際のレスポンスがtext/htmlのエラーページで、
-    // かつno-store指定になっており、アプリ本体に届く前にCDNの時点で弾かれている
-    // ことを確認済み)、認証なしではBluesky全アカウントを横断した本文検索はできない。
-    // そのため、代わりに actor 検索(searchActors/searchActorsTypeahead)で見つかった
-    // アカウント自身の投稿だけを対象に、本文一致するものを拾う。
-    // これは「関連しそうなアカウントの投稿」しか対象にできないという構造的な限界が
-    // あり、Bluesky全体を対象にした検索の代わりにはならないが、対象アカウント数を
-    // 増やすことでヒット件数は改善できるため、actor検索で得られた候補(最大30件)
-    // 全てのフィードを見に行くようにする(以前は上位10件のみだった)。
+    // A failed global search must not fan out into thousands of author posts.
     const normalizedQuery = (taglessQuery || q).toLocaleLowerCase();
     const pages = await Promise.all(
-      users.slice(0, 30).map((user) => fetchBlueskyAuthorFeed({
-        actor: user.username,
-        limit: 100,
+      users.slice(0, 4).map((user) => fetchBlueskyAuthorFeed({
+        actor: user.id,
+        limit: 20,
+        signal: options?.signal,
         filter: 'posts_with_replies',
       }).catch(() => null)),
     );
@@ -1072,12 +1083,16 @@ async function searchBlueskyUncached(query: string, options?: { includePosts?: b
 export async function searchBluesky(query: string, options?: { includePosts?: boolean; signal?: AbortSignal }): Promise<BlueskySearchResults> {
   const q = query.trim();
   if (!q) return { posts: [], users: [] };
-  if (options?.signal) return searchBlueskyUncached(q, options);
-
+  if(options?.signal?.aborted)throw options.signal.reason;
   const key = `${options?.includePosts === false ? 'accounts' : 'all'}:${q.toLocaleLowerCase()}`;
-  const cached = blueskySearchCache.get(key);
+  const cached = blueskySearchCache.get(key) || (options?.includePosts===false ? blueskySearchCache.get(`all:${q.toLocaleLowerCase()}`):undefined);
   if (cached && cached.expiresAt > Date.now()) return cached.result;
 
+  if(options?.signal) {
+    const result=await searchBlueskyUncached(q,options);
+    if(!options.signal.aborted)blueskySearchCache.set(key,{result,expiresAt:Date.now()+BLUESKY_SEARCH_CACHE_TTL_MS});
+    return result;
+  }
   const inFlight = blueskySearchRequests.get(key);
   if (inFlight) return inFlight;
 
@@ -1100,6 +1115,7 @@ export async function fetchBlueskyAuthorFeed(options?: {
   filter?: 'posts_no_replies' | 'posts_with_replies' | 'posts_and_author_threads';
   signal?: AbortSignal;
 }): Promise<BlueskyAuthorFeedPage> {
+  if (options?.actor && isMisskeyActor(options.actor)) return misskeyFeed(options);
   const actor = options?.actor || BSKY_AUTHOR_HANDLE;
   const limit = Math.min(100, Math.max(1, options?.limit ?? 30));
   const params = new URLSearchParams({
@@ -1112,7 +1128,7 @@ export async function fetchBlueskyAuthorFeed(options?: {
     params.set('cursor', options.cursor);
   }
 
-  const response = await fetch(
+  const response = await externalFetch(
     `${BSKY_PUBLIC_API}/app.bsky.feed.getAuthorFeed?${params.toString()}`,
     {
       method: 'GET',
@@ -1178,7 +1194,7 @@ function decodeTrendingCursor(cursor: string | null | undefined): TrendingCursor
  * 合算結果からいいね数でフィルタし、最後にシャッフルすることで
  * 「日本語のトレンド投稿がランダムに出てくる」体験を近似している。
  */
-export async function fetchTrendingJapaneseBlueskyPosts(options?: {
+async function fetchBlueskyTrendingPosts(options?: {
   cursor?: string | null;
   limit?: number;
   signal?: AbortSignal;
@@ -1318,6 +1334,7 @@ export async function fetchBlueskyFollowers(options: {
   limit?: number;
   signal?: AbortSignal;
 }): Promise<BlueskyFollowListPage> {
+  if (isMisskeyActor(options.actor)) return misskeyFollowList(options.actor,false,options.cursor,options.limit,options.signal);
   return fetchBlueskyFollowList('app.bsky.graph.getFollowers', 'followers', options);
 }
 
@@ -1327,12 +1344,13 @@ export async function fetchBlueskyFollows(options: {
   limit?: number;
   signal?: AbortSignal;
 }): Promise<BlueskyFollowListPage> {
+  if (isMisskeyActor(options.actor)) return misskeyFollowList(options.actor,true,options.cursor,options.limit,options.signal);
   return fetchBlueskyFollowList('app.bsky.graph.getFollows', 'follows', options);
 }
 
 // BlueskyのDIDは "did:" で始まるため、これでLimeの内部ユーザーと区別できる
 export function isBlueskyProfileId(id: string | null | undefined): boolean {
-  return typeof id === 'string' && id.startsWith('did:');
+  return typeof id === 'string' && (id.startsWith('did:') || id.startsWith('misskey-user:'));
 }
 
 export function mergePostsByCreatedAt<T extends { id: string; createdAt: string }>(
@@ -1360,4 +1378,43 @@ export async function fetchBlueskyTopicPosts(options: {query:string;cursor?:stri
   if(!response.ok) throw new Error(`Bluesky topic search failed: ${response.status}`);
   const data=await response.json() as {posts?:BlueskyFeedItem['post'][];cursor?:string};
   return {posts:(data.posts ?? []).map(post=>mapBlueskyFeedItemToPost({post})).filter((post):post is BlueskyMappedPost=>!!post),cursor:data.cursor ?? null};
+}
+
+// Historical Bluesky-named readers above dispatch external IDs to their own provider.
+export function getConfiguredExternalHandles() { return [...getConfiguredBlueskyHandles(),...configuredMisskeyHandles()]; }
+
+export async function fetchTrendingJapaneseBlueskyPosts(options?:{cursor?:string|null;limit?:number;signal?:AbortSignal}):Promise<BlueskyAuthorFeedPage> {
+  const results=await Promise.allSettled([
+    fetchBlueskyTrendingPosts(options),
+    !options?.cursor && misskeyEnabled() ? misskeyRequest<MisskeyNote[]>('notes/featured',{limit:options?.limit || 30},options?.signal).then(notes=>notes.map(note=>mapMisskeyNote(note)).filter((post):post is BlueskyMappedPost=>Boolean(post))) : Promise.resolve([]),
+  ]);
+  const bluesky=results[0].status==='fulfilled' ? results[0].value : {posts:[],cursor:null};
+  const misskey=results[1].status==='fulfilled' ? results[1].value : [];
+  if (options?.signal?.aborted) throw options.signal.reason;
+  // Keep the existing external candidate budget. Adding a provider must not
+  // double its weight against LimeNote or replace the existing Bluesky pool.
+  const limit=Math.min(100,Math.max(1,options?.limit ?? 30));
+  const extra=misskey.slice(0,bluesky.posts.length ? Math.floor(limit/3) : limit);
+  const base=bluesky.posts.slice(0,limit-extra.length);
+  const posts:BlueskyMappedPost[]=[];
+  while(base.length || extra.length) {
+    posts.push(...base.splice(0,2),...extra.splice(0,1));
+  }
+  return {posts,cursor:bluesky.cursor};
+}
+
+// Both search surfaces publish one ranked list after the readers settle.
+export async function searchExternalUsers(query:string,options:{includeBluesky?:boolean;signal?:AbortSignal;limit?:number}={}):Promise<BlueskyProfile[]> {
+  const normalized=query.trim().replace(/^@+/, '');
+  if(!normalized)return [];
+  const results=await Promise.allSettled([
+    options.includeBluesky===false ? Promise.resolve({users:[]}):searchBluesky(normalized,{includePosts:false,signal:options.signal}),
+    searchMisskey(normalized,false,options.signal),
+  ]);
+  if(options.signal?.aborted)throw options.signal.reason;
+  if(results.every(result=>result.status==='rejected'))throw (results[0] as PromiseRejectedResult).reason;
+  const users=results.flatMap(result=>result.status==='fulfilled' ? result.value.users:[]);
+  return [...new Map(users.map(user=>[user.id,user])).values()]
+    .sort((a,b)=>accountSearchScore(b,normalized)-accountSearchScore(a,normalized))
+    .slice(0,options.limit ?? 3);
 }

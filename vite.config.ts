@@ -1,7 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
-import { componentTagger } from "lovable-tagger";
 import { VitePWA } from "vite-plugin-pwa";
 
 // https://vitejs.dev/config/
@@ -10,7 +9,7 @@ export default defineConfig(({ mode }) => ({
   base: "/RaimuNoteSNS.github.io/",
   build: { target: ["es2020", "safari16"] },
   server: {
-    host: "::",
+    host: "127.0.0.1",
     port: 8080,
     hmr: {
       overlay: false,
@@ -18,7 +17,6 @@ export default defineConfig(({ mode }) => ({
   },
   plugins: [
     react(),
-    mode === "development" && componentTagger(),
     VitePWA({
       registerType: "autoUpdate",
       injectRegister: false,

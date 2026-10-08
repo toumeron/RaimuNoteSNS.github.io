@@ -1,3 +1,4 @@
+import {getBlueskyPostUrl} from '@/lib/bluesky';
 import { OfflineBookmarkContext } from '@/components/stickers/OfflineBookmarkContext';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal, flushSync } from 'react-dom';
@@ -174,7 +175,7 @@ export function MediaLightbox({ selection, onClose }: { selection: MediaViewerSe
   const replyPostId = post?.replyPostId ?? post?.id;
   const external = !!post && isExternalPostId(post.id);
   const requestReply = () => {
-    if (external) { window.open(`https://bsky.app/profile/${post!.author.username}/post/${post!.id.split('/').pop()}`, '_blank', 'noopener,noreferrer'); return; }
+    if (external) { const url=getBlueskyPostUrl(post);if(url)window.open(url, '_blank', 'noopener,noreferrer');return; }
     setControls(true); setDetails(true);
     requestAnimationFrame(() => { const input = [...(stage.current?.closest('[role=dialog]')?.querySelectorAll<HTMLElement>('.lime-media-reply-launcher,input,textarea') ?? [])].find(el => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden'); if (input?.matches('.lime-media-reply-launcher')) input.click(); else input?.focus(); input?.scrollIntoView({ block: 'nearest' }); });
   };

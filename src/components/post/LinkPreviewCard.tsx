@@ -9,16 +9,17 @@ export function useLinkPreview(content:string,enabled=true,provided?:LinkPreview
   const seed=saved?.preview??(url&&provided?.url===url?provided:null);
   const offline=useContext(OfflineBookmarkContext);
   const [failed,setFailed]=useState<string|null>(null);
-  const query=useQuery({queryKey:[persist?'link-preview-saved-v1':'link-preview-live-v1',url],queryFn:()=>fetchLinkPreview(url!,persist),enabled:enabled&&!!url&&!offline&&!seed,initialData:saved?.preview,staleTime:persist&&saved?.preview!==null?Infinity:900_000,gcTime:86400000,retry:1});
+  const query=useQuery({queryKey:[persist?'link-preview-saved-v6':'link-preview-live-v6',url],queryFn:()=>fetchLinkPreview(url!,persist),enabled:enabled&&!!url&&!offline&&!seed,initialData:saved?.preview,staleTime:persist&&saved?.preview?Infinity:60_000,gcTime:86400000,retry:1});
   useEffect(()=>{if(persist&&enabled&&url&&provided?.url===url&&!offline&&!saved)savePreview(url,provided);},[persist,enabled,url,provided,offline,saved]);
-  const preview=enabled&&url&&failed!==url?(offline?offline.linkPreviews?.[url]??seed:seed??query.data):null;
+  const resolved=enabled&&url?(offline?offline.linkPreviews?.[url]??seed:seed??query.data):null;
+  const preview=resolved&&failed===url?{...resolved,image:''}:resolved;
   return {preview:preview??null,cacheImage:persist&&!offline,onImageError:()=>setFailed(url),text:(text:string)=>preview?text.replace(url!, '').replace(content.match(/https?:\/\/[^\s<>"\u3000]+/i)?.[0]??url!, '').trim():text};
 }
 export function LinkPreviewCard({preview,onImageError,cacheImage=true}:{preview:LinkPreview|null;onImageError?:()=>void;cacheImage?:boolean}) {
   if(!preview)return null;
   return <a href={preview.url} target="_blank" rel="noopener noreferrer" onClick={event=>event.stopPropagation()} className="mt-3 block w-full max-w-[420px] overflow-hidden rounded-2xl border border-border bg-background text-foreground hover:bg-muted/30" aria-label={preview.title} data-link-preview>
-    <SavedImage image={preview.image} cacheImage={cacheImage} alt="" loading="lazy" referrerPolicy="no-referrer" onError={onImageError} className="block aspect-[2.4/1] max-h-[175px] w-full object-cover" />
-    <div className="px-3 py-2"><div className="truncate text-sm text-muted-foreground">{preview.domain}</div><div className="mt-1 line-clamp-2 text-sm leading-snug">{preview.title}</div></div>
+    {preview.image&&<SavedImage image={preview.image} cacheImage={cacheImage} alt="" loading="lazy" referrerPolicy="no-referrer" onError={onImageError} className={"block aspect-[2.4/1] max-h-[175px] w-full "+(/(^|\.)amazon\.co\.jp$/.test(preview.domain)?"bg-white object-contain":"object-cover")} />}
+    <div className="px-3 py-2"><div className="truncate text-sm text-muted-foreground">{preview.domain}</div><div className="mt-1 line-clamp-2 text-sm leading-snug">{preview.title}</div>{preview.description&&<div className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">{preview.description}</div>}</div>
   </a>;
 }
 

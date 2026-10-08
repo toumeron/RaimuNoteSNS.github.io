@@ -311,7 +311,7 @@ export function BottomNav() {
         hideTopBorder ? '!border-t-0' : 'border-t',
         useTimelineChromeDesign
           ? isTimelineDark
-            ? 'border-white/[0.06] bg-[#05070a]/82 text-white supports-[backdrop-filter]:bg-[#05070a]/74 backdrop-blur-md backdrop-blur-2xl'
+            ? 'border-white/[0.06] bg-background/80 text-white supports-[backdrop-filter]:bg-background/70 backdrop-blur-md backdrop-blur-2xl'
             : 'border-black/[0.08] bg-white/82 text-zinc-950 supports-[backdrop-filter]:bg-white/74 backdrop-blur-md backdrop-blur-2xl'
           : 'border-border/60 bg-background',
       )}

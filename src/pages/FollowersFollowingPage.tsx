@@ -189,7 +189,7 @@ export default function FollowersFollowingPage() {
           <AlertTriangle className="h-8 w-8 text-muted-foreground/60" />
           <p className="text-lg font-bold text-foreground">ユーザーが見つかりませんでした</p>
           <p className="text-sm text-muted-foreground max-w-xs">
-            @{username} はLimeにもBlueskyにも見つかりませんでした。
+            @{username} はLimeNote・Bluesky・Misskeyに見つかりませんでした。
           </p>
         </div>
       </div>
@@ -283,7 +283,7 @@ export default function FollowersFollowingPage() {
             <div className="flex flex-col border-t border-border/40">
               {users.map((user) => {
                 const userIsBluesky = isBlueskyProfileId(user.id);
-                const blueskyProfileUrl = 'https://bsky.app/profile/' + user.username;
+                const blueskyProfileUrl = user.id.startsWith('misskey-user:') ? 'https://misskey.io/@' + user.username.replace(/@misskey\.io$/, '') : 'https://bsky.app/profile/' + user.username;
                 return (
                   <div
                     key={user.id}

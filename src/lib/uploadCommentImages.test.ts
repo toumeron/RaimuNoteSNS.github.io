@@ -1,26 +1,15 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { uploadCommentImages } from './uploadCommentImages';
-afterEach(() => vi.unstubAllGlobals());
-describe('reply image uploads', () => {
-  it('keeps already uploaded URLs', async () => {
-    const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
-    expect(await uploadCommentImages(['https://example.com/image.jpg'])).toEqual(['https://example.com/image.jpg']);
-    expect(fetch).not.toHaveBeenCalled();
-  });
-  it('uploads image blobs using the existing post preset', async () => {
-    const fetch = vi.fn().mockResolvedValueOnce({ ok: true, blob: async () => new Blob(['image'], { type: 'image/png' }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ secure_url: 'https://example.com/upload.png' }) });
-    vi.stubGlobal('fetch', fetch);
-    expect(await uploadCommentImages(['blob:preview'])).toEqual(['https://example.com/upload.png']);
-    expect(fetch.mock.calls[1][0]).toContain('api.cloudinary.com/v1_1/');
-    expect(fetch.mock.calls[1][1].body.get('upload_preset')).toBe(import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET);
-  });
-  it('rejects failed uploads rather than returning missing images', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ ok: true, blob: async () => new Blob(['image'], { type: 'image/png' }) }).mockResolvedValueOnce({ ok: false, json: async () => ({ error: 'offline' }) }));
-    await expect(uploadCommentImages(['blob:preview'])).rejects.toThrow('アップロード');
-  });
-  it('rejects more than four attachments before sending requests', async () => {
-    const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
-    await expect(uploadCommentImages(Array(5).fill('blob:preview'))).rejects.toThrow('4枚');
-    expect(fetch).not.toHaveBeenCalled();
-  });
+import {beforeEach,describe,it,expect,vi} from 'vitest';
+const state=vi.hoisted(()=>({user:'owner' as string|null,upload:vi.fn()}));
+vi.mock('./currentUser',()=>({getCurrentUserId:async()=>state.user}));
+vi.mock('./uploadPostMedia',()=>({uploadPostMedia:state.upload}));
+import {uploadCommentImages} from './uploadCommentImages';
+beforeEach(()=>{state.user='owner';state.upload.mockReset().mockResolvedValue(['storage://post-media/private']);});
+describe('reply image compatibility helper',()=>{
+ it('delegates to private storage instead of an unsigned public upload preset',async()=>{
+  expect(await uploadCommentImages(['blob:preview'])).toEqual(['storage://post-media/private']);
+  expect(state.upload).toHaveBeenCalledWith(['blob:preview'],'owner',expect.any(String),true);
+ });
+ it('requires a signed-in owner',async()=>{state.user=null;await expect(uploadCommentImages(['blob:preview'])).rejects.toThrow('ログイン');expect(state.upload).not.toHaveBeenCalled();});
+ it('propagates failed uploads',async()=>{state.upload.mockRejectedValue(new Error('アップロード失敗'));await expect(uploadCommentImages(['blob:preview'])).rejects.toThrow('アップロード');});
+ it('rejects more than four attachments before sending requests',async()=>{await expect(uploadCommentImages(Array(5).fill('blob:preview'))).rejects.toThrow('4枚');expect(state.upload).not.toHaveBeenCalled();});
 });

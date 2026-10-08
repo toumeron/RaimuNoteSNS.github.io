@@ -21,7 +21,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
-import { searchBluesky } from '@/lib/bluesky';
+import { searchExternalUsers } from '@/lib/bluesky';
 import type { User } from '@/types';
 import {
   LogOut,
@@ -1953,49 +1953,21 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
     };
   }, [isSearchRoute]);
 
-  // 入力中のBlueskyユーザーサジェストを取得する(検索ページ・モバイルのみ)。
-  // 検索コマンド(from: など)は除き、検索語だけを渡す(PC版と同じ)。
+  // Both external providers share the same suggestion slots and cancellation.
   useEffect(() => {
-    if (!isSearchRoute) {
-      setHeaderBlueskySuggestionUsers([]);
-      return;
-    }
-
-    const query = getSuggestFreeText(headerSearchValue).trim();
-    if (!query || excludeBlueskyPosts) {
-      setHeaderBlueskySuggestionUsers([]);
-      return;
-    }
-
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      searchBluesky(normalizeBlueskySuggestQuery(query), { includePosts: false })
-        .then((result) => {
-          if (cancelled) return;
-          setHeaderBlueskySuggestionUsers(result.users.slice(0, 3).map((u) => ({
-            id: u.id,
-            username: u.username,
-            displayName: u.displayName,
-            avatarUrl: u.avatarUrl,
-            coverUrl: u.coverUrl,
-            createdAt: u.createdAt,
-            bio: u.bio,
-            isOfficial: false,
-          })));
-        })
-        .catch((error) => {
-          if (!cancelled) {
-            console.error('Bluesky suggestion search failed:', error);
-            setHeaderBlueskySuggestionUsers([]);
-          }
-        });
-    }, 250);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
+    const query=getSuggestFreeText(headerSearchValue).trim();
+    setHeaderBlueskySuggestionUsers([]);
+    if(!query || !isSearchRoute || desktopLayout)return;
+    const controller=new AbortController();
+    const publish=(users:Awaited<ReturnType<typeof searchExternalUsers>>)=>{
+      if(!controller.signal.aborted)setHeaderBlueskySuggestionUsers(users.map(user=>({...user,isOfficial:false})));
     };
-  }, [headerSearchValue, excludeBlueskyPosts, isSearchRoute]);
+    const timer=window.setTimeout(()=>{
+      void searchExternalUsers(normalizeBlueskySuggestQuery(query),{includeBluesky:!excludeBlueskyPosts,signal:controller.signal})
+        .then(publish).catch(error=>{if(!controller.signal.aborted)console.warn('External suggestions unavailable',error);});
+    },250);
+    return()=>{controller.abort();window.clearTimeout(timer);};
+  },[headerSearchValue, excludeBlueskyPosts, isSearchRoute,desktopLayout]);
 
   // サジェストの外側をクリックしたら閉じる。
   useEffect(() => {
@@ -2856,7 +2828,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
         shouldHideMobileHeader ? '-translate-y-full' : 'translate-y-0',
         useTimelineChromeDesign
           ? isTimelineDark
-            ? 'border-white/[0.06] bg-[#090b10]/78 text-white supports-[backdrop-filter]:bg-[#090b10]/70 backdrop-blur-2xl'
+            ? 'border-white/[0.06] bg-background/[.78] text-white supports-[backdrop-filter]:bg-background/70 backdrop-blur-2xl'
             : 'border-black/[0.08] bg-white/78 text-zinc-950 supports-[backdrop-filter]:bg-white/70 backdrop-blur-2xl'
           : 'z-50 border-border/40 bg-background/80'
       )}

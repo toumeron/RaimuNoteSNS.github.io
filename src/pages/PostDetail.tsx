@@ -1,5 +1,7 @@
+import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
 import { openMediaViewer } from '@/components/media/openMediaViewer';
 import {useLayoutEffect} from 'react';
+import {HighlightPostMenuButton} from '@/components/post/HighlightPostMenuButton';
 import {PinPostMenuButton} from '@/components/post/PinPostMenuButton';
 import {LinkPreviewCard,useLinkPreview} from '@/components/post/LinkPreviewCard';
 import { renderStickerText } from '@/components/stickers/renderStickerText';
@@ -94,19 +96,20 @@ interface ReplicatedDot {
 // 本文・画像・埋め込みをそのまま表示しつつ、いいね・リアクション・プロフィール遷移
 // といった実際の操作だけBluesky側で行ってもらうように振り分ける。
 type BlueskyPostFields = {
-  source?: 'lime' | 'bluesky';
+  source?: 'lime' | 'bluesky' | 'misskey';
   blueskyUrl?: string;
   blueskyUri?: string;
 };
 
 const isBlueskyPostLike = (post: { id?: string; source?: string }) => (
-  post.source === 'bluesky' || String(post.id || '').startsWith('bsky:')
+  post.source === 'bluesky' || (String(post.id || '').startsWith('bsky:') || String(post.id || '').startsWith('misskey:'))
 );
 
 const getBlueskyPostUrl = (post: Pick<BlueskyPostFields, 'blueskyUrl'> & { author?: { username?: string }; id?: string }) => {
   if (post.blueskyUrl) return post.blueskyUrl;
 
   const id = String(post.id || '');
+  if (id.startsWith('misskey:')) return id.slice('misskey:'.length);
   if (!id.startsWith('bsky:')) return null;
 
   const uri = id.slice('bsky:'.length);
@@ -241,7 +244,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
   const isLoading = isBlueskyPost ? isBlueskyLoading : isLimeLoading;
   const isError = isBlueskyPost ? isBlueskyError || !blueskyData : isLimeError;
   const blueskyPostUrl = data ? getBlueskyPostUrl(data as unknown as { id?: string; blueskyUrl?: string; author?: { username?: string } }) : null;
-  const blueskySession = useBlueskySession();
+  const blueskySession = useBlueskySession(id);
   const blueskyPostUri = isBlueskyPost ? getBlueskyUriFromPostId(id) : null;
   const [failedUrls, setFailedUrls] = useState<string[]>([]); // 読み込み失敗URL管理
   const navigate = useNavigate();
@@ -721,12 +724,12 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
     if (!text) return null;
     
     // @username と #hashtag 形式にマッチさせる正規表現
-    const parts = text.split(/(@\w+|#[^\s#　.,!?:;'"()\[\]{}<>]+)/g);
+    const parts = splitMentionText(text,true);
     
     return parts.map((part, index) => {
       // メンション処理
       if (part.startsWith('@')) {
-        const username = part.substring(1);
+        const username = mentionProfileHandle(part,data?.author);
         return (
           <Link
             key={`mention-${index}`}
@@ -1664,10 +1667,11 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                         className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
                       >
                         <ChartBarBig className="h-4 w-4" />
-                        {isBlueskyPost ? 'Blueskyで見る' : 'ポストアクティビティー'}
+                        {isBlueskyPost ? (id.startsWith('misskey:') ? 'Misskeyで見る' : 'Blueskyで見る') : 'ポストアクティビティー'}
                       </button>
 
                       {isMyPost && !isBlueskyPost && !('replyId' in data && data.replyId) && <PinPostMenuButton userId={data.userId} postId={data.id} onClose={()=>setShowMenu(false)}/>}
+                      {isMyPost && !isBlueskyPost && !('replyId' in data && data.replyId) && <HighlightPostMenuButton userId={data.userId} postId={data.id} onClose={()=>setShowMenu(false)}/>}
                       {isMyPost && currentVisibility !== 'public' && (
                         <button
                           onClick={(e) => handleToggleVisibility(e, 'public')}
@@ -1738,7 +1742,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
           {isBlueskyPost && (
             <div className="flex items-center gap-1 mt-1.5 text-muted-foreground/70">
               <Globe className="h-3.5 w-3.5" />
-              <span className="text-[15px] font-medium">Bluesky</span>
+              <span className="text-[15px] font-medium">{id.startsWith('misskey:') ? 'Misskey' : 'Bluesky'}</span>
             </div>
           )}
 
@@ -1799,7 +1803,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
             </div>
           )}
 
-          {!isBlueskyPost && (data as PostWithAuthor).isQuote && <QuotedPost post={(data as PostWithAuthor).parentPost} />}
+          {(data as PostWithAuthor).isQuote && <QuotedPost post={(data as PostWithAuthor).parentPost} />}
 
           <p className={`mt-4 text-xs text-muted-foreground ${useMobileThreadLayout ? 'post-detail-mobile-meta' : ''}`} title={formatDate(data.createdAt)}>
             {formatDate(data.createdAt)} · {formatRelative(data.createdAt)}
@@ -2222,7 +2226,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                 mobileFlat={useMobileThreadLayout}
               />
             ) : (
-              <CommentList postId={data.id} mobileFlat={useMobileThreadLayout} />
+              <CommentList postId={data.id} mobileFlat={useMobileThreadLayout} threadAuthorId={data.author.id} />
             )}
           </div>
         </>

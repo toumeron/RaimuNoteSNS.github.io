@@ -71,7 +71,7 @@ export function ReplyDetail({ commentId, post, mobileFlat }: { commentId: string
       </div>
       {(!mobileFlat || desktopLayout) && <CommentForm key={commentId} postId={post.id} parentCommentId={commentId} variant={desktopLayout ? 'desktopReply' : 'default'} />}
       <div className={mobileFlat ? 'post-detail-mobile-comments-shell' : ''}>
-        <CommentList postId={post.id} parentCommentId={commentId} mobileFlat={mobileFlat} />
+        <CommentList postId={post.id} parentCommentId={commentId} mobileFlat={mobileFlat} threadAuthorId={post.author?.id} />
       </div>
     </div>
   );

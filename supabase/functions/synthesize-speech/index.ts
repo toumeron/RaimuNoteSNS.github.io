@@ -1,3 +1,4 @@
+import { quota, boundedBody } from '../_shared/security.ts';
 import { CALM_FEMALE_VOICE_ID, PCM_SAMPLE_RATE } from '../_shared/aiVoice.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -21,10 +22,12 @@ Deno.serve(async (req: Request) => {
     });
     const { data, error } = await client.auth.getUser();
     if (error || !data.user) return json('ログインが必要です。', 401);
+    const limited = await quota(data.user.id, 'voice', cors); if (limited) return limited;
     const key = Deno.env.get('FISH_AUDIO_API_KEY');
     if (!key) return json('AI音声の設定が未完了です。サーバーにFish AudioのAPIキーを設定してください。', 503);
     if (Number(req.headers.get('content-length')) > 16000) return json('読み上げる文章が長すぎます。', 413);
-    const raw = await req.text();
+    let raw: string;
+    try { raw = await boundedBody(req, 16000); } catch { return json("読み上げる文章が長すぎます。", 413); }
     if (raw.length > 16000) return json('読み上げる文章が長すぎます。', 413);
     let body;
     try { body = JSON.parse(raw); } catch { return json('音声リクエストが無効です。', 400); }

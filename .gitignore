@@ -34,3 +34,9 @@ playwright-report/
 
 # Downloaded MMD validation assets (not redistributed)
 tests/avatar/local-models/
+
+# Never publish environment variants or private signing credentials
+.env.*
+!.env.example
+*.pem
+*.key

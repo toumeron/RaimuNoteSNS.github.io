@@ -1,3 +1,5 @@
+import { useProfileHighlights } from '@/hooks/useProfileHighlights';
+import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
 import { ProfileVirtualizedListItem } from '@/components/profile/ProfileVirtualizedRow';
 import { openMediaViewer } from '@/components/media/openMediaViewer';
 import {getPostById} from '@/api/posts';
@@ -37,7 +39,7 @@ import { getYouTubeId } from '@/lib/utils';
 import { getCurrentUserId } from '@/lib/currentUser';
 import { supabase } from '@/lib/supabase';
 import { fetchBlueskyAuthorFeed, fetchBlueskyProfile } from '@/lib/bluesky';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import {
   useProfile,
   useUserPostsInfinite,
@@ -46,10 +48,11 @@ import {
   useUserReactionsInfinite,
 } from '@/hooks/useProfile';
 
-type ProfileTabValue = 'posts' | 'likes' | 'media' | 'reactions';
+type ProfileTabValue = 'posts' | 'likes' | 'media' | 'reactions' | 'highlights';
 
 const profileTabs: Array<{ value: ProfileTabValue; label: string }> = [
   { value: 'posts', label: 'ポスト' },
+  { value: 'highlights', label: 'ハイライト' },
   { value: 'media', label: 'メディア' },
   { value: 'likes', label: 'いいね' },
   { value: 'reactions', label: 'リアクション' },
@@ -101,19 +104,20 @@ const canShowParentPostInsideProfileReplies = ({
 // 外部リンクへ飛ばさずに内容（本文・画像・埋め込み）はそのまま表示しつつ、
 // プロフィール遷移やリアクション・返信などの実操作だけBluesky側で行ってもらう。
 type BlueskyPostFields = {
-  source?: 'lime' | 'bluesky';
+  source?: 'lime' | 'bluesky' | 'misskey';
   blueskyUrl?: string;
   blueskyUri?: string;
 };
 
 const isBlueskyPostLike = (post: { id?: string; source?: string }) => (
-  post.source === 'bluesky' || String(post.id || '').startsWith('bsky:')
+  post.source === 'bluesky' || (String(post.id || '').startsWith('bsky:') || String(post.id || '').startsWith('misskey:'))
 );
 
 const getBlueskyPostUrl = (post: Pick<BlueskyPostFields, 'blueskyUrl'> & { author?: { username?: string }; id?: string }) => {
   if (post.blueskyUrl) return post.blueskyUrl;
 
   const id = String(post.id || '');
+  if (id.startsWith('misskey:')) return id.slice('misskey:'.length);
   if (!id.startsWith('bsky:')) return null;
 
   const uri = id.slice('bsky:'.length);
@@ -606,15 +610,15 @@ const renderProfileThreadTextWithHashtags = (text: string, navigate: (to: string
   });
 };
 
-const renderProfileThreadTextWithMentions = (text: string, navigate: (to: string) => void): React.ReactNode => {
-  if (hasStickers(text)) return renderStickerText(text, part=>renderProfileThreadTextWithMentions(part,navigate));
+const renderProfileThreadTextWithMentions = (text: string, navigate: (to: string) => void, author?:{id?:string;username?:string}): React.ReactNode => {
+  if (hasStickers(text)) return renderStickerText(text, part=>renderProfileThreadTextWithMentions(part,navigate,author));
   if (!text) return null;
 
-  const parts = text.split(/(@\w+)/g);
+  const parts = splitMentionText(text);
 
   return parts.map((part, index) => {
     if (part.startsWith('@')) {
-      const username = part.substring(1);
+      const username = mentionProfileHandle(part,author);
 
       return (
         <Link
@@ -2284,7 +2288,7 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
   const isParentBluesky = parent ? isBlueskyPostLike(parent) : false;
   const parentBlueskyUrl = parent && isParentBluesky ? getBlueskyPostUrl(parent) : null;
   const parentBlueskyProfileUrl = isParentBluesky && parentAuthor?.username
-    ? `https://bsky.app/profile/${parentAuthor.username}`
+    ? parent?.id.startsWith('misskey:') ? `https://misskey.io/@${parentAuthor.username.replace(/@misskey\.io$/, '')}` : `https://bsky.app/profile/${parentAuthor.username}`
     : null;
 
   const handleParentAuthorClick = (event: ReactMouseEvent) => {
@@ -2335,14 +2339,14 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
 
             {parentContent ? (
               <p className="whitespace-pre-wrap break-words text-[16px] leading-normal text-foreground mt-1 sm:text-base sm:leading-relaxed">
-                {renderProfileThreadTextWithMentions(parentContent, navigate)}
+                {renderProfileThreadTextWithMentions(parentContent, navigate,parentAuthor)}
               </p>
             ) : null}
 
             {isParentBluesky && (
               <div className="flex items-center gap-1 mt-1.5 text-muted-foreground/70">
                 <Globe className="h-3.5 w-3.5" />
-                <span className="text-[15px] font-medium">Bluesky</span>
+                <span className="text-[15px] font-medium">{parent?.id.startsWith('misskey:') ? 'Misskey' : 'Bluesky'}</span>
               </div>
             )}
 
@@ -2425,7 +2429,7 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
 
               {replyContent ? (
                 <p className="whitespace-pre-wrap break-words text-[16px] leading-normal text-foreground mt-1 sm:text-base sm:leading-relaxed">
-                  {renderProfileThreadTextWithMentions(replyContent, navigate)}
+                  {renderProfileThreadTextWithMentions(replyContent, navigate,commentAuthor)}
                 </p>
               ) : null}
 
@@ -2618,6 +2622,8 @@ export default function Profile() {
   const [failedThreadImageUrls, setFailedThreadImageUrls] = useState<string[]>([]);
   const [isScrolled, setIsScrolled] = useState(false);
   const tabsSentinelRef = useRef<HTMLDivElement>(null);
+  const mobileTabsRef = useRef<HTMLDivElement>(null);
+  const [highlightTabCenter, setHighlightTabCenter] = useState(0);
   // 仮想化用：カードごとに直近測定した高さを記憶しておくキャッシュ。
   // 画面外に出て中身をアンマウントする際、このキャッシュの高さで
   // プレースホルダーを描画するため、スクロール位置がズレない。
@@ -2655,27 +2661,67 @@ export default function Profile() {
     isLoading: isBlueskyFeedLoading,
     isError: isBlueskyFeedError,
     refetch: refetchBlueskyFeed,
-  } = useQuery({
+    fetchNextPage:fetchExternalNextPage,
+    hasNextPage:hasExternalNextPage,
+    isFetchingNextPage:isFetchingExternalNextPage,
+  } = useInfiniteQuery({
     queryKey: ['bluesky-profile-feed', username],
-    queryFn: ({ signal }) => fetchBlueskyAuthorFeed({ actor: username, limit: 100, signal }),
+    initialPageParam:null as string|null,
+    queryFn: ({ signal,pageParam }) => fetchBlueskyAuthorFeed({ actor: username, cursor:pageParam,limit:20,signal }),
+    getNextPageParam:page=>page.cursor ?? undefined,
+    select:data=>({posts:data.pages.flatMap(page=>page.posts),cursor:data.pages.at(-1)?.cursor ?? null}),
     enabled: isBlueskyProfile,
     staleTime: 1000 * 60,
   });
 
+  const highlightsQuery = useProfileHighlights(!isBlueskyProfile ? user?.id : undefined, viewer?.id);
+  const hasHighlights = !!highlightsQuery.data?.pages.some(page => page.length > 0);
+  const visibleProfileTabs = profileTabs.filter(tab => tab.value !== 'highlights' || hasHighlights);
+  useEffect(() => {
+    if (activeTab === 'highlights' && !hasHighlights) setActiveTab('posts');
+  }, [activeTab, hasHighlights]);
+  useLayoutEffect(() => {
+    const tabs = mobileTabsRef.current;
+    const target = tabs?.querySelector<HTMLElement>('[role="tab"][data-state="active"]');
+    if (!hasHighlights || !tabs || !target || tabs.scrollWidth <= tabs.clientWidth) return;
+    const left = target.offsetLeft, right = left + target.offsetWidth;
+    if (left < tabs.scrollLeft) tabs.scrollLeft = left;
+    else if (right > tabs.scrollLeft + tabs.clientWidth) tabs.scrollLeft = right - tabs.clientWidth;
+  }, [activeTab, hasHighlights]);
+  useLayoutEffect(() => {
+    const tabs = mobileTabsRef.current;
+    if (!hasHighlights || !tabs) return;
+    const measure = () => {
+      const selected = tabs.querySelector<HTMLElement>('[role="tab"][data-state="active"]');
+      if (!selected) return;
+      const tabBox = selected.getBoundingClientRect();
+      const listBox = tabs.getBoundingClientRect();
+      setHighlightTabCenter(tabBox.left - listBox.left + tabs.scrollLeft + tabBox.width / 2);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(tabs);
+    tabs.querySelectorAll('[role="tab"]').forEach(tab => observer.observe(tab));
+    let cancelled = false;
+    document.fonts?.ready.then(() => { if (!cancelled) measure(); });
+    return () => { cancelled = true; observer.disconnect(); };
+  }, [activeTab, hasHighlights]);
   // 非表示タブの無限スクロール取得を開始しない。
   // フック自体は常に同じ順序で呼び出し、アクティブなタブだけ userId を渡す。
   // これにより初回表示で4タブ分のデータを同時に保持する必要をなくす。
-  const postsQuery = useUserPostsInfinite(activeTab === 'posts' ? user?.id : undefined);
+  const postsQuery = useUserPostsInfinite(!isBlueskyProfile && activeTab === 'posts' ? user?.id : undefined);
   const pinQuery=useQuery({queryKey:profilePinKey(user?.id??''),queryFn:()=>getProfilePin(user!.id),enabled:!!user?.id&&!isBlueskyProfile&&activeTab==='posts'});
   const pinnedPostQuery=useQuery({queryKey:['profile-pinned-post',user?.id,pinQuery.data,viewer?.id],queryFn:()=>getPostById(pinQuery.data!),enabled:!!pinQuery.data&&!isBlueskyProfile&&activeTab==='posts'});
   const pinnedPost=activeTab==='posts'&&pinnedPostQuery.data?.userId===user?.id?pinnedPostQuery.data:null;
-  const likesQuery = useUserLikesInfinite(activeTab === 'likes' ? user?.id : undefined);
-  const mediaQuery = useUserMediaInfinite(activeTab === 'media' ? user?.id : undefined);
-  const reactionsQuery = useUserReactionsInfinite(activeTab === 'reactions' ? user?.id : undefined);
+  const likesQuery = useUserLikesInfinite(!isBlueskyProfile && activeTab === 'likes' ? user?.id : undefined);
+  const mediaQuery = useUserMediaInfinite(!isBlueskyProfile && activeTab === 'media' ? user?.id : undefined);
+  const reactionsQuery = useUserReactionsInfinite(!isBlueskyProfile && activeTab === 'reactions' ? user?.id : undefined);
 
   // タブに応じて使用するクエリを切り替え（Supabaseレベルでフィルタリングされた結果を取得）
   const currentQuery =
-    activeTab === 'likes'
+    activeTab === 'highlights'
+      ? highlightsQuery
+      : activeTab === 'likes'
       ? likesQuery
       : activeTab === 'media'
         ? mediaQuery
@@ -2686,12 +2732,15 @@ export default function Profile() {
   const {
     data: profileData,
     isLoading: isProfileContentLoading,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
+    fetchNextPage:fetchNativeNextPage,
+    hasNextPage:hasNativeNextPage,
+    isFetchingNextPage:isFetchingNativeNextPage,
     isError: isProfileContentError,
     refetch: refetchCurrentQuery,
   } = currentQuery;
+  const fetchNextPage=isBlueskyProfile ? fetchExternalNextPage:fetchNativeNextPage;
+  const hasNextPage=isBlueskyProfile ? hasExternalNextPage:hasNativeNextPage;
+  const isFetchingNextPage=isBlueskyProfile ? isFetchingExternalNextPage:isFetchingNativeNextPage;
   const contentLoading = isBlueskyProfile ? isBlueskyFeedLoading : isProfileContentLoading;
   const contentError = isBlueskyProfile ? isBlueskyFeedError : isProfileContentError;
 
@@ -2778,13 +2827,15 @@ export default function Profile() {
         tasks.push(refetchCurrentQuery());
       }
 
+      if (activeTab !== 'highlights') tasks.push(highlightsQuery.refetch());
+
       if (activeTab === 'posts') {
         setProfileRepliesRefreshKey((value) => value + 1);
       }
     }
 
     await Promise.all(tasks);
-  }, [isBlueskyProfile, refetchBlueskyFeed, refetchCurrentQuery, activeTab]);
+  }, [isBlueskyProfile, refetchBlueskyFeed, refetchCurrentQuery, highlightsQuery.refetch, activeTab]);
 
   // モーダル表示中や初期ロード中はプルダウン更新を無効化する
   const isPullToRefreshEnabled = !userLoading;
@@ -3092,6 +3143,8 @@ export default function Profile() {
       });
     }
 
+    if (activeTab === 'highlights') return uniquePostsById(flatPageItems);
+
     const ownPosts: ProfilePostItem[] = uniquePostsById(flatPageItems).map((post: any) => ({
       __profileItemType: PROFILE_POST_ITEM,
       sortAt: post.profileRepostedAt ?? post.createdAt ?? post.created_at ?? new Date().toISOString(),
@@ -3243,30 +3296,30 @@ export default function Profile() {
             ].join(' ')}
           />
 
-          <TabsList data-lime-profile-mobile-tabs className="relative z-20 grid h-full w-full grid-cols-4 rounded-none bg-transparent p-0 shadow-none sm:hidden">
+          <TabsList ref={mobileTabsRef} data-lime-profile-mobile-tabs data-lime-profile-tabs-scrollable={hasHighlights ? '' : undefined} className={`relative z-20 h-full w-full rounded-none bg-transparent p-0 shadow-none sm:hidden ${hasHighlights ? 'flex justify-start overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden' : 'grid grid-cols-4'}`}>
             <span
               aria-hidden="true"
               className="profile-tabs-underline pointer-events-none absolute bottom-2 left-0 z-[2] h-[4px] w-16 -translate-x-1/2 rounded-full bg-pink-500 sm:w-10"
               style={{
-                left: `${((Math.max(0, profileTabs.findIndex((tab) => tab.value === activeTab)) + 0.5) / profileTabs.length) * 100}%`,
+                left: hasHighlights ? highlightTabCenter : `${((Math.max(0, visibleProfileTabs.findIndex((tab) => tab.value === activeTab)) + 0.5) / visibleProfileTabs.length) * 100}%`,
               }}
             />
 
-            {profileTabs.map((tab) => (
+            {visibleProfileTabs.map((tab) => (
               <TabsTrigger
                 key={tab.value}
                 value={tab.value}
-                className="profile-tabs-trigger relative h-full min-h-15 min-w-0 rounded-none border-0 bg-transparent px-0 text-[16px] leading-none shadow-none outline-none transition-none duration-0 hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=inactive]:bg-transparent min-[390px]:text-[13px] sm:text-[14px]"
+                className={`profile-tabs-trigger relative h-full min-h-15 min-w-0 rounded-none border-0 bg-transparent px-0 text-[14px] leading-none shadow-none outline-none transition-none duration-0 hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=inactive]:bg-transparent min-[390px]:text-[12px] sm:text-[14px] ${hasHighlights ? 'flex-1 shrink-0 min-w-max px-3' : ''}`}
               >
-                <span className="whitespace-nowrap">
+                <span data-lime-tab-label className="whitespace-nowrap">
                   {tab.label}
                 </span>
               </TabsTrigger>
             ))}
           </TabsList>
 
-          <TabsList data-lime-profile-desktop-tabs className="hidden w-full grid-cols-4 rounded-2xl bg-muted/50 p-1 sm:grid">
-            {profileTabs.map((tab) => (
+          <TabsList data-lime-profile-desktop-tabs style={{ gridTemplateColumns: `repeat(${visibleProfileTabs.length}, minmax(0, 1fr))` }} className="hidden w-full grid-cols-4 rounded-2xl bg-muted/50 p-1 sm:grid">
+            {visibleProfileTabs.map((tab) => (
               <TabsTrigger
                 key={`desktop-${tab.value}`}
                 value={tab.value}
@@ -3289,6 +3342,7 @@ export default function Profile() {
           {!profilePostsLoading && contentError && (
             <div className="m-4 rounded-3xl border border-dashed border-border bg-card/60 p-10 text-center text-sm text-muted-foreground animate-in fade-in zoom-in duration-300 sm:m-0 sm:p-12">
               {activeTab === 'posts' && '投稿の取得に失敗しました。'}
+              {activeTab === 'highlights' && 'ハイライトの取得に失敗しました。'}
               {activeTab === 'likes' && 'いいねした投稿の取得に失敗しました。'}
               {activeTab === 'media' && 'メディア投稿の取得に失敗しました。'}
               {activeTab === 'reactions' && 'リアクションの取得に失敗しました。'}
@@ -3304,6 +3358,7 @@ export default function Profile() {
           {profilePostsEmpty && (
             <div className="m-4 rounded-3xl border border-dashed border-border bg-card/60 p-10 text-center text-sm text-muted-foreground animate-in fade-in zoom-in duration-300 sm:m-0 sm:p-12">
               {activeTab === 'posts' && 'まだ投稿がありません。'}
+              {activeTab === 'highlights' && 'ハイライトした投稿がありません。'}
               {activeTab === 'likes' && 'いいねした投稿がありません。'}
               {activeTab === 'media' && 'メディア投稿がありません。'}
               {activeTab === 'reactions' && 'リアクションした投稿がありません。'}

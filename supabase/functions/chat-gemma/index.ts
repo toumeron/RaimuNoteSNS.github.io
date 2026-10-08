@@ -1,3 +1,4 @@
+import { authenticate, quota, boundedBody } from '../_shared/security.ts';
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2"
 
 const corsHeaders = {
@@ -1457,10 +1458,10 @@ async function executeDirectHtml(
 
 function createSearchSupabaseClient(): SupabaseClient | null {
   const url = Deno.env.get("SUPABASE_URL")
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
+  const serviceRoleKey = Deno.env.get("SUPABASE_ANON_KEY")
 
   if (!url || !serviceRoleKey) {
-    console.error("Search requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY")
+    console.error("Search requires SUPABASE_URL and SUPABASE_ANON_KEY")
     return null
   }
 
@@ -3746,10 +3747,20 @@ ${thinkingSteps.map((step) => `【${step.label}】\n${step.content}`).join("\n\n
   }
 }
 
-Deno.serve((req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { status: 200, headers: corsHeaders })
   }
+
+  if (req.method !== 'POST') return Response.json({error: 'Method not allowed'}, {status: 405, headers: corsHeaders});
+  const actor = await authenticate(req, corsHeaders);
+  if (actor instanceof Response) return actor;
+  const limit = await quota(actor.userId, 'chat', corsHeaders);
+  if (limit) return limit;
+  try {
+    const body = await boundedBody(req, 2 * 1024 * 1024);
+    req = new Request(req.url, {method: 'POST', headers: req.headers, body});
+  } catch { return Response.json({error: 'Request body too large'}, {status: 413, headers: corsHeaders}); }
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {

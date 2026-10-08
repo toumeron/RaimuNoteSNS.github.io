@@ -9,14 +9,15 @@ import './desktop-layout.css';
 import { DesktopLayoutContext } from './DesktopLayoutContext';
 import { PageCompanion } from '@/components/ai/PageCompanion';
 import { Skeleton } from '@/components/ui/skeleton';
+import { isIpad } from '@/lib/utils';
 
 export function AppLayout() {
   const { user, loading } = useAuth();
   const location = useLocation();
   const [desktopSidebarContainer, setDesktopSidebarContainer] = useState<HTMLDivElement | null>(null);
-  const [isDesktop, setIsDesktop] = useState(() => window.matchMedia('(min-width: 768px)').matches);
+  const [isDesktop, setIsDesktop] = useState(() => window.matchMedia(isIpad() ? '(min-width: 640px)' : '(min-width: 768px)').matches);
   useEffect(() => {
-    const media = window.matchMedia('(min-width: 768px)');
+    const media = window.matchMedia(isIpad() ? '(min-width: 640px)' : '(min-width: 768px)');
     const update = () => setIsDesktop(media.matches);
     media.addEventListener('change', update);
     return () => media.removeEventListener('change', update);
@@ -63,6 +64,7 @@ export function AppLayout() {
         <PageCompanion userId={user.id} />
         <DesktopLayoutContext.Provider value={true}>
         <div className="lime-app-shell" data-lime-page={location.pathname}
+          data-lime-ipad={isIpad() || undefined}
           data-lime-workspace={location.pathname === '/chat' || undefined}
           data-lime-hide-header={hideHeader || undefined}
           data-lime-edge={isEdgePage || undefined}

@@ -64,9 +64,10 @@ async function downloadImage(url:string,signal:AbortSignal){
  try{
   const response=await fetch(url,{signal,credentials:'omit',referrerPolicy:'no-referrer'});
   if(!response.ok)throw new Error('画像を保存できませんでした。もう一度お試しください');
+  if(!response.headers.get('content-type')?.startsWith('image/'))throw new Error('画像データを取得できませんでした');
   return {bytes:await response.arrayBuffer(),type:response.headers.get('content-type')??'application/octet-stream'};
  }catch(error){
-  if(!(error instanceof TypeError)||signal.aborted)throw error;
+  if(signal.aborted)throw error;
   // Browser image tags may display an asset whose host denies fetch/CORS.
   // Request only supported public media through the authenticated image reader.
   const {data,error:proxyError,response}=await supabase.functions.invoke('link-preview',{body:{url,mode:'image'},signal});
