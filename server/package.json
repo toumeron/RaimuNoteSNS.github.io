@@ -1,0 +1,14 @@
+{
+  "name": "limenote-notification-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24 <25" },
+  "scripts": {
+    "start": "node external-notifications.mjs",
+    "test": "node --test *.test.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.104.1"
+  }
+}

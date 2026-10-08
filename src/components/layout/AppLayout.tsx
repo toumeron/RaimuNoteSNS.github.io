@@ -45,6 +45,7 @@ export function AppLayout() {
 
   // ページのパスに応じてメインコンテナのクラス名を切り替える
   let mainClassName = 'mx-auto max-w-2xl px-4 py-6';
+  if (location.pathname === '/notifications') mainClassName = 'w-full max-w-none px-0 py-0';
   if (isAccountAboutPage) mainClassName = 'mx-auto max-w-2xl px-0 py-0';
   
   if (isLimeProPage) {
@@ -58,9 +59,9 @@ export function AppLayout() {
 
   if (isDesktop) {
     const isWorkspacePage = location.pathname === '/chat' || location.pathname.startsWith('/media');
-    const hideHeader = (location.pathname.startsWith('/u/') && !isAccountAboutPage) || ['/search', '/notifications', '/settings', '/chat', '/bookmarks'].includes(location.pathname) || location.pathname.startsWith('/media') || isPostDetailPage;
+    const hideHeader = (location.pathname.startsWith('/u/') && !isAccountAboutPage) || ['/search', '/settings', '/chat', '/bookmarks'].includes(location.pathname) || location.pathname.startsWith('/media') || isPostDetailPage;
     const showRightSidebar = !['/chat', '/settings'].includes(location.pathname);
-    const isEdgePage = isWorkspacePage || location.pathname === '/bookmarks' || location.pathname === '/' || location.pathname.startsWith('/u/') || isPostDetailPage;
+    const isEdgePage = location.pathname === '/notifications' || isWorkspacePage || location.pathname === '/bookmarks' || location.pathname === '/' || location.pathname.startsWith('/u/') || isPostDetailPage;
     return (
       <CallSessionProvider>
         <PageCompanion userId={user.id} />

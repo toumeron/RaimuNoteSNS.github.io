@@ -1,0 +1,11 @@
+**
+!server/
+!server/package.json
+!server/package-lock.json
+!server/external-notifications.mjs
+!server/external-notification-listener.mjs
+!server/external-notification-events.mjs
+!supabase/
+!supabase/functions/
+!supabase/functions/check-external-notifications/
+!supabase/functions/check-external-notifications/sources.ts

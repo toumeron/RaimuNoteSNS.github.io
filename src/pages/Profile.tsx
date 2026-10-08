@@ -1,3 +1,5 @@
+import { accountReviewsKey } from '@/api/account-reviews';
+import { AccountReviewsTab } from '@/components/reviews/AccountReviewsTab';
 import { useProfileHighlights } from '@/hooks/useProfileHighlights';
 import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
 import { ProfileVirtualizedListItem } from '@/components/profile/ProfileVirtualizedRow';
@@ -39,7 +41,7 @@ import { getYouTubeId } from '@/lib/utils';
 import { getCurrentUserId } from '@/lib/currentUser';
 import { supabase } from '@/lib/supabase';
 import { fetchBlueskyAuthorFeed, fetchBlueskyProfile } from '@/lib/bluesky';
-import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import {
   useProfile,
   useUserPostsInfinite,
@@ -48,12 +50,13 @@ import {
   useUserReactionsInfinite,
 } from '@/hooks/useProfile';
 
-type ProfileTabValue = 'posts' | 'likes' | 'media' | 'reactions' | 'highlights';
+type ProfileTabValue = 'posts' | 'likes' | 'media' | 'reactions' | 'highlights' | 'reviews';
 
 const profileTabs: Array<{ value: ProfileTabValue; label: string }> = [
   { value: 'posts', label: 'ポスト' },
   { value: 'highlights', label: 'ハイライト' },
   { value: 'media', label: 'メディア' },
+  { value: 'reviews', label: 'レビュー' },
   { value: 'likes', label: 'いいね' },
   { value: 'reactions', label: 'リアクション' },
 ];
@@ -2613,6 +2616,7 @@ const PROFILE_PAGE_STYLES = `
         `;
 
 export default function Profile() {
+  const queryClient = useQueryClient();
   const { user: viewer } = useAuth();
   const { username = '' } = useParams();
   const navigate = useNavigate();
@@ -2676,27 +2680,36 @@ export default function Profile() {
 
   const highlightsQuery = useProfileHighlights(!isBlueskyProfile ? user?.id : undefined, viewer?.id);
   const hasHighlights = !!highlightsQuery.data?.pages.some(page => page.length > 0);
-  const visibleProfileTabs = profileTabs.filter(tab => tab.value !== 'highlights' || hasHighlights);
+  const hasReviews = !isBlueskyProfile && !!user && 'review' in user && user.review === true;
+  const hasExtraTabs = hasHighlights || hasReviews;
+  const visibleProfileTabs = profileTabs.filter(tab => (tab.value !== 'highlights' || hasHighlights) && (tab.value !== 'reviews' || hasReviews));
+  useEffect(() => {
+    if (activeTab === 'reviews' && !hasReviews) setActiveTab('posts');
+  }, [activeTab, hasReviews]);
   useEffect(() => {
     if (activeTab === 'highlights' && !hasHighlights) setActiveTab('posts');
-  }, [activeTab, hasHighlights]);
+  }, [activeTab, hasHighlights, hasReviews]);
   useLayoutEffect(() => {
     const tabs = mobileTabsRef.current;
     const target = tabs?.querySelector<HTMLElement>('[role="tab"][data-state="active"]');
-    if (!hasHighlights || !tabs || !target || tabs.scrollWidth <= tabs.clientWidth) return;
-    const left = target.offsetLeft, right = left + target.offsetWidth;
-    if (left < tabs.scrollLeft) tabs.scrollLeft = left;
-    else if (right > tabs.scrollLeft + tabs.clientWidth) tabs.scrollLeft = right - tabs.clientWidth;
-  }, [activeTab, hasHighlights]);
+    if (!hasExtraTabs || !tabs || !target || tabs.scrollWidth <= tabs.clientWidth) return;
+    const box = target.getBoundingClientRect(), list = tabs.getBoundingClientRect();
+    if (box.left < list.left) tabs.scrollLeft += box.left - list.left;
+    else if (box.right > list.right) tabs.scrollLeft += box.right - list.right;
+  }, [activeTab, hasHighlights, hasReviews]);
   useLayoutEffect(() => {
     const tabs = mobileTabsRef.current;
-    if (!hasHighlights || !tabs) return;
+    if (!hasExtraTabs || !tabs) return;
     const measure = () => {
       const selected = tabs.querySelector<HTMLElement>('[role="tab"][data-state="active"]');
       if (!selected) return;
       const tabBox = selected.getBoundingClientRect();
       const listBox = tabs.getBoundingClientRect();
       setHighlightTabCenter(tabBox.left - listBox.left + tabs.scrollLeft + tabBox.width / 2);
+      if (activeTab === 'reviews' && tabs.scrollWidth > tabs.clientWidth) {
+        if (tabBox.left < listBox.left) tabs.scrollLeft += tabBox.left - listBox.left;
+        else if (tabBox.right > listBox.right) tabs.scrollLeft += tabBox.right - listBox.right;
+      }
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -2705,7 +2718,7 @@ export default function Profile() {
     let cancelled = false;
     document.fonts?.ready.then(() => { if (!cancelled) measure(); });
     return () => { cancelled = true; observer.disconnect(); };
-  }, [activeTab, hasHighlights]);
+  }, [activeTab, hasHighlights, hasReviews]);
   // 非表示タブの無限スクロール取得を開始しない。
   // フック自体は常に同じ順序で呼び出し、アクティブなタブだけ userId を渡す。
   // これにより初回表示で4タブ分のデータを同時に保持する必要をなくす。
@@ -2822,6 +2835,8 @@ export default function Profile() {
       if (typeof refetchBlueskyFeed === 'function') {
         tasks.push(refetchBlueskyFeed());
       }
+    } else if (activeTab === 'reviews' && user?.id) {
+      tasks.push(queryClient.invalidateQueries({ queryKey: accountReviewsKey(user.id) }));
     } else {
       if (typeof refetchCurrentQuery === 'function') {
         tasks.push(refetchCurrentQuery());
@@ -2835,7 +2850,7 @@ export default function Profile() {
     }
 
     await Promise.all(tasks);
-  }, [isBlueskyProfile, refetchBlueskyFeed, refetchCurrentQuery, highlightsQuery.refetch, activeTab]);
+  }, [isBlueskyProfile, refetchBlueskyFeed, refetchCurrentQuery, highlightsQuery.refetch, activeTab, queryClient, user?.id]);
 
   // モーダル表示中や初期ロード中はプルダウン更新を無効化する
   const isPullToRefreshEnabled = !userLoading;
@@ -3104,6 +3119,10 @@ export default function Profile() {
 
   // データのフラット化
   const items: ProfileFeedItem[] = useMemo(() => {
+    // Reviews have their own data source. During profile navigation the tab can
+    // remain selected for one render before the disabled-tab effect resets it.
+    if (activeTab === 'reviews') return [];
+
     if (activeTab === 'likes') {
       return uniquePostsById(
         flatPageItems
@@ -3251,6 +3270,10 @@ export default function Profile() {
       {user && <ProfileHeader
         user={user}
         isBlueskyProfile={isBlueskyProfile}
+        onOpenReviews={() => {
+          setActiveTab('reviews');
+          window.requestAnimationFrame(() => tabsSentinelRef.current?.scrollIntoView({ block: 'start' }));
+        }}
         blueskyStats={isBlueskyProfile ? {
           following: blueskyProfile?.followingCount ?? 0,
           followers: blueskyProfile?.followersCount ?? 0,
@@ -3296,12 +3319,12 @@ export default function Profile() {
             ].join(' ')}
           />
 
-          <TabsList ref={mobileTabsRef} data-lime-profile-mobile-tabs data-lime-profile-tabs-scrollable={hasHighlights ? '' : undefined} className={`relative z-20 h-full w-full rounded-none bg-transparent p-0 shadow-none sm:hidden ${hasHighlights ? 'flex justify-start overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden' : 'grid grid-cols-4'}`}>
+          <TabsList ref={mobileTabsRef} data-lime-profile-mobile-tabs data-lime-profile-tabs-scrollable={hasExtraTabs ? '' : undefined} className={`relative z-20 h-full w-full rounded-none bg-transparent p-0 shadow-none sm:hidden ${hasExtraTabs ? 'flex justify-start overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden' : 'grid grid-cols-4'}`}>
             <span
               aria-hidden="true"
               className="profile-tabs-underline pointer-events-none absolute bottom-2 left-0 z-[2] h-[4px] w-16 -translate-x-1/2 rounded-full bg-pink-500 sm:w-10"
               style={{
-                left: hasHighlights ? highlightTabCenter : `${((Math.max(0, visibleProfileTabs.findIndex((tab) => tab.value === activeTab)) + 0.5) / visibleProfileTabs.length) * 100}%`,
+                left: hasExtraTabs ? highlightTabCenter : `${((Math.max(0, visibleProfileTabs.findIndex((tab) => tab.value === activeTab)) + 0.5) / visibleProfileTabs.length) * 100}%`,
               }}
             />
 
@@ -3309,7 +3332,7 @@ export default function Profile() {
               <TabsTrigger
                 key={tab.value}
                 value={tab.value}
-                className={`profile-tabs-trigger relative h-full min-h-15 min-w-0 rounded-none border-0 bg-transparent px-0 text-[14px] leading-none shadow-none outline-none transition-none duration-0 hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=inactive]:bg-transparent min-[390px]:text-[12px] sm:text-[14px] ${hasHighlights ? 'flex-1 shrink-0 min-w-max px-3' : ''}`}
+                className={`profile-tabs-trigger relative h-full min-h-15 min-w-0 rounded-none border-0 bg-transparent px-0 text-[14px] leading-none shadow-none outline-none transition-none duration-0 hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=inactive]:bg-transparent min-[390px]:text-[12px] sm:text-[14px] ${hasExtraTabs ? 'flex-1 shrink-0 min-w-max px-3' : ''}`}
               >
                 <span data-lime-tab-label className="whitespace-nowrap">
                   {tab.label}
@@ -3331,7 +3354,7 @@ export default function Profile() {
           </TabsList>
         </div>
 
-        <div data-lime-profile-posts className="space-y-0 sm:space-y-4">
+        {activeTab === 'reviews' ? (hasReviews && user ? <AccountReviewsTab profileId={user.id} /> : null) : <div data-lime-profile-posts className="space-y-0 sm:space-y-4">
           {profilePostsLoading && (
             <>
               <PostCardSkeleton />
@@ -3444,7 +3467,7 @@ export default function Profile() {
               </p>
             ) : null)}
           </div>
-        </div>
+        </div>}
       </Tabs>
 
       {failedThreadImageUrls.length > 0 && (

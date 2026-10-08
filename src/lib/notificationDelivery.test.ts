@@ -1,0 +1,12 @@
+import {afterEach,beforeEach,expect,it,vi} from 'vitest';
+const state=vi.hoisted(()=>({count:3,set:vi.fn(),clear:vi.fn(),dismiss:vi.fn(),toast:vi.fn(),message:vi.fn(),closed:vi.fn()}));
+vi.mock('sonner',()=>({toast:Object.assign(state.toast,{dismiss:state.dismiss})}));
+vi.mock('@/lib/supabase',()=>({supabase:{from:()=>{const q={select:()=>q,eq:()=>q,then:(done:Function)=>Promise.resolve({count:state.count,error:null}).then(done as never)};return q;}}}));
+import {refreshNotificationBadge} from './notificationBadge';
+import {showNotificationToast,dismissNotificationToasts} from './notificationToast';
+beforeEach(()=>{vi.useFakeTimers();Object.assign(state,{count:3});for(const name of ['set','clear','dismiss','toast','message','closed'] as const)state[name].mockClear();Object.defineProperty(navigator,'setAppBadge',{configurable:true,value:state.set});Object.defineProperty(navigator,'clearAppBadge',{configurable:true,value:state.clear});Object.defineProperty(navigator,'serviceWorker',{configurable:true,value:{getRegistration:async()=>({active:{postMessage:state.message},getNotifications:async()=>[{tag:'read',data:{notificationId:'read'},close:state.closed}]})}});});
+afterEach(()=>{dismissNotificationToasts();vi.useRealTimers();});
+it('dismisses notification popups after five seconds independently of toast hover state',async()=>{showNotificationToast('one','title','body');expect(state.dismiss).not.toHaveBeenCalled();await vi.advanceTimersByTimeAsync(5000);expect(state.dismiss).toHaveBeenCalledWith('notification-one');});
+it('reading closes the relevant popup without dismissing unrelated notifications',()=>{showNotificationToast('one','title','body');showNotificationToast('two','title','body');dismissNotificationToasts(['one']);expect(state.dismiss.mock.calls).toEqual([['notification-one']]);});
+it('updates unread badge from the saved count and clears badge and read OS notices at zero',async()=>{await refreshNotificationBadge('owner');expect(state.set).toHaveBeenCalledWith(3);state.count=0;await refreshNotificationBadge('owner',['read']);expect(state.clear).toHaveBeenCalled();expect(state.closed).toHaveBeenCalled();expect(state.message).toHaveBeenCalledWith({type:'LIME_NOTIFICATIONS_READ',ids:['read'],count:0});});
+it('does not wait indefinitely for serviceWorker.ready on an unregistered page',async()=>{Object.defineProperty(navigator,'serviceWorker',{configurable:true,value:{ready:new Promise(()=>{}),getRegistration:async()=>undefined}});await refreshNotificationBadge('owner');expect(state.set).toHaveBeenCalledWith(3);});

@@ -1,0 +1,14 @@
+{
+  "name": "limenote-free-notifications",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "wrangler deploy --dry-run --outdir /private/tmp/lime-notification-cloudflare-build",
+    "login": "wrangler login",
+    "test": "node --test *.test.mjs",
+    "deploy": "node deploy-free.mjs"
+  },
+  "dependencies": {"@supabase/supabase-js":"2.104.1"},
+  "devDependencies": {"wrangler":"4.148.0"}
+}

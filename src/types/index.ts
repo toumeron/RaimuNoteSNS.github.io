@@ -9,6 +9,7 @@ export type User = {
   avatarUrl: string;
   coverUrl: string;
   createdAt: string;
+  review?: boolean;
   isOfficial?: boolean; 
   emojiEffect?: string; // 絵文字の雨機能用の追加
   

@@ -3,12 +3,13 @@ import type { User } from '@/types';
 import { supabase } from '@/lib/supabase';
 
 // Keep the fields returned by toUser; exclude unrelated profile settings.
-const USER_SELECT_COLUMNS = 'id, username, display_name, bio, location, avatar_url, cover_url, created_at, is_official, emoji_effect, bot_enabled';
+const USER_SELECT_COLUMNS = 'id, username, display_name, bio, location, avatar_url, cover_url, created_at, is_official, emoji_effect, bot_enabled, review';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function toUser(row: any): User {
   return {
     id: row.id as string,
+    review: row.review === true,
     username: row.username as string,
     displayName: (row.display_name ?? '') as string,
     bio: (row.bio ?? '') as string,

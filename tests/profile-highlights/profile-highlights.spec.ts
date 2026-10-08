@@ -107,7 +107,9 @@ test('highlight tabs stay in one row above pinned posts at every width',async({p
     });
     await page.screenshot({path:info.outputPath(`highlight-tabs-${width}.png`),animations:'disabled'});
     expect(['flex','grid']).toContain(layout.display);
-    expect(layout.tabs.every(tab=>Math.abs(tab.top-layout.top)<1&&tab.bottom<=layout.bottom+1)).toBe(true);
+    // The existing 640px desktop-style tabs have inner padding; compare
+    // tab positions with each other while checking container boundaries.
+    expect(layout.tabs.every(tab=>Math.abs(tab.top-layout.tabs[0].top)<1&&tab.top>=layout.top-1&&tab.bottom<=layout.bottom+1)).toBe(true);
     const postBox=await page.locator('[data-lime-post-card]').first().boundingBox();
     expect(postBox!.y).toBeGreaterThanOrEqual(layout.bottom-1);
   }
@@ -393,4 +395,63 @@ test('own post pin is read and updated through profiles and survives reload', as
   await expect.poll(()=>state.pin).toBeNull();
   await expect(page.locator('[data-lime-pinned-label]')).toHaveCount(0);
   expect(legacyRequests).toEqual([]);
+});
+
+test('notification header contains animated tabs, full-width rows and no settings button',async({page})=>{
+ await setup(page,false);
+ const notifications=[
+  {id:'like-1',user_id:user.id,actor_id:'actor-a',actor_name:'Alice',actor_username:'alice',actor_is_official:true,type:'like',post_id:'native',image_urls:['data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="80" height="80"%3E%3Crect width="80" height="80" fill="pink"/%3E%3C/svg%3E'],is_read:false,created_at:'2026-10-08T10:00:00Z'},
+  {id:'like-2',user_id:user.id,actor_id:'actor-b',actor_name:'Bob',type:'like',post_id:'native',is_read:false,created_at:'2026-10-08T09:00:00Z'},
+  {id:'mention',user_id:user.id,actor_id:'actor-b',actor_name:'Bob',type:'mention',post_id:'native',content_preview:'こんにちは @lime',is_read:false,created_at:'2026-10-08T08:00:00Z'},
+  {id:'follow',user_id:user.id,actor_id:'actor-c',actor_name:'Carol',actor_username:'carol',type:'follow',post_id:null,is_read:true,created_at:'2026-10-07T08:00:00Z'},
+ ];const readIds:string[]=[];
+ await page.route('**/rest/v1/notifications*',route=>{if(route.request().method()==='PATCH'){readIds.push(new URL(route.request().url()).searchParams.get('id')??'');return route.fulfill({status:204,body:''});}return route.fulfill({contentType:'application/json',body:JSON.stringify(notifications)});});
+ await page.goto('notifications');
+ await expect(page.locator('[data-lime-header-row]').getByRole('heading',{name:'通知',exact:true})).toBeVisible();
+ await expect(page.locator('[data-notification-type="like"]')).toHaveCount(1);
+ await expect(page.getByText('さんと他1人があなたのポストをいいねしました',{exact:false})).toBeVisible();
+ await expect(page.getByRole('img',{name:'通知対象のポストの画像'})).toBeVisible();
+ expect(await page.locator('[data-notification-type="follow"]').getAttribute('href')).toContain('/u/carol');
+ await press(page,page.getByRole('tab',{name:'メンション',exact:true}));
+ await expect(page.locator('[data-notification-type="like"]')).toHaveCount(0);
+ await expect(page.getByText('こんにちは @lime')).toBeVisible();
+ await expect.poll(()=>readIds.length).toBeGreaterThan(0);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+ await press(page,page.getByRole('tab',{name:'すべて',exact:true}));
+ await page.screenshot({path:`artifacts/notifications-${test.info().project.name}.png`,fullPage:false});
+ await expect(page.locator('[data-lime-app-header]').getByRole('link',{name:'通知設定',exact:true})).toHaveCount(0);
+ expect(await page.locator('[data-lime-notification-tabs]').evaluate(el=>!!el.closest('[data-lime-app-header]'))).toBe(true);
+ const widths=await page.evaluate(()=>{const row=document.querySelector('[data-notification-type]')!.getBoundingClientRect();const header=document.querySelector('[data-lime-app-header]')!.getBoundingClientRect();return {row:row.width,header:header.width};});expect(Math.abs(widths.row-widths.header)).toBeLessThan(2);
+});
+
+test('notification preferences persist and subscribed actors can be disabled without changing other settings',async({page})=>{
+ await setup(page,false);const preferences:Record<string,boolean>={};let failed=false;
+ let subscriptions=[{id:'native-target',subscriber_id:user.id,provider:'limenote',target_user_id:'other',external_actor:null,profiles:{username:'native',display_name:'Native User'}},{id:'external-target',subscriber_id:user.id,provider:'bluesky',target_user_id:null,external_actor:'cat.bsky.social',target_name:'Bluesky Cat',profiles:null}];
+ await page.route('**/rest/v1/profile_private_settings*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({notification_preferences:preferences})}));
+ await page.route('**/rest/v1/rpc/set_notification_preference',route=>{if(failed)return route.fulfill({status:500,body:'{"message":"failed"}'});const {kind,enabled}=route.request().postDataJSON();preferences[kind]=enabled;return route.fulfill({status:204,body:''});});
+ await page.route('**/rest/v1/post_notification_subscriptions*',route=>{if(route.request().method()==='DELETE'){const id=new URL(route.request().url()).searchParams.get('id')?.slice(3);subscriptions=subscriptions.filter(row=>row.id!==id);return route.fulfill({status:204,body:''});}return route.fulfill({contentType:'application/json',body:JSON.stringify(subscriptions)});});
+ await page.goto('settings#notifications');const section=page.locator('#notifications');await section.scrollIntoViewIfNeeded();
+ const card=await section.evaluate(el=>({radius:getComputedStyle(el).borderRadius,border:getComputedStyle(el).borderTopWidth}));expect(parseFloat(card.radius)).toBeGreaterThan(0);expect(parseFloat(card.border)).toBeGreaterThan(0);
+ await expect(section.getByRole('switch',{name:'いいね',exact:true})).toBeChecked();
+ await press(page,section.getByRole('switch',{name:'いいね',exact:true}));await expect(section.getByRole('switch',{name:'いいね',exact:true})).not.toBeChecked();
+ await page.reload();await section.scrollIntoViewIfNeeded();await expect(section.getByRole('switch',{name:'いいね',exact:true})).not.toBeChecked();
+ failed=true;await press(page,section.getByRole('switch',{name:'返信',exact:true}));await expect(page.getByText('通知設定を保存できませんでした')).toBeVisible();await expect(section.getByRole('switch',{name:'返信',exact:true})).toBeChecked();
+ await expect(section.getByText('Bluesky Cat',{exact:true})).toBeVisible();const externalOff=section.getByRole('button',{name:'通知をOFF'}).last();await externalOff.scrollIntoViewIfNeeded();await press(page,externalOff);await expect(section.getByText('Bluesky Cat',{exact:true})).toHaveCount(0);await expect(section.getByText('Native User',{exact:true})).toBeVisible();
+ await section.scrollIntoViewIfNeeded();await page.screenshot({path:`artifacts/notification-settings-${test.info().project.name}.png`,fullPage:false});
+ const sections=await page.evaluate(()=>{const h=Array.from(document.querySelectorAll('h2'));return ['LimePro','通知設定','背景'].map(name=>h.findIndex(item=>item.textContent===name));});expect(sections[0]).toBeLessThan(sections[1]);expect(sections[1]).toBeLessThan(sections[2]);
+});
+
+test('Bluesky and Misskey notification bells persist provider subscriptions and handle write failures',async({page})=>{
+ await setup(page,false);let subscriptions:Record<string,unknown>[]=[];let fail=false;
+ await page.route('**/rest/v1/profiles?*',route=>route.fulfill({contentType:'application/json',body:'[]'}));
+ await page.route('**/public.api.bsky.app/**',route=>route.fulfill({contentType:'application/json',body:JSON.stringify(route.request().url().includes('getProfile')?{did:'did:plc:fixture-cat',handle:'cat.bsky.social',displayName:'Bluesky Cat',createdAt:user.createdAt}:{feed:[],posts:[],actors:[]})}));
+ await page.route('https://misskey.io/api/**',route=>route.fulfill({contentType:'application/json',body:JSON.stringify(route.request().url().endsWith('/users/show')?{id:'local-cat',username:'cat',name:'Misskey Cat',notesCount:0}:[])}));
+ await page.route('**/rest/v1/post_notification_subscriptions*',route=>{const req=route.request();const url=new URL(req.url());if(req.method()==='POST'){if(fail)return route.fulfill({status:500,body:'{"message":"failed"}'});subscriptions.push({...req.postDataJSON(),id:'subscription-'+subscriptions.length});return route.fulfill({status:201,body:''});}const actor=url.searchParams.get('external_actor')?.slice(3);if(req.method()==='DELETE'){subscriptions=subscriptions.filter(row=>row.external_actor!==actor);return route.fulfill({status:204,body:''});}return route.fulfill({contentType:'application/json',body:JSON.stringify(subscriptions.find(row=>row.external_actor===actor)??null)});});
+ for(const [handle,provider] of [['cat.bsky.social','bluesky'],['cat@misskey.io','misskey']]){
+  await page.goto(`u/${handle}`);await press(page,page.getByRole('button',{name:'新しい投稿を通知する',exact:true}));await expect(page.getByRole('button',{name:'新しい投稿の通知をオフにする',exact:true})).toBeVisible();
+  expect(subscriptions.at(-1)).toMatchObject({provider,external_actor:handle});expect(subscriptions.at(-1)?.target_user_id).toBeUndefined();
+  await page.reload();await expect(page.getByRole('button',{name:'新しい投稿の通知をオフにする',exact:true})).toBeVisible();
+  await press(page,page.getByRole('button',{name:'新しい投稿の通知をオフにする',exact:true}));await expect(page.getByRole('button',{name:'新しい投稿を通知する',exact:true})).toBeVisible();
+ }
+ fail=true;await press(page,page.getByRole('button',{name:'新しい投稿を通知する',exact:true}));await expect(page.getByText('投稿通知の切り替えに失敗しました。もう一度お試しください。')).toBeVisible();await expect(page.getByRole('button',{name:'新しい投稿を通知する',exact:true})).toBeVisible();expect(subscriptions).toEqual([]);
 });

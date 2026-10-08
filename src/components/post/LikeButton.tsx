@@ -292,6 +292,7 @@ export function LikeButton({
   bluesky,
   onChange,
   syncState = false,
+  persistLike,
 }: {
   postId: string;
   liked: boolean;
@@ -301,8 +302,11 @@ export function LikeButton({
   bluesky?: LikeButtonBlueskyTarget;
   onChange?: (state: { liked: boolean; count: number }) => void;
   syncState?: boolean;
+  persistLike?: (liked: boolean) => Promise<{ liked: boolean; count: number }>;
 }) {
   const queryClient = useQueryClient();
+  const [savingCustomLike, setSavingCustomLike] = useState(false);
+  const customLikePendingRef = useRef(false);
 
   const isPWA = useIsPWA();
   const [isMobile, setIsMobile] = useState(false);
@@ -362,7 +366,7 @@ export function LikeButton({
   // props の liked が false のまま来るケースに備えて、表示初期化時だけDB上の実状態を反映する。
   // (Lime内部投稿のみ。Bluesky投稿は別のeffectで初期状態を取得する)
   useEffect(() => {
-    if (isBluesky) return;
+    if (isBluesky || persistLike) return;
 
     let cancelled = false;
 
@@ -396,7 +400,7 @@ export function LikeButton({
     return () => {
       cancelled = true;
     };
-  }, [postId, type, isBluesky]);
+  }, [postId, type, isBluesky, persistLike]);
 
   // Bluesky投稿用: 自分のBlueskyアカウントとして現在のいいね状態(と、
   // いいね作成に必要なcid)を取得する。
@@ -523,7 +527,7 @@ export function LikeButton({
   // リアルタイム反映(Supabase Realtime)。Bluesky投稿はLimeのテーブルに
   // 行が存在しないため、この購読自体を行わない。
   useEffect(() => {
-    if (isBluesky) return;
+    if (isBluesky || persistLike) return;
 
     const config = TABLE_CONFIG[type];
     const channelSuffix = `${type}-${postId}-${channelIdRef.current}-${crypto.randomUUID()}`;
@@ -594,7 +598,7 @@ export function LikeButton({
       void supabase.removeChannel(likeRowsChannel);
       void supabase.removeChannel(countColumnChannel);
     };
-  }, [applyLatestCount, postId, syncLatestCount, type, isBluesky]);
+  }, [applyLatestCount, postId, syncLatestCount, type, isBluesky, persistLike]);
 
   const handleBlueskyLikeToggle = useCallback(async (willBeLiked: boolean, wasLiked: boolean, wasCount: number, nextCount: number) => {
     if (!bluesky) return;
@@ -653,6 +657,7 @@ export function LikeButton({
     e.preventDefault();
     e.stopPropagation();
     ensureTwitterLikeStyles();
+    if (persistLike && customLikePendingRef.current) return;
 
     const wasLiked = stateRef.current.liked;
     const wasCount = stateRef.current.count;
@@ -678,6 +683,27 @@ export function LikeButton({
         setIsAnimating(false);
         animationTimerRef.current = null;
       }, 1050);
+    }
+
+    if (persistLike) {
+      customLikePendingRef.current = true;
+      setSavingCustomLike(true);
+      try {
+        const result = await persistLike(willBeLiked);
+        stateRef.current = result;
+        setDisplayLiked(result.liked);
+        animateCount(nextCount, result.count);
+        onChange?.(result);
+      } catch (error) {
+        stateRef.current = { liked: wasLiked, count: wasCount };
+        setDisplayLiked(wasLiked);
+        animateCount(nextCount, wasCount);
+        setIsAnimating(false);
+      } finally {
+        customLikePendingRef.current = false;
+        setSavingCustomLike(false);
+      }
+      return;
     }
 
     if (bluesky) {
@@ -744,11 +770,13 @@ export function LikeButton({
       animateCount(nextCount, wasCount);
       setIsAnimating(false);
     }
-  }, [animateCount, bluesky, handleBlueskyLikeToggle, postId, queryClient, syncLatestCount, type, onChange]);
+  }, [animateCount, bluesky, handleBlueskyLikeToggle, postId, queryClient, syncLatestCount, type, onChange, persistLike]);
 
   return (
     <button
       type="button"
+      disabled={!!persistLike && savingCustomLike}
+      aria-label={persistLike ? (displayLiked ? 'いいねを取り消す' : 'いいね') : undefined}
       data-lime-post-action="like"
       onClick={handleClick}
       className={cn(

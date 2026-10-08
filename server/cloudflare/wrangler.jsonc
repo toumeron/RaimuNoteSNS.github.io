@@ -1,0 +1,11 @@
+{
+  "name": "limenote-notifications",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-08",
+  "workers_dev": true,
+  "preview_urls": false,
+  "durable_objects": {
+    "bindings": [{"name":"LISTENER","class_name":"ExternalNotificationListener"}]
+  },
+  "migrations": [{"tag":"v1","new_sqlite_classes":["ExternalNotificationListener"]}]
+}

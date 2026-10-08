@@ -10,10 +10,6 @@ export type PostNotificationToggleResult =
 
 const queryKeyFor = (myId?: string, targetUserId?: string) => ['post-notification-subscription', myId, targetUserId];
 
-// 直前の if で 'denied' が除外されると TypeScript が型を絞り込んでしまうため、
-// 許可ダイアログ後の最新の値を取り直すときは関数経由で読む。
-const getNotificationPermission = (): NotificationPermission => Notification.permission;
-
 function isNotificationApiAvailable() {
   return (
     typeof window !== 'undefined' &&
@@ -27,7 +23,7 @@ function isNotificationApiAvailable() {
  * 指定ユーザーの「新しい投稿を通知する」ON/OFF状態と切り替え処理。
  * targetUserId が undefined のときは何も取得しない。
  */
-export function usePostNotificationSubscription(targetUserId?: string) {
+export function usePostNotificationSubscription(targetUserId?: string, external?: {provider:'bluesky'|'misskey';actor:string;name:string;avatarUrl:string}) {
   const { user: me } = useAuth();
   const queryClient = useQueryClient();
   const [isPending, setIsPending] = useState(false);
@@ -41,7 +37,8 @@ export function usePostNotificationSubscription(targetUserId?: string) {
         .from('post_notification_subscriptions')
         .select('id')
         .eq('subscriber_id', me!.id)
-        .eq('target_user_id', targetUserId!)
+        .eq(external ? 'external_actor' : 'target_user_id', external?.actor ?? targetUserId!)
+        .eq('provider', external?.provider ?? 'limenote')
         .maybeSingle();
 
       if (error) throw error;
@@ -64,7 +61,8 @@ export function usePostNotificationSubscription(targetUserId?: string) {
           .from('post_notification_subscriptions')
           .delete()
           .eq('subscriber_id', me.id)
-          .eq('target_user_id', targetUserId);
+          .eq(external ? 'external_actor' : 'target_user_id', external?.actor ?? targetUserId)
+          .eq('provider', external?.provider ?? 'limenote');
 
         if (error) {
           console.error('Disable post notification failed:', error);
@@ -72,27 +70,14 @@ export function usePostNotificationSubscription(targetUserId?: string) {
         }
 
         queryClient.setQueryData(queryKeyFor(me.id, targetUserId), false);
+        void queryClient.invalidateQueries({queryKey:['notification-subscriptions',me.id]});
         return { ok: true, enabled: false };
       }
 
-      // --- ONにする: まず通知の許可・Push購読を確認する ---
-      if (!isNotificationApiAvailable()) {
-        // iOSではホーム画面に追加したPWAでのみ Notification / PushManager が使える
-        return { ok: false, reason: 'unsupported' };
-      }
-
-      if (Notification.permission === 'denied') {
-        return { ok: false, reason: 'denied' };
-      }
-
-      // 許可されていなければここでブラウザの許可ダイアログが出る。許可後はPush購読も保存される。
-      const subscribed = await requestPermissionAndSubscribe(me.id);
-
-      if (!subscribed) {
-        return {
-          ok: false,
-          reason: getNotificationPermission() === 'denied' ? 'denied' : 'push-failed',
-        };
+      // Save in-app subscriptions even on devices without Web Push.
+      // Request permission immediately from the gesture when supported.
+      if (isNotificationApiAvailable() && Notification.permission !== 'denied') {
+        await requestPermissionAndSubscribe(me.id);
       }
 
       const { error } = await supabase
@@ -101,8 +86,8 @@ export function usePostNotificationSubscription(targetUserId?: string) {
         // DO UPDATE 形式のupsertだと UPDATE 権限とポリシーが必要になり 42501 になるため、
         // INSERT権限だけで動く ignoreDuplicates を使う。
         .upsert(
-          { subscriber_id: me.id, target_user_id: targetUserId },
-          { onConflict: 'subscriber_id,target_user_id', ignoreDuplicates: true },
+          external ? {subscriber_id:me.id,provider:external.provider,external_actor:external.actor,target_name:external.name,target_avatar_url:external.avatarUrl} : { subscriber_id: me.id, target_user_id: targetUserId, provider:'limenote' },
+          external ? {ignoreDuplicates:true} : { onConflict: 'subscriber_id,target_user_id', ignoreDuplicates: true },
         );
 
       if (error) {
@@ -111,11 +96,12 @@ export function usePostNotificationSubscription(targetUserId?: string) {
       }
 
       queryClient.setQueryData(queryKeyFor(me.id, targetUserId), true);
+      void queryClient.invalidateQueries({queryKey:['notification-subscriptions',me.id]});
       return { ok: true, enabled: true };
     } finally {
       setIsPending(false);
     }
-  }, [me?.id, targetUserId, enabled, isPending, queryClient]);
+  }, [me?.id, targetUserId, enabled, isPending, queryClient, external]);
 
   return { enabled, isPending, toggle };
 }

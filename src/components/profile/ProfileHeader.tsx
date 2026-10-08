@@ -1,3 +1,5 @@
+import { ReviewStars } from '@/components/reviews/ReviewStars';
+import { accountReviewsKey, getAccountReviews } from '@/api/account-reviews';
 import { setExternalAccountAdded } from '@/lib/externalAccounts';
 import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
 import {configuredMisskeyHandles} from '@/lib/misskey';
@@ -82,10 +84,12 @@ export function ProfileHeader({
   user,
   blueskyStats,
   isBlueskyProfile = false,
+  onOpenReviews,
 }: {
   user: User;
   blueskyStats?: { following: number; followers: number; posts?: number };
   isBlueskyProfile?: boolean;
+  onOpenReviews?: () => void;
 }) {
   const { user: me } = useAuth();
   const { data: stats } = useFollowStats(isBlueskyProfile ? undefined : user.id);
@@ -94,6 +98,11 @@ export function ProfileHeader({
     queryFn: () => getProfileActivityCount(user.id),
     enabled: !isBlueskyProfile,
     staleTime: 0,
+  });
+  const { data: reviewSummary } = useQuery({
+    queryKey: [...accountReviewsKey(user.id), 'summary'],
+    queryFn: () => getAccountReviews(user.id),
+    enabled: !isBlueskyProfile && user.review === true,
   });
   const isMe = me?.id === user.id;
   // 自分がこのユーザーをフォローしているか（通知ベルボタンの表示条件に使用）
@@ -107,13 +116,13 @@ export function ProfileHeader({
   const { data: isMember } = useMembershipStatus(showSubscriptionButton ? user.id : undefined);
   const joinMembership = useJoinMembership(user.id);
   const leaveMembership = useLeaveMembership(user.id);
-  // 「新しい投稿を通知する」ベルボタン（自分自身・Blueskyプロフィールでは表示しない。フォロー中のときのみ表示）
-  const showPostNotificationButton = !isMe && !isBlueskyProfile && isFollowing;
+  // 「新しい投稿を通知する」ベルボタン（LimeNoteはフォロー中、外部ユーザーはプロフィールで設定）
+  const showPostNotificationButton = !isMe && (isBlueskyProfile || isFollowing);
   const {
     enabled: isPostNotificationEnabled,
     isPending: isPostNotificationPending,
     toggle: togglePostNotification,
-  } = usePostNotificationSubscription(showPostNotificationButton ? user.id : undefined);
+  } = usePostNotificationSubscription(showPostNotificationButton ? user.id : undefined, isBlueskyProfile ? {provider:user.id.startsWith('misskey-user:')?'misskey':'bluesky',actor:user.username,name:user.displayName,avatarUrl:user.avatarUrl} : undefined);
   const [isSubscriptionOpen, setIsSubscriptionOpen] = useState(false);
   const [isAvatarOpen, setIsAvatarOpen] = useState(false);
   const [isCoverOpen, setIsCoverOpen] = useState(false);
@@ -420,9 +429,15 @@ export function ProfileHeader({
             </DropdownMenu>
           </div>
         </div>
+        {!isBlueskyProfile && user.review === true && reviewSummary?.enabled && (
+          <button type="button" data-lime-profile-review-rating aria-label="レビューを見る" onClick={onOpenReviews}
+            className="absolute bottom-3 right-4 z-20 flex cursor-pointer border-0 bg-transparent p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:right-6">
+            <ReviewStars value={reviewSummary.average} />
+          </button>
+        )}
       </div>
       <div className="relative px-4 pb-4 sm:px-6 sm:pb-5">
-        <div className="relative flex min-h-[52px] items-start justify-between gap-3">
+        <div className={`relative flex min-h-[52px] items-start justify-between gap-3 ${showSubscriptionButton ? 'max-sm:gap-1' : ''}`}>
           <button
             type="button"
             aria-label={`${user.displayName}のプロフィール画像を拡大表示`}
@@ -440,7 +455,7 @@ export function ProfileHeader({
               </AvatarFallback>
             </Avatar>
           </button>
-          <div className="mt-3 flex shrink-0 items-center">
+          <div data-lime-profile-actions className={`mt-3 flex shrink-0 items-center ${showSubscriptionButton ? 'max-sm:[&>button]:h-9 max-sm:[&>button]:px-1.5 max-sm:[&>button]:text-[13px] min-[360px]:max-sm:[&>button]:px-3 min-[360px]:max-sm:[&>button]:text-sm max-sm:[&>button]:mr-1 max-sm:[&>button:last-child]:mr-0 max-sm:[&>button[aria-pressed]]:w-9 max-sm:[&>button[aria-pressed]]:p-0' : ''}`}>
             {showSubscriptionButton && (
               <Button
                 type="button"

@@ -1,3 +1,4 @@
+import { NotificationTabs } from '@/components/notifications/NotificationTabs';
 import { usePostOverlay } from './PostOverlayContext';
 import { MobileAccountShortcuts } from './AccountSwitcher';
 import { SearchExploreTabs } from '@/components/search/SearchExploreTabs';
@@ -2033,6 +2034,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
 
   const isSearchPage = normalizeAppPath(location.pathname) === '/u/LimeBiz';
   const isChatPage = normalizeAppPath(location.pathname) === '/chat';
+  const isNotificationsPage = normalizeAppPath(location.pathname) === '/notifications';
   const accountAboutMatch = normalizeAppPath(location.pathname).match(/^\/u\/([^/]+)\/about\/?$/);
   const hideHeaderOnMobileProfile = isGithubPagesProfilePath(location.pathname);
   // ポスト詳細ページはモバイルで専用ヘッダー(戻る・タイトル・もっと見る)を
@@ -3313,7 +3315,9 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
               +設定歯車アイコンを配置する。ロゴはモバイルでは表示しない。
             - PC(sm以上): ロゴを左端、アバターを右端、その間(中央)にタブを配置。 */}
         <div data-lime-header-row className="relative mx-auto flex h-14 max-w-5xl items-center gap-2 px-3 sm:h-16 sm:px-4">
-          {accountAboutMatch ? <>
+          {isNotificationsPage ? <>
+            <h1 className="min-w-0 flex-1 text-xl font-bold">通知</h1>
+          </> : accountAboutMatch ? <>
             <Button asChild variant="ghost" size="icon" className="shrink-0 rounded-full">
               <Link to={`/u/${accountAboutMatch[1]}`} aria-label="プロフィールに戻る"><ArrowLeft className="h-5 w-5" /></Link>
             </Button>
@@ -3365,6 +3369,8 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
           </div>
           </>}
         </div>
+
+        {isNotificationsPage && <NotificationTabs />}
 
         {/* タブ行(モバイルのみ)。ロゴ行のすぐ下に、画面幅に応じて間隔が変わる
             中央揃えのタブを表示する。表示するのはタイムライン(ホーム画面 "/")のみ。

@@ -1,3 +1,4 @@
+import { NotificationSettings } from '@/components/profile/NotificationSettings';
 import { setExternalAccountAdded } from '@/lib/externalAccounts';
 import { uploadProfileMedia } from '@/lib/uploadProfileMedia';
 import { getPrivateBotPrompt } from '@/lib/privateProfile';
@@ -1822,6 +1823,8 @@ export default function Settings() {
         </Button>
       </div>
 
+      <Separator />
+      <NotificationSettings />
       <Separator />
 
       <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">

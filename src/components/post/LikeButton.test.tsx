@@ -142,3 +142,25 @@ describe('live like counts without UI changes', () => {
     await expectCount(8);
   });
 });
+
+describe('review persistence using the existing like design', () => {
+  it('uses the supplied persistence without subscribing to post likes', async () => {
+    const persistLike = vi.fn(async () => ({liked:true,count:1}));
+    const client = new QueryClient();
+    render(<QueryClientProvider client={client}><LikeButton postId="review-one" liked={false} count={0} persistLike={persistLike}/></QueryClientProvider>);
+    fireEvent.click(screen.getByRole('button',{name:/^いいね$/}));
+    await waitFor(()=>expect(persistLike).toHaveBeenCalledWith(true));
+    await expectCount(1);
+    expect(db.handlers).toHaveLength(0);
+    expect(screen.getByRole('button',{name:'いいねを取り消す'})).toHaveClass('text-pink-500');
+  });
+  it('restores the previous state when review persistence fails', async () => {
+    const persistLike = vi.fn(async () => {throw new Error('unavailable');});
+    const client = new QueryClient();
+    render(<QueryClientProvider client={client}><LikeButton postId="review-one" liked={false} count={2} persistLike={persistLike}/></QueryClientProvider>);
+    fireEvent.click(screen.getByRole('button',{name:/^いいね$/}));
+    await waitFor(()=>expect(persistLike).toHaveBeenCalled());
+    await expectCount(2);
+    expect(screen.getByRole('button',{name:/^いいね$/})).not.toHaveClass('text-pink-500');
+  });
+});

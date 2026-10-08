@@ -1,6 +1,8 @@
 import { secretMatches } from '../_shared/security.ts';
 type NotificationRecord = {
   id: string;
+  is_read?: boolean;
+  expires_at?:string;
   user_id: string;
   actor_id?: string | null;
   post_id?: string | null;
@@ -8,6 +10,10 @@ type NotificationRecord = {
   actor_name?: string | null;
   actor_avatar_url?: string | null;
   content_preview?: string | null;
+  external_post_id?: string | null;
+  actor_username?: string | null;
+  emoji?: string | null;
+  comment_id?: string | null;
 };
 
 type PushSubscriptionRow = {
@@ -150,7 +156,8 @@ const getNotificationTitle = (record: NotificationRecord) => {
     return `${actorName}さんが投稿しました`;
   }
 
-  return `${actorName}さんからの通知`;
+  const labels:Record<string,string>={reply:'返信',like:'いいね',repost:'リポスト',reaction:'リアクション',follow:'フォロー'};
+  return `${actorName}さんからの${labels[record.type??'']??'通知'}`;
 };
 
 const getNotificationBody = (record: NotificationRecord) => {
@@ -164,13 +171,20 @@ const getNotificationBody = (record: NotificationRecord) => {
     return '新しいポストを投稿しました';
   }
 
-  return '新しい通知があります';
+  const labels:Record<string,string>={reply:'あなたに返信しました',like:'あなたのポストをいいねしました',repost:'あなたのポストをリポストしました',reaction:`あなたのポストに${record.emoji??''}でリアクションしました`,follow:'あなたをフォローしました'};
+  return labels[record.type??'']??'新しい通知があります';
 };
 
 const getNotificationUrl = (appOrigin: string, record: NotificationRecord) => {
-  const path = record.post_id
-    ? `/RaimuNoteSNS.github.io/post/${record.post_id}`
-    : '/RaimuNoteSNS.github.io/notifications';
+  const path = record.external_post_id
+    ? `/RaimuNoteSNS.github.io/post/${encodeURIComponent(record.external_post_id)}`
+    : record.comment_id
+      ? `/RaimuNoteSNS.github.io/post/${encodeURIComponent(`reply:${record.comment_id}`)}`
+    : record.post_id
+      ? `/RaimuNoteSNS.github.io/post/${record.post_id}`
+      : record.actor_username && record.type==='follow'
+        ? `/RaimuNoteSNS.github.io/u/${encodeURIComponent(record.actor_username)}`
+        : '/RaimuNoteSNS.github.io/notifications';
 
   return new URL(path, appOrigin).toString();
 };
@@ -222,7 +236,7 @@ const deleteRows = async (config: SupabaseRestConfig, pathAndQuery: string) => {
 };
 
 const getExistingNotification = async (config: SupabaseRestConfig, notificationId: string) => {
-  const select = 'id,user_id,actor_id,post_id,type,actor_name,actor_avatar_url,content_preview';
+  const select = 'id,is_read,expires_at,user_id,actor_id,post_id,type,actor_name,actor_avatar_url,content_preview,external_post_id,actor_username,emoji,comment_id';
   const rows = await selectRows<NotificationRecord>(
     config,
     `notifications?select=${encodeURIComponent(select)}&id=eq.${encodeURIComponent(notificationId)}&limit=1`,
@@ -243,7 +257,7 @@ const getPushSubscriptions = async (config: SupabaseRestConfig, userId: string) 
 const getUnreadNotificationCount = async (config: SupabaseRestConfig, userId: string) => {
   const rows = await selectRows<{ id: string }>(
     config,
-    `notifications?select=id&user_id=eq.${encodeURIComponent(userId)}&is_read=eq.false`,
+    `notifications?select=id&user_id=eq.${encodeURIComponent(userId)}&is_read=eq.false&expires_at=gt.${encodeURIComponent(new Date().toISOString())}`,
   );
 
   return rows.length;
@@ -461,6 +475,12 @@ Deno.serve(async (req: Request) => {
     if (!record?.id || !record.user_id) {
       return jsonResponse({ error: 'notification not found' }, 404);
     }
+
+    const settings=await selectRows<{notification_preferences?:Record<string,boolean>}>(config,`profile_private_settings?select=notification_preferences&user_id=eq.${encodeURIComponent(record.user_id)}&limit=1`);
+    const preferences=settings[0]?.notification_preferences??{};
+    if(preferences.push===false || preferences[record.type??'']===false)return jsonResponse({ok:true,sent:0,skipped:true});
+
+    if(record.is_read||record.expires_at&&Date.parse(record.expires_at)<=Date.now())return jsonResponse({ok:true,sent:0,skipped:true});
 
     if (record.post_id) {
       const posts = await selectRows<{user_id: string; visibility: string}>(config,

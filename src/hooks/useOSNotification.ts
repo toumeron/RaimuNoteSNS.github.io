@@ -1,13 +1,10 @@
+import { getNotificationPreferences, notificationDescription, notificationLink, markNotificationsRead, type NotificationRow } from '@/api/notifications';
 import { useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { toast } from "sonner";
+import {refreshNotificationBadge as updateAppBadge} from '@/lib/notificationBadge';
+import {showNotificationToast,dismissNotificationToasts} from '@/lib/notificationToast';
 
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
-
-type BadgeNavigator = Navigator & {
-  setAppBadge?: (contents?: number) => Promise<void>;
-  clearAppBadge?: () => Promise<void>;
-};
 
 type PushSubscriptionWithKeys = PushSubscription & {
   getKey?: (name: PushEncryptionKeyName) => ArrayBuffer | null;
@@ -62,42 +59,6 @@ async function getReadyServiceWorkerRegistration() {
   }
 
   return registration;
-}
-
-async function updateAppBadge(currentUserId: string) {
-  const { count, error } = await supabase
-    .from('notifications')
-    .select('id', { count: 'exact', head: true })
-    .eq('user_id', currentUserId)
-    .eq('is_read', false);
-
-  if (error) {
-    console.error('Unread notification count failed:', error);
-    return;
-  }
-
-  const unreadCount = count || 0;
-  const badgeNavigator = navigator as BadgeNavigator;
-
-  try {
-    if (unreadCount > 0 && typeof badgeNavigator.setAppBadge === 'function') {
-      await badgeNavigator.setAppBadge(unreadCount);
-    } else if (unreadCount <= 0 && typeof badgeNavigator.clearAppBadge === 'function') {
-      await badgeNavigator.clearAppBadge();
-    }
-  } catch (error) {
-    console.error('App badge update failed:', error);
-  }
-
-  try {
-    const registration = await navigator.serviceWorker?.ready;
-    registration?.active?.postMessage({
-      type: unreadCount > 0 ? 'LIME_SET_BADGE' : 'LIME_CLEAR_BADGE',
-      count: unreadCount,
-    });
-  } catch {
-    // Service Workerが未準備でも、通常の画面側バッジ更新は継続する。
-  }
 }
 
 function getSubscriptionKey(subscription: PushSubscriptionWithKeys, keyName: PushEncryptionKeyName) {
@@ -192,60 +153,27 @@ export async function requestPermissionAndSubscribe(currentUserId: string) {
   }
 }
 
-function bindPermissionRequest(currentUserId: string, onSubscribed: () => void) {
-  if (!isPushSupported()) return () => {};
-
-  let busy = false;
-  let cleanup: (() => void) | null = null;
-
-  const handleUserGesture = () => {
-    if (busy) return;
-    if (Notification.permission === 'denied') return;
-
-    busy = true;
-    requestPermissionAndSubscribe(currentUserId)
-      .then((saved) => {
-        if (!saved) return;
-        onSubscribed();
-        cleanup?.();
-      })
-      .finally(() => {
-        busy = false;
-      });
-  };
-
-  cleanup = () => {
-    window.removeEventListener('pointerdown', handleUserGesture);
-    window.removeEventListener('touchend', handleUserGesture);
-    window.removeEventListener('click', handleUserGesture);
-    window.removeEventListener('keydown', handleUserGesture);
-  };
-
-  window.addEventListener('pointerdown', handleUserGesture, { passive: true });
-  window.addEventListener('touchend', handleUserGesture, { passive: true });
-  window.addEventListener('click', handleUserGesture, { passive: true });
-  window.addEventListener('keydown', handleUserGesture);
-
-  return cleanup;
-}
-
 async function showRealtimeOSNotification({
   title,
   message,
   iconUrl,
   postId,
+  targetUrl,
+  notificationId,
 }: {
   title: string;
   message: string;
   iconUrl: string;
   postId?: string | null;
+  targetUrl?: string;
+  notificationId: string;
 }) {
   if (!('Notification' in window)) return;
   if (Notification.permission !== 'granted') return;
 
-  const url = postId
+  const url = targetUrl ?? (postId
     ? `${import.meta.env.BASE_URL}post/${postId}`
-    : `${import.meta.env.BASE_URL}notifications`;
+    : `${import.meta.env.BASE_URL}notifications`);
 
   try {
     if ('serviceWorker' in navigator) {
@@ -254,19 +182,24 @@ async function showRealtimeOSNotification({
         await registration.showNotification(title, {
           body: message,
           icon: iconUrl,
-          tag: postId ? `notification-${postId}` : 'notification',
-          data: { url },
+          tag: notificationId,
+          requireInteraction: false,
+          data: { url,notificationId,expiresAt:Date.now()+30000 },
         });
+        window.setTimeout(()=>{void registration.getNotifications({tag:notificationId}).then(notices=>notices.forEach(n=>{if(n.data?.expiresAt<=Date.now())n.close();})).catch(()=>{});},30000);
         return;
       }
     }
 
-    new Notification(title, {
+    const notice = new Notification(title, {
       body: message,
       icon: iconUrl,
-      tag: postId ? `notification-${postId}` : 'notification',
-      data: { url },
+      tag: notificationId,
+          requireInteraction: false,
+      data: { url,notificationId,expiresAt:Date.now()+30000 },
     });
+    window.setTimeout(()=>notice.close(),30000);
+    notice.onclick=()=>{notice.close();const target=new URL(url,window.location.origin);target.searchParams.set('notification',notificationId);window.location.assign(target.href);};
   } catch (error) {
     console.error('Notification creation failed:', error);
   }
@@ -291,9 +224,7 @@ export function useOSNotification(currentUserId: string | null) {
 
     ensurePushSubscription();
 
-    const unbindPermissionRequest = bindPermissionRequest(currentUserId, () => {
-      hasSavedPushSubscription = true;
-    });
+    // Permission is requested only by the bell or notification settings button.
 
     updateAppBadge(currentUserId);
 
@@ -310,14 +241,18 @@ export function useOSNotification(currentUserId: string | null) {
     };
 
     const handleServiceWorkerMessage = (event: MessageEvent) => {
-      const data = event.data as { type?: string; url?: string } | undefined;
+      const data = event.data as { type?: string; url?: string;notificationId?:string } | undefined;
       if (data?.type !== 'LIME_NOTIFICATION_CLICK' || !data.url) return;
 
+      if(data.notificationId)void markNotificationsRead(currentUserId,[data.notificationId]).catch(()=>{});
       const targetUrl = new URL(data.url, window.location.origin);
+      if(targetUrl.origin!==window.location.origin)return;
       window.history.pushState({}, '', targetUrl.pathname + targetUrl.search + targetUrl.hash);
       window.dispatchEvent(new PopStateEvent('popstate'));
     };
 
+    const clickedId=new URLSearchParams(window.location.search).get('notification');
+    if(clickedId && /^[0-9a-f-]{36}$/i.test(clickedId)){void markNotificationsRead(currentUserId,[clickedId]).catch(()=>{});const url=new URL(window.location.href);url.searchParams.delete('notification');window.history.replaceState(window.history.state,'',url.pathname+url.search+url.hash);}
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('focus', handleFocus);
     window.addEventListener('pageshow', handleFocus);
@@ -333,7 +268,11 @@ export function useOSNotification(currentUserId: string | null) {
           table: 'notifications',
           filter: `user_id=eq.${currentUserId}`,
         },
-        (payload) => {
+        async (payload) => {
+          if(payload.new.is_read)return;
+          if(window.location.pathname.replace(/^\/RaimuNoteSNS\.github\.io/,'')==='/notifications'){void markNotificationsRead(currentUserId,[payload.new.id]).catch(()=>{});return;}
+          const preferences = await getNotificationPreferences(currentUserId).catch(() => null);
+          if (cancelled || !preferences || preferences[(payload.new as NotificationRow).type] === false) return;
           const { actor_name, actor_avatar_url, content_preview, post_id, type } = payload.new;
 
           const actorName = actor_name || 'ユーザー';
@@ -342,26 +281,23 @@ export function useOSNotification(currentUserId: string | null) {
             ? `${actorName}さんからのメンション`
             : type === 'new_post'
               ? `${actorName}`
-              : `${actorName}さんからの通知`;
+              : `${actorName}${notificationDescription((payload.new as NotificationRow).type,(payload.new as NotificationRow).emoji)}`;
           const message = content_preview || (type === 'mention'
             ? 'ポストであなたをメンションしました'
             : type === 'new_post'
               ? '新しいポストを投稿しました'
-              : '新しい通知があります');
+              : notificationDescription((payload.new as NotificationRow).type,(payload.new as NotificationRow).emoji).replace(/^さんが/,''));
           const iconUrl = actor_avatar_url || `${import.meta.env.BASE_URL}favicon.ico`;
 
-          toast(title, {
-            description: message,
-            icon: actor_avatar_url ? undefined : '🔔',
-          });
+          showNotificationToast(payload.new.id,title,message);
 
           updateAppBadge(currentUserId);
           ensurePushSubscription();
 
           // Push購読済みの場合は、既存notifications INSERT → send-push → Service Worker通知に任せる。
           // ここでさらにOS通知を出すと、macOS/Android/iOS PWAで二重通知になるため出さない。
-          if (isNotificationSupported && !hasSavedPushSubscription) {
-            showRealtimeOSNotification({ title, message, iconUrl, postId: post_id });
+          if (preferences.push && isNotificationSupported && !hasSavedPushSubscription) {
+            showRealtimeOSNotification({ title, message, iconUrl, postId: post_id,notificationId:payload.new.id, targetUrl: `${import.meta.env.BASE_URL.replace(/\/$/,'')}${notificationLink(payload.new as NotificationRow)}` });
           }
         }
       )
@@ -393,7 +329,8 @@ export function useOSNotification(currentUserId: string | null) {
 
     return () => {
       cancelled = true;
-      unbindPermissionRequest();
+      dismissNotificationToasts();
+
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleFocus);
       window.removeEventListener('pageshow', handleFocus);

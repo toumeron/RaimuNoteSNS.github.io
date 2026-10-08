@@ -452,3 +452,6 @@ verify_jwt = true
 
 [functions.upload-profile-media]
 verify_jwt = true
+
+[functions.check-external-notifications]
+verify_jwt = false
