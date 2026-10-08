@@ -2,6 +2,7 @@ import {searchMisskey,misskeyEnabled} from '@/lib/misskey';
 import { openMediaViewer } from '@/components/media/openMediaViewer';
 import { useAuth } from '@/hooks/useAuth';
 import { getRecommendationPreferences } from '@/api/recommendations';
+import {useQuery} from '@tanstack/react-query';
 import type { RecommendationPreferences } from '@/lib/recommendations';
 import { useTrends } from '@/hooks/useTrends';
 import { useDesktopLayout } from '@/components/layout/DesktopLayoutContext';
@@ -1553,15 +1554,7 @@ export default function SearchPage() {
   const appliedSearchHomeTokenRef = useRef<number | null>(null);
 
   const { user } = useAuth();
-  const [preferences, setPreferences] = useState<RecommendationPreferences>({authors: {}, terms: {}});
-  useEffect(() => {
-    let cancelled = false;
-    setPreferences({authors: {}, terms: {}});
-    getRecommendationPreferences(user?.id ?? null).then(value => {
-      if (!cancelled) setPreferences(value);
-    }).catch(() => { /* Public ranking remains usable if preferences cannot load. */ });
-    return () => { cancelled = true; };
-  }, [user?.id]);
+  const {data:preferences={authors:{},terms:{}}}=useQuery<RecommendationPreferences>({queryKey:['recommendation-preferences',user?.id??null],queryFn:()=>getRecommendationPreferences(user?.id??null),staleTime:0});
 
   // Both external providers share the same suggestion slots and cancellation.
   useEffect(() => {

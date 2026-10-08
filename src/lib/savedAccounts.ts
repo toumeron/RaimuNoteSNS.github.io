@@ -70,6 +70,12 @@ export function activateAccountIntegrations(previousId: string | null | undefine
   try {
     const snapshot = () => Object.fromEntries(integrationKeys.map(key => [key, localStorage.getItem(key)]));
     const owner = localStorage.getItem(ACTIVE_ACCOUNT_KEY);
+    if (nextId && owner === nextId) {
+      // The active integration values are newer than the last switch snapshot.
+      // Reloads and auth callbacks in a second tab must not restore stale credentials.
+      localStorage.setItem(integrationKey(nextId), JSON.stringify(snapshot()));
+      return;
+    }
     if (previousId && owner === previousId) localStorage.setItem(integrationKey(previousId), JSON.stringify(snapshot()));
     if (previousId === undefined && nextId && (!owner || owner === nextId) && !localStorage.getItem(integrationKey(nextId))) {
       // Adopt the already logged-in account's legacy browser settings once.

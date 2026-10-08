@@ -19,11 +19,20 @@ export type User = {
 };
 
 export type Post = {
+  languages?: string[];
+  recommendationLanguages?: string[];
+  imageAltTexts?: string[];
+  contentLabels?: string[];
+  recommendationTopics?: string[];
+  recommendationSources?: string[];
+  recommendationVisual?: import('@/lib/recommendationVisual').RecommendationVisual;
+  recommendationVisualStatus?: 'checked'|'unavailable';
+  recommendationAuthorTopics?: string[];
   source?: 'lime' | 'bluesky' | 'misskey';
   blueskyUrl?: string;
   blueskyUri?: string;
   cid?: string;
-  linkPreview?: {url:string;domain:string;title:string;image:string};
+  linkPreview?: {url:string;domain:string;title:string;image:string;description?:string};
   id: string;
   userId: string;
   authorId?: string; // DBの author_id をそのまま受け入れるために重要

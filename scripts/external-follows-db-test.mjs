@@ -1,0 +1,25 @@
+import {PGlite} from '@electric-sql/pglite';
+import {readFile} from 'node:fs/promises';
+import assert from 'node:assert/strict';
+const db=new PGlite(),a='11111111-1111-4111-8111-111111111111',b='22222222-2222-4222-8222-222222222222';
+await db.exec(`create role anon;create role authenticated;create schema auth;create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('test.viewer',true),'')::uuid$$;
+create table profiles(id uuid primary key);insert into profiles values('${a}'),('${b}');
+create table follows(follower_id uuid references profiles(id),followee_id uuid references profiles(id) not null,created_at timestamptz not null default now(),primary key(follower_id,followee_id),check(follower_id<>followee_id));insert into follows values('${a}','${b}',now());
+alter table follows enable row level security;create policy read on follows for select using(true);create policy own_insert on follows for insert with check(follower_id=auth.uid());create policy own_delete on follows for delete using(follower_id=auth.uid());
+create table profile_private_settings(user_id uuid primary key,external_accounts_imported_at timestamptz);insert into profile_private_settings values('${a}',now());
+create table external_account_users(user_id uuid,provider text,handle text,created_at timestamptz default now());insert into external_account_users(user_id,provider,handle) values('${a}','bluesky','artist.bsky.social'),('${a}','misskey','artist@misskey.io');
+create function notify_account_activity() returns trigger language plpgsql as $$begin if new.followee_id is null then raise exception 'Native notification for external user';end if;return new;end$$;create trigger notify_account_activity after insert on follows for each row execute function notify_account_activity();
+grant usage on schema public,auth to authenticated,anon;grant select on follows to anon,authenticated;grant insert,delete on follows to authenticated;`);
+await db.exec(await readFile('supabase/migrations/20261009030000_unify_external_follows.sql','utf8'));
+async function actor(id,sql,params=[]){await db.exec('begin');try{await db.query("select set_config('test.viewer',$1,true)",[id??'']);await db.exec('set local role authenticated');const rows=(await db.query(sql,params)).rows;await db.exec('commit');return rows;}catch(error){await db.exec('rollback');throw error;}}
+assert.equal((await db.query('select count(*)::int n from follows')).rows[0].n,3);
+assert.equal((await db.query("select count(*)::int n from information_schema.tables where table_schema='public' and table_type='BASE TABLE'")).rows[0].n,3);
+assert.equal((await actor(a,'select * from external_account_users where user_id=$1',[a])).length,2);
+const follow=(id,enabled,profile=null)=>actor(id,'select set_external_follow($1,$2,$3,$4)',['bluesky','new.bsky.social',enabled,profile]);
+await follow(a,true,{displayName:'New artist'});await follow(a,true);assert.equal((await db.query('select count(*)::int n from follows')).rows[0].n,4);
+await follow(b,false);assert.equal((await db.query('select count(*)::int n from follows')).rows[0].n,4);
+await assert.rejects(follow(null,true));
+await assert.rejects(actor(b,'insert into follows(follower_id,external_provider,external_handle) values($1,$2,$3)',[a,'bluesky','forged.bsky.social']));
+await follow(a,false);await actor(a,'select import_external_account_users($1)',[[{provider:'bluesky',handle:'new.bsky.social'}]]);assert.equal((await db.query('select count(*)::int n from follows')).rows[0].n,3);
+assert.equal((await db.query('select count(*)::int n from follows where followee_id is not null')).rows[0].n,1);
+await db.close();console.log('Unified follows: legacy rows/native follows preserved, no new table, public list, idempotency, own writes, anonymous rejection and no native external notifications passed.');

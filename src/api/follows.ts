@@ -59,16 +59,19 @@ export async function toggleFollow(targetUserId: string): Promise<{ followed: bo
     .maybeSingle();
 
   if (existing) {
-    await supabase
+    const {error}=await supabase
       .from('follows')
       .delete()
       .eq('follower_id', currentId)
       .eq('followee_id', targetUserId);
+    if(error)throw error;
     return { followed: false };
   }
 
-  await supabase
+  if(!currentId)throw new Error('ログインしてください');
+  const {error}=await supabase
     .from('follows')
     .insert({ follower_id: currentId, followee_id: targetUserId });
+  if(error)throw error;
   return { followed: true };
 }

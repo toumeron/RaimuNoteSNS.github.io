@@ -14,6 +14,7 @@ export async function loadMisskey(endpoint:unknown, params:unknown):Promise<unkn
  for(const key of ['query','username','host','origin']){
   if(input[key]!==undefined){if(input[key]!==null&&(typeof input[key]!=='string'||(input[key] as string).length>200))throw new Error('Invalid Misskey search');body[key]=input[key];}
  }
+ if(input.withFiles!==undefined){if(typeof input.withFiles!=='boolean')throw new Error('Invalid Misskey media filter');body.withFiles=input.withFiles;}
  if(input.limit!==undefined)body.limit=Math.min(100,Math.max(1,Number(input.limit)||30));
  if(input.i!==undefined)throw new Error('Misskey credentials are not supported');
  const response=await fetch(`https://misskey.io/api/${endpoint}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(15000)});

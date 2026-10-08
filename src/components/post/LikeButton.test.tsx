@@ -164,3 +164,14 @@ describe('review persistence using the existing like design', () => {
     expect(screen.getByRole('button',{name:/^いいね$/})).not.toHaveClass('text-pink-500');
   });
 });
+
+it.each(['bsky:at://did:plc:test/app.bsky.feed.post/abc','misskey:https://misskey.io/notes/abc'])('keeps the shared heart and count animation after a fast cloud acknowledgement for %s',async id=>{
+ let acknowledge:(value:any)=>void;const pending=new Promise<any>(resolve=>acknowledge=resolve);
+ const persistLike=vi.fn(()=>pending),client=new QueryClient({defaultOptions:{queries:{retry:false}}});
+ const view=render(<QueryClientProvider client={client}><LikeButton postId={id} liked={false} count={2} syncState persistLike={persistLike}/></QueryClientProvider>);
+ fireEvent.click(screen.getByRole('button',{name:'いいね'}));
+ expect(view.container.querySelector('.twitter-like-heart')).toHaveClass('is-animating');expect(view.container.querySelector('.twitter-like-count')).toHaveClass('is-up');
+ await act(async()=>acknowledge!({liked:true,count:3}));
+ view.rerender(<QueryClientProvider client={client}><LikeButton postId={id} liked count={3} syncState persistLike={persistLike}/></QueryClientProvider>);
+ expect(view.container.querySelector('.twitter-like-heart')).toHaveClass('is-animating');expect(view.container.querySelector('.twitter-like-effects')).toHaveClass('is-animating');expect(view.container.querySelector('.twitter-like-count')).toHaveClass('is-up');
+});

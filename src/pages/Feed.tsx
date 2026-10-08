@@ -1,7 +1,12 @@
 import { RefreshCw, Sparkles, Loader2 } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery,useQueryClient } from '@tanstack/react-query';
+import {getTopicPreferences,topicsKey} from '@/api/topics';
+import {recommendationIdentity,recommendationFingerprint} from '@/lib/recommendationIdentity';
+import {recommendationIsEligible} from '@/lib/recommendationEligibility';
+import {recommendationTopicAffinity} from '@/lib/recommendationSignals';
+import {useAuth} from '@/hooks/useAuth';
 import { PostComposer } from '@/components/feed/PostComposer';
 import { PostCard } from '@/components/feed/PostCard';
 import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
@@ -170,6 +175,7 @@ function readCachedTimelineDesignForReturnNavigation() {
 }
 
 export default function Feed() {
+  const {user}=useAuth();
   const [activeTab, setActiveTab] = useState<FeedTab>(() => readStoredActiveFeedTab());
   const [timelineBackgroundUrl, setTimelineBackgroundUrl] = useState<string | null>(() => {
     const cachedDesign = readCachedTimelineDesignForReturnNavigation();
@@ -248,6 +254,7 @@ export default function Feed() {
 
   const timelineFeed = useTimelineFeed(activeTab === 'following' ? 'following' : 'all', activeTab !== 'recommended');
   const recommendedFeed = useRecommendedFeed(activeTab === 'recommended');
+  const {data:topicPreferences}=useQuery({queryKey:topicsKey(user?.id),queryFn:()=>getTopicPreferences(user!.id),enabled:activeTab==='trending'&&!!user,staleTime:0});
   const {
     data,
     isLoading,
@@ -276,10 +283,10 @@ export default function Feed() {
   // トレンド専用に取得したランダム順の投稿だけをそのまま表示する
   // (createdAt順に並び替えてしまうと「ランダム表示」の意図が崩れるため)。
   const allPosts = useMemo(() => {
-    if (activeTab === 'trending') return trendingPosts;
+    if (activeTab === 'trending') return topicPreferences ? trendingPosts.filter(post=>recommendationIsEligible(post,topicPreferences.followed)).sort((a,b)=>recommendationTopicAffinity(b,topicPreferences)-recommendationTopicAffinity(a,topicPreferences)) : trendingPosts;
     if (activeTab === 'recommended') return fetchedPosts;
     return mergePostsByCreatedAt(limePosts);
-  }, [activeTab, limePosts, trendingPosts, fetchedPosts]);
+  }, [activeTab, limePosts, trendingPosts, fetchedPosts,topicPreferences]);
 
   const normalizeBlueskyPostForFeed = useCallback(normalizeTimelineBlueskyPost, []);
 
@@ -789,7 +796,7 @@ export default function Feed() {
 
 
   useEffect(() => {
-    if (!isPWAMobile) {
+    if (!isMobile) {
       document.documentElement.style.overscrollBehaviorY = '';
       document.body.style.overscrollBehaviorY = '';
       return;
@@ -800,7 +807,7 @@ export default function Feed() {
 
     const handleTouchStart = (e: TouchEvent) => {
       if (isRefreshing) return;
-      if (window.scrollY !== 0) return;
+      if (window.scrollY > 2) return;
       if (e.touches.length !== 1) return;
 
       touchStartYRef.current = e.touches[0].clientY;
@@ -815,7 +822,7 @@ export default function Feed() {
       if (isRefreshing) return;
       if (e.touches.length !== 1) return;
 
-      if (window.scrollY !== 0) {
+      if (window.scrollY > 2) {
         isPullingRef.current = false;
         pullDistanceRef.current = 0;
         setPullDistance(0);
@@ -859,6 +866,8 @@ export default function Feed() {
       try {
         if (activeTab === 'trending') {
           await loadTrendingPosts(true);
+        } else if(activeTab==='recommended'){
+          await queryClient.resetQueries({queryKey:['feed','recommended']});
         } else {
           await Promise.all([
             queryClient.invalidateQueries({ queryKey: ['posts'] }),
@@ -903,7 +912,7 @@ export default function Feed() {
       window.removeEventListener('touchend', handleTouchEnd);
       window.removeEventListener('touchcancel', handleTouchCancel);
     };
-  }, [isPWAMobile, isRefreshing, queryClient, activeTab, loadTrendingPosts]);
+  }, [isMobile, isRefreshing, queryClient, activeTab, loadTrendingPosts]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1086,7 +1095,7 @@ export default function Feed() {
   // データソースが違うため個別に判定する。
   const isInitialLoading = activeTab === 'trending'
     ? trendingLoading && allPosts.length === 0
-    : isLoading && allPosts.length === 0;
+    : (isLoading || (activeTab==='recommended'&&recommendedFeed.data?.pages.at(-1)?.pendingAnalysis)) && allPosts.length === 0;
 
   // 初回表示の「ふわっと浮かび上がる」アニメーションは、再読み込み後の最初のフィード表示だけに限定。
   // タブを切り替えた後のフィードには animate-float-up を付けない。
@@ -1205,10 +1214,13 @@ export default function Feed() {
       setActiveTab(nextTab);
     };
 
+    const handleScrollTop=()=>{feedTabScrollPositionsRef.current[activeFeedTabForScrollRef.current]=0;pendingFeedTabScrollRestoreRef.current=null;};
+    window.addEventListener('lime-feed-scroll-top',handleScrollTop);
     window.addEventListener('lime-active-feed-tab-changed', handleActiveFeedTabChanged as EventListener);
     window.addEventListener('storage', handleStorage);
 
     return () => {
+      window.removeEventListener('lime-feed-scroll-top',handleScrollTop);
       window.removeEventListener('lime-active-feed-tab-changed', handleActiveFeedTabChanged as EventListener);
       window.removeEventListener('storage', handleStorage);
     };
@@ -1413,16 +1425,18 @@ export default function Feed() {
     () => allPosts.slice(virtualRange.start, virtualRange.end).map((post) => (
       <div
         key={`${activeTab}-${post.id}`}
-        data-lime-recommendation-post={activeTab === 'recommended' ? post.id : undefined}
+        data-lime-recommendation-post={activeTab === 'recommended' ? recommendationIdentity(post) : undefined}
+        data-lime-recommendation-fingerprint={activeTab === 'recommended' ? recommendationFingerprint(post) : undefined}
         className={shouldPlayInitialFloatAnimation ? 'animate-float-up' : ''}
         ref={(element) => registerPostElement(post.id, element)}
       >
-        <PostCard post={post} timelineGlass={hasTimelineBackground} />
+        <PostCard post={post} timelineGlass={hasTimelineBackground} onNotInterested={activeTab==='recommended'?recommendedFeed.dismiss:undefined} />
       </div>
     )),
     [
       activeTab,
       allPosts,
+      recommendedFeed.dismiss,
       hasTimelineBackground,
       shouldPlayInitialFloatAnimation,
       virtualRange.end,
@@ -1434,7 +1448,7 @@ export default function Feed() {
 
   const isBusyLoadingMore = activeTab === 'trending'
     ? trendingLoading
-    : isFetchingNextPage;
+    : isFetchingNextPage || (activeTab==='recommended'&&!!recommendedFeed.data?.pages.at(-1)?.pendingAnalysis);
 
   const hasMoreToLoad = activeTab === 'trending'
     ? trendingHasMore
@@ -1573,7 +1587,7 @@ export default function Feed() {
           }
         `}</style>
       )}
-      {isPWAMobile && (
+      {isMobile && (
         <div
           className="pointer-events-none fixed left-0 right-0 top-0 z-[80] flex justify-center transition-all duration-150"
           style={{

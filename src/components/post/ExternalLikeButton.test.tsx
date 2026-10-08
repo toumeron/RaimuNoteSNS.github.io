@@ -1,0 +1,20 @@
+import {render,screen,fireEvent,waitFor,cleanup} from '@testing-library/react';
+import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
+import {afterEach,beforeEach,expect,it,vi} from 'vitest';
+const mocks=vi.hoisted(()=>({save:vi.fn(),read:vi.fn(),remote:vi.fn(),like:vi.fn(),unlike:vi.fn(),session:null as any,record:vi.fn(),toast:vi.fn()}));
+vi.mock('@/hooks/useAuth',()=>({useAuth:()=>({user:{id:'viewer'}})}));
+vi.mock('@/hooks/useBlueskySession',()=>({useBlueskySession:()=>mocks.session}));
+vi.mock('@/api/external-likes',()=>({getExternalLikeState:mocks.read,setExternalLike:mocks.save}));
+vi.mock('@/lib/bluesky',()=>({getBlueskyUriFromPostId:(id:string)=>id.replace(/^bsky:/,''),fetchBlueskyPostViewerState:mocks.remote,likeBlueskyPost:mocks.like,unlikeBlueskyPost:mocks.unlike}));
+vi.mock('@/lib/recommendations',()=>({recordRecommendationLike:mocks.record,addRecommendationInterest:vi.fn()}));
+vi.mock('sonner',()=>({toast:{info:mocks.toast,error:mocks.toast}}));
+vi.mock('./LikeButton',()=>({LikeButton:({liked,persistLike,count}:any)=><button aria-label={liked?'undo':'like'} onClick={()=>persistLike(!liked)}>{count}</button>}));
+import {ExternalLikeButton} from './ExternalLikeButton';
+const post:any={id:'bsky:at://did:plc:test/app.bsky.feed.post/abc',userId:'artist',content:'',imageUrls:['image'],likesCount:4,author:{id:'artist'},cid:'cid'};
+function mount(row=post){const client=new QueryClient({defaultOptions:{queries:{retry:false}}});render(<QueryClientProvider client={client}><ExternalLikeButton post={row}/></QueryClientProvider>);return client;}
+beforeEach(()=>{vi.clearAllMocks();mocks.session=null;mocks.read.mockResolvedValue({liked:false,count:0,unmirroredCount:0});mocks.save.mockResolvedValue({liked:true,count:1,unmirroredCount:1});mocks.remote.mockResolvedValue({cid:'cid'});mocks.like.mockResolvedValue('like-uri');});afterEach(cleanup);
+it('saves a Bluesky like without provider login or navigation and learns it locally',async()=>{mount();fireEvent.click(await screen.findByRole('button',{name:'like'}));await waitFor(()=>expect(screen.getByRole('button',{name:'undo'})).toHaveTextContent('5'));expect(mocks.save).toHaveBeenCalledWith(post,true);expect(mocks.like).not.toHaveBeenCalled();expect(mocks.record).toHaveBeenCalledWith(post,true,'viewer');});
+it('saves a Misskey like without provider login',async()=>{const row={...post,id:'misskey:https://misskey.io/notes/abc'};mount(row);fireEvent.click(await screen.findByRole('button',{name:'like'}));await waitFor(()=>expect(mocks.save).toHaveBeenCalledWith(row,true));expect(mocks.remote).not.toHaveBeenCalled();});
+it('mirrors connected Bluesky likes after cloud save without double counting',async()=>{mocks.session={did:'did:plc:me'};mocks.save.mockResolvedValueOnce({liked:true,count:1,unmirroredCount:1}).mockResolvedValueOnce({liked:true,count:1,unmirroredCount:0});mount();fireEvent.click(await screen.findByRole('button',{name:'like'}));await waitFor(()=>expect(mocks.save).toHaveBeenLastCalledWith(post,true,true));expect(mocks.like).toHaveBeenCalledWith('at://did:plc:test/app.bsky.feed.post/abc','cid');await waitFor(()=>expect(screen.getByRole('button',{name:'undo'})).toHaveTextContent('5'));});
+it('retains the LimeNote like when the provider fails',async()=>{mocks.session={};mocks.like.mockRejectedValue(new Error('provider offline'));mount();fireEvent.click(await screen.findByRole('button',{name:'like'}));await waitFor(()=>expect(screen.getByRole('button',{name:'undo'})).toBeVisible());expect(mocks.save).toHaveBeenCalledTimes(1);expect(mocks.toast).toHaveBeenCalled();});
+it('removes the cloud and connected provider like',async()=>{mocks.session={};mocks.read.mockResolvedValue({liked:true,count:1,unmirroredCount:0});mocks.remote.mockResolvedValue({likeUri:'existing-like'});mocks.save.mockResolvedValue({liked:false,count:0,unmirroredCount:0});mount();fireEvent.click(await screen.findByRole('button',{name:'undo'}));await waitFor(()=>expect(mocks.unlike).toHaveBeenCalledWith('existing-like'));expect(mocks.save).toHaveBeenCalledWith(post,false);});

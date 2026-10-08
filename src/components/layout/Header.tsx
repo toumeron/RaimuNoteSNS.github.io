@@ -1,4 +1,5 @@
 import { NotificationTabs } from '@/components/notifications/NotificationTabs';
+import { TopicTabs } from '@/components/topics/TopicTabs';
 import { usePostOverlay } from './PostOverlayContext';
 import { MobileAccountShortcuts } from './AccountSwitcher';
 import { SearchExploreTabs } from '@/components/search/SearchExploreTabs';
@@ -41,6 +42,7 @@ import {
   Home,
   PenSquare,
   Mic,
+  Hash,
 } from 'lucide-react';
 
 type TimelineChromeTheme = 'light' | 'dark';
@@ -1435,7 +1437,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   const maxDocumentHeightRef = useRef(0);
   const heightLockRef = useRef<{ previousMinHeight: string; version: number } | null>(null);
   const heightLockVersionRef = useRef(0);
-  const feedTabClickRef = useRef<{ value: FeedTabValue | null; switchedOnFirstClick: boolean; at: number }>({
+  const feedTabClickRef = useRef<{ value: FeedTabValue | null; switchedOnFirstClick: boolean; at: number;count?:number }>({
     value: null,
     switchedOnFirstClick: false,
     at: 0,
@@ -2035,6 +2037,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   const isSearchPage = normalizeAppPath(location.pathname) === '/u/LimeBiz';
   const isChatPage = normalizeAppPath(location.pathname) === '/chat';
   const isNotificationsPage = normalizeAppPath(location.pathname) === '/notifications';
+  const isTopicsPage = normalizeAppPath(location.pathname) === '/topics';
   const accountAboutMatch = normalizeAppPath(location.pathname).match(/^\/u\/([^/]+)\/about\/?$/);
   const hideHeaderOnMobileProfile = isGithubPagesProfilePath(location.pathname);
   // ポスト詳細ページはモバイルで専用ヘッダー(戻る・タイトル・もっと見る)を
@@ -2073,6 +2076,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
 
   // 通常クリックではスクロール位置を変更しない。
   // ダブルクリック判定用に「1回目のクリックでタブが切り替わったか」だけを記録する。
+  const scrollFeedToTop=()=>{window.dispatchEvent(new Event('lime-feed-scroll-top'));window.scrollTo({top:0,behavior:'smooth'});};
   const handleFeedTabClick = (value: FeedTabValue) => {
     const now = Date.now();
     const previous = feedTabClickRef.current;
@@ -2082,6 +2086,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
       feedTabClickRef.current = {
         value,
         switchedOnFirstClick: value !== activeFeedTab,
+        count:1,
         at: now,
       };
       return;
@@ -2091,8 +2096,10 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
     feedTabClickRef.current = {
       value,
       switchedOnFirstClick: previous.switchedOnFirstClick,
+      count:(previous.count??1)+1,
       at: now,
     };
+    if((feedTabClickRef.current.count??0)>=3&&value===activeFeedTab){scrollFeedToTop();feedTabClickRef.current={value:null,switchedOnFirstClick:false,at:0,count:0};}
   };
 
   // 「タブを切り替えた直後の2回クリック」ではなく、
@@ -2106,10 +2113,9 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
       now - clickState.at <= 500 &&
       value === activeFeedTab;
 
-    feedTabClickRef.current = { value: null, switchedOnFirstClick: false, at: 0 };
-
     if (!isValidDoubleClick) return;
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    feedTabClickRef.current = { value: null, switchedOnFirstClick: false, at: 0 };
+    scrollFeedToTop();
   };
 
   const handleLogoClick = () => {
@@ -2640,6 +2646,11 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
           icon: Bookmark,
           onClick: () => navigate('/bookmarks'),
         }, {
+          label: 'トピック',
+          path: '/topics',
+          icon: Hash,
+          onClick: () => navigate('/topics'),
+        }, {
           label: 'スペースを作成',
           path: '/spaces/new',
           icon: Mic,
@@ -2787,6 +2798,9 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
                     </DropdownMenuItem>
                     <DropdownMenuItem className="gap-3 rounded-xl px-4 py-4 text-base font-bold" onClick={() => navigate('/bookmarks')}>
                       <Bookmark className="h-6 w-6 shrink-0 stroke-[2]" />ブックマーク
+                    </DropdownMenuItem>
+                    <DropdownMenuItem className="gap-3 rounded-xl px-4 py-4 text-base font-bold" onClick={() => navigate('/topics')}>
+                      <Hash className="h-6 w-6 shrink-0 stroke-[2]" />トピック
                     </DropdownMenuItem>
                     <DropdownMenuItem className="gap-3 rounded-xl px-4 py-4 text-base font-bold" onSelect={() => { createSpaceAfterMenuClose.current = true; setIsSidebarMoreOpen(false); }}>
                       <Mic className="h-6 w-6 shrink-0 stroke-[2]" />スペースを作成
@@ -3315,7 +3329,10 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
               +設定歯車アイコンを配置する。ロゴはモバイルでは表示しない。
             - PC(sm以上): ロゴを左端、アバターを右端、その間(中央)にタブを配置。 */}
         <div data-lime-header-row className="relative mx-auto flex h-14 max-w-5xl items-center gap-2 px-3 sm:h-16 sm:px-4">
-          {isNotificationsPage ? <>
+          {isTopicsPage ? <>
+            <Button variant="ghost" size="icon" className="shrink-0 rounded-full" aria-label="戻る" onClick={() => window.history.state?.idx > 0 ? navigate(-1) : navigate('/')}><ArrowLeft className="h-5 w-5" /></Button>
+            <h1 className="ml-2 min-w-0 flex-1 text-xl font-bold">トピック</h1>
+          </> : isNotificationsPage ? <>
             <h1 className="min-w-0 flex-1 text-xl font-bold">通知</h1>
           </> : accountAboutMatch ? <>
             <Button asChild variant="ghost" size="icon" className="shrink-0 rounded-full">
@@ -3371,6 +3388,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
         </div>
 
         {isNotificationsPage && <NotificationTabs />}
+        {isTopicsPage && <TopicTabs />}
 
         {/* タブ行(モバイルのみ)。ロゴ行のすぐ下に、画面幅に応じて間隔が変わる
             中央揃えのタブを表示する。表示するのはタイムライン(ホーム画面 "/")のみ。

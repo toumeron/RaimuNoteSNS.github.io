@@ -2,6 +2,7 @@ import { cloudExternalHandles, saveExternalProviderHandles } from './externalAcc
 import {externalFetch, accountSearchScore} from './utils';
 import { searchMisskey, configuredMisskeyHandles, isMisskeyActor, isMisskeyId, misskeyFeed, misskeyProfile, misskeyThread, misskeyFollowList, misskeyRequest, mapMisskeyNote, type MisskeyNote, misskeyEnabled, misskeyViewer, likeMisskey, unlikeMisskey, misskeyFollowState, followMisskey, unfollowMisskey } from './misskey';
 import {singlePreviewUrl,type LinkPreview} from './linkPreview';
+import {TOPICS,matchingTopics,type TopicId} from './topics';
 import { ACTIVE_ACCOUNT_KEY } from './savedAccounts';
 // 初期状態ではBlueskyアカウントを1件も登録しない。
 // BSKY_AUTHOR_HANDLE は既存コードとの互換性のためだけに残し、既定の登録先には使用しない。
@@ -160,45 +161,39 @@ export async function loginToBluesky(identifierRaw: string, appPassword: string)
 
 /**
  * accessJwtが失効した場合にrefreshJwtでセッションを更新する。
- * refreshJwt自体が失効している場合はローカルのセッションを削除してnullを返す(=ログアウト扱い)。
+ * refreshJwtの失効が確認できた場合だけ保存セッションを削除する。一時的な失敗では保持する。
  */
+let sessionRefresh: {token:string;owner:string|null;promise:Promise<BlueskySession|null>}|null=null;
 export async function refreshBlueskySession(): Promise<BlueskySession | null> {
-  const current = getStoredBlueskySession();
-  if (!current) return null;
-
-  try {
-    const response = await fetch(`${BSKY_PDS_API}/com.atproto.server.refreshSession`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${current.refreshJwt}` },
-    });
-
-    if (!response.ok) {
-      if (getStoredBlueskySession()?.refreshJwt === current.refreshJwt) saveBlueskySession(null);
-      return null;
+  const current=getStoredBlueskySession();
+  if(!current)return null;
+  const owner=window.localStorage.getItem(ACTIVE_ACCOUNT_KEY);
+  if(sessionRefresh?.token===current.refreshJwt&&sessionRefresh.owner===owner)return sessionRefresh.promise;
+  const stillCurrent=()=>window.localStorage.getItem(ACTIVE_ACCOUNT_KEY)===owner&&getStoredBlueskySession()?.refreshJwt===current.refreshJwt;
+  const perform=async()=>{
+    if(!stillCurrent()){
+      const latest=getStoredBlueskySession();
+      return window.localStorage.getItem(ACTIVE_ACCOUNT_KEY)===owner&&latest?.did===current.did?latest:null;
     }
-
-    const data = (await response.json()) as {
-      did: string;
-      handle: string;
-      accessJwt: string;
-      refreshJwt: string;
-    };
-
-    const session: BlueskySession = {
-      ...current,
-      did: data.did,
-      handle: data.handle,
-      accessJwt: data.accessJwt,
-      refreshJwt: data.refreshJwt,
-    };
-
-    if (getStoredBlueskySession()?.refreshJwt !== current.refreshJwt) return null;
-    saveBlueskySession(session);
-    return session;
-  } catch (error) {
-    console.error('Bluesky session refresh failed:', error);
-    return null;
-  }
+    const response=await fetch(`${BSKY_PDS_API}/com.atproto.server.refreshSession`,{method:'POST',headers:{Authorization:`Bearer ${current.refreshJwt}`}});
+    if(!response.ok){
+      const error=await response.clone().json().catch(()=>({}));
+      // Network/server/rate-limit failures do not invalidate saved login credentials.
+      if((response.status===400||response.status===401)&&['ExpiredToken','InvalidToken','AccountTakedown'].includes(error.error)&&stillCurrent())saveBlueskySession(null);
+      throw new Error(`Blueskyのログイン更新に失敗しました (${response.status})`);
+    }
+    const data=await response.json() as BlueskySession;
+    if(!data.did||!data.handle||!data.accessJwt||!data.refreshJwt)throw new Error('Blueskyのログイン更新の応答が不正です');
+    if(!stillCurrent()){
+      const latest=getStoredBlueskySession();
+      return window.localStorage.getItem(ACTIVE_ACCOUNT_KEY)===owner&&latest?.did===current.did?latest:null;
+    }
+    const session={...current,...data};saveBlueskySession(session);return session;
+  };
+  const promise=typeof navigator!=='undefined'&&navigator.locks
+    ?navigator.locks.request(`lime-bluesky-refresh:${owner??'guest'}`,perform).then(result=>result):perform();
+  sessionRefresh={token:current.refreshJwt,owner,promise};
+  try{return await promise;}finally{if(sessionRefresh?.promise===promise)sessionRefresh=null;}
 }
 
 export async function logoutFromBluesky(): Promise<void> {
@@ -440,6 +435,7 @@ export async function likeBlueskyPost(uri: string, cid: string): Promise<string>
   }
 
   const data = (await response.json()) as { uri: string };
+  recommendationLikesCache.clear();
   return data.uri;
 }
 
@@ -469,6 +465,7 @@ export async function unlikeBlueskyPost(likeUri: string): Promise<void> {
   if (!response.ok) {
     throw new Error(`いいね解除に失敗しました (${response.status})`);
   }
+  recommendationLikesCache.clear();
 }
 
 /**
@@ -531,6 +528,12 @@ export async function unfollowBlueskyUser(followUri: string): Promise<void> {
 }
 
 export type BlueskyMappedPost = {
+  languages?: string[];
+  recommendationLanguages?: string[];
+  imageAltTexts?: string[];
+  contentLabels?: string[];
+  recommendationTopics?: string[];
+  recommendationSources?: string[];
   linkPreview?:LinkPreview;
   id: string;
   userId: string;
@@ -597,7 +600,7 @@ const blueskySearchRequests = new Map<string, Promise<BlueskySearchResults>>();
 
 type BlueskyEmbed = {
   $type?: string;
-  images?: Array<{ fullsize?: string; thumb?: string }>;
+  images?: Array<{ fullsize?: string; thumb?: string;alt?:string }>;
   thumbnail?: string;
   external?: { uri?: string; thumb?: string; title?: string; description?: string };
   media?: BlueskyEmbed;
@@ -629,6 +632,7 @@ type BlueskyFeedItem = {
     };
     record?: {
       text?: string;
+      langs?: string[];
       createdAt?: string;
       facets?: Array<{
         index?: { byteStart?: number; byteEnd?: number };
@@ -636,6 +640,7 @@ type BlueskyFeedItem = {
       }>;
     };
     embed?: BlueskyEmbed;
+    labels?:Array<{val?:string}>;
     likeCount?: number;
     replyCount?: number;
     indexedAt?: string;
@@ -682,26 +687,32 @@ function mapBlueskyActorProfile(profile: BlueskyActorProfile): BlueskyProfile | 
   };
 }
 
+const searchEndpointCooldown=new Map<string,number>();
 async function fetchBlueskySearchEndpoint(
   endpoint: string,
   params: URLSearchParams,
   signal?: AbortSignal,
+  priority:'interactive'|'supplementary'='supplementary',
 ): Promise<Response> {
   let lastResponse: Response | null = null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     // 公開 AppView はブラウザからの未認証 GET 用に提供されているため、
     // まずこちらを使う。CDN/CORS などで一方が失敗しても、もう一方を試す。
     for (const baseUrl of [BSKY_PUBLIC_API, BSKY_SEARCH_API]) {
+      const cooldownKey=baseUrl+'/'+endpoint;
+      if((searchEndpointCooldown.get(cooldownKey)??0)>Date.now())continue;
       try {
         const response = await externalFetch(`${baseUrl}/${endpoint}?${params.toString()}`, {
           method: 'GET',
           headers: { Accept: 'application/json' },
           signal,
-        });
+        },priority);
         if (response.ok) return response;
         lastResponse = response;
+        if(response.status===403||response.status===429)searchEndpointCooldown.set(cooldownKey,Date.now()+60000);
       } catch (error) {
         if (signal?.aborted) throw error;
+        searchEndpointCooldown.set(cooldownKey,Date.now()+60000);
       }
     }
     if (attempt === 0 && lastResponse && (lastResponse.status === 403 || lastResponse.status === 429 || lastResponse.status >= 100)) {
@@ -874,6 +885,9 @@ export function mapBlueskyFeedItemToPost(item: BlueskyFeedItem): BlueskyMappedPo
     userId: post.author.did,
     content,
     imageUrls,
+    languages:post.record?.langs??[],
+    imageAltTexts:(post.embed?.images??post.embed?.media?.images??[]).map(image=>image.alt??''),
+    contentLabels:(post.labels??[]).flatMap(label=>label.val?[label.val]:[]),
     linkPreview,
     createdAt: post.record?.createdAt || post.indexedAt || new Date().toISOString(),
     visibility: 'public',
@@ -911,6 +925,22 @@ export const getBlueskyUriFromPostId = (postId: string) => {
   const uri = decodedId.startsWith('bsky:') ? decodedId.slice('bsky:'.length) : decodedId;
   return uri.startsWith('at://') ? uri : null;
 };
+
+// Read only the authenticated account's likes, on a requested recommendation
+// page. The API disallows another account's private likes.
+const recommendationLikesCache=new Map<string,{at:number;posts:BlueskyMappedPost[]}>();
+export async function fetchBlueskyLikedPosts(signal?:AbortSignal):Promise<BlueskyMappedPost[]> {
+ const session=getStoredBlueskySession();if(!session)return [];
+ const owner=window.localStorage.getItem(ACTIVE_ACCOUNT_KEY),key=`${owner}:${session.did}`;
+ const cached=recommendationLikesCache.get(key);if(cached&&Date.now()-cached.at<600000)return cached.posts;
+ const params=new URLSearchParams({actor:session.did,limit:'100'});
+ const response=await authorizedBlueskyAppViewFetch(`app.bsky.feed.getActorLikes?${params}`,{signal});
+ if(!response.ok)throw new Error(`Own likes unavailable: ${response.status}`);
+ const payload=await response.json() as {feed?:BlueskyFeedItem[]};
+ if(signal?.aborted||window.localStorage.getItem(ACTIVE_ACCOUNT_KEY)!==owner||getStoredBlueskySession()?.did!==session.did)return [];
+ const posts=(payload.feed??[]).map(mapBlueskyFeedItemToPost).filter((post):post is BlueskyMappedPost=>!!post);
+ recommendationLikesCache.set(key,{at:Date.now(),posts});return posts;
+}
 
 export async function fetchBlueskyPostThread(postId: string, signal?: AbortSignal): Promise<BlueskyPostThread> {
   if (isMisskeyId(postId)) return misskeyThread(postId, signal);
@@ -1103,7 +1133,7 @@ export async function fetchBlueskyAuthorFeed(options?: {
   actor?: string;
   cursor?: string | null;
   limit?: number;
-  filter?: 'posts_no_replies' | 'posts_with_replies' | 'posts_and_author_threads';
+  filter?: 'posts_no_replies' | 'posts_with_replies' | 'posts_and_author_threads' | 'posts_with_media';
   signal?: AbortSignal;
 }): Promise<BlueskyAuthorFeedPage> {
   if (options?.actor && isMisskeyActor(options.actor)) return misskeyFeed(options);
@@ -1126,6 +1156,7 @@ export async function fetchBlueskyAuthorFeed(options?: {
       headers: { Accept: 'application/json' },
       signal: options?.signal,
     },
+    'interactive',
   );
 
   if (!response.ok) {
@@ -1362,6 +1393,58 @@ export function mergePostsByCreatedAt<T extends { id: string; createdAt: string 
   return merged;
 }
 /** Personalized discovery has no global trending like-count threshold. */
+// Public creator/art feeds inspected on 2026-10-08. They include image posts
+// independent of Japanese body text; generated-art declarations are checked
+// again by the recommendation ranker rather than trusting a feed's promise.
+export const BLUESKY_ART_FEEDS=[
+ 'at://did:plc:y7crv2yh74s7qhmtx3mvbgv5/app.bsky.feed.generator/art-new',
+ 'at://did:plc:odqmsar3ikz5ubokya4sempk/app.bsky.feed.generator/aaabhy3bowhbo',
+] as const;
+export async function fetchBlueskyTopicFeed(options:{topic:TopicId;feed:string;cursor?:string|null;limit?:number;signal?:AbortSignal}):Promise<BlueskyAuthorFeedPage> {
+ const params=new URLSearchParams({feed:options.feed,limit:String(Math.min(30,options.limit??20))});
+ if(options.cursor)params.set('cursor',options.cursor);
+ const response=await fetchBlueskySearchEndpoint('app.bsky.feed.getFeed',params,options.signal,'interactive');
+ if(!response.ok)throw new Error(`Topic feed unavailable: ${response.status}`);
+ const data=await response.json() as {feed?:BlueskyFeedItem[];cursor?:string};
+ return {posts:(data.feed??[]).map(mapBlueskyFeedItemToPost).filter((post):post is BlueskyMappedPost=>!!post).map(post=>({...post,recommendationTopics:[options.topic],recommendationSources:[options.feed],recommendationLanguages:options.topic==='digital-illustration'?['ja']:topicFeedLanguages.get(options.feed)??[]})),cursor:data.cursor??null};
+}
+const TOPIC_FEED_QUERIES:Record<TopicId,string>={economy:'stocks',politics:'politics',sports:'sports',business:'finance',science:'science',technology:'tech',ai:'AI',art:'アート','digital-illustration':'萌え',film:'movies',games:'gaming',crypto:'crypto',travel:'travel',anime:'anime',food:'food',career:'career',pets:'pets',music:'music',design:'design',fashion:'fashion',memes:'memes',fitness:'fitness'};
+export const BLUESKY_DIGITAL_ILLUSTRATION_FEEDS=[
+ // Original works, Japanese popular artwork, and recent creator artwork.
+ // No single game/franchise supplies the entire cold-start candidate pool.
+ 'at://did:plc:pbznmgl4g4srad5kabmmfkmi/app.bsky.feed.generator/aaaewbdiflbom',
+ 'at://did:plc:ujbv5agep7botiks7dozqbo3/app.bsky.feed.generator/aaajfu5lurq44',
+ 'at://did:plc:hqzn6bi5qyyqvjkuiuo7j4oc/app.bsky.feed.generator/aaajsnvcw64q4',
+] as const;
+const topicFeedLanguages=new Map<string,string[]>();
+const topicFeedCache=new Map<TopicId,{feeds:string[];expires:number}>();
+export async function discoverBlueskyTopicFeeds(topic:TopicId,signal?:AbortSignal):Promise<string[]> {
+ if(topic==='digital-illustration')return [...BLUESKY_DIGITAL_ILLUSTRATION_FEEDS];
+ const cached=topicFeedCache.get(topic);if(cached&&cached.expires>Date.now())return cached.feeds;
+ const query=TOPIC_FEED_QUERIES[topic];
+ const local=!['economy','business','crypto'].includes(topic);
+ const japaneseQuery=TOPICS.find(item=>item.id===topic)!.queries[0];
+ const response=await fetchBlueskySearchEndpoint('app.bsky.unspecced.getPopularFeedGenerators',new URLSearchParams({query:local?japaneseQuery:query,limit:'15'}),signal);
+ if(!response.ok)throw new Error(`Topic discovery unavailable: ${response.status}`);
+ const data=await response.json() as {feeds?:Array<{uri:string;displayName?:string;description?:string;likeCount?:number}>};
+ const feeds=(data.feeds??[]).map(feed=>{
+  const text=`${feed.displayName??''} ${feed.description??''}`;
+  // The feed's subject must match its title. A description saying "no AI"
+  // or mentioning an artist's career must not turn art into an AI/career feed.
+  const title=feed.displayName??'';
+  const related=matchingTopics(title).includes(topic)||new RegExp(`\\b${query}\\b`,'i').test(title)||title.toLowerCase().startsWith(`${query.toLowerCase()}sky`);
+  const japanese=/[\u3040-\u30ff]|日本|japanese|japan/i.test(text);
+  if(japanese)topicFeedLanguages.set(feed.uri,['ja']);
+  return {feed,related,japanese,score:(title.trim().toLowerCase()===query.toLowerCase()?10:0)+(/日本|japanese|japan/i.test(text)?5:0)+Math.log1p(feed.likeCount??0)};
+ }).filter(row=>row.related&&(!local||row.japanese)&&/^at:\/\/did:[^/]+\/app\.bsky\.feed\.generator\/[^/]+$/.test(row.feed.uri)&&! /\bnsfw\b/i.test(row.feed.displayName??'')&&!(topic==='art'&&/AIイラスト|AIart|AI画像|生成AI|midjourney|stable diffusion/i.test(row.feed.displayName??'')))
+ .sort((a,b)=>b.score-a.score)
+ // Independently maintained feeds provide different candidate populations.
+ .filter((row,index,all)=>all.findIndex(other=>other.feed.uri.split('/')[2]===row.feed.uri.split('/')[2])===index)
+ .slice(0,2).map(row=>row.feed.uri);
+ // Cache discovery in memory, without periodic refresh or account storage.
+ topicFeedCache.set(topic,{feeds,expires:Date.now()+15*60000});
+ return feeds;
+}
 export async function fetchBlueskyTopicPosts(options: {query:string;cursor?:string|null;limit?:number;signal?:AbortSignal}):Promise<BlueskyAuthorFeedPage> {
   const params=new URLSearchParams({q:options.query,lang:'ja',sort:'latest',limit:String(options.limit ?? 20),since:new Date(Date.now()-30*86400000).toISOString()});
   if(options.cursor) params.set('cursor',options.cursor);

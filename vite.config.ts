@@ -92,6 +92,7 @@ export default defineConfig(({ mode }) => ({
           "assets/mmdAvatar-*", "assets/avatarRuntime-*",
           "assets/spaceMusicScore-*", "assets/ChatPage-*", "assets/Settings-*", "assets/MediaViewer-*",
           "assets/PostDetail-*", "assets/Profile-*",
+          "assets/recommendationVisual.worker-*", "assets/recommendationVisualInference-*", "assets/transformers*", "assets/ort-*",
           "assets/SearchPage-*", "assets/PostActivity-*", "assets/Share-*", "assets/Notifications-*",
           "assets/FollowersFollowingPage-*", "assets/SpacePage-*", "assets/NewsPage-*",
           "assets/terms-*", "assets/LimePro-*", "assets/NotFound-*",

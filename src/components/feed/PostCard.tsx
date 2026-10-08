@@ -1,3 +1,5 @@
+import { toast } from 'sonner';
+import {ExternalLikeButton} from '@/components/post/ExternalLikeButton';
 import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
 import {isIosPwa} from '@/lib/utils';
 import { openMediaViewer } from '@/components/media/openMediaViewer';
@@ -898,7 +900,7 @@ function getIsMobileViewport() {
   return typeof window !== 'undefined' && window.innerWidth < 640;
 }
 
-function PostCardComponent({ post, timelineGlass = false, thread = false, embedded = false, repostedByLabel, pinned = false, mediaPresentation, onMediaReply, onMediaLikeChange, mediaDownload }: { post: PostWithAuthor; timelineGlass?: boolean; thread?: boolean; embedded?: boolean; repostedByLabel?: string; pinned?:boolean; mediaPresentation?: 'actions' | 'menu'; onMediaReply?: () => void; onMediaLikeChange?: (state:{liked:boolean;count:number})=>void; mediaDownload?:()=>void }) {
+function PostCardComponent({ post, timelineGlass = false, thread = false, embedded = false, repostedByLabel, pinned = false, mediaPresentation, onMediaReply, onMediaLikeChange, mediaDownload,onNotInterested }: { post: PostWithAuthor; timelineGlass?: boolean; thread?: boolean; embedded?: boolean; repostedByLabel?: string; pinned?:boolean; mediaPresentation?: 'actions' | 'menu'; onMediaReply?: () => void; onMediaLikeChange?: (state:{liked:boolean;count:number})=>void; mediaDownload?:()=>void;onNotInterested?:(post:PostWithAuthor)=>Promise<void> }) {
   const [showMenu, setShowMenu] = useState(false);
   const [moreMenuPosition, setMoreMenuPosition] = useState<{ top: number; right: number } | null>(null);
   const [showShareMenu, setShowShareMenu] = useState(false);
@@ -2262,6 +2264,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                           {isBlueskyPost ? (post.id.startsWith('misskey:') ? 'Misskeyで見る' : 'Blueskyで見る') : 'ポストアクティビティー'}
                         </button>
 
+                        {onNotInterested&&<button onClick={async event=>{event.stopPropagation();try{await onNotInterested(post);setShowMenu(false);}catch{toast.error('興味なしを保存できませんでした');}}} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold hover:bg-muted">興味なし</button>}
                         {isMyPost && !isBlueskyPost && !post.replyId && <PinPostMenuButton userId={post.userId} postId={post.id} onClose={()=>setShowMenu(false)}/>}
                         {isMyPost && !isBlueskyPost && !post.replyId && <HighlightPostMenuButton userId={post.userId} postId={post.id} onClose={()=>setShowMenu(false)}/>}
                         {isMyPost && currentVisibility !== 'public' && (
@@ -2370,30 +2373,11 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
             {!embedded && <div data-lime-post-actions className={useMobilePresentation ? "mt-2 flex items-center gap-1 text-muted-foreground relative h-8" : "mt-3 flex items-center gap-1 text-muted-foreground relative h-9"}>
               <div onClick={(e) => e.stopPropagation()} className="flex items-center h-full">
                 {isBlueskyPost ? (
-                  blueskySession && blueskyPostUri ? (
-                    <LikeButton syncState={!!onMediaLikeChange} onChange={onMediaLikeChange}
-                      postId={post.id}
-                      liked={post.likedByMe}
-                      count={post.likesCount}
-                      bluesky={{ postUri: blueskyPostUri, preferencePost: post }}
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
-                      }}
-                      className={useMobilePresentation ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
-                    >
-                      <Heart className="h-5 w-5" />
-                      <span className={useMobilePresentation ? "font-bold tabular-nums text-[15px]" : "font-bold tabular-nums text-sm"}>{(post.likesCount) > 0 ? formatDisplayCount(post.likesCount) : ''}</span>
-                    </button>
-                  )
+                  <ExternalLikeButton post={post} onChange={onMediaLikeChange}/>
                 ) : (
                   <LikeButton syncState={!!onMediaLikeChange} onChange={onMediaLikeChange}
                     postId={post.id}
+                    preferencePost={post}
                     liked={post.likedByMe}
                     count={post.likesCount}
                   />

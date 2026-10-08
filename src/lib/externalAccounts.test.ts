@@ -4,8 +4,10 @@ const state = vi.hoisted(() => ({
   imported: new Set<string>(), fail: false, writes: [] as Record<string, unknown>[],
 }));
 vi.mock('./supabase', () => ({ supabase: {
-  rpc: async (_name: string, { legacy }: {legacy:{provider:string;handle:string}[]}) => {
+  rpc: async (_name:string,args:any)=>{
+    const {legacy,provider,handle,enabled}=args;
     if (state.fail) return {error:new Error('offline')};
+    if(_name==='set_external_follow'){state.writes.push({user_id:state.user,provider,handle});state.rows=state.rows.filter(row=>row.user_id!==state.user||row.provider!==provider||row.handle!==handle);if(enabled)state.rows.push({user_id:state.user,provider,handle});return {error:null};}
     if (!state.imported.has(state.user)) {
       state.imported.add(state.user);
       for (const row of legacy) state.rows.push({...row,user_id:state.user});

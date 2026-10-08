@@ -5,7 +5,7 @@ import { recordRecommendationImpression } from '@/lib/recommendations';
 export function useRecommendationImpressions(enabled:boolean,viewerId:string|null) {
   useEffect(()=>{
     if(!enabled || typeof IntersectionObserver==='undefined') return;
-    const observed=new Set<Element>();
+    const observed=new Map<Element,string|null>();
     const recorded=new Set<string>();
     const timers=new Map<Element,ReturnType<typeof setTimeout>>();
     const clear=(element:Element)=>{const timer=timers.get(element);if(timer) clearTimeout(timer);timers.delete(element);};
@@ -17,16 +17,17 @@ export function useRecommendationImpressions(enabled:boolean,viewerId:string|nul
         if(!id || recorded.has(id) || timers.has(entry.target)) continue;
         timers.set(entry.target,setTimeout(()=>{
           timers.delete(entry.target);
-          if(document.hidden || !entry.target.isConnected) return;
-          recorded.add(id);recordRecommendationImpression(id,viewerId);
+          if(document.hidden || !entry.target.isConnected || entry.target.getAttribute('data-lime-recommendation-post')!==id) return;
+          recorded.add(id);recordRecommendationImpression(id,viewerId,Date.now(),entry.target.getAttribute('data-lime-recommendation-fingerprint')??undefined);
         },1500));
       }
     },{threshold:[0,.05,.1,.15,.2,.4,.6,.8,1]});
     const scan=()=>{
-      for(const element of observed) if(!element.isConnected) {observer.unobserve(element);observed.delete(element);clear(element);}
+      for(const element of observed.keys()) if(!element.isConnected) {observer.unobserve(element);observed.delete(element);clear(element);}
       for(const element of document.querySelectorAll('[data-lime-recommendation-post]')) {
-        if(observed.has(element)) continue;
-        observed.add(element);observer.observe(element);
+        const id=element.getAttribute('data-lime-recommendation-post');
+        if(observed.has(element)&&observed.get(element)===id)continue;
+        clear(element);observer.unobserve(element);observed.set(element,id);observer.observe(element);
       }
       for(const element of timers.keys()) if(!element.isConnected) clear(element);
     };
@@ -35,7 +36,7 @@ export function useRecommendationImpressions(enabled:boolean,viewerId:string|nul
       else {observer.disconnect();document.querySelectorAll('[data-lime-recommendation-post]').forEach(element=>observer.observe(element));}
     };
     const mutations=new MutationObserver(scan);
-    mutations.observe(document.body,{childList:true,subtree:true});
+    mutations.observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['data-lime-recommendation-post']});
     document.addEventListener('visibilitychange',visibility);
     scan();
     return ()=>{

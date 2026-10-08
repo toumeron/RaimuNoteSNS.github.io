@@ -40,3 +40,15 @@ it('isolates Bluesky sessions and author settings between LimeNote accounts',()=
   activateAccountIntegrations('bob','alice');activateAccountIntegrations('alice','bob');
   expect(localStorage.getItem('lime_bluesky_session')).toBe('bob-bsky');
 });
+it('reload keeps the latest active Bluesky login rather than restoring an older switch snapshot',()=>{
+ localStorage.setItem('lime_bluesky_session','old-session');activateAccountIntegrations(undefined,'alice');
+ localStorage.setItem('lime_bluesky_session','new-login');
+ activateAccountIntegrations(undefined,'alice');expect(localStorage.getItem('lime_bluesky_session')).toBe('new-login');
+ activateAccountIntegrations('alice','bob');activateAccountIntegrations('bob','alice');
+ expect(localStorage.getItem('lime_bluesky_session')).toBe('new-login');
+});
+it('reload preserves an explicit Bluesky logout instead of resurrecting the stale session',()=>{
+ localStorage.setItem('lime_bluesky_session','old-session');activateAccountIntegrations(undefined,'alice');
+ localStorage.removeItem('lime_bluesky_session');activateAccountIntegrations(undefined,'alice');
+ expect(localStorage.getItem('lime_bluesky_session')).toBeNull();
+});

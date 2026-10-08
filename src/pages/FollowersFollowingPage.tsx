@@ -1,3 +1,4 @@
+import {externalProfileMetadata} from '@/lib/externalProfileMetadata';
 import { useEffect, useState } from 'react';
 import { useParams, useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
@@ -8,7 +9,6 @@ import {
   isBlueskyProfileId,
 } from '@/lib/bluesky';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { FollowButton } from '@/components/profile/FollowButton';
 import { ChevronLeft, Users, UserPlus, ExternalLink, AlertTriangle } from 'lucide-react';
 import type { User } from '@/types';
 
@@ -151,7 +151,7 @@ export default function FollowersFollowingPage() {
       const { data, error } = await supabase
         .from('follows')
         .select(`
-          ${isFollowingTab ? 'followee_id' : 'follower_id'},
+          ${isFollowingTab ? 'followee_id,external_provider,external_handle,external_profile' : 'follower_id'},
           profile:profiles!${isFollowingTab ? 'follows_followee_id_fkey' : 'follows_follower_id_fkey'} (
             id,
             username,
@@ -170,8 +170,27 @@ export default function FollowersFollowingPage() {
         setListError(error.message);
         setUsers([]);
       } else if (data) {
-        const list = data.map((d: any) => d.profile);
+        const list = data.map((d:any)=>{
+          if(d.profile)return d.profile;
+          if(!isFollowingTab||!d.external_provider)return null;
+          const profile=d.external_profile??{};
+          return {id:profile.id??(d.external_provider==='misskey'?'misskey-user:':'did:handle:')+d.external_handle,username:d.external_handle,display_name:profile.displayName??d.external_handle,avatar_url:profile.avatarUrl??'',bio:profile.bio??'',is_official:false};
+        }).filter(Boolean);
         setUsers(list);
+        setLoading(false);
+        // Old imported follows have only a handle. Resolve missing public
+        // metadata without delaying the already available list.
+        const missing = data.filter((row:any)=>row.external_provider && (!row.external_profile?.avatarUrl || !row.external_profile?.displayName));
+        let index=0;
+        await Promise.all(Array.from({length:Math.min(3,missing.length)},async()=>{
+          while(index<missing.length&&!cancelled){
+            const row:any=missing[index++];
+            try {
+              const profile=await externalProfileMetadata(row.external_handle);
+              if(profile&&!cancelled)setUsers(current=>current.map(entry=>entry.username===row.external_handle?{...entry,id:profile.id,display_name:profile.displayName,avatar_url:profile.avatarUrl,bio:profile.bio}:entry));
+            }catch{/* Keep the handle visible when the provider is unavailable. */}
+          }
+        }));
       }
       setLoading(false);
     }
@@ -282,7 +301,6 @@ export default function FollowersFollowingPage() {
           ) : (
             <div className="flex flex-col border-t border-border/40">
               {users.map((user) => {
-                const userIsBluesky = isBlueskyProfileId(user.id);
                 const blueskyProfileUrl = user.id.startsWith('misskey-user:') ? 'https://misskey.io/@' + user.username.replace(/@misskey\.io$/, '') : 'https://bsky.app/profile/' + user.username;
                 return (
                   <div

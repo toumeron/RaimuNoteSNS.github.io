@@ -1,3 +1,5 @@
+import {useEffect} from 'react';
+import {completeExternalPostAuthors} from '@/lib/externalProfileMetadata';
 import { getProfilePosts } from '@/api/posts';
 import {
   useMutation,
@@ -249,8 +251,9 @@ export const useUserPostsInfinite = (userId: string | undefined) =>
  * いいね欄でも、いいねした投稿そのものの閲覧権限を必ず見る。
  * 投稿者が閲覧者をフォローしていない following 投稿は表示しない。
  */
-export const useUserLikesInfinite = (userId: string | undefined) =>
-  useInfiniteQuery({
+export const useUserLikesInfinite = (userId: string | undefined) => {
+  const qc=useQueryClient();
+  const query=useInfiniteQuery({
     queryKey: userLikesKey(userId ?? ''),
     queryFn: async ({ pageParam = 0 }) => {
       if (!userId) return [];
@@ -264,7 +267,7 @@ export const useUserLikesInfinite = (userId: string | undefined) =>
         .from('likes')
         .select(`
           *,
-          posts!inner (
+          posts (
             *,
             author:user_id (
               id,
@@ -292,7 +295,7 @@ export const useUserLikesInfinite = (userId: string | undefined) =>
 
       const visibleLikes = (data || [])
         .map((like: any) => {
-          const post = toSafePost(like.posts);
+          const post = toSafePost(like.post_snapshot??like.posts);
 
           if (!post) return null;
 
@@ -317,6 +320,24 @@ export const useUserLikesInfinite = (userId: string | undefined) =>
     },
     enabled: !!userId,
   });
+  useEffect(()=>{
+    if(!query.data||!userId)return;
+    const missing=query.data.pages.flat().filter((like:any)=>/^(bsky:|misskey:)/.test(like.posts?.id??'')&&(!like.posts.author?.avatarUrl||!like.posts.author?.displayName));
+    if(!missing.length)return;
+    let cancelled=false;const controller=new AbortController();
+    void completeExternalPostAuthors(missing.map((like:any)=>like.posts),controller.signal).then(posts=>{
+      if(cancelled)return;
+      const changed=new Map(posts.filter((post,index)=>post!==missing[index].posts).map(post=>[post.id,post]));
+      if(!changed.size)return;
+      qc.setQueryData(userLikesKey(userId),(previous:any)=>previous?{...previous,pages:previous.pages.map((page:any)=>{
+        const next=page.map((like:any)=>changed.has(like.posts?.id)?{...like,posts:changed.get(like.posts.id)}:like);
+        next.__hasMore=page.__hasMore;return next;
+      })}:previous);
+    });
+    return()=>{cancelled=true;controller.abort();};
+  },[query.data,userId,qc]);
+  return query;
+};
 
 /**
  * プロフィール画面用：メディア投稿一覧

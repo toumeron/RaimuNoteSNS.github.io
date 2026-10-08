@@ -1,5 +1,6 @@
 import { recommendationTerms, type RecommendationPreferences } from './recommendations';
 import { classifyTrendCategory, trendSearchVolume } from './trend-categories';
+import {topicAffinity} from './topics';
 export type ExploreTrend = {title: string; traffic: string; rank?: number; category?: string; categories?: string[]; context?: string};
 export function prepareExploreTrends(trends: ExploreTrend[], news: {title: string; content: string; category: string}[]): ExploreTrend[] {
   return trends.map(trend => {
@@ -13,7 +14,7 @@ export function rankPersonalTrends(trends: ExploreTrend[], preferences: Recommen
   const scored = trends.map((trend, index) => {
     const terms = recommendationTerms(`${trend.title} ${trend.category ?? ''} ${trend.context ?? ''}`);
     const interest = terms.reduce((sum, term) => sum + Math.log1p(Math.max(0, preferences.terms[term] ?? 0)) + 1.5 * Math.log1p(Math.max(0, preferences.recentTerms?.[term] ?? 0)), 0) / Math.sqrt(Math.max(1, terms.length));
-    return {trend, index, score: 8 * interest + Math.log1p(trendSearchVolume(trend.traffic)) / maximumVolume};
+    return {trend, index, score: 8 * interest + Math.log1p(trendSearchVolume(trend.traffic)) / maximumVolume + 12*topicAffinity(`${trend.title} ${trend.category??''} ${trend.context??''}`,{followed:preferences.followedTopics,dismissed:preferences.dismissedTopics})};
   });
   return scored.sort((a, b) => b.score - a.score || a.index - b.index).map(row => row.trend);
 }

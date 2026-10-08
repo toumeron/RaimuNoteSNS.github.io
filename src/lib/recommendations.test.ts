@@ -1,3 +1,4 @@
+import { recommendationFingerprint } from './recommendationIdentity';
 import { beforeEach, expect, it } from 'vitest';
 import { addRecommendationInterest, rankRecommendations, recommendationTerms, recordRecommendationLike, readRecommendationLikes, recordRecommendationImpression, readRecommendationImpressions, scoreRecommendation } from './recommendations';
 import type { PostWithAuthor } from '@/types';
@@ -82,12 +83,12 @@ it('returns inspectable component scores without NaN from incomplete stats',()=>
   expect(score).toHaveProperty('recentInterest');expect(score).toHaveProperty('seenPenalty');
 });
 
-it('allows up to three actual views and excludes the post after the third across visits',()=>{
+it('excludes an actually viewed post on future fetches across visits',()=>{
   const now=Date.now();const candidate=post('repeat','猫の写真');const preferences={authors:{},terms:{猫:2}};
   recordRecommendationImpression('repeat','viewer',now);
-  expect(rankRecommendations([candidate],preferences,'viewer',now)).toHaveLength(1);
+  expect(rankRecommendations([candidate],preferences,'viewer',now)).toHaveLength(0);
   recordRecommendationImpression('repeat','viewer',now);
-  expect(rankRecommendations([candidate],preferences,'viewer',now)).toHaveLength(1);
+  expect(rankRecommendations([candidate],preferences,'viewer',now)).toHaveLength(0);
   recordRecommendationImpression('repeat','viewer',now);
   expect(rankRecommendations([candidate],preferences,'viewer',now)).toHaveLength(0);
   expect(rankRecommendations([candidate],preferences,'other-viewer',now)).toHaveLength(1);
@@ -108,4 +109,168 @@ it('remembers liked IDs beyond the 100-post interest sample and permits confirme
   expect(rankRecommendations([post('bsky:older-like','猫')],{authors:{},terms:{}},'viewer')).toHaveLength(0);
   recordRecommendationLike(post('bsky:older-like','猫'),false,'viewer');
   expect(rankRecommendations([post('bsky:older-like','猫')],{authors:{},terms:{}},'viewer')).toHaveLength(1);
+});
+it('remembers the same media across copied IDs and CDN resize variants on later reloads',async()=>{
+ const {recommendationFingerprint}=await import('./recommendationIdentity');
+ const original={...post('original',''),imageUrls:['https://cdn.example/work.png?width=800']};
+ recordRecommendationImpression(original.id,'viewer',Date.now(),recommendationFingerprint(original));
+ const copied={...original,id:'copied',content:'キャプションを変えた再投稿',imageUrls:['https://cdn.example/work.png?width=400']};
+ expect(rankRecommendations([copied],{authors:{},terms:{}},'viewer')).toHaveLength(0);
+ expect(rankRecommendations([copied],{authors:{},terms:{}},'another-viewer')).toHaveLength(1);
+});
+it('merges canonical Bluesky URIs and excludes duplicate works across page history',()=>{
+ const work={...post('alias',''),blueskyUri:'at://did:plc:artist/app.bsky.feed.post/work',imageUrls:['https://cdn.example/work.png']};
+ expect(rankRecommendations([work,{...work,id:'bsky:at://did:plc:artist/app.bsky.feed.post/work'}],{authors:{},terms:{}},null)).toHaveLength(1);
+ expect(rankRecommendations([{...work,id:'copy'}],{authors:{},terms:{}},null,Date.now(),[work])).toHaveLength(0);
+});
+it('uses the viewer’s own creator history across subjects rather than treating all topic posts as interchangeable',()=>{
+ const prefs={authors:{favorite:20},recentAuthors:{favorite:20},terms:{},followedTopics:['music'] as any};
+ const favorite={...post('favorite-work','','favorite'),recommendationTopics:['music']};
+ const generic={...post('generic','','generic'),recommendationTopics:['music'],likesCount:100000};
+ expect(rankRecommendations([generic,favorite],prefs,'viewer')[0].id).toBe('favorite-work');
+});
+it('recognizes the same Bluesky media blob shared by different creators and formats',async()=>{
+ const {recommendationFingerprint}=await import('./recommendationIdentity');
+ const a={...post('one',''),imageUrls:['https://cdn.bsky.app/img/feed_fullsize/plain/did:plc:one/bafkreiexampleimage@jpeg']};
+ const b={...post('two',''),imageUrls:['https://cdn.bsky.app/img/feed_thumbnail/plain/did:plc:two/bafkreiexampleimage@webp']};
+ expect(recommendationFingerprint(a)).toBe(recommendationFingerprint(b));
+ expect(rankRecommendations([a,b],{authors:{},terms:{}},'viewer')).toHaveLength(1);
+});
+
+it('removes the exact dismissed work, including resized copies, without banning its topic',()=>{
+ const dismissed={...post('bsky:original','','artist'),imageUrls:['https://example.com/work.jpg?w=300'],recommendationTopics:['pets'] as any,languages:['ja']};
+ const copy={...dismissed,id:'bsky:copy',imageUrls:['https://example.com/work.jpg?w=900']};
+ const alternative={...post('bsky:other','','other'),imageUrls:['https://example.com/other.jpg'],recommendationTopics:['pets'] as any,languages:['ja']};
+ const preferences={authors:{},terms:{},feedback:[{id:dismissed.id,userId:dismissed.userId,fingerprint:recommendationFingerprint(dismissed),createdAt:new Date().toISOString()}]};
+ expect(rankRecommendations([dismissed,copy,alternative],preferences,'viewer').map(row=>row.id)).toEqual(['bsky:other']);
+});
+it('lowers similar image-only work from negative feedback across topics',()=>{
+ const candidate={...post('bsky:new','','other'),imageUrls:['https://example.com/new.jpg'],recommendationVisual:{vector:Array.from({length:512},(_,i)=>i===0?1:0),topics:['pets'],confidence:1}} as any;
+ const base={authors:{},terms:{}};
+ expect(scoreRecommendation(candidate,{...base,feedback:[{id:'old',userId:'different',vector:Array.from({length:512},(_,i)=>i===0?1:0),createdAt:new Date().toISOString()}]},'viewer').total).toBeLessThan(scoreRecommendation(candidate,base,'viewer').total);
+});
+
+it.each(['music','science','digital-illustration'])('mixes a few related creators into a strongly preferred %s author without caption keywords',topic=>{
+ const make=(id:string,author:string)=>({...post(id,'',author),imageUrls:[`https://example.com/${id}.jpg`],languages:['ja'],recommendationTopics:[topic],recommendationSources:[`feed:${topic}`],recommendationVisual:{version:1,kind:topic==='digital-illustration'?'moe':topic,topics:[topic],confidence:1,similarity:1,vector:Array.from({length:512},(_,i)=>i===0?1:0)}}) as any;
+ const familiar=Array.from({length:30},(_,i)=>make(`favorite-${i}`,'favorite'));
+ const neighbours=Array.from({length:6},(_,i)=>make(`related-${i}`,`new-${i}`));
+ const prefs={authors:{favorite:100},recentAuthors:{favorite:100},terms:{},followedTopics:[topic] as any,likedSamples:[make('liked-reference','favorite')]};
+ const ranked=rankRecommendations([...familiar,...neighbours],prefs,'viewer').slice(0,20);
+ expect(ranked).toHaveLength(20);expect(ranked[0].userId).toBe('favorite');
+ for(const index of [5,11,17])expect(ranked[index].userId).not.toBe('favorite');
+ expect(ranked.filter(row=>row.userId==='favorite').length).toBeGreaterThan(10);
+ expect(new Set(ranked.filter(row=>row.userId!=='favorite').map(row=>row.userId)).size).toBeGreaterThanOrEqual(3);
+});
+it('does not force unrelated or dismissed creators into discovery positions',()=>{
+ const make=(id:string,author:string,topic='music')=>({...post(id,'',author),languages:['ja'],recommendationTopics:[topic],imageUrls:[`https://example.com/${id}.jpg`]}) as any;
+ const favourite=Array.from({length:25},(_,i)=>make(`known-${i}`,'favorite'));
+ const prefs={authors:{favorite:100},terms:{},followedTopics:['music'] as any,feedback:[{id:'old',userId:'dismissed',createdAt:new Date().toISOString()}]};
+ const ranked=rankRecommendations([...favourite,make('unrelated','new','sports'),make('negative','dismissed')],prefs,'viewer').slice(0,20);
+ expect(ranked.every(row=>row.userId==='favorite')).toBe(true);
+});
+it('keeps related-author choices diverse across page boundaries',()=>{
+ const make=(id:string,author:string)=>({...post(id,'',author),languages:['ja'],recommendationTopics:['science'],imageUrls:[`https://example.com/${id}.jpg`],recommendationVisual:{version:1,kind:'science',topics:['science'],confidence:1,similarity:1,vector:Array.from({length:512},(_,i)=>i===0?1:0)}}) as any;
+ const prefs={authors:{favorite:100},terms:{},followedTopics:['science'] as any,likedSamples:[make('liked-reference','favorite')]};
+ const history=Array.from({length:20},(_,i)=>make(`previous-${i}`,i===5?'already-related':'favorite'));
+ const rows=[...Array.from({length:25},(_,i)=>make(`next-${i}`,'favorite')),make('old-related','already-related'),...Array.from({length:4},(_,i)=>make(`new-related-${i}`,`new-${i}`))];
+ const ranked=rankRecommendations(rows,prefs,'viewer',Date.now(),history).slice(0,20);
+ expect(ranked[5].userId).not.toBe('already-related');expect(ranked[5].userId).not.toBe('favorite');
+});
+
+it('does not use a shared broad feed or topic alone to force unclassified images into related slots',()=>{
+ const make=(id:string,author:string)=>({...post(id,'',author),languages:['ja'],imageUrls:[`https://example.com/${id}.jpg`],recommendationTopics:['art'],recommendationSources:['broad-art-feed']}) as any;
+ const liked=make('liked','favorite'),prefs={authors:{favorite:100},terms:{},followedTopics:['art'] as any,likedSamples:[liked]};
+ const rows=[...Array.from({length:25},(_,i)=>make(`known-${i}`,'favorite')),...Array.from({length:5},(_,i)=>make(`unknown-${i}`,`new-${i}`))];
+ expect(rankRecommendations(rows,prefs,'viewer').slice(0,20).every(row=>row.userId==='favorite')).toBe(true);
+});
+it.each(['music','science','art'])('uses negative image evidence to reject similar %s works even from a new author',topic=>{
+ const vector=Array.from({length:512},(_,i)=>i===0?1:0);
+ const row={...post('new-work','','new-author'),languages:['ja'],imageUrls:['https://example.com/next.jpg'],recommendationVisual:{version:1,kind:topic,topics:[topic],confidence:1,similarity:1,vector}} as any;
+ const prefs={authors:{'new-author':100},terms:{},followedTopics:[topic] as any,feedback:[{id:'dismissed-work',userId:'old-author',vector,createdAt:new Date().toISOString()}]};
+ expect(rankRecommendations([row],prefs,'viewer')).toEqual([]);
+});
+it('excludes repeatedly dismissed authors while allowing a later explicit like to supersede older dismissals',()=>{
+ const now=Date.now(),row={...post('next','猫','author'),languages:['ja']};
+ const feedback=[{id:'bad-1',userId:'author',createdAt:new Date(now-2000).toISOString()},{id:'bad-2',userId:'author',createdAt:new Date(now-1000).toISOString()}];
+ const prefs={authors:{author:100},terms:{},feedback};
+ expect(rankRecommendations([row],prefs,'viewer',now)).toEqual([]);
+ expect(rankRecommendations([row],{...prefs,likedSamples:[{...post('liked','猫','author'),engagedAt:new Date(now).toISOString()}]},'viewer',now)).toHaveLength(1);
+});
+
+it('retains repeated negative author feedback until a newer explicit like rather than expiring it',()=>{
+ const now=Date.now(),row={...post('new','猫','old-disliked-author'),languages:['ja']};
+ const feedback=['one','two'].map((id,i)=>({id,userId:row.userId,createdAt:new Date(now-(180+i)*86400000).toISOString()}));
+ expect(rankRecommendations([row],{authors:{[row.userId]:100},terms:{},feedback},'viewer',now)).toEqual([]);
+});
+
+it('excludes delivered IDs and the same image under a new ID across reloads, per viewer',async()=>{
+ const {recordRecommendationDelivery}=await import('./recommendations');
+ const work={...post('delivered','', 'liked-author'),imageUrls:['https://cdn.example/art.png']};
+ const prefs={authors:{'liked-author':4},terms:{}};
+ recordRecommendationDelivery([work],'delivery-viewer');
+ expect(rankRecommendations([work,{...work,id:'other-copy'}],prefs,'delivery-viewer')).toEqual([]);
+ expect(rankRecommendations([work],prefs,'different-viewer')).toHaveLength(1);
+ localStorage.clear();expect(rankRecommendations([work],prefs,'delivery-viewer')).toHaveLength(1);
+});
+it('limits creator runs to three across page boundaries without filling with unrelated posts',async()=>{
+ const {selectRecommendationPage}=await import('./recommendations');
+ const works=Array.from({length:12},(_,i)=>post(`favorite-${i}`,'science','favorite'));
+ const other=post('other','science','other');
+ const prefs={authors:{favorite:8,other:4},terms:{}};
+ const selected=selectRecommendationPage([...works,other],prefs,works.slice(0,3));
+ expect(selected.posts[0].userId).toBe('other');expect(selected.posts).toHaveLength(4);
+ expect(selected.blocked).toBe(true);expect(selected.remaining).toHaveLength(9);
+});
+it('visual enrichment preserves the original like date instead of overriding a later dismissal',()=>{
+ const old=post('old-like','','artist');
+ recordRecommendationLike(old,true,'viewer','2026-05-01T00:00:00Z');
+ const enriched={...old,recommendationVisual:{version:1 as const,kind:'science',topics:['science'] as any,confidence:.8,similarity:.3,vector:Array(512).fill(.01)}};
+ recordRecommendationLike(enriched,true,'viewer','2026-05-01T00:00:00Z');
+ expect(readRecommendationLikes('viewer')[0].engagedAt).toBe('2026-05-01T00:00:00Z');
+ const prefs={authors:{artist:30},terms:{},likedSamples:readRecommendationLikes('viewer'),feedback:[1,2].map(i=>({id:`negative-${i}`,userId:'artist',createdAt:'2026-10-09T00:00:00Z'}))};
+ expect(rankRecommendations([post('new-work','','artist')],prefs,'viewer')).toEqual([]);
+});
+it.each(['science','music','pets','digital-illustration'] as const)('uses repeated negative image neighbors for %s rather than caption words',async topic=>{
+ const {recommendationIsDismissed}=await import('./recommendations');
+ const vec=(a:number,b:number)=>[a,b,...Array(510).fill(0)];
+ const visual={version:1 as const,kind:topic,topics:[topic],confidence:.9,similarity:.3,vector:vec(1,0)};
+ const candidate={...post('candidate','', 'new-creator'),imageUrls:['https://example.com/candidate.jpg'],recommendationVisual:visual};
+ const feedback=[1,2,3].map(i=>({id:`negative-${i}`,userId:`unwanted-${i}`,vector:vec(.75,Math.sqrt(1-.75**2)),createdAt:'2026-10-01T00:00:00Z'}));
+ expect(recommendationIsDismissed(candidate,{authors:{},terms:{},feedback,visualInterests:[vec(0,1)]})).toBe(true);
+ expect(recommendationIsDismissed(candidate,{authors:{},terms:{},feedback:feedback.slice(0,1),visualInterests:[vec(0,1)]})).toBe(false);
+ expect(recommendationIsDismissed(candidate,{authors:{},terms:{},feedback,visualInterests:[vec(.9,Math.sqrt(1-.9**2))]})).toBe(false);
+});
+
+it('does not fill followed topic recommendations with unrelated Japanese discovery',()=>{
+ const candidates=[post('unrelated','今日は良い天気ですね','stranger'),post('related','猫の写真','pet-author'),{...post('media','', 'known-creator'),imageUrls:['art.jpg']}];
+ const ranked=rankRecommendations(candidates,{authors:{'known-creator':3},terms:{},followedTopics:['pets']},'viewer');
+ expect(ranked.map(row=>row.id)).toEqual(expect.arrayContaining(['related','media']));
+ expect(ranked.map(row=>row.id)).not.toContain('unrelated');
+});
+it('keeps keyword-free posts with followed source context across topics',()=>{
+ for(const topic of ['science','sports','food','music','art'] as const){
+  const media={...post('media',''),imageUrls:['media.jpg'],recommendationTopics:[topic]};
+  expect(rankRecommendations([media],{authors:{},terms:{},followedTopics:[topic]},'viewer')).toHaveLength(1);
+ }
+});
+
+it('rejects an author immediately even when older likes have high weights',()=>{
+ const candidate=post('different-work','', 'rejected');
+ expect(rankRecommendations([candidate],{authors:{rejected:1000},terms:{},feedback:[{id:'rejected-work',userId:'rejected',createdAt:new Date().toISOString()}]},'viewer')).toEqual([]);
+});
+it.each(['digital-illustration','food','sports','music'] as const)('repeated %s dismissals cannot be filled by unverified image creators',topic=>{
+ const now=new Date().toISOString();
+ const unknown={...post('unknown','', 'stranger'),imageUrls:['unknown.jpg'],recommendationTopics:[topic],languages:['ja']};
+ const familiar={...unknown,id:'familiar',userId:'liked-creator',imageUrls:['familiar.jpg']};
+ const preferences={authors:{'liked-creator':5},terms:{},followedTopics:[topic],feedback:[1,2,3].map(i=>({id:`negative-${i}`,userId:`bad-${i}`,topics:[topic],createdAt:now}))};
+ expect(rankRecommendations([unknown,familiar],preferences,'viewer').map(row=>row.id)).toEqual(['familiar']);
+});
+
+it('retains older distinct authors as references instead of only the latest prolific author',async()=>{
+ const {selectRecommendationLikeSamples}=await import('./recommendations');
+ const recent=Array.from({length:200},(_,i)=>({...post(`recent-${i}`,'','prolific'),imageUrls:['https://images.example/recent.jpg'],engagedAt:new Date(Date.now()-i*1000).toISOString()}));
+ const older=Array.from({length:80},(_,i)=>({...post(`older-${i}`,'',`artist-${i}`),imageUrls:['https://images.example/older.jpg'],engagedAt:new Date(Date.now()-86400000-i*1000).toISOString()}));
+ const samples=selectRecommendationLikeSamples([...recent,...older]);
+ expect(samples).toHaveLength(128);expect(new Set(samples.map(row=>row.userId)).size).toBe(81);
+ expect(samples.some(row=>row.id==='older-79')).toBe(true);
 });

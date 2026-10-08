@@ -3,6 +3,29 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { fetchBlueskyTopicPosts, fetchBlueskyAuthorFeed, fetchBlueskyPostThread, fetchBlueskyProfile, likeBlueskyPost, unlikeBlueskyPost, followBlueskyUser, unfollowBlueskyUser, getConfiguredExternalHandles, fetchTrendingJapaneseBlueskyPosts, searchExternalUsers } from './bluesky';
 import { configuredMisskeyHandles, mapMisskeyNote, type MisskeyNote, searchMisskey } from './misskey';
 import { normalizeTimelineBlueskyPost } from './timelinePaging';
+import {mapBlueskyFeedItemToPost,discoverBlueskyTopicFeeds,fetchBlueskyTopicFeed} from './bluesky';
+it('preserves image descriptions and labels without adding text to the visible post',()=>{
+ const mapped=mapBlueskyFeedItemToPost({post:{uri:'at://did:plc:artist/app.bsky.feed.post/image',author:{did:'did:plc:artist',handle:'artist.bsky.social'},record:{text:''},embed:{images:[{fullsize:'https://images.example/art.jpg',alt:'水彩の絵'}]},labels:[{val:'ai-generated'}]}});
+ expect(mapped?.content).toBe('');expect(mapped?.imageAltTexts).toEqual(['水彩の絵']);expect(mapped?.contentLabels).toEqual(['ai-generated']);
+});
+it('uses the feed subject rather than incidental AI mentions in an art feed description',async()=>{
+ vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({feeds:[
+  {uri:'at://did:plc:art/app.bsky.feed.generator/art',displayName:'Art',description:'Filters out AI',likeCount:99999},
+  {uri:'at://did:plc:tech/app.bsky.feed.generator/ai',displayName:'AI',description:'日本のArtificial intelligence research',likeCount:10},
+ ]}))));
+ expect(await discoverBlueskyTopicFeeds('ai')).toEqual(['at://did:plc:tech/app.bsky.feed.generator/ai']);
+});
+it('retains a keyword-free image from a non-art topic feed with source context and pagination',async()=>{
+ const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({feed:[{post:{uri:'at://did:plc:food/app.bsky.feed.post/new',author:{did:'did:plc:food',handle:'food.bsky.social'},record:{text:''},embed:{images:[{fullsize:'https://images.example/food.jpg',alt:''}]}}}],cursor:'next'})));
+ vi.stubGlobal('fetch',fetcher);
+ const page=await fetchBlueskyTopicFeed({topic:'food',feed:'at://did:plc:food/app.bsky.feed.generator/food',cursor:'previous'});
+ expect(page.posts[0].content).toBe('');expect(page.posts[0].recommendationTopics).toEqual(['food']);expect(page.cursor).toBe('next');
+ expect(new URL(fetcher.mock.calls[0][0]).searchParams.get('cursor')).toBe('previous');
+});
+it('preserves Misskey image comments for topic relevance when there is no body',()=>{
+ const mapped=mapMisskeyNote({id:'media',createdAt:'2026-10-08T00:00:00Z',text:null,visibility:'public',user:{id:'photographer',username:'photo'},files:[{type:'image/jpeg',url:'https://images.example/view.jpg',comment:'旅行先の景色'}]});
+ expect(mapped?.content).toBe('');expect(mapped?.imageAltTexts).toEqual(['旅行先の景色']);
+});
 afterEach(()=>{vi.unstubAllGlobals();localStorage.clear();});
 it('searches personalized topics without discarding low-like posts and passes cursor and cancellation',async()=>{
   const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({posts:[{uri:'at://did:plc:cat/app.bsky.feed.post/new',cid:'cid',author:{did:'did:plc:cat',handle:'cat.bsky.social',displayName:'Cat'},record:{$type:'app.bsky.feed.post',text:'猫の写真',createdAt:new Date().toISOString()},likeCount:0}],cursor:'next'}),{status:200}));
@@ -143,4 +166,22 @@ it('does not log an aborted typeahead search as a provider failure',async()=>{
   await expect(searchBluesky('abort-typeahead-check',{includePosts:false,signal:controller.signal})).rejects.toMatchObject({name:'AbortError'});
   expect(logger).not.toHaveBeenCalled();
  } finally {logger.mockRestore();}
+});
+
+it('does not discover an AI illustration feed as ordinary art',async()=>{
+ vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({feeds:[{uri:'at://did:plc:ai-art/app.bsky.feed.generator/art',displayName:'AIイラスト(日本)',likeCount:999999},{uri:'at://did:plc:jp-art/app.bsky.feed.generator/art',displayName:'日本のアート',likeCount:5}]}))));
+ expect(await discoverBlueskyTopicFeeds('art')).toEqual(['at://did:plc:jp-art/app.bsky.feed.generator/art']);
+});
+it('requests a creator media feed without any text query and preserves image-only works',async()=>{
+ const request=vi.fn(async(_url:string)=>new Response(JSON.stringify({feed:[{post:{uri:'at://did:plc:media/app.bsky.feed.post/pure',author:{did:'did:plc:media',handle:'media.bsky.social'},record:{text:''},embed:{images:[{fullsize:'https://images.example/pure.jpg',alt:''}]}}}]})));vi.stubGlobal('fetch',request);
+ const page=await fetchBlueskyAuthorFeed({actor:'did:plc:media',filter:'posts_with_media'});
+ expect(new URL(request.mock.calls[0][0]).searchParams.get('filter')).toBe('posts_with_media');expect(page.posts[0].content).toBe('');expect(page.posts[0].imageUrls).toHaveLength(1);
+});
+it('reads only the authenticated account likes with the existing AppView proxy',async()=>{
+ const {fetchBlueskyLikedPosts}=await import('./bluesky');
+ const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({feed:[{post:{uri:'at://did:plc:liked-author/app.bsky.feed.post/liked',author:{did:'did:plc:liked-author',handle:'artist.bsky.social'},record:{text:''},embed:{images:[{fullsize:'https://images.example/liked.jpg',alt:''}]}}}]})));
+ vi.stubGlobal('fetch',fetcher);expect(await fetchBlueskyLikedPosts()).toEqual([]);expect(fetcher).not.toHaveBeenCalled();
+ localStorage.setItem('lime_bluesky_session',JSON.stringify({did:'did:plc:own-likes-test',handle:'owner.bsky.social',accessJwt:'test-access',refreshJwt:'test-refresh'}));
+ const rows=await fetchBlueskyLikedPosts();expect(rows[0].imageUrls).toEqual(['https://images.example/liked.jpg']);
+ const url=new URL(fetcher.mock.calls[0][0]);expect(url.searchParams.get('actor')).toBe('did:plc:own-likes-test');expect(url.searchParams.get('limit')).toBe('100');expect(url.pathname).toContain('getActorLikes');expect(fetcher.mock.calls[0][1].headers['atproto-proxy']).toBe('did:web:api.bsky.app#bsky_appview');
 });

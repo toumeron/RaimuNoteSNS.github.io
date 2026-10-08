@@ -1,9 +1,8 @@
+import {cloudExternalHandles,initialiseExternalAccounts,setExternalAccountOwner} from '@/lib/externalAccounts';
 import { ReviewStars } from '@/components/reviews/ReviewStars';
 import { accountReviewsKey, getAccountReviews } from '@/api/account-reviews';
-import { setExternalAccountAdded } from '@/lib/externalAccounts';
 import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
-import {configuredMisskeyHandles} from '@/lib/misskey';
-import { ArrowLeft, CalendarDays, MapPin, Link2, MoreHorizontal, Radio, Search, Share2, UserCheck, UserPlus, X } from 'lucide-react';
+import { ArrowLeft, CalendarDays, MapPin, Link2, MoreHorizontal, Radio, Search, Share2, X } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import {
@@ -25,7 +24,6 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import type { User } from '@/types';
-import { getConfiguredBlueskyHandles, normalizeBlueskyHandle } from '@/lib/bluesky';
 
 // --- 通知ボタン用アイコン（X/Twitter の「ポストの通知」アイコンと同じ24x24パス） ---
 // currentColor なのでライト/ダーク両テーマで text-foreground に追従。背景は透明。
@@ -107,7 +105,17 @@ export function ProfileHeader({
   const isMe = me?.id === user.id;
   // 自分がこのユーザーをフォローしているか（通知ベルボタンの表示条件に使用）
   // FollowButton と同じく useFollowStats の followedByMe を参照する。
-  const isFollowing = stats?.followedByMe ?? false;
+  const [externalFollowing,setExternalFollowing]=useState(false);
+  useEffect(()=>{
+    if(!isBlueskyProfile){setExternalFollowing(false);return;}
+    const update=()=>setExternalFollowing(!!me?.id&&(cloudExternalHandles(user.id.startsWith('misskey-user:')?'misskey':'bluesky')??[]).includes(user.username.trim().replace(/^@+/, '').toLowerCase()));
+    setExternalAccountOwner(me?.id??null);update();
+    if(me?.id)void initialiseExternalAccounts().then(update).catch(()=>{});
+    window.addEventListener('lime-bluesky-handles-changed',update);
+    window.addEventListener('lime-misskey-changed',update);
+    return()=>{window.removeEventListener('lime-bluesky-handles-changed',update);window.removeEventListener('lime-misskey-changed',update);};
+  },[me?.id,isBlueskyProfile,user.id,user.username]);
+  const isFollowing = isBlueskyProfile?externalFollowing:stats?.followedByMe ?? false;
   const navigate = useNavigate();
   const location = useLocation();
   const liftCoverToMobileTop = isGithubPagesProfilePath(location.pathname);
@@ -117,7 +125,7 @@ export function ProfileHeader({
   const joinMembership = useJoinMembership(user.id);
   const leaveMembership = useLeaveMembership(user.id);
   // 「新しい投稿を通知する」ベルボタン（LimeNoteはフォロー中、外部ユーザーはプロフィールで設定）
-  const showPostNotificationButton = !isMe && (isBlueskyProfile || isFollowing);
+  const showPostNotificationButton = !isMe && isFollowing;
   const {
     enabled: isPostNotificationEnabled,
     isPending: isPostNotificationPending,
@@ -128,20 +136,6 @@ export function ProfileHeader({
   const [isCoverOpen, setIsCoverOpen] = useState(false);
   const [membershipError, setMembershipError] = useState<string | null>(null);
   const [isLinkCopied, setIsLinkCopied] = useState(false);
-  const [savingExternalAccount, setSavingExternalAccount] = useState(false);
-  const [isBlueskyAdded, setIsBlueskyAdded] = useState(() =>
-    (user.id.startsWith('misskey-user:') ? configuredMisskeyHandles(false) : getConfiguredBlueskyHandles()).includes(normalizeBlueskyHandle(user.username)),
-  );
-  useEffect(() => {
-    const sync = () => setIsBlueskyAdded((user.id.startsWith('misskey-user:') ? configuredMisskeyHandles(false) : getConfiguredBlueskyHandles()).includes(normalizeBlueskyHandle(user.username)));
-    sync();
-    window.addEventListener('lime-bluesky-handles-changed', sync);
-    window.addEventListener('lime-misskey-changed', sync);
-    return () => {
-      window.removeEventListener('lime-bluesky-handles-changed', sync);
-      window.removeEventListener('lime-misskey-changed', sync);
-    };
-  }, [user.id, user.username]);
   useEffect(() => {
     if (!isSubscriptionOpen && !isAvatarOpen && !isCoverOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -216,15 +210,6 @@ export function ProfileHeader({
         setMembershipError(error instanceof Error ? error.message : '解除に失敗しました。もう一度お試しください。');
       },
     });
-  };
-  const handleToggleBlueskyUser = async () => {
-    const handle = normalizeBlueskyHandle(user.username);
-    if (!handle || savingExternalAccount) return;
-    setSavingExternalAccount(true);
-    try {
-      await setExternalAccountAdded(user.id.startsWith('misskey-user:') ? 'misskey' : 'bluesky', handle, !isBlueskyAdded);
-    } catch { toast.error('追加済みユーザーを保存できませんでした。もう一度お試しください。'); }
-    finally { setSavingExternalAccount(false); }
   };
   // --- ベルボタン: 新しい投稿の通知をON/OFFする ---
   // iOSでは通知許可のダイアログをタップ直後に出す必要があるため、onClickから直接呼ぶ。
@@ -489,22 +474,7 @@ export function ProfileHeader({
               </Button>
             )}
             {isBlueskyProfile ? (
-              <Button
-                type="button"
-                onClick={handleToggleBlueskyUser}
-                disabled={savingExternalAccount}
-                className={`rounded-full px-5 font-bold shadow-soft transition ${
-                  isBlueskyAdded
-                    ? 'bg-secondary text-secondary-foreground hover:bg-destructive/10 hover:text-destructive'
-                    : 'bg-gradient-primary text-primary-foreground hover:shadow-pop'
-                }`}
-              >
-                {isBlueskyAdded ? (
-                  <><UserCheck className="mr-1.5 h-4 w-4" /> 追加済み</>
-                ) : (
-                  <><UserPlus className="mr-1.5 h-4 w-4" /> 追加する</>
-                )}
-              </Button>
+              <FollowButton userId={user.id} externalProfile={user} />
             ) : isMe ? (
               <Button
                 asChild

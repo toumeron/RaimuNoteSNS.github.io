@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import {initialiseExternalAccounts,setExternalAccountOwner} from '@/lib/externalAccounts';
 import {useAuth} from './useAuth';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { getFeed, getFollowingFeed } from '@/api/posts';
@@ -10,6 +11,9 @@ export function useTimelineFeed(tab: 'all' | 'following', enabled = true) {
   const [handles, setHandles] = useState(getConfiguredExternalHandles);
   useEffect(() => {
     const update = () => setHandles(getConfiguredExternalHandles());
+    setExternalAccountOwner(user?.id??null);
+    update();
+    if(user)void initialiseExternalAccounts().then(update).catch(()=>{});
     const storage = (event: StorageEvent) => {
       if (event.key?.startsWith('lime_misskey_') || event.key === 'lime_bluesky_author_handles' || event.key === null) update();
     };
@@ -21,7 +25,7 @@ export function useTimelineFeed(tab: 'all' | 'following', enabled = true) {
       window.removeEventListener('lime-misskey-changed', update);
       window.removeEventListener('storage', storage);
     };
-  }, []);
+  }, [user?.id]);
 
   return useInfiniteQuery({
     enabled:enabled&&!loading&&!!user,

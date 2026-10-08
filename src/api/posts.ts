@@ -162,7 +162,7 @@ export async function getFollowingFeed(page: number = 0, limit: number = 10, bef
     supabase.from('follows').select('follower_id').eq('followee_id', userId),
     supabase.from('memberships').select('creator_id').eq('member_id', userId),
   ]);
-  const followingIds = followingData?.map(f => f.followee_id) || [];
+  const followingIds = followingData?.map(f => f.followee_id).filter(Boolean) || [];
   if (followingIds.length === 0) return [];
   const authorsWhoFollowMe = followedByData?.map(f => f.follower_id) || [];
   const creatorsIAmMemberOf = membershipsData?.map(m => m.creator_id) || [];

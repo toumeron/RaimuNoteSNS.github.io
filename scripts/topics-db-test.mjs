@@ -1,0 +1,45 @@
+import {PGlite} from '@electric-sql/pglite';
+import {readFile} from 'node:fs/promises';
+import assert from 'node:assert/strict';
+const db=new PGlite(),alice='11111111-1111-4111-8111-111111111111',bob='22222222-2222-4222-8222-222222222222';
+await db.exec(`create role anon;create role authenticated;create schema auth;
+create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('test.viewer',true),'')::uuid$$;
+create table profiles(id uuid primary key);
+create table profile_private_settings(user_id uuid primary key references profiles(id),bot_prompt text,notification_preferences jsonb default '{}'::jsonb);
+alter table profile_private_settings enable row level security;
+grant usage on schema public,auth to anon,authenticated;
+grant select on profile_private_settings to authenticated;
+create policy private_settings_owner on profile_private_settings for select to authenticated using(user_id=auth.uid());
+insert into profiles values('${alice}'),('${bob}');
+insert into profile_private_settings(user_id,bot_prompt,notification_preferences) values('${alice}','private', '{"like":false}');`);
+await db.exec(await readFile('supabase/migrations/20261008233000_topic_preferences.sql','utf8'));
+await db.exec(await readFile('supabase/migrations/20261009001000_digital_illustration_topic.sql','utf8'));
+async function actor(role,id,sql){await db.exec('begin');try{await db.query("select set_config('test.viewer',$1,true)",[id??'']);await db.exec(`set local role ${role}`);const result=await db.query(sql);await db.exec('commit');return result.rows;}catch(e){await db.exec('rollback');throw e;}}
+const write=(ids,status)=>`select update_topic_preferences(array[${ids.map(id=>id===null?'null':`'${id}'`).join(',')}]::text[],'${status}')`;
+await assert.rejects(actor('anon',null,write(['pets'],'follow')));
+await assert.rejects(actor('authenticated',null,write(['pets'],'follow')));
+await assert.rejects(actor('authenticated',alice,write(['unknown'],'follow')));
+await assert.rejects(actor('authenticated',alice,write(['pets'],'bad')));
+await assert.rejects(actor('authenticated',alice,write([],'follow')));
+await assert.rejects(actor('authenticated',alice,write([null],'follow')));
+await actor('authenticated',alice,write(['pets','pets','music'],'follow'));
+await actor('authenticated',alice,write(['games'],'follow'));
+await actor('authenticated',alice,write(['pets'],'dismiss'));
+let [row]=await actor('authenticated',alice,'select * from profile_private_settings');
+assert.deepEqual(row.followed_topics,['games','music']);assert.deepEqual(row.dismissed_topics,['pets']);
+assert.equal(row.bot_prompt,'private');assert.deepEqual(row.notification_preferences,{like:false});
+await actor('authenticated',alice,write(['pets'],'follow'));
+await actor('authenticated',alice,write(['music'],'clear'));
+[row]=await actor('authenticated',alice,'select * from profile_private_settings');
+assert.deepEqual(row.followed_topics,['games','pets']);assert.deepEqual(row.dismissed_topics,[]);
+assert.deepEqual(await actor('authenticated',bob,'select * from profile_private_settings'),[]);
+await actor('authenticated',bob,write(['travel'],'follow'));
+assert.deepEqual((await actor('authenticated',bob,'select * from profile_private_settings'))[0].followed_topics,['travel']);
+await assert.rejects(actor('authenticated',alice,`update profile_private_settings set followed_topics='{}' where user_id='${bob}'`));
+assert.equal((await db.query("select count(*)::int n from information_schema.tables where table_schema='public'")).rows[0].n,2);
+
+await actor('authenticated',alice,write(['digital-illustration'],'follow'));
+assert.ok((await actor('authenticated',alice,'select followed_topics from profile_private_settings'))[0].followed_topics.includes('digital-illustration'));
+
+await db.close();
+console.log('Topics DB checks passed: no new tables, owner privacy, authenticated writes, validation, duplicates, follow/dismiss/clear, other settings preserved.');

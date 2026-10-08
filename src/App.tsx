@@ -19,6 +19,7 @@ import { useOSNotification } from "@/hooks/useOSNotification";
 const AuthPage = lazy(() => import("./pages/Auth"));
 import Feed from "./pages/Feed";
 const Bookmarks = lazy(() => import("./pages/Bookmarks"));
+const Topics = lazy(() => import("./pages/Topics"));
 const PostDetail = lazy(() => import("./pages/PostDetail"));
 const Profile = lazy(() => import("./pages/Profile"));
 const Settings = lazy(() => import("./pages/Settings"));
@@ -2685,7 +2686,7 @@ const isPostDetailPage = lowerPath.includes("/post/");
 const isMediaPage = lowerPath === "/media" || lowerPath.startsWith("/media/");
 
 // いずれかの非表示対象ページであるか、またはスクロールによって非表示にするか
-const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage || isMediaPage || isPostDetailPage;
+const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage || isMediaPage || isPostDetailPage || lowerPath === '/topics';
 
   return (
     <PostOverlayContext.Provider value={openPostOverlay}>
@@ -2715,6 +2716,7 @@ const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage |
             <Route path="/u/:username/followers_following" element={<Suspense fallback={<RouteLoading />}><FollowersFollowingPage /></Suspense>} />
             <Route path="/settings" element={<Suspense fallback={<RouteLoading />}><Settings /></Suspense>} />
             <Route path="/bookmarks" element={<Suspense fallback={<RouteLoading />}><Bookmarks /></Suspense>} />
+            <Route path="/topics" element={<Suspense fallback={<RouteLoading />}><Topics /></Suspense>} />
             <Route path="/share" element={<Suspense fallback={<RouteLoading />}><Share /></Suspense>} />
             <Route path="/spaces/:id" element={<Suspense fallback={<RouteLoading />}><SpacePage /></Suspense>} />
             <Route path="/limepro" element={<Suspense fallback={<RouteLoading />}><LimeProLanding /></Suspense>} />

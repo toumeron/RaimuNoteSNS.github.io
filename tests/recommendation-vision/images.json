@@ -1,0 +1,27 @@
+[
+  {
+    "name": "original-moe",
+    "url": "https://cdn.bsky.app/img/feed_thumbnail/plain/did:plc:x7wlmxvs37m3kddcug7qhjb4/bafkreidwkkrdbaragidy4ucmwwgugqlegqkovizwpnpbucwpn6w6lv7r7a",
+    "kind": "moe"
+  },
+  {
+    "name": "male-character",
+    "url": "https://cdn.bsky.app/img/feed_thumbnail/plain/did:plc:pubtb27xyc53slizkmynjzzq/bafkreiagp6g3wwluqj3nyft753oogvwjk23yncsffhovjeqlg3g5h2irxq",
+    "kind": "not-moe"
+  },
+  {
+    "name": "game-screen",
+    "url": "https://raw.githubusercontent.com/luanti-org/luanti-org.github.io/master/public/media/gallery/1.jpg",
+    "kind": "game-screen"
+  },
+  {
+    "name": "pets",
+    "url": "https://huggingface.co/datasets/Xenova/transformers.js-docs/resolve/main/cats.jpg",
+    "kind": "pets"
+  },
+  {
+    "name": "sports",
+    "url": "https://huggingface.co/datasets/Xenova/transformers.js-docs/resolve/main/football-match.jpg",
+    "kind": "sports"
+  }
+]

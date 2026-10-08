@@ -72,16 +72,14 @@ export async function refreshExternalAccounts() {
   await initialiseExternalAccounts();
   if (owner) await refresh(owner, generation);
 }
-export async function setExternalAccountAdded(provider: ExternalProvider, handle: string, added: boolean) {
+export async function setExternalAccountAdded(provider: ExternalProvider, handle: string, added: boolean, profile?: {id:string;username:string;displayName?:string;avatarUrl?:string;bio?:string}) {
   const id = owner, version = generation;
   if (!id) throw new Error('ログインしてください');
   await initialiseExternalAccounts();
   if (owner !== id || generation !== version) throw new Error('アカウントが切り替わりました');
   const normal = handle.trim().replace(/^@+/, '').replace(/\/$/, '').toLowerCase();
   if (!normal || normal.length > 253 || /[\s/]/.test(normal)) throw new Error('ユーザー名が正しくありません');
-  const result = added
-    ? await supabase.from('external_account_users').upsert({ user_id: id, provider, handle: normal }, { onConflict: 'user_id,provider,handle', ignoreDuplicates: true })
-    : await supabase.from('external_account_users').delete().eq('user_id', id).eq('provider', provider).eq('handle', normal);
+  const result = await supabase.rpc('set_external_follow',{provider,handle:normal,enabled:added,profile:profile??null});
   if (result.error) throw result.error;
   if (owner !== id || generation !== version) return;
   revision++;

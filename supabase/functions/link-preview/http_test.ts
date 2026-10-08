@@ -111,3 +111,11 @@ Deno.test('a missing exact Misskey user is an empty lookup while other upstream 
   await rejects(()=>loadMisskey('users/search',{query:'missing'}));
  } finally {globalThis.fetch=original;}
 });
+Deno.test('Misskey relay forwards a validated media filter for text-free creator feeds',async()=>{
+ const original=globalThis.fetch;let sent:Record<string,unknown>={};
+ globalThis.fetch=async(_input,init)=>{sent=JSON.parse(String(init?.body));return new Response('[]');};
+ try{await loadMisskey('users/notes',{userId:'creator',limit:15,withFiles:true});assert(sent.withFiles===true);assert(sent.query===undefined);assert(sent.i===undefined);}finally{globalThis.fetch=original;}
+});
+Deno.test('Misskey relay rejects an invalid media filter before reading the server',async()=>{
+ let rejected=false;try{await loadMisskey('users/notes',{userId:'creator',withFiles:'true'});}catch{rejected=true;}assert(rejected);
+});

@@ -30,31 +30,28 @@ export function mentionProfileHandle(mention:string,author?:{id?:string;username
   return `${handle}@${author.username?.split('@')[1] || 'misskey.io'}`;
 }
 
-// One budget for supplementary readers, including queued work from another page.
-let activeExternalReads = 0;
-const externalReadQueue: Array<() => void> = [];
-export async function externalRead<T>(read: () => Promise<T>, signal?: AbortSignal): Promise<T> {
-  await new Promise<void>((resolve,reject) => {
-    if(signal?.aborted){reject(signal.reason);return;}
-    const start=()=>{
-      signal?.removeEventListener('abort',cancel);
-      activeExternalReads+=1;resolve();
-    };
-    const cancel=()=>{
-      const index=externalReadQueue.indexOf(start);
-      if(index>=0)externalReadQueue.splice(index,1);
-      reject(signal?.reason);
-    };
-    if(activeExternalReads<3)start();
-    else {externalReadQueue.push(start);signal?.addEventListener('abort',cancel,{once:true});}
-  });
-  try {
-    if (signal?.aborted) throw signal.reason;
-    return await read();
-  } finally {
-    activeExternalReads -= 1;
-    externalReadQueue.shift()?.();
-  }
+// Keep the same three-request budget, reserving one slot for the visible
+// timeline so slow supplementary searches cannot occupy every connection.
+export type ExternalReadPriority='interactive'|'supplementary';
+let activeExternalReads=0,activeSupplementaryReads=0;
+const externalReadQueue:{start:()=>void;priority:ExternalReadPriority}[]=[];
+function drainExternalReads(){
+ while(activeExternalReads<3){
+  let index=externalReadQueue.findIndex(job=>job.priority==='interactive');
+  if(index<0&&activeSupplementaryReads<2)index=externalReadQueue.findIndex(job=>job.priority==='supplementary');
+  if(index<0)return;
+  externalReadQueue.splice(index,1)[0].start();
+ }
+}
+export async function externalRead<T>(read:()=>Promise<T>,signal?:AbortSignal,priority:ExternalReadPriority='supplementary'):Promise<T>{
+ await new Promise<void>((resolve,reject)=>{
+  if(signal?.aborted){reject(signal.reason);return;}
+  const job={priority,start:()=>{signal?.removeEventListener('abort',cancel);activeExternalReads++;if(priority==='supplementary')activeSupplementaryReads++;resolve();}};
+  const cancel=()=>{const index=externalReadQueue.indexOf(job);if(index>=0)externalReadQueue.splice(index,1);reject(signal?.reason);};
+  externalReadQueue.push(job);signal?.addEventListener('abort',cancel,{once:true});drainExternalReads();
+ });
+ try{if(signal?.aborted)throw signal.reason;return await read();}
+ finally{activeExternalReads--;if(priority==='supplementary')activeSupplementaryReads--;drainExternalReads();}
 }
 
 export function accountSearchScore(user: {username:string;displayName:string}, query:string): number {
@@ -67,7 +64,7 @@ export function accountSearchScore(user: {username:string;displayName:string}, q
   return q.split(/\s+/).every(token => `${name} ${handle}`.includes(token)) ? 20 : 0;
 }
 
-export async function externalFetch(url:string,init:RequestInit={}):Promise<Response> {
+export async function externalFetch(url:string,init:RequestInit={},priority:ExternalReadPriority='supplementary'):Promise<Response> {
   return externalRead(async()=>{
     const controller=new AbortController();
     const abort=()=>controller.abort(init.signal?.reason);
@@ -75,5 +72,5 @@ export async function externalFetch(url:string,init:RequestInit={}):Promise<Resp
     const timer=setTimeout(()=>controller.abort(new DOMException('External read timed out','TimeoutError')),12000);
     try {return await fetch(url,{...init,signal:controller.signal});}
     finally {clearTimeout(timer);init.signal?.removeEventListener('abort',abort);}
-  },init.signal ?? undefined);
+  },init.signal ?? undefined,priority);
 }

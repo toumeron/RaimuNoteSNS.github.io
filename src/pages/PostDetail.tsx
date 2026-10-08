@@ -1,3 +1,4 @@
+import {ExternalLikeButton} from '@/components/post/ExternalLikeButton';
 import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
 import { openMediaViewer } from '@/components/media/openMediaViewer';
 import {useLayoutEffect} from 'react';
@@ -1883,27 +1884,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
           <div data-lime-post-actions className={useMobilePresentation ? "mt-3 flex items-center gap-1 relative h-9 post-detail-mobile-action-row" : "mt-3 flex items-center gap-1 border-t border-border/60 pt-3 relative h-9"}>
             <div onClick={(e) => e.stopPropagation()} className={`flex items-center h-full ${useMobilePresentation ? 'post-detail-mobile-action-hit' : ''}`}>
               {isBlueskyPost ? (
-                blueskySession && blueskyPostUri ? (
-                  <LikeButton
-                    postId={data.id}
-                    liked={data.likedByMe}
-                    count={data.likesCount}
-                    bluesky={{ postUri: blueskyPostUri, preferencePost: data as PostWithAuthor }}
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
-                    }}
-                    className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"
-                  >
-                    <Heart className="h-5 w-5" />
-                    <span className="font-bold tabular-nums text-sm">{(data.likesCount) > 0 ? formatDisplayCount(data.likesCount) : ''}</span>
-                  </button>
-                )
+                <ExternalLikeButton post={data as PostWithAuthor}/>
               ) : (
                 <LikeButton 
                   postId={data.id} 

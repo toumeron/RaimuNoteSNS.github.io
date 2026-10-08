@@ -285,6 +285,7 @@ export interface LikeButtonBlueskyTarget {
 
 export function LikeButton({
   postId,
+  preferencePost,
   liked,
   count,
   size = 'md',
@@ -295,6 +296,7 @@ export function LikeButton({
   persistLike,
 }: {
   postId: string;
+  preferencePost?: PostWithAuthor;
   liked: boolean;
   count: number;
   size?: 'sm' | 'md';
@@ -389,7 +391,7 @@ export function LikeButton({
       }
 
       const currentLiked = Boolean(data);
-      if (type === 'post') recordRecommendationLike({ id: postId, content: '' } as PostWithAuthor, currentLiked, userId);
+      if (type === 'post') recordRecommendationLike(preferencePost??{ id: postId, content: '' } as PostWithAuthor, currentLiked, userId);
       setDisplayLiked(currentLiked);
       stateRef.current.liked = currentLiked;
       hasLocalStateRef.current = true;
@@ -487,6 +489,12 @@ export function LikeButton({
       lastTargetRef.current.postId !== postId || lastTargetRef.current.type !== type;
     const safeCount = Number(count) || 0;
 
+    // A cloud acknowledgement is not another click. Keep the optimistic
+    // heart/count animation running when it confirms the same state.
+    if(persistLike&&!targetChanged&&customLikePendingRef.current)return;
+    if(persistLike&&!targetChanged&&safeCount===stateRef.current.count){
+      setDisplayLiked(liked);stateRef.current.liked=liked;return;
+    }
     if (targetChanged) {
       lastTargetRef.current = { postId, type };
       hasLocalStateRef.current = false;
@@ -522,7 +530,7 @@ export function LikeButton({
       stateRef.current.count = safeCount;
       animateCount(currentCount, safeCount);
     }
-  }, [animateCount, postId, type, liked, count, isBluesky, syncLatestCount, syncState]);
+  }, [animateCount, postId, type, liked, count, isBluesky, syncLatestCount, syncState, persistLike]);
 
   // リアルタイム反映(Supabase Realtime)。Bluesky投稿はLimeのテーブルに
   // 行が存在しないため、この購読自体を行わない。
@@ -692,7 +700,7 @@ export function LikeButton({
         const result = await persistLike(willBeLiked);
         stateRef.current = result;
         setDisplayLiked(result.liked);
-        animateCount(nextCount, result.count);
+        if(result.count!==nextCount)animateCount(nextCount, result.count);
         onChange?.(result);
       } catch (error) {
         stateRef.current = { liked: wasLiked, count: wasCount };
@@ -743,7 +751,7 @@ export function LikeButton({
         if (error) throw error;
       }
 
-      if (type === 'post') recordRecommendationLike({ id: postId, content: '' } as PostWithAuthor, willBeLiked, userId);
+      if (type === 'post') recordRecommendationLike(preferencePost??{ id: postId, content: '' } as PostWithAuthor, willBeLiked, userId);
 
       // DB反映を待つ
       const latestCount = await syncLatestCount();

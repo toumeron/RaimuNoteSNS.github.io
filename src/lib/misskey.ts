@@ -26,7 +26,7 @@ export async function changeMisskeySetting(key:string, value:unknown) {
 }
 // Misskey is an account reader, not an additional login provider.
 type MisskeyUser = {id:string;username:string;host?:string|null;name?:string|null;avatarUrl?:string;bannerUrl?:string;description?:string;createdAt?:string;followersCount?:number;followingCount?:number;notesCount?:number;isBot?:boolean;isFollowing?:boolean};
-export type MisskeyNote = {id:string;createdAt:string;text?:string|null;cw?:string|null;visibility:string;user:MisskeyUser;files?:{type:string;url:string;thumbnailUrl?:string;isSensitive?:boolean}[];reactions?:Record<string,number>;myReaction?:string|null;repliesCount?:number;renoteCount?:number;renote?:MisskeyNote;reply?:MisskeyNote};
+export type MisskeyNote = {id:string;createdAt:string;text?:string|null;cw?:string|null;visibility:string;user:MisskeyUser;files?:{type:string;url:string;thumbnailUrl?:string;isSensitive?:boolean;comment?:string|null}[];reactions?:Record<string,number>;myReaction?:string|null;repliesCount?:number;renoteCount?:number;renote?:MisskeyNote;reply?:MisskeyNote};
 let relayRequired=false;
 export async function misskeyRequest<T>(endpoint:string, body:Record<string,unknown>={}, signal?:AbortSignal, required=false):Promise<T> {
   if (required) throw new Error('Misskeyの操作は元のサイトで行ってください');
@@ -69,7 +69,8 @@ export function mapMisskeyNote(note:MisskeyNote,includeQuote=true):BlueskyMapped
   if (!note.text && !note.files?.length && note.renote) return null;
   const url=`${MISSKEY_ORIGIN}/notes/${note.id}`;
   const quoted=includeQuote && note.renote ? mapMisskeyNote(note.renote,false) : null;
-  return {...(quoted ? {isQuote:true,parentId:quoted.id,parentPost:{...quoted,repostsCount:0,repostedByMe:false,author:{coverUrl:'',...quoted.author}}} : {}),id:`misskey:${url}`,userId:`misskey-user:${note.user.id}`,content:[note.cw,note.text].filter(Boolean).join('\n\n'),imageUrls:(note.files || []).filter(file=>file.type.startsWith('image/')).map(file=>file.url),createdAt:note.createdAt,visibility:'public',likedByMe:Boolean(note.myReaction),likesCount:Object.values(note.reactions || {}).reduce((a,b)=>a+b,0),commentsCount:note.repliesCount || 0,isBot:Boolean(note.user.isBot),cid:note.id,author:mapMisskeyUser(note.user),source:'misskey',blueskyUrl:url,blueskyUri:url};
+  const imageAltTexts=(note.files??[]).filter(file=>file.type.startsWith('image/')).map(file=>file.comment??'');
+  return {...(quoted ? {isQuote:true,parentId:quoted.id,parentPost:{...quoted,repostsCount:0,repostedByMe:false,author:{coverUrl:'',...quoted.author}}} : {}),id:`misskey:${url}`,userId:`misskey-user:${note.user.id}`,content:[note.cw,note.text].filter(Boolean).join('\n\n'),imageUrls:(note.files || []).filter(file=>file.type.startsWith('image/')).map(file=>file.url),imageAltTexts,createdAt:note.createdAt,visibility:'public',likedByMe:Boolean(note.myReaction),likesCount:Object.values(note.reactions || {}).reduce((a,b)=>a+b,0),commentsCount:note.repliesCount || 0,isBot:Boolean(note.user.isBot),cid:note.id,author:mapMisskeyUser(note.user),source:'misskey',blueskyUrl:url,blueskyUri:url};
 }
 const noteId = (id:string) => {
   const match=id.match(/^(?:misskey:)?https:\/\/misskey\.io\/notes\/([a-zA-Z0-9]+)$/);
@@ -95,6 +96,7 @@ export async function misskeyFeed(options:{actor?:string;cursor?:string|null;lim
   const limit=Math.min(100,Math.max(1,options.limit || 30));
   const actor=options.actor || 'misskey.io';
   const body:Record<string,unknown>={limit,...(options.cursor ? {untilId:options.cursor} : {})};
+  if(options.filter==='posts_with_media')body.withFiles=true;
   if (actor!=='misskey.io') body.userId=(await misskeyProfile(actor,options.signal)).id.slice('misskey-user:'.length);
   const rows=await misskeyRequest<MisskeyNote[]>(actor==='misskey.io' ? 'notes/local-timeline' : 'users/notes',body,options.signal);
   return {posts:rows.filter(note=>(options.filter || 'posts_no_replies')!=='posts_no_replies' || !note.reply).map(note=>mapMisskeyNote(note)).filter((post):post is BlueskyMappedPost=>Boolean(post)),cursor:rows.length===limit ? rows.at(-1)!.id : null};
@@ -105,6 +107,12 @@ export async function misskeyThread(id:string,signal?:AbortSignal) {
   return {post:mapMisskeyNote(note),replies:replies.map(note=>mapMisskeyNote(note)).filter((post):post is BlueskyMappedPost=>Boolean(post))};
 }
 const searchCache=new Map<string,{result:{posts:BlueskyMappedPost[];users:BlueskyProfile[]};expires:number}>();
+/** Fetch only topic notes; discovery does not need a parallel account search. */
+export async function fetchMisskeyTopicPosts(options:{query:string;cursor?:string|null;limit?:number;signal?:AbortSignal}) {
+ const limit=Math.min(30,Math.max(1,options.limit??20));
+ const notes=await misskeyRequest<MisskeyNote[]>('notes/search',{query:options.query,limit,...(options.cursor?{untilId:options.cursor}:{})},options.signal);
+ return {posts:notes.map(note=>mapMisskeyNote(note)).filter((post):post is BlueskyMappedPost=>Boolean(post)),cursor:notes.length===limit?notes.at(-1)!.id:null};
+}
 export async function searchMisskey(query:string,includePosts=true,signal?:AbortSignal) {
   const normalized=query.trim().replace(`${MISSKEY_ORIGIN}/@`,'').replace(/^@+/, '');
   if(!normalized)return {posts:[],users:[]};

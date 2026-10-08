@@ -45,7 +45,7 @@ export function AppLayout() {
 
   // ページのパスに応じてメインコンテナのクラス名を切り替える
   let mainClassName = 'mx-auto max-w-2xl px-4 py-6';
-  if (location.pathname === '/notifications') mainClassName = 'w-full max-w-none px-0 py-0';
+  if (location.pathname === '/notifications' || location.pathname === '/topics') mainClassName = 'w-full max-w-none px-0 py-0';
   if (isAccountAboutPage) mainClassName = 'mx-auto max-w-2xl px-0 py-0';
   
   if (isLimeProPage) {
@@ -61,7 +61,7 @@ export function AppLayout() {
     const isWorkspacePage = location.pathname === '/chat' || location.pathname.startsWith('/media');
     const hideHeader = (location.pathname.startsWith('/u/') && !isAccountAboutPage) || ['/search', '/settings', '/chat', '/bookmarks'].includes(location.pathname) || location.pathname.startsWith('/media') || isPostDetailPage;
     const showRightSidebar = !['/chat', '/settings'].includes(location.pathname);
-    const isEdgePage = location.pathname === '/notifications' || isWorkspacePage || location.pathname === '/bookmarks' || location.pathname === '/' || location.pathname.startsWith('/u/') || isPostDetailPage;
+    const isEdgePage = location.pathname === '/notifications' || location.pathname === '/topics' || isWorkspacePage || location.pathname === '/bookmarks' || location.pathname === '/' || location.pathname.startsWith('/u/') || isPostDetailPage;
     return (
       <CallSessionProvider>
         <PageCompanion userId={user.id} />
@@ -88,7 +88,7 @@ export function AppLayout() {
     // LimeProページの場合はボトムナビゲーション用の余白(pb-20)を削除する
     <CallSessionProvider>
         <PageCompanion userId={user.id} />
-      <div className={`min-h-screen ${isLimeProPage ? 'pb-0' : 'pb-20 md:pb-0'}`}>
+      <div className={`min-h-screen ${isLimeProPage ? 'pb-0' : location.pathname === '/topics' ? 'pb-[var(--lime-bottom-nav-height,64px)] md:pb-0' : 'pb-20 md:pb-0'}`}>
       
         {/* LimeProページ以外でのみヘッダーを表示する */}
         {!isLimeProPage && location.pathname !== '/bookmarks' && <Header />}
