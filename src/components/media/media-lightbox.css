@@ -100,6 +100,13 @@ body:has(.lime-media-lightbox) [data-radix-popper-content-wrapper]{z-index:21474
 .lime-media-lightbox textarea:focus,.lime-media-reply-dialog textarea:focus{outline:none!important;box-shadow:none!important;border:0!important}
 [data-lime-media-sheet]{background:#202327!important;color:#fff;--background:0 0% 0%;--foreground:0 0% 100%;--card:210 10% 14%;--muted:210 10% 20%;--border:0 0% 19%}
 @media(max-width:767px){
+[data-lime-media-sheet]:not(.lime-post-options){position:fixed!important;top:auto!important;bottom:0!important;left:0!important;right:0!important;width:100%!important;max-height:70dvh!important;border-radius:24px 24px 0 0!important;border:0!important;padding:28px 12px calc(14px + env(safe-area-inset-bottom))!important;box-shadow:0 -8px 40px #0004;animation:lime-media-reply-enter .22s cubic-bezier(.2,.7,.2,1)!important;overflow-y:auto!important;z-index:2147483647!important}
+[data-lime-media-sheet]:not(.lime-post-options):before{content:'';position:absolute;top:10px;left:calc(50% - 18px);height:4px;width:36px;border-radius:99px;background:#555}
+[data-lime-media-sheet]:not(.lime-post-options)>button{min-height:48px;font-size:16px!important;padding:12px 16px!important}
+[data-lime-media-sheet]:not(.lime-post-options)>button svg{width:22px;height:22px;flex:none}
+[data-lime-media-sheet-backdrop]{background:#0008!important}
+}
+@media(min-width:640px) and (max-width:767px){
 [data-lime-media-sheet]{position:fixed!important;top:auto!important;bottom:0!important;left:0!important;right:0!important;width:100%!important;max-height:70dvh!important;border-radius:24px 24px 0 0!important;border:0!important;padding:28px 12px calc(14px + env(safe-area-inset-bottom))!important;box-shadow:0 -8px 40px #0004;animation:lime-media-reply-enter .22s cubic-bezier(.2,.7,.2,1)!important;overflow-y:auto!important;z-index:2147483647!important}
 [data-lime-media-sheet]:before{content:'';position:absolute;top:10px;left:calc(50% - 18px);height:4px;width:36px;border-radius:99px;background:#555}
 [data-lime-media-sheet]>button{min-height:48px;font-size:16px!important;padding:12px 16px!important}

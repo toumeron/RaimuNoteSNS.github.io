@@ -1186,10 +1186,10 @@ export async function fetchBlueskyAuthorFeed(options?: {
 // 「もっと読み込む」のたびに各クエリのカーソルを個別に進めたいが、
 // 呼び出し側(Feed.tsx)には他のBluesky取得と同じく単一のcursor文字列として
 // 渡したいため、ここでJSON文字列にエンコード/デコードする。
-type TrendingCursorMap = Partial<Record<(typeof TRENDING_SEED_QUERIES)[number], string | null>>;
+type TrendingCursorMap = Partial<Record<(typeof TRENDING_SEED_QUERIES)[number], string | null>> & {queryRound?:number};
 
 function encodeTrendingCursor(map: TrendingCursorMap): string | null {
-  const hasAny = Object.values(map).some((cursor) => Boolean(cursor));
+  const hasAny = TRENDING_SEED_QUERIES.some(seed => !(seed in map) || Boolean(map[seed]));
   if (!hasAny) return null;
   return JSON.stringify(map);
 }
@@ -1219,10 +1219,14 @@ function decodeTrendingCursor(cursor: string | null | undefined): TrendingCursor
 async function fetchBlueskyTrendingPosts(options?: {
   cursor?: string | null;
   limit?: number;
+  queryLimit?: number;
   signal?: AbortSignal;
 }): Promise<BlueskyAuthorFeedPage> {
   const perQueryLimit = Math.min(100, Math.max(1, options?.limit ?? 30));
   const cursorMap = decodeTrendingCursor(options?.cursor);
+
+  const round=cursorMap.queryRound??0;
+  const seeds=options?.queryLimit ? Array.from({length:Math.min(TRENDING_SEED_QUERIES.length,Math.max(1,options.queryLimit))},(_,i)=>TRENDING_SEED_QUERIES[(round+i)%TRENDING_SEED_QUERIES.length]) : TRENDING_SEED_QUERIES;
 
   // 直近 TRENDING_MAX_AGE_DAYS 日以内の投稿だけを対象にする。
   // app.bsky.feed.searchPosts の since パラメータ(ISO日時)でAPI側にも
@@ -1232,7 +1236,7 @@ async function fetchBlueskyTrendingPosts(options?: {
   const sinceTime = sinceDate.getTime();
 
   const results = await Promise.all(
-    TRENDING_SEED_QUERIES.map(async (seedQuery) => {
+    seeds.map(async (seedQuery) => {
       // 前回のページで「このクエリはもう次がない」と分かっている場合はスキップする
       if (seedQuery in cursorMap && !cursorMap[seedQuery]) {
         return { seedQuery, posts: [] as BlueskyMappedPost[], cursor: null as string | null };
@@ -1279,7 +1283,8 @@ async function fetchBlueskyTrendingPosts(options?: {
     }),
   );
 
-  const nextCursorMap: TrendingCursorMap = {};
+  const nextCursorMap: TrendingCursorMap = {...cursorMap};
+  if(options?.queryLimit)nextCursorMap.queryRound=round+seeds.length;
   const seenIds = new Set<string>();
   const combinedPosts: BlueskyMappedPost[] = [];
 
@@ -1457,7 +1462,7 @@ export async function fetchBlueskyTopicPosts(options: {query:string;cursor?:stri
 // Historical Bluesky-named readers above dispatch external IDs to their own provider.
 export function getConfiguredExternalHandles() { return [...getConfiguredBlueskyHandles(),...configuredMisskeyHandles()]; }
 
-export async function fetchTrendingJapaneseBlueskyPosts(options?:{cursor?:string|null;limit?:number;signal?:AbortSignal}):Promise<BlueskyAuthorFeedPage> {
+export async function fetchTrendingJapaneseBlueskyPosts(options?:{cursor?:string|null;limit?:number;queryLimit?:number;signal?:AbortSignal}):Promise<BlueskyAuthorFeedPage> {
   const results=await Promise.allSettled([
     fetchBlueskyTrendingPosts(options),
     !options?.cursor && misskeyEnabled() ? misskeyRequest<MisskeyNote[]>('notes/featured',{limit:options?.limit || 30},options?.signal).then(notes=>notes.map(note=>mapMisskeyNote(note)).filter((post):post is BlueskyMappedPost=>Boolean(post))) : Promise.resolve([]),

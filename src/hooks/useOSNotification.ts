@@ -270,6 +270,7 @@ export function useOSNotification(currentUserId: string | null) {
         },
         async (payload) => {
           if(payload.new.is_read)return;
+          void updateAppBadge(currentUserId);
           if(window.location.pathname.replace(/^\/RaimuNoteSNS\.github\.io/,'')==='/notifications'){void markNotificationsRead(currentUserId,[payload.new.id]).catch(()=>{});return;}
           const preferences = await getNotificationPreferences(currentUserId).catch(() => null);
           if (cancelled || !preferences || preferences[(payload.new as NotificationRow).type] === false) return;
@@ -291,7 +292,6 @@ export function useOSNotification(currentUserId: string | null) {
 
           showNotificationToast(payload.new.id,title,message);
 
-          updateAppBadge(currentUserId);
           ensurePushSubscription();
 
           // Push購読済みの場合は、既存notifications INSERT → send-push → Service Worker通知に任せる。

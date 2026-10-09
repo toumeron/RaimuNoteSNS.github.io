@@ -19,6 +19,7 @@ export type User = {
 };
 
 export type Post = {
+  mapLocation?: import('@/lib/mapLocation').MapLocation | null;
   languages?: string[];
   recommendationLanguages?: string[];
   imageAltTexts?: string[];

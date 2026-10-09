@@ -1,128 +1,85 @@
 import './news-history.css';
-import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { useMemo } from 'react';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { Link, Navigate, useLocation, useSearchParams } from 'react-router-dom';
+import { Loader2 } from 'lucide-react';
 import { formatRelative } from '@/lib/format';
-import { History, X } from 'lucide-react';
-import { PostCard } from '@/components/feed/PostCard'; // PostCardをインポート
-import { useSearchParams } from 'react-router-dom';
-
+import { getNewsHistory, getNewsRelatedPosts } from '@/api/search-news';
+import { useNewsStory } from '@/hooks/useNewsStory';
+import { useAuth } from '@/hooks/useAuth';
+import { PostCard } from '@/components/feed/PostCard';
+import { Button } from '@/components/ui/button';
+import { SearchTabIndicator } from '@/components/search/SearchTabIndicator';
 
 export default function NewsPage() {
-  const [params] = useSearchParams();
-  const [news, setNews] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showHistory, setShowHistory] = useState(false);
+  const [params, setParams] = useSearchParams();
+  const { user } = useAuth();
+  const showHistory = useLocation().pathname === '/news/history';
+  const storyQuery = useNewsStory(params.get('story'), !showHistory);
+  const story = storyQuery.data;
+  const tab = params.get('tab') === 'latest' ? 'latest' : 'top';
+  const related = useQuery({
+    queryKey: ['news-related-posts', story?.id, user?.id],
+    queryFn: () => getNewsRelatedPosts(story!),
+    enabled: !!story && !showHistory,
+    staleTime: 60000,
+    refetchOnWindowFocus: false,
+  });
+  const history = useInfiniteQuery({
+    queryKey: ['news-history'],
+    queryFn: ({ pageParam }) => getNewsHistory(pageParam),
+    enabled: showHistory,
+    initialPageParam: 0,
+    getNextPageParam: (last, pages) => last.length === 20 ? pages.length * 20 : undefined,
+    staleTime: 60000,
+    refetchOnWindowFocus: false,
+  });
+  const posts = useMemo(() => [...(related.data ?? [])].sort((a, b) => tab === 'latest'
+    ? Date.parse(b.createdAt) - Date.parse(a.createdAt)
+    : (b.likesCount + (b.repostsCount ?? 0) + b.commentsCount) - (a.likesCount + (a.repostsCount ?? 0) + a.commentsCount) || Date.parse(b.createdAt) - Date.parse(a.createdAt)), [related.data, tab]);
+  const source = story?.source === 'bluesky' ? 'Bluesky' : 'LimeNote';
 
-  useEffect(() => {
-    async function fetchAllNews() {
-      const { data, error } = await supabase
-        .from('news_summaries')
-        .select('*')
-        .order('created_at', { ascending: false });
-      
-      if (!error) setNews(data || []);
-      setLoading(false);
-    }
-    fetchAllNews();
-  }, []);
 
-  if (loading) return <div className="min-h-screen bg-transparent flex items-center justify-center text-gray-500 font-bold">読み込み中...</div>;
+  if (!showHistory && params.get('history') === '1') {
+    const next = new URLSearchParams(params); next.delete('history');
+    return <Navigate replace to={`/news/history?${next}`} />;
+  }
+  if (showHistory) return <div data-lime-news-history className="news-history-enter min-h-screen pb-20">
+          {history.isPending ? <div className="flex justify-center p-8" role="status" aria-label="トレンド履歴を読み込み中"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>
+            : history.isError ? <p className="p-8 text-center text-muted-foreground">履歴を読み込めませんでした。</p>
+            : history.data?.pages.flat().length ? history.data.pages.flat().map(item => <Link key={item.id} to={`/news?story=${encodeURIComponent(item.id)}`} className="block border-b border-border px-5 py-4 hover:bg-muted/40">
+              <time dateTime={item.created_at} className="text-xs text-muted-foreground">{new Date(item.created_at).toLocaleString('ja-JP')}</time>
+              <h2 className="mt-1 font-bold leading-6">{item.title}</h2>
+              <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{item.content}</p>
+            </Link>) : <p className="p-8 text-center text-muted-foreground">履歴はありません。</p>}
+          {history.hasNextPage && <Button variant="ghost" className="w-full" disabled={history.isFetchingNextPage} onClick={() => void history.fetchNextPage()}>さらに読み込む</Button>}
 
-  const latest = news.find(item => item.id === params.get('story')) ?? news[0];
-  const historyItems = news.filter(item => item.id !== latest?.id);
+  </div>;
 
-  return (
-    <div className="min-h-screen bg-transparent text-black dark:text-white pb-20">
-      <div className="max-w-2xl mx-auto p-4 flex flex-col gap-4">
-        
-        {/* 最新の1件：カード形式 */}
-        {latest ? (
-          <div className="animate-in fade-in duration-500">
-            <div className="p-6 rounded-[32px] bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 mb-4">
-              <div className="flex items-center gap-2 mb-4">
-                <span className="text-[10px] font-black px-1.5 py-0.5 bg-[#1d9bf0]/20 text-[#1d9bf0] rounded uppercase tracking-tighter">
-                  {latest.source === 'bluesky' ? 'Bluesky' : 'LimeNote'}
-                </span>
-                <span className="text-xs text-gray-500 font-medium">
-                  {formatRelative(latest.created_at)}
-                </span>
-              </div>
+  return <div className="news-detail pb-20" data-lime-news-detail>
+    {storyQuery.isPending ? <div className="flex justify-center py-12" role="status" aria-label="ニュースを読み込み中"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>
+      : storyQuery.isError ? <p className="p-8 text-center text-muted-foreground">ニュースを読み込めませんでした。</p>
+      : !story ? <p className="p-8 text-center text-muted-foreground">ニュースがありません。</p>
+      : <>
+        <article className="news-detail-article">
+          <h1 className="text-2xl font-bold leading-snug sm:text-3xl">{story.title}</h1>
+          <p className="mt-3 text-sm text-muted-foreground">最終更新: <time dateTime={story.updated_at ?? story.created_at}>{formatRelative(story.updated_at ?? story.created_at)}</time></p>
+          <p className="mt-4 whitespace-pre-wrap break-words text-base leading-7">{story.content}</p>
+          <p className="mt-5 text-sm leading-6 text-muted-foreground">このストーリーは、{source}のポストの要約であり、時間の経過とともに新しくなります。AIは間違えることがあるため、アウトプットが事実かどうかを確認してください</p>
+        </article>
+        <div className="relative flex border-y border-border" role="tablist" aria-label="ニュースの関連ポスト">
+          {(['top', 'latest'] as const).map(value => <button key={value} id={`news-tab-${value}`} type="button" role="tab" aria-selected={tab === value} aria-controls="news-posts" className={`flex h-14 flex-1 justify-center text-sm transition-colors hover:bg-muted/40 ${tab === value ? 'font-bold text-foreground' : 'text-muted-foreground'}`} onClick={() => setParams(previous => { const next = new URLSearchParams(previous); next.set('tab', value); return next; }, { replace: true })}>
+            <span data-lime-tab-label className="flex h-full items-center">{value === 'top' ? 'トップ' : '最新'}</span>
+          </button>)}
+          <SearchTabIndicator active={tab} />
+        </div>
+        <div id="news-posts" role="tabpanel" aria-labelledby={`news-tab-${tab}`} className="news-detail-posts">
+          {related.isPending ? <div className="flex justify-center py-10" role="status" aria-label="関連ポストを読み込み中"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>
+            : related.isError ? <p className="p-8 text-center text-muted-foreground">関連ポストを読み込めませんでした。</p>
+            : posts.length ? posts.map(post => <div className="news-detail-post" key={post.id} data-news-post={post.id}><PostCard post={post} /></div>)
+            : <p className="p-8 text-center text-muted-foreground">表示できる関連ポストはありません。</p>}
+        </div>
+      </>}
 
-              <h1 className="text-2xl font-black mb-4 leading-tight text-black dark:text-white">
-                {latest.title}
-              </h1>
-
-              <div className="text-[16px] leading-relaxed text-gray-800 dark:text-gray-200 whitespace-pre-wrap mb-6">
-                {latest.content}
-              </div>
-
-              <p className="text-[12px] leading-snug text-gray-500 dark:text-gray-600 mb-8">
-                このストーリーは、{latest.source === 'bluesky' ? 'Bluesky' : 'LimeNote'}のポストの要約であり、時間の経過とともに新しくなります。AIは間違えることがあるため、アウトプットが事実かどうかを確認してください
-              </p>
-
-              {/* 関連ポストセクション */}
-              {latest.related_posts && (
-                <div className="pt-6 border-t border-black/5 dark:border-white/5 flex flex-col gap-4">
-                  <h3 className="text-xs font-bold text-gray-500 px-2 uppercase tracking-widest">Related Posts</h3>
-                  <div className="flex flex-col gap-3">
-                    {/* related_postsがID配列やオブジェクト配列である前提 */}
-                    {latest.related_posts.map((post: any) => (
-                      <PostCard key={post.id} post={post} />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* 小さく配置した履歴ボタン */}
-            {!showHistory && news.length > 1 && (
-              <div className="flex justify-center">
-                <button 
-                  onClick={() => setShowHistory(true)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-full border border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5 transition-all text-[13px] font-bold text-gray-500"
-                >
-                  <History className="w-3.5 h-3.5" />
-                  履歴を見る
-                </button>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="py-20 text-center text-gray-500">ニュースがありません。</div>
-        )}
-
-        {/* 履歴リスト（展開時） */}
-        {showHistory && (
-          <div data-lime-news-history className="mt-2 news-history-enter">
-            <div className="flex items-center justify-between mb-4 px-2">
-              <span className="text-sm font-bold text-gray-500 dark:text-gray-400">過去のニュース</span>
-              <button 
-                onClick={() => setShowHistory(false)} 
-                className="p-1.5 hover:bg-black/10 dark:hover:bg-white/10 rounded-full transition-colors"
-              >
-                <X className="w-4 h-4 text-gray-500" />
-              </button>
-            </div>
-            
-            <div className="flex flex-col gap-3">
-              {historyItems.map((item) => (
-                <div 
-                  key={item.id} 
-                  className="p-5 rounded-[24px] bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5"
-                >
-                  <div className="text-[11px] text-gray-500 mb-1">
-                    {new Date(item.created_at).toLocaleDateString('ja-JP')}
-                  </div>
-                  <h3 className="text-md font-bold mb-1 tracking-tight text-black dark:text-white">{item.title}</h3>
-                  <p className="text-xs text-gray-600 dark:text-gray-400 leading-normal">
-                    {item.content}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
+  </div>;
 }

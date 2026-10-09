@@ -1,0 +1,75 @@
+.lime-map-wrap { position: relative; isolation: isolate; }
+.lime-map { height: clamp(320px, 58dvh, 650px); width: 100%; z-index: 0; background: #25282a; }
+/* Keep the free standard map and its labels; apply the dark palette only to tiles. */
+.lime-map .leaflet-tile-pane { filter: grayscale(1) invert(1) brightness(.75) contrast(.9); }
+.lime-map .leaflet-control-attribution { font-size: 10px; background: #202528db; color: #bbb; }
+.lime-map .leaflet-control-attribution a { color: #b5bec5; }
+.lime-map .leaflet-bar { border: 1px solid #ffffff25; box-shadow: 0 3px 16px #0004; }
+.lime-map .leaflet-bar a { background: #24292d; color: #eee; border-color: #ffffff20; }
+.lime-map .leaflet-bar a:hover { background: #363d42; }
+.lime-map-pin span { display: block; width: 100%; height: 80%; border-radius: 50% 50% 50% 0; background: #64748b; border: 2px solid white; box-shadow: 0 1px 5px #0006; transform: rotate(-45deg); }
+.lime-map-pin-selected span { background: #f34b94; }
+.lime-map-dot { display: grid; place-items: center; }
+.lime-map-dot span { width: 7px; height: 7px; border-radius: 50%; background: #ffed64; box-shadow: 0 0 5px #ffec6380; }
+.lime-map-dot:hover span,.lime-map-dot:focus span { width: 11px; height: 11px; box-shadow: 0 0 0 4px #ffed6425; }
+.lime-map-post-popup .leaflet-popup-content-wrapper,.lime-map-post-popup .leaflet-popup-tip { background: #252b30; color: #f6f7f8; }
+.lime-map-post-popup .leaflet-popup-content { margin: 14px; }
+.lime-map-preview { font-family: inherit; font-size: 13px; line-height: 1.5; }
+.lime-map-preview-author { display: flex; gap: 9px; padding-right: 8px; align-items: center; }
+.lime-map-preview-author img { width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%; object-fit: cover; }
+.lime-map-preview-author strong { display: block; overflow-wrap: anywhere; }
+.lime-map-preview-author time { color: #abb4bc; font-size: 10px; }
+.lime-map-preview p { margin: 10px 0 !important; white-space: pre-wrap; overflow-wrap: anywhere; }
+.lime-map-preview button { color: #ffe86c; font-weight: 600; padding: 4px 0; }
+.lime-map-error { position: absolute; top: 110px; left: 16px; right: 16px; z-index: 500; background: #292f35ed; color: #fff; padding: 10px; font-size: 12px; border-radius: 8px; }
+.lime-map-dialog { z-index: 2147483200; }
+.lime-map-dialog .lime-map { height: min(50dvh, 440px); }
+.lime-map-dialog-body { min-height: 0; overflow-y: auto; }
+.lime-map-post-detail { position: absolute; bottom: 24px; right: 62px; z-index: 600; width: min(460px,calc(100% - 32px)); max-height: 60dvh; padding: 28px 0 0; overflow-y: auto; border-radius: 14px; border: 1px solid hsl(var(--border)); background: hsl(var(--background)); color: hsl(var(--foreground)); box-shadow: 0 8px 32px #0006; }
+.lime-map-detail-close { position: absolute; top: 8px; right: 12px; padding: 2px; }
+@media (max-width:639px) { .lime-map-post-detail { right:16px; bottom:74px; max-height:55dvh; } }
+.lime-maps-page { position: relative; height: calc(100dvh - var(--lime-bottom-nav-height,64px)); overflow: hidden; background: #25282a; color: #f4f5f6; }
+.lime-maps-page > .lime-map-wrap,.lime-maps-page > .lime-map-wrap > .lime-map { height: 100%; }
+body:has([data-lime-maps]) [data-lime-app-header] { display: none !important; }
+.lime-maps-toolbar { position: absolute; z-index: 600; left: 16px; right: 16px; top: max(16px,env(safe-area-inset-top)); display: flex; gap: 12px; align-items: center; pointer-events: none; }
+.lime-maps-toolbar > * { pointer-events: auto; }
+.lime-maps-brand { font-size: 16px; font-weight: 750; letter-spacing: -.5px; text-shadow: 0 1px 8px #000b; }
+.lime-maps-search { display: flex; gap: 10px; align-items: center; width: min(420px,100%); min-width: 0; padding: 10px 14px; background: #20262ce8; border: 1px solid #ffffff25; box-shadow: 0 4px 16px #0003; border-radius: 12px; color: #aeb7c0; }
+.lime-maps-search input { width: 100%; min-width: 0; background: transparent; color: #fff; outline: none; font-size: 13px; }
+.lime-maps-search svg { flex-shrink: 0; }
+.lime-maps-search button { display: flex; padding: 2px; }
+.lime-maps-tool { background: #20262ce8; border: 1px solid #ffffff25; border-radius: 10px; padding: 10px; }
+.lime-maps-guide { position: absolute; top: max(70px,calc(env(safe-area-inset-top) + 54px)); left: 16px; z-index: 500; display: flex; gap: 6px; align-items: center; font-size: 11px; color: #d5dbdf; text-shadow: 0 1px 5px #000; pointer-events: none; }
+.lime-maps-status { position: absolute; bottom: 24px; left: 16px; z-index: 500; display: flex; align-items: center; gap: 8px; padding: 10px 13px; border-radius: 10px; background: #20262cde; border: 1px solid #ffffff1a; font-size: 12px; }
+.lime-maps-status button { color: #ffed64; padding-left: 8px; }
+.lime-maps-dot-key { width: 6px; height: 6px; background: #ffed64; border-radius: 50%; }
+.lime-maps-data-error { position: absolute; bottom: 78px; left: 16px; z-index: 500; color: #eee; background: #20262ce8; border-radius: 8px; padding: 10px 12px; font-size: 12px; }
+@media (max-width: 639px) {
+  body:has([data-lime-maps]) [data-sonner-toaster] { max-width: calc(100vw - 32px); }
+  .lime-maps-brand { display: none; }
+  .lime-maps-toolbar { gap: 8px; left: 12px; right: 12px; }
+  .lime-maps-search { flex: 1; }
+}
+.lime-app-shell[data-lime-page="/maps"] .lime-desktop-column { grid-column: 2 / 4; border: 0; }
+.lime-app-shell[data-lime-page="/maps"] .lime-desktop-main { padding: 0; }
+.lime-app-shell .lime-maps-page { height: 100dvh; }
+.lime-app-shell .lime-maps-menu { display: none; }
+.lime-maps-sidebar-toggle { display: none; }
+.lime-app-shell:not([data-lime-ipad]) .lime-maps-sidebar-toggle { display: flex; }
+.lime-app-shell[data-lime-map-sidebar-collapsed] { grid-template-columns: 0 minmax(0,1fr) 0; }
+.lime-app-shell[data-lime-map-sidebar-collapsed] .lime-desktop-menu { display: none; }
+.lime-maps-loading { position: absolute; bottom: 24px; left: 16px; z-index: 500; background: #20262cde; padding: 10px; border-radius: 10px; }
+.lime-maps-more { position: absolute; bottom: 24px; left: 16px; z-index: 500; font-size: 12px; }
+:root:not(.dark) .lime-map,:root:not(.dark) .lime-maps-page { background: #e9ede7; color: #1b252b; }
+:root:not(.dark) .lime-map .leaflet-tile-pane { filter: none; }
+:root:not(.dark) .lime-maps-search,:root:not(.dark) .lime-maps-tool,:root:not(.dark) .lime-maps-loading,:root:not(.dark) .lime-maps-data-error,:root:not(.dark) .lime-map-error { background: #fffffff0; border-color: #26364225; color: #34434e; }
+:root:not(.dark) .lime-maps-search input { color: #1b252b; }
+:root:not(.dark) .lime-maps-brand { text-shadow: 0 1px 8px #fff; }
+:root:not(.dark) .lime-map .leaflet-bar a { background: #fff; color: #27343d; border-color: #26364225; }
+:root:not(.dark) .lime-map .leaflet-bar a:hover { background: #edf1f4; }
+:root:not(.dark) .lime-map .leaflet-control-attribution { background: #ffffffe0; color: #52626d; }
+:root:not(.dark) .lime-map .leaflet-control-attribution a { color: #385c75; }
+:root:not(.dark) .lime-map-post-popup .leaflet-popup-content-wrapper,:root:not(.dark) .lime-map-post-popup .leaflet-popup-tip { background: #fff; color: #1b252b; }
+:root:not(.dark) .lime-map-preview-author time { color: #687781; }
+:root:not(.dark) .lime-map-preview button { color: #9c6c00; }
+:root:not(.dark) .lime-map-dot span { background: #d59500; box-shadow: 0 0 0 1px #fff,0 0 4px #80500050; }

@@ -1,5 +1,6 @@
+import { UnreadBadge } from '@/components/notifications/UnreadBadge';
 import { useState, type ReactElement } from 'react';
-import { Check, Loader2, Plus, X } from 'lucide-react';
+import { Check, CircleEllipsis, Loader2, Plus, X } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { Drawer } from 'vaul';
 import { supabase } from '@/lib/supabase';
@@ -45,6 +46,7 @@ export function SavedAccountList({ onDone, managing = false, mobile = false }: {
         }}>
         <AccountAvatar account={account} />
         <span className="min-w-0 flex-1"><span className={`flex min-w-0 items-center gap-1 font-bold ${mobile ? "text-base" : "text-[15px]"}`}><span className="truncate">{account.displayName}</span>{account.isOfficial && <img src={`${import.meta.env.BASE_URL}verified.png`} alt="認証済み" className="h-4 w-4 shrink-0" />}</span><span className="block truncate text-sm text-muted-foreground">@{account.username}</span>{account.needsLogin && <span className="text-xs text-muted-foreground">再ログイン</span>}</span>
+        <UnreadBadge userId={account.id} floating={false} />
         {account.id === user?.id && <Check className={`h-5 w-5 shrink-0 ${mobile ? "rounded-full bg-primary p-1 text-primary-foreground" : "text-green-500"}`} aria-label="ログイン中" />}
       </button>
       {managing && account.id !== user?.id && <button type="button" disabled={switching} aria-label={`@${account.username}をこの端末の保存から削除`} className="mr-3 rounded-full p-2 text-muted-foreground hover:bg-muted" onClick={() => forgetAccount(account.id)}><X className="h-4 w-4" /></button>}
@@ -100,7 +102,8 @@ export function MobileAccountShortcuts({ onDone }: { onDone: () => void }) {
   return <div className="ml-auto flex shrink-0 items-center gap-1" data-lime-mobile-account-shortcuts>
     <MobileAccountSwitcher onDone={onDone}>
       <button type="button" disabled={switching} aria-label="アカウント一覧を開く" className="flex items-center gap-1 rounded-full p-1 disabled:opacity-50">
-        {switching ? <Loader2 className="h-5 w-5 animate-spin" /> : others.length ? others.slice(0, 2).map(account => <AccountAvatar key={account.id} account={account} small />) : <Plus className="h-5 w-5" />}
+        {switching ? <Loader2 className="h-5 w-5 animate-spin" /> : others.length ? others.slice(0, 2).map(account => <AccountAvatar key={account.id} account={account} small />) : null}
+        {!switching && <CircleEllipsis className="ml-2 h-6 w-6" />}
       </button>
     </MobileAccountSwitcher>
   </div>;

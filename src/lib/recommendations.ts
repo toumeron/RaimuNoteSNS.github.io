@@ -1,12 +1,19 @@
 import {matchingTopics} from './topics';
 import type { PostWithAuthor } from '@/types';
-import {TOPICS,topicAffinity,type TopicId} from './topics';
+import {TOPICS,isTopicId,topicAffinity,type TopicId} from './topics';
 import {recommendationIdentity,recommendationFingerprint} from './recommendationIdentity';
 import {recommendationIsEligible} from './recommendationEligibility';
 import {isDeclaredGeneratedArt} from './artRecommendations';
 import {recommendationOriginLanguages,recommendationTopicAffinity,recommendationTopicSignals,recommendationText} from './recommendationSignals';
-import {visualSimilarity,readVisualCache,applyCachedRecommendationVisuals} from './recommendationVisual';
+import {visualSimilarity as directVisualSimilarity,createVisualSimilarityComparator,readVisualCache,applyCachedRecommendationVisuals} from './recommendationVisual';
 
+// The scope ends with each scoring pass: no stale cache after feedback changes.
+let compareVisual:ReturnType<typeof createVisualSimilarityComparator>|undefined;
+const visualSimilarity=(a:number[],b:number[])=>compareVisual?compareVisual(a,b):directVisualSimilarity(a,b);
+function withScoringComparisons<T>(read:()=>T):T{
+ if(compareVisual)return read();
+ compareVisual=createVisualSimilarityComparator();try{return read();}finally{compareVisual=undefined;}
+}
 export type RecommendationFeedback={id:string;userId:string;fingerprint?:string;topics?:TopicId[];vector?:number[];imageUrls?:string[];visualKind?:string;createdAt:string};
 export type RecommendationPreferences = {
   authors: Record<string, number>;
@@ -30,7 +37,7 @@ export function selectRecommendationLikeSamples(rows:(PostWithAuthor & {engagedA
  const selected:typeof rows=[],rest:typeof rows=[];
  for(const row of unique){if(!authors.has(row.userId)&&selected.length<limit){authors.add(row.userId);selected.push(row);}else rest.push(row);}
  for(const row of rest){if(selected.length>=limit)break;selected.push(row);}
- return selected.map(row=>({id:row.id,userId:row.userId,content:row.content.slice(0,2000),imageUrls:row.imageUrls.slice(0,4),imageAltTexts:row.imageAltTexts?.slice(0,4),source:row.source,languages:row.languages,recommendationLanguages:row.recommendationLanguages,recommendationTopics:row.recommendationTopics,recommendationVisual:row.recommendationVisual,engagedAt:row.engagedAt,author:{id:row.userId,bio:row.author?.bio,displayName:row.author?.displayName}} as PostWithAuthor & {engagedAt?:string}));
+ return selected.map(row=>({id:row.id,userId:row.userId,content:row.content.slice(0,2000),imageUrls:row.imageUrls.slice(0,4),imageAltTexts:row.imageAltTexts?.slice(0,4),source:row.source,languages:row.languages,recommendationLanguages:row.recommendationLanguages,recommendationTopics:row.recommendationTopics,recommendationAuthorTopics:row.recommendationAuthorTopics,recommendationSources:row.recommendationSources,recommendationVisual:row.recommendationVisual,engagedAt:row.engagedAt,author:{id:row.userId,bio:row.author?.bio,displayName:row.author?.displayName}} as PostWithAuthor & {engagedAt?:string}));
 }
 const stopWords = new Set(['です','ます','した','して','する','ある','いる','これ','それ','ため','さん','こと','よう','今日','昨日','今回','自分','本当','こちら','みんな','https','http','www','com','the','and','with','this','that']);
 const concepts = [
@@ -40,15 +47,20 @@ const concepts = [
   ['music','音楽','楽曲','music','ライブ','コンサート'],
   ['programming','プログラミング','開発','typescript','javascript','python','coding'],
 ];
+let wordSegmenter:any;
+const termCache=new Map<string,string[]>();
 export function recommendationTerms(content: string): string[] {
   const text=content.replace(/https?:\/\/\S+/g,' ').normalize('NFKC').toLowerCase();
+  const cached=termCache.get(text);if(cached)return [...cached];
   const Segmenter=(Intl as any).Segmenter;
-  const words: string[]=Segmenter ? [...new Segmenter('ja',{granularity:'word'}).segment(text)].filter((s:any)=>s.isWordLike).map((s:any)=>s.segment) : text.match(/[\p{L}\p{N}]+/gu) ?? [];
+  if(Segmenter&&!wordSegmenter)wordSegmenter=new Segmenter('ja',{granularity:'word'});
+  const words: string[]=Segmenter ? [...wordSegmenter.segment(text)].filter((s:any)=>s.isWordLike).map((s:any)=>s.segment) : text.match(/[\p{L}\p{N}]+/gu) ?? [];
   const terms=[...new Set(words.filter(word=>!stopWords.has(word) && !/^\d+$/.test(word) && (word.length>1 || /\p{Script=Han}/u.test(word))))].slice(0,64);
   for(const [concept,...aliases] of concepts) if(aliases.some(alias=>terms.includes(alias))) terms.push(`topic:${concept}`);
-  return terms;
+  if(termCache.size>=512)termCache.delete(termCache.keys().next().value!);
+  termCache.set(text,terms);return [...terms];
 }
-export function addRecommendationInterest(preferences: RecommendationPreferences, post: {content?:string;userId?:string;user_id?:string;imageAltTexts?:string[];recommendationTopics?:string[];recommendationVisual?:PostWithAuthor['recommendationVisual'];linkPreview?:{title?:string;description?:string};languages?:string[];recommendationLanguages?:string[];author?:{id?:string;bio?:string;displayName?:string}}, weight:number, eventAt?:string, now=Date.now()) {
+export function addRecommendationInterest(preferences: RecommendationPreferences, post: {content?:string;userId?:string;user_id?:string;imageAltTexts?:string[];recommendationTopics?:string[];recommendationAuthorTopics?:string[];recommendationVisual?:PostWithAuthor['recommendationVisual'];linkPreview?:{title?:string;description?:string};languages?:string[];recommendationLanguages?:string[];author?:{id?:string;bio?:string;displayName?:string}}, weight:number, eventAt?:string, now=Date.now()) {
   const timestamp=eventAt ? Date.parse(eventAt) : now;
   const age=Number.isFinite(timestamp)?Math.max(0,(now-timestamp)/86400000):30;
   const longWeight=weight*Math.pow(0.5,age/60);
@@ -63,7 +75,12 @@ export function addRecommendationInterest(preferences: RecommendationPreferences
     preferences.authorLanguages??={};
     preferences.authorLanguages[author]=[...new Set([...(preferences.authorLanguages[author]??[]),...recommendationOriginLanguages(post)])];
     preferences.authorTopics??={};const profile=preferences.authorTopics[author]??={};
-    for(const topic of post.recommendationVisual?.topics??recommendationTopicSignals(post))profile[topic]=(profile[topic]??0)+longWeight;
+    // A liked image-only work can carry creator context without body keywords.
+    // Confident visual classification still takes precedence over source hints.
+    const topics=post.recommendationVisual?.kind&&post.recommendationVisual.kind!=='unknown'
+      ? post.recommendationVisual.topics
+      : [...new Set([...recommendationTopicSignals(post),...(post.recommendationAuthorTopics??[]).filter(isTopicId)])];
+    for(const topic of topics)profile[topic]=(profile[topic]??0)+longWeight;
   }
   const terms=recommendationTerms(recommendationText(post));
   // Normalize each event so verbose posts cannot dominate the user's profile.
@@ -101,37 +118,49 @@ type RecommendationDelivery={at:number;userId:string;fingerprint?:string};
 const deliveredMemory=new Map<string,Record<string,RecommendationDelivery>>();
 const deliveredKey=(viewerId:string|null)=>`lime_recommendation_deliveries:${viewerId??'guest'}`;
 export function readRecommendationDeliveries(viewerId:string|null,now=Date.now()):Record<string,RecommendationDelivery>{
- const key=deliveredKey(viewerId);let stored={};try{stored=JSON.parse(localStorage.getItem(key)??'{}');}catch{stored=deliveredMemory.get(key)??{};}
- return Object.fromEntries(Object.entries(stored).filter(([,row]:[string,any])=>row&&Number.isFinite(row.at)&&row.at<=now&&now-row.at<30*86400000&&typeof row.userId==='string')) as Record<string,RecommendationDelivery>;
+ // A fetched card is not a view. Reserve it briefly in this document so
+ // overlapping requests cannot repeat it; only visible impressions persist.
+ // Ignore legacy persisted deliveries, which suppressed unseen work for 30 days.
+ const stored=deliveredMemory.get(deliveredKey(viewerId))??{};
+ return Object.fromEntries(Object.entries(stored).filter(([,row])=>Number.isFinite(row.at)&&row.at<=now&&now-row.at<120000)) as Record<string,RecommendationDelivery>;
 }
 export function recordRecommendationDelivery(posts:PostWithAuthor[],viewerId:string|null,now=Date.now()):void{
  const key=deliveredKey(viewerId),rows=readRecommendationDeliveries(viewerId,now);
  for(const post of posts)rows[recommendationIdentity(post)]={at:now,userId:post.userId,fingerprint:recommendationFingerprint(post)};
  const bounded=Object.fromEntries(Object.entries(rows).sort((a,b)=>b[1].at-a[1].at).slice(0,5000));
- deliveredMemory.set(key,bounded);try{localStorage.setItem(key,JSON.stringify(bounded));}catch{}
+ deliveredMemory.set(key,bounded);
 }
 /** Keep a hard run limit independently of popularity or creator affinity. */
 export function selectRecommendationPage(ranked:PostWithAuthor[],preferences:RecommendationPreferences,history:PostWithAuthor[],limit=20){
+ return withScoringComparisons(()=>selectRecommendationPageInternal(ranked,preferences,history,limit));
+}
+function selectRecommendationPageInternal(ranked:PostWithAuthor[],preferences:RecommendationPreferences,history:PostWithAuthor[],limit:number){
  const posts:PostWithAuthor[]=[],remaining=[...ranked];
  const feedback=activeRecommendationFeedback(preferences,Date.now());
+ const scoring=prepareScoringContext(preferences,{},Date.now());
  const hasLikedPixels=preferences.likedSamples?.some(post=>post.recommendationVisual);
  while(posts.length<limit&&remaining.length){
   const recent=[...history.slice(-3),...posts].slice(-3),last=recent.at(-1)?.userId;
   let index=0;
   if(recent.length===3&&recent.every(post=>post.userId===last)){
-   index=remaining.findIndex(post=>post.userId!==last&&scoreRecommendation(post,preferences,null).total>0&&(!hasLikedPixels||!!preferences.authors[post.userId]||relatedRecommendationScore(post,preferences.likedSamples??[],preferences,feedback)>0));
+   index=remaining.findIndex(post=>post.userId!==last&&scoreRecommendation(post,preferences,null,scoring).total>0&&(!hasLikedPixels||!!preferences.authors[post.userId]||relatedRecommendationScore(post,preferences.likedSamples??[],preferences,feedback)>0));
    if(index<0)break;
   }
   posts.push(remaining.splice(index,1)[0]);
  }
  return {posts,remaining,blocked:posts.length<limit&&remaining.length>0};
 }
-function cosine(terms:string[],profile:Record<string,number>,idf:Record<string,number>):number {
+type CosineProfile={vector:Record<string,number>;norm:number};
+function prepareCosine(profile:Record<string,number>,idf:Record<string,number>):CosineProfile {
   const strongest=Object.entries(profile).filter(([,weight])=>weight>0).sort((a,b)=>b[1]-a[1]).slice(0,96);
   const vector=Object.fromEntries(strongest.map(([term,weight])=>[term,Math.log1p(weight)*(idf[term] ?? 1)]));
+  return {vector,norm:Object.values(vector).reduce((sum,value)=>sum+value*value,0)};
+}
+function cosine(terms:string[],profile:Record<string,number>,idf:Record<string,number>,prepared?:CosineProfile):number{
+  const {vector,norm:profileNorm}=prepared??prepareCosine(profile,idf);
   let dot=0,candidateNorm=0;
   for(const term of terms) {const weight=idf[term] ?? 1;dot+=weight*(vector[term] ?? 0);candidateNorm+=weight*weight;}
-  const profileNorm=Object.values(vector).reduce((sum,value)=>sum+value*value,0);
+
   return candidateNorm && profileNorm ? dot/Math.sqrt(candidateNorm*profileNorm):0;
 }
 function activeRecommendationFeedback(preferences:RecommendationPreferences,now:number):RecommendationFeedback[] {
@@ -148,14 +177,18 @@ function positiveImageSimilarity(post:PostWithAuthor,preferences:RecommendationP
 export type RecommendationScore = {
   interest:number;recentInterest:number;author:number;follow:number;freshness:number;quality:number;seenPenalty:number;spamPenalty:number;selfPenalty:number;total:number;
 };
-export function scoreRecommendation(post:PostWithAuthor,preferences:RecommendationPreferences,viewerId:string|null,context:{idf?:Record<string,number>;impressions?:Record<string,Impression>;now?:number}={}):RecommendationScore {
+type ScoringContext={idf?:Record<string,number>;impressions?:Record<string,Impression>;now?:number;profiles?:{long:CosineProfile;recent:CosineProfile};feedback?:RecommendationFeedback[]};
+function prepareScoringContext(preferences:RecommendationPreferences,idf:Record<string,number>,now:number,impressions?:Record<string,Impression>):ScoringContext {
+ return {idf,now,impressions,profiles:{long:prepareCosine(preferences.terms,idf),recent:prepareCosine(preferences.recentTerms??preferences.terms,idf)},feedback:activeRecommendationFeedback(preferences,now)};
+}
+export function scoreRecommendation(post:PostWithAuthor,preferences:RecommendationPreferences,viewerId:string|null,context:ScoringContext={}):RecommendationScore {
   const now=context.now ?? Date.now();
   const relevanceText=recommendationText(post);
   const terms=recommendationTerms(relevanceText);
   const timestamp=Date.parse(post.createdAt);
   const age=Number.isFinite(timestamp)?Math.max(0,(now-timestamp)/3600000):168;
-  const interest=cosine(terms,preferences.terms,context.idf ?? {});
-  const recentInterest=cosine(terms,preferences.recentTerms ?? preferences.terms,context.idf ?? {});
+  const interest=cosine(terms,preferences.terms,context.idf ?? {},context.profiles?.long);
+  const recentInterest=cosine(terms,preferences.recentTerms ?? preferences.terms,context.idf ?? {},context.profiles?.recent);
   const author=1-Math.exp(-((preferences.authors[post.userId] ?? 0)+(preferences.recentAuthors?.[post.userId] ?? 0))/8);
   const follow=preferences.followedAuthors?.includes(post.userId)?1:0;
   const freshness=Math.pow(0.5,age/48);
@@ -179,7 +212,7 @@ export function scoreRecommendation(post:PostWithAuthor,preferences:Recommendati
   // Shared visual composition/style learned from liked works applies to every
   // media topic. A caption cannot provide this signal.
   const mediaInterest=72*Math.max(0,(visualInterest-.35)/.65);
-  const negatives=activeRecommendationFeedback(preferences,now);
+  const negatives=context.feedback??activeRecommendationFeedback(preferences,now);
   const dislikedAuthor=negatives.filter(row=>row.userId===post.userId).length;
   const negativeSimilarity=imageFeedbackSimilarity(post,negatives);
   const positiveSimilarity=positiveImageSimilarity(post,preferences);
@@ -238,6 +271,9 @@ export function recommendationIsDismissed(post:PostWithAuthor,preferences:Recomm
  return neighbors.length>=3&&neighbors.slice(0,3).reduce((sum,value)=>sum+value,0)/3>positive+.025;
 }
 export function rankRecommendations(posts:PostWithAuthor[], preferences:RecommendationPreferences, viewerId:string|null, now=Date.now(), history:PostWithAuthor[]=[],rankLimit=Infinity):PostWithAuthor[] {
+ return withScoringComparisons(()=>rankRecommendationsInternal(posts,preferences,viewerId,now,history,rankLimit));
+}
+function rankRecommendationsInternal(posts:PostWithAuthor[], preferences:RecommendationPreferences, viewerId:string|null, now:number, history:PostWithAuthor[],rankLimit:number):PostWithAuthor[] {
   const impressions=readRecommendationImpressions(viewerId,now);
   const deliveries=readRecommendationDeliveries(viewerId,now);
   const deliveredFingerprints=new Set(Object.values(deliveries).map(row=>row.fingerprint).filter(Boolean));
@@ -278,7 +314,8 @@ export function rankRecommendations(posts:PostWithAuthor[], preferences:Recommen
   const counts:Record<string,number>={};
   for(const post of unique) for(const term of recommendationTerms(recommendationText(post))) counts[term]=(counts[term] ?? 0)+1;
   const idf=Object.fromEntries(Object.entries(counts).map(([term,count])=>[term,1+Math.log((unique.length+1)/(count+1))]));
-  const candidates=unique.map(post=>({post,score:scoreRecommendation(post,preferences,viewerId,{idf,impressions,now}).total,terms:termCache.get(post.id)!}));
+  const scoring=prepareScoringContext(preferences,idf,now,impressions);
+  const candidates=unique.map(post=>({post,score:scoreRecommendation(post,preferences,viewerId,scoring).total,terms:termCache.get(post.id)!}));
   const seedAuthors=new Set(Object.entries(preferences.authors).filter(([,weight])=>weight>0).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([id])=>id));
   const anchors=preferences.likedSamples??[];
   const relatedScores=new Map(unique.map(post=>[post.id,relatedRecommendationScore(post,anchors,preferences,feedback)]));

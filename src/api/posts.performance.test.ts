@@ -2,19 +2,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const db = vi.hoisted(() => ({
   rows: {} as Record<string, Record<string, unknown>[]>,
-  calls: [] as { table: string; filters: Record<string, unknown>; select: string }[],
+  calls: [] as { table: string; filters: Record<string, unknown>; select: string; signal?:AbortSignal }[],
   errors: {} as Record<string, Error>,
 }));
 vi.mock('@/lib/currentUser', () => ({ getCurrentUserId: async () => 'viewer' }));
 vi.mock('@/lib/supabase', () => ({
   supabase: {
     from: (table: string) => {
-      const call = { table, filters: {} as Record<string, unknown>, select: '' };
+      const call = { table, filters: {} as Record<string, unknown>, select: '',signal:undefined as AbortSignal|undefined };
       const builder = {
         select: (columns: string) => { call.select = columns; return builder; },
         eq: (column: string, value: unknown) => { call.filters[column] = value; return builder; },
         in: (column: string, values: unknown[]) => { call.filters[column] = values; return builder; },
         or: (value: string) => { call.filters.or = value; return builder; },
+        abortSignal: (signal:AbortSignal) => {call.signal=signal;return builder;},
         ilike: () => builder,
         order: () => builder,
         range: (from: number, to: number) => { call.filters.range = [from, to]; return builder; },
@@ -283,3 +284,16 @@ describe('profile highlights feed', () => {
     await expect(getHighlightedPosts('author')).rejects.toThrow('unavailable');
   });
 });
+
+ it.each([
+ ['feed',(signal:AbortSignal)=>getFeed(0,8,undefined,signal)],
+ ['author',(signal:AbortSignal)=>getPostsByUser('author',0,8,signal)],
+ ['search',(signal:AbortSignal)=>searchPosts('post',0,8,signal)],
+ ])('forwards cancellation to every %s page query',async(_,load)=>{
+ const controller=new AbortController();await load(controller.signal);
+ expect(db.calls.length).toBeGreaterThan(0);expect(db.calls.every(call=>call.signal===controller.signal)).toBe(true);
+ });
+ it('does not start DB reads for an already cancelled recommendation source',async()=>{
+ const controller=new AbortController();controller.abort(new DOMException('Cancelled','AbortError'));
+ await expect(getFeed(0,8,undefined,controller.signal)).rejects.toThrow('Cancelled');expect(db.calls).toEqual([]);
+ });

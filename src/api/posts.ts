@@ -1,3 +1,4 @@
+import { validMapLocation, type MapLocation, type MapBounds } from '@/lib/mapLocation';
 import { uploadPostMedia } from '@/lib/uploadPostMedia';
 import { getClientName } from '@/lib/clientName';
 import type { PostWithAuthor } from '@/types';
@@ -37,6 +38,7 @@ function rowToPost(row: any, likedIds: Set<string>, repostedIds: Set<string>): P
   return {
     ...row,
     id:            row.id,
+    mapLocation: row.map_latitude != null && row.map_longitude != null ? {latitude: row.map_latitude, longitude: row.map_longitude} : null,
     userId:        row.user_id,
     content:       row.content,
     imageUrls:     row.image_urls   ?? [],
@@ -59,13 +61,13 @@ function rowToPost(row: any, likedIds: Set<string>, repostedIds: Set<string>): P
 type ViewerPostRow = { id: string; parent_post?: { id: string } | null };
 
 // Apply the same visibility rules to reposted and quoted originals.
-async function filterVisibleRows(rows: any[], userId: string | null): Promise<any[]> {
+async function filterVisibleRows(rows: any[], userId: string | null,signal?:AbortSignal): Promise<any[]> {
   const restrictedAuthors = [...new Set(rows.filter(row => row.visibility && row.visibility !== 'public' && row.user_id !== userId).map(row => row.user_id))];
   if (!restrictedAuthors.length) return rows;
   if (!userId) return rows.filter(row => !row.visibility || row.visibility === 'public');
   const [follows, memberships] = await Promise.all([
-    supabase.from('follows').select('follower_id').eq('followee_id', userId).in('follower_id', restrictedAuthors),
-    supabase.from('memberships').select('creator_id').eq('member_id', userId).in('creator_id', restrictedAuthors),
+    readWithSignal(supabase.from('follows').select('follower_id').eq('followee_id', userId).in('follower_id', restrictedAuthors),signal),
+    readWithSignal(supabase.from('memberships').select('creator_id').eq('member_id', userId).in('creator_id', restrictedAuthors),signal),
   ]);
   const following = new Set((follows.data ?? []).map(row => row.follower_id));
   const members = new Set((memberships.data ?? []).map(row => row.creator_id));
@@ -74,17 +76,25 @@ async function filterVisibleRows(rows: any[], userId: string | null): Promise<an
     || (row.visibility === 'members' && members.has(row.user_id)));
 }
 
+function readWithSignal<T extends {abortSignal(signal:AbortSignal):unknown}>(query:T,signal?:AbortSignal):T {
+  if(signal?.aborted)throw signal.reason;
+  return signal?query.abortSignal(signal) as T:query;
+}
+
 // Fetch fresh viewer state only for this page and its quoted parent posts.
-async function getViewerReactions(userId: string, rows: ViewerPostRow[]) {
+async function getViewerReactions(userId: string, rows: ViewerPostRow[],signal?:AbortSignal) {
+  if(signal?.aborted)throw signal.reason;
   const parents = rows.map((row: any) => row.parent_post).filter(Boolean);
-  const visibleParents = new Set((await filterVisibleRows(parents, userId)).map(row => row.id));
+  const visibleParents = new Set((await filterVisibleRows(parents, userId,signal)).map(row => row.id));
+  if(signal?.aborted)throw signal.reason;
   rows.forEach((row: any) => { if (row.parent_post && !visibleParents.has(row.parent_post.id)) row.parent_post = null; });
   const postIds = [...new Set(rows.flatMap((row) => [row.id, row.parent_post?.id]).filter(Boolean))];
   if (postIds.length === 0) return { likedIds: new Set<string>(), repostedIds: new Set<string>() };
   const [likesRes, repostsRes] = await Promise.all([
-    supabase.from('likes').select('post_id').eq('user_id', userId).in('post_id', postIds),
-    supabase.from('reposts').select('post_id').eq('user_id', userId).in('post_id', postIds),
+    readWithSignal(supabase.from('likes').select('post_id').eq('user_id', userId).in('post_id', postIds),signal),
+    readWithSignal(supabase.from('reposts').select('post_id').eq('user_id', userId).in('post_id', postIds),signal),
   ]);
+  if(signal?.aborted)throw signal.reason;
   // Viewer flags are optional enrichment. A missing reactions table or failed
   // request must not discard posts that were successfully fetched.
   // Keep each successful response even when the other one fails.
@@ -99,16 +109,17 @@ async function getViewerReactions(userId: string, rows: ViewerPostRow[]) {
  * ロジック: 公開投稿、自分の投稿、自分をフォローしている人の投稿、
  * または自分がメンバーになっている投稿主のメンバー限定投稿を表示
  */
-export async function getFeed(page: number = 0, limit: number = 10, before?: FeedCursor): Promise<PostWithAuthor[]> {
+export async function getFeed(page: number = 0, limit: number = 10, before?: FeedCursor,signal?:AbortSignal): Promise<PostWithAuthor[]> {
   const userId = await getCurrentUserId();
   
+  if(signal?.aborted)throw signal.reason;
   const from = before ? 0 : page * limit;
   const to = from + limit - 1;
 
   // 「自分(userId)をフォローしている投稿主」のリストを取得
   const [{ data: followedByData }, { data: membershipsData }] = await Promise.all([
-    supabase.from('follows').select('follower_id').eq('followee_id', userId),
-    supabase.from('memberships').select('creator_id').eq('member_id', userId),
+    readWithSignal(supabase.from('follows').select('follower_id').eq('followee_id', userId),signal),
+    readWithSignal(supabase.from('memberships').select('creator_id').eq('member_id', userId),signal),
   ]);
   const authorsWhoFollowMe = followedByData?.map(f => f.follower_id) || [];
 
@@ -130,7 +141,7 @@ export async function getFeed(page: number = 0, limit: number = 10, before?: Fee
     conditions.push(`and(user_id.in.(${creatorsIAmMemberOf.join(',')}),visibility.eq.members)`);
   }
 
-  const postsRes = await supabase
+  const postsRes = await readWithSignal(supabase
       .from('posts')
       .select(POST_SELECT_QUERY)
       .or(before
@@ -138,10 +149,10 @@ export async function getFeed(page: number = 0, limit: number = 10, before?: Fee
         : conditions.join(','))
       .order('created_at', { ascending: false })
       .order('id', { ascending: false })
-      .range(from, to);
+      .range(from, to),signal);
   if (postsRes.error) throw postsRes.error;
   const rows = postsRes.data ?? [];
-  const { likedIds, repostedIds } = await getViewerReactions(userId, rows);
+  const { likedIds, repostedIds } = await getViewerReactions(userId, rows,signal);
   return rows.map((row: any) => rowToPost(row, likedIds, repostedIds));
 }
 
@@ -206,20 +217,21 @@ export async function getFollowingFeed(page: number = 0, limit: number = 10, bef
  * - following: 投稿主が閲覧者をフォローしている場合のみ表示
  * - members: 閲覧者が投稿主のメンバーである場合のみ表示
  */
-export async function getPostsByUser(targetUserId: string, page: number = 0, limit: number = 10): Promise<PostWithAuthor[]> {
+export async function getPostsByUser(targetUserId: string, page: number = 0, limit: number = 10,signal?:AbortSignal): Promise<PostWithAuthor[]> {
   const userId = await getCurrentUserId();
   
+  if(signal?.aborted)throw signal.reason;
   const from = page * limit;
   const to = from + limit - 1;
 
   const [{ data: authorFollowsMe }, { data: membershipRow }] = await Promise.all([
     userId !== targetUserId
-      ? supabase.from('follows').select('follower_id')
-          .eq('follower_id', targetUserId).eq('followee_id', userId).maybeSingle()
+      ? readWithSignal(supabase.from('follows').select('follower_id')
+          .eq('follower_id', targetUserId).eq('followee_id', userId),signal).maybeSingle()
       : Promise.resolve({ data: null }),
     userId !== targetUserId
-      ? supabase.from('memberships').select('id')
-          .eq('creator_id', targetUserId).eq('member_id', userId).maybeSingle()
+      ? readWithSignal(supabase.from('memberships').select('id')
+          .eq('creator_id', targetUserId).eq('member_id', userId),signal).maybeSingle()
       : Promise.resolve({ data: null }),
   ]);
   const viewerIsMember = Boolean(membershipRow);
@@ -238,10 +250,10 @@ export async function getPostsByUser(targetUserId: string, page: number = 0, lim
     query = query.in('visibility', allowedVisibilities);
   }
 
-  const postsRes = await query.order('created_at', { ascending: false }).order('id', { ascending: false }).range(from, to);
+  const postsRes = await readWithSignal(query.order('created_at', { ascending: false }).order('id', { ascending: false }).range(from, to),signal);
   if (postsRes.error) throw postsRes.error;
   const rows = postsRes.data ?? [];
-  const { likedIds, repostedIds } = await getViewerReactions(userId, rows);
+  const { likedIds, repostedIds } = await getViewerReactions(userId, rows,signal);
   return rows.map((row: any) => rowToPost(row, likedIds, repostedIds));
 }
 
@@ -287,15 +299,16 @@ export async function getLikedPostsByUser(targetUserId: string, page: number = 0
  * タイムライン(getFeed)と同様に、自分がメンバーになっている投稿主の
  * メンバー限定投稿も検索結果に含める。
  */
-export async function searchPosts(query: string, page: number = 0, limit: number = 10): Promise<PostWithAuthor[]> {
+export async function searchPosts(query: string, page: number = 0, limit: number = 10,signal?:AbortSignal): Promise<PostWithAuthor[]> {
   const userId = await getCurrentUserId();
   
+  if(signal?.aborted)throw signal.reason;
   const from = page * limit;
   const to = from + limit - 1;
 
   const [{ data: followedByData }, { data: membershipsData }] = await Promise.all([
-    supabase.from('follows').select('follower_id').eq('followee_id', userId),
-    supabase.from('memberships').select('creator_id').eq('member_id', userId),
+    readWithSignal(supabase.from('follows').select('follower_id').eq('followee_id', userId),signal),
+    readWithSignal(supabase.from('memberships').select('creator_id').eq('member_id', userId),signal),
   ]);
   const authorsWhoFollowMe = followedByData?.map(f => f.follower_id) || [];
 
@@ -314,16 +327,16 @@ export async function searchPosts(query: string, page: number = 0, limit: number
     conditions.push(`and(user_id.in.(${creatorsIAmMemberOf.join(',')}),visibility.eq.members)`);
   }
 
-  const postsRes = await supabase
+  const postsRes = await readWithSignal(supabase
       .from('posts')
       .select(POST_SELECT_QUERY)
       .ilike('content', `%${query}%`)
       .or(conditions.join(','))
       .order('created_at', { ascending: false })
-      .range(from, to);
+      .range(from, to),signal);
   if (postsRes.error) throw postsRes.error;
   const rows = postsRes.data ?? [];
-  const { likedIds, repostedIds } = await getViewerReactions(userId, rows);
+  const { likedIds, repostedIds } = await getViewerReactions(userId, rows,signal);
   return rows.map((row: any) => rowToPost(row, likedIds, repostedIds));
 }
 
@@ -381,6 +394,7 @@ export async function getPostById(id: string): Promise<PostWithAuthor | null> {
 }
 
 export async function createPost(input: {
+  mapLocation?: MapLocation | null;
   content: string;
   imageUrls: string[];
   parentId?: string;
@@ -389,6 +403,7 @@ export async function createPost(input: {
   isBot?: boolean; // 追加
 }): Promise<PostWithAuthor> {
   const userId = await getCurrentUserId();
+  if (input.mapLocation && !validMapLocation(input.mapLocation)) throw new Error('場所が無効です');
   const newId = crypto.randomUUID();
 
   const IMAGE_URL_PATTERN = /(https?:\/\/.*\.(?:png|jpg|jpeg|gif|webp|svg|avif)(?:\?.*)?)/gi;
@@ -418,6 +433,7 @@ export async function createPost(input: {
     ...(externalParent ? { quoted_external_post: externalParent } : {}),
     is_quote:    input.isQuote || false,
     visibility:  input.visibility || 'public',
+    ...(input.mapLocation ? {map_latitude: input.mapLocation.latitude, map_longitude: input.mapLocation.longitude} : {}),
     is_bot:      input.isBot || false // AIフラグをDBに保存
   });
 
@@ -538,4 +554,27 @@ export async function getProfilePosts(userId: string, page = 0, limit = 10): Pro
     const dateB = b.profileRepostedAt ?? b.createdAt;
     return dateB.localeCompare(dateA) || b.id.localeCompare(a.id);
   }).slice(page * limit, end);
+}
+
+
+export async function getMapPosts(bounds: MapBounds, before?: FeedCursor, signal?: AbortSignal, search = ''): Promise<PostWithAuthor[]> {
+  let query = supabase.from('posts').select(POST_SELECT_QUERY).eq('visibility', 'public')
+    .not('map_latitude', 'is', null).gte('map_latitude', bounds.south).lte('map_latitude', bounds.north);
+  if (bounds.west <= bounds.east) query = query.gte('map_longitude', bounds.west).lte('map_longitude', bounds.east);
+  if (search.trim()) query = query.ilike('content', `%${search.trim().replace(/[\\%_]/g, '\\$&')}%`);
+  const longitudeFilter = bounds.west > bounds.east ? `or(map_longitude.gte.${bounds.west},map_longitude.lte.${bounds.east})` : '';
+  const cursorFilter = before ? `or(created_at.lt.${before.createdAt},and(created_at.eq.${before.createdAt},id.lt.${before.id}))` : '';
+  const filters = [longitudeFilter, cursorFilter].filter(Boolean);
+  if (filters.length) query = query.or(`and(${filters.join(',')})`);
+  if (signal) query = query.abortSignal(signal);
+  const {data, error} = await query.order('created_at', {ascending:false}).order('id', {ascending:false}).limit(40);
+  if (error) throw error;
+  const viewer = await getCurrentUserId();
+  const {likedIds, repostedIds} = await getViewerReactions(viewer, data ?? [], signal);
+  return (data ?? []).map(row => rowToPost(row, likedIds, repostedIds));
+}
+export async function setPostMapLocation(postId: string, location: MapLocation | null): Promise<void> {
+  if (location && !validMapLocation(location)) throw new Error('場所が無効です');
+  const {error} = await supabase.rpc('set_post_map_location', {post_id:postId, latitude:location?.latitude ?? null, longitude:location?.longitude ?? null});
+  if (error) throw error;
 }

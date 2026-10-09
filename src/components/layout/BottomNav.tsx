@@ -1,7 +1,8 @@
+import { UnreadBadge } from '@/components/notifications/UnreadBadge';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { Home, User as UserIcon, Settings as SettingsIcon, Search, MessageSquare } from 'lucide-react';
+import { Bell, Home, User as UserIcon, Settings as SettingsIcon, Search, MessageSquare } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
 import { CommentForm } from '@/components/post/CommentForm';
@@ -153,7 +154,8 @@ function useIsMobileKeyboardOpen() {
         return;
       }
 
-      const heightDiff = window.innerHeight - viewport.height;
+      const editing = document.activeElement instanceof HTMLElement && (document.activeElement.matches('input, textarea') || document.activeElement.isContentEditable);
+      const heightDiff = editing ? window.innerHeight - viewport.height : 0;
       setKeyboardInset(heightDiff > 120 ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop) : 0);
     };
 
@@ -163,12 +165,16 @@ function useIsMobileKeyboardOpen() {
     viewport?.addEventListener('scroll', update);
     window.addEventListener('resize', update);
     window.addEventListener('orientationchange', update);
+    window.addEventListener('focusin', update);
+    window.addEventListener('focusout', update);
 
     return () => {
       viewport?.removeEventListener('resize', update);
       viewport?.removeEventListener('scroll', update);
       window.removeEventListener('resize', update);
       window.removeEventListener('orientationchange', update);
+      window.removeEventListener('focusin', update);
+      window.removeEventListener('focusout', update);
     };
   }, []);
 
@@ -277,6 +283,7 @@ export function BottomNav() {
     { to: '/', icon: Home, label: 'ホーム', end: true },
     { to: '/search', icon: Search, label: '検索', onClick: handleSearchNavClick },
     { to: `/u/${user.username}`, icon: UserIcon, label: 'プロフ' },
+    { to: '/notifications', icon: Bell, label: '通知' },
     { to: '/chat', icon: MessageSquare, label: 'チャット' },
     { to: '/settings', icon: SettingsIcon, label: '設定' },
   ];
@@ -318,6 +325,7 @@ export function BottomNav() {
       style={{
         zIndex: 120,
         isolation: 'isolate',
+        borderBottomLeftRadius: 'var(--lime-mobile-drawer-radius, 0px)',
         borderTop: hideTopBorder ? '0 solid transparent' : undefined,
         borderTopWidth: hideTopBorder ? 0 : undefined,
         borderTopColor: hideTopBorder ? 'transparent' : undefined,
@@ -350,16 +358,17 @@ export function BottomNav() {
         </div>
       )}
 
-      <ul hidden={isKeyboardOpen} className={cn("mx-auto max-w-md grid-cols-5", isKeyboardOpen ? "hidden" : "grid")}>
+      <ul hidden={isKeyboardOpen} className={cn("mx-auto max-w-md grid-cols-6", isKeyboardOpen ? "hidden" : "grid")}>
         {items.map((it) => (
           <li key={it.to}>
             <NavLink
               to={it.to}
+              aria-label={it.label}
               end={it.end}
               onClick={it.onClick}
               className={({ isActive }) =>
                 cn(
-                  'flex flex-col items-center gap-1 py-2.5 text-[10px] font-bold transition',
+                  'flex h-14 items-center justify-center transition-colors',
                   useTimelineChromeDesign
                     ? isActive
                       ? 'text-primary'
@@ -372,8 +381,7 @@ export function BottomNav() {
                 )
               }
             >
-              <it.icon className="h-5 w-5" />
-              {it.label}
+              <span className="relative inline-flex"><it.icon className="h-6 w-6" />{it.to === "/notifications" && <UnreadBadge />}</span>
             </NavLink>
           </li>
         ))}

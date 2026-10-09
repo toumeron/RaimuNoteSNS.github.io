@@ -7,18 +7,17 @@ import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription} from '@
 import {useQueryClient} from '@tanstack/react-query';
 import {configuredMisskeyHandles,isMisskeyActor} from '@/lib/misskey';
 import {CompanionSettings} from '@/components/ai/CompanionSettings';
-import { createPortal } from 'react-dom';
-import { useCallback, useEffect, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import {
   Download,
   ImagePlus,
+  Check,
   Loader2,
   LogOut,
   Moon,
   Sun,
   Monitor,
   Sparkles,
-  Check,
   Bot,
   MessageSquareText,
   Smile,
@@ -28,17 +27,21 @@ import {
   CreditCard,
   X,
   Plus,
+  Search,
+  ChevronRight,
+  ArrowLeft,
 } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Separator } from '@/components/ui/separator';
+import { useDesktopLayout } from '@/components/layout/DesktopLayoutContext';
+import { SETTINGS_DESCRIPTIONS, SETTINGS_GROUPS, SETTINGS_SECTIONS, settingsGroupForSection } from '@/lib/settingsSections';
+import './settings.css';
 import { useAuth } from '@/hooks/useAuth';
 import { useUpdateProfile } from '@/hooks/useProfile';
-import { Link, useNavigate } from 'react-router-dom';
-import { z } from 'zod';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useTheme } from 'next-themes';
 import { Switch } from '@/components/ui/switch';
@@ -54,11 +57,6 @@ import {
   type BlueskySession,
 } from '@/lib/bluesky';
 
-const schema = z.object({
-  displayName: z.string().trim().min(1, '表示名を入力してください').max(30, '30文字以内で入力してください'),
-  bio: z.string().max(160, '自己紹介は160文字以内で入力してください'),
-  location: z.string().trim().max(100, '場所は100文字以内で入力してください'),
-});
 
 interface CustomEmoji {
   id: string;
@@ -83,375 +81,6 @@ const fetchBlueskyProfile = async (handle:string):Promise<BlueskyProfileInfo> =>
     return {handle:profile.username,displayName:profile.displayName,avatar:profile.avatarUrl};
   } catch { return {handle}; }
 };
-
-type ProfileImageCropTarget = 'avatar' | 'cover';
-
-type ProfileCropOffset = { x: number; y: number };
-
-const PROFILE_CROP_LIMIT = { min: 1, max: 3 };
-
-interface ProfileImageCropperProps {
-  src: string;
-  target: ProfileImageCropTarget;
-  onApply: (url: string) => void;
-  onClose: () => void;
-}
-
-function ProfileImageCropper({ src, target, onApply, onClose }: ProfileImageCropperProps) {
-  const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
-  const [boxSize, setBoxSize] = useState({ width: 0, height: 0 });
-  const [zoom, setZoom] = useState(1);
-  const [offset, setOffset] = useState<ProfileCropOffset>({ x: 0, y: 0 });
-  const [saving, setSaving] = useState(false);
-  const boxRef = useRef<HTMLDivElement>(null);
-  const imageRef = useRef<HTMLImageElement | null>(null);
-  const offsetRef = useRef<ProfileCropOffset>({ x: 0, y: 0 });
-  const zoomRef = useRef(1);
-  const dragRef = useRef({ active: false, startX: 0, startY: 0, baseX: 0, baseY: 0 });
-  const pointersRef = useRef(new Map<number, { x: number; y: number }>());
-  const pinchRef = useRef({ active: false, startDistance: 0, startZoom: 1, startMidX: 0, startMidY: 0, baseX: 0, baseY: 0 });
-
-  // 切り抜き画面は、完成後の比率をそのまま操作しやすいサイズで表示する。
-  // アイコンは正方形、ヘッダーは3:1の横長。
-  const outputSize = target === 'avatar'
-    ? { width: 512, height: 512 }
-    : { width: 1500, height: 500 };
-
-  const isAvatar = target === 'avatar';
-
-  const cropFrameStyle = isAvatar
-    ? {
-        width: 'min(86vw, 520px)',
-        aspectRatio: '1 / 1',
-        borderRadius: '0',
-      }
-    : {
-        width: 'min(94vw, 960px)',
-        aspectRatio: '3 / 1',
-        borderRadius: '0.75rem',
-      };
-
-  const modalClassName = isAvatar
-    ? 'flex w-[min(94vw,620px)] max-w-[620px] flex-col overflow-hidden rounded-2xl bg-card text-card-foreground shadow-2xl'
-    : 'flex w-[min(96vw,1120px)] max-w-[1120px] flex-col overflow-hidden rounded-2xl bg-card text-card-foreground shadow-2xl';
-
-  const cropAreaClassName = isAvatar
-    ? 'flex min-h-0 flex-none items-center justify-center overflow-hidden bg-muted/20 px-3 py-4 sm:px-6 sm:py-6'
-    : 'flex min-h-0 flex-none items-center justify-center overflow-hidden bg-muted/20 px-2 py-3 sm:px-5 sm:py-5';
-
-  useEffect(() => {
-    offsetRef.current = offset;
-  }, [offset]);
-
-  useEffect(() => {
-    zoomRef.current = zoom;
-  }, [zoom]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const img = new Image();
-    img.onload = () => {
-      if (cancelled) return;
-      imageRef.current = img;
-      setImageSize({ width: img.naturalWidth, height: img.naturalHeight });
-      setZoom(1);
-      setOffset({ x: 0, y: 0 });
-    };
-    img.onerror = () => {
-      if (!cancelled) {
-        toast.error('画像を読み込めませんでした');
-        onClose();
-      }
-    };
-    img.src = src;
-    return () => { cancelled = true; };
-  }, [onClose, src]);
-
-  useEffect(() => {
-    const update = () => {
-      const rect = boxRef.current?.getBoundingClientRect();
-      if (rect) setBoxSize({ width: rect.width, height: rect.height });
-    };
-    update();
-    window.addEventListener('resize', update);
-    const observer = typeof ResizeObserver !== 'undefined' && boxRef.current
-      ? new ResizeObserver(update)
-      : null;
-    if (boxRef.current) observer?.observe(boxRef.current);
-    return () => {
-      window.removeEventListener('resize', update);
-      observer?.disconnect();
-    };
-  }, []);
-
-  const clampOffset = useCallback((next: ProfileCropOffset, nextZoom = zoomRef.current) => {
-    if (!imageSize.width || !imageSize.height || !boxSize.width || !boxSize.height) return next;
-    const baseScale = Math.max(boxSize.width / imageSize.width, boxSize.height / imageSize.height);
-    const scale = baseScale * nextZoom;
-    const renderedWidth = imageSize.width * scale;
-    const renderedHeight = imageSize.height * scale;
-    const maxX = Math.max(0, (renderedWidth - boxSize.width) / 2);
-    const maxY = Math.max(0, (renderedHeight - boxSize.height) / 2);
-    return {
-      x: Math.min(maxX, Math.max(-maxX, next.x)),
-      y: Math.min(maxY, Math.max(-maxY, next.y)),
-    };
-  }, [boxSize.height, boxSize.width, imageSize.height, imageSize.width]);
-
-  const updateTransform = useCallback((nextZoom: number, nextOffset: ProfileCropOffset) => {
-    const z = Math.min(PROFILE_CROP_LIMIT.max, Math.max(PROFILE_CROP_LIMIT.min, nextZoom));
-    const o = clampOffset(nextOffset, z);
-    zoomRef.current = z;
-    offsetRef.current = o;
-    setZoom(z);
-    setOffset(o);
-  }, [clampOffset]);
-
-  const startGesture = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-    const pointers = pointersRef.current;
-    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-
-    if (pointers.size >= 2) {
-      const [a, b] = Array.from(pointers.values());
-      const distance = Math.hypot(a.x - b.x, a.y - b.y);
-      pinchRef.current = {
-        active: true,
-        startDistance: distance,
-        startZoom: zoomRef.current,
-        startMidX: (a.x + b.x) / 2,
-        startMidY: (a.y + b.y) / 2,
-        baseX: offsetRef.current.x,
-        baseY: offsetRef.current.y,
-      };
-      dragRef.current.active = false;
-      return;
-    }
-
-    pinchRef.current.active = false;
-    dragRef.current = {
-      active: true,
-      startX: event.clientX,
-      startY: event.clientY,
-      baseX: offsetRef.current.x,
-      baseY: offsetRef.current.y,
-    };
-  }, []);
-
-  useEffect(() => {
-    const move = (event: PointerEvent) => {
-      const pointers = pointersRef.current;
-      if (pointers.has(event.pointerId)) {
-        pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-      }
-
-      if (pointers.size >= 2) {
-        event.preventDefault();
-        const [a, b] = Array.from(pointers.values());
-        const distance = Math.hypot(a.x - b.x, a.y - b.y);
-        const midX = (a.x + b.x) / 2;
-        const midY = (a.y + b.y) / 2;
-        const pinch = pinchRef.current;
-        if (!pinch.active) {
-          pinchRef.current = {
-            active: true,
-            startDistance: distance,
-            startZoom: zoomRef.current,
-            startMidX: midX,
-            startMidY: midY,
-            baseX: offsetRef.current.x,
-            baseY: offsetRef.current.y,
-          };
-          return;
-        }
-        const nextZoom = pinch.startZoom * distance / Math.max(1, pinch.startDistance);
-        updateTransform(nextZoom, {
-          x: pinch.baseX + midX - pinch.startMidX,
-          y: pinch.baseY + midY - pinch.startMidY,
-        });
-        return;
-      }
-
-      if (!dragRef.current.active) return;
-      event.preventDefault();
-      const drag = dragRef.current;
-      updateTransform(zoomRef.current, {
-        x: drag.baseX + event.clientX - drag.startX,
-        y: drag.baseY + event.clientY - drag.startY,
-      });
-    };
-
-    const end = (event: PointerEvent) => {
-      pointersRef.current.delete(event.pointerId);
-      if (pointersRef.current.size === 0) {
-        dragRef.current.active = false;
-        pinchRef.current.active = false;
-      } else if (pointersRef.current.size === 1) {
-        const remaining = Array.from(pointersRef.current.values())[0];
-        pinchRef.current.active = false;
-        dragRef.current = {
-          active: true,
-          startX: remaining.x,
-          startY: remaining.y,
-          baseX: offsetRef.current.x,
-          baseY: offsetRef.current.y,
-        };
-      }
-    };
-
-    window.addEventListener('pointermove', move, { passive: false });
-    window.addEventListener('pointerup', end);
-    window.addEventListener('pointercancel', end);
-    return () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', end);
-      window.removeEventListener('pointercancel', end);
-    };
-  }, [updateTransform]);
-
-  useEffect(() => {
-    const targetBox = boxRef.current;
-    if (!targetBox) return;
-    const wheel = (event: WheelEvent) => {
-      event.preventDefault();
-      updateTransform(zoomRef.current - event.deltaY * 0.0015, offsetRef.current);
-    };
-    targetBox.addEventListener('wheel', wheel, { passive: false });
-    return () => targetBox.removeEventListener('wheel', wheel);
-  }, [updateTransform]);
-
-  const save = async () => {
-    if (saving || !imageRef.current || !imageSize.width || !imageSize.height || !boxSize.width || !boxSize.height) return;
-    setSaving(true);
-    try {
-      const baseScale = Math.max(boxSize.width / imageSize.width, boxSize.height / imageSize.height);
-      const scale = baseScale * zoomRef.current;
-      const sourceWidth = Math.min(imageSize.width, boxSize.width / scale);
-      const sourceHeight = Math.min(imageSize.height, boxSize.height / scale);
-      const centerX = imageSize.width / 2 - offsetRef.current.x / scale;
-      const centerY = imageSize.height / 2 - offsetRef.current.y / scale;
-      const sourceX = Math.max(0, Math.min(imageSize.width - sourceWidth, centerX - sourceWidth / 2));
-      const sourceY = Math.max(0, Math.min(imageSize.height - sourceHeight, centerY - sourceHeight / 2));
-
-      const canvas = document.createElement('canvas');
-      canvas.width = outputSize.width;
-      canvas.height = outputSize.height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) throw new Error('canvas context unavailable');
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(imageRef.current, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
-
-      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92));
-      if (!blob) throw new Error('canvas blob unavailable');
-      onApply(URL.createObjectURL(blob));
-    } catch (error) {
-      console.error('Profile image crop failed:', error);
-      toast.error('画像の切り抜きに失敗しました');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const changeZoom = (delta: number) => {
-    updateTransform(zoomRef.current + delta, offsetRef.current);
-  };
-
-  const displayedScale = imageSize.width && imageSize.height && boxSize.width && boxSize.height
-    ? Math.max(boxSize.width / imageSize.width, boxSize.height / imageSize.height) * zoom
-    : 1;
-
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[2147483647] flex items-center justify-center bg-black/50 p-2 sm:p-4"
-      onPointerDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <div className={modalClassName}>
-        <div className="flex h-12 shrink-0 items-center justify-between px-3 sm:h-14 sm:px-4">
-          <button
-            type="button"
-            onClick={onClose}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted hover:text-foreground"
-            aria-label="閉じる"
-          >
-            <X className="h-5 w-5" />
-          </button>
-          <span className="text-sm font-bold">{target === 'avatar' ? 'アイコン' : 'ヘッダー'}</span>
-          <Button
-            type="button"
-            size="sm"
-            className="h-9 rounded-full px-4 font-bold"
-            onClick={save}
-            disabled={saving || !imageSize.width}
-          >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : '適用'}
-          </Button>
-        </div>
-
-        <div className={cropAreaClassName}>
-          <div
-            ref={boxRef}
-            className="relative cursor-grab overflow-hidden bg-background touch-none select-none active:cursor-grabbing"
-            style={{
-              ...cropFrameStyle,
-              maxWidth: 'calc(100vw - 20px)',
-              maxHeight: 'calc(92svh - 132px)',
-              touchAction: 'none',
-              userSelect: 'none',
-              WebkitUserSelect: 'none',
-            }}
-            onPointerDown={startGesture}
-          >
-            <div
-              className="absolute inset-0 bg-center bg-no-repeat"
-              style={{
-                backgroundImage: `url(${src})`,
-                backgroundSize: imageSize.width && imageSize.height
-                  ? `${imageSize.width * displayedScale}px ${imageSize.height * displayedScale}px`
-                  : 'contain',
-                backgroundPosition: `calc(50% + ${offset.x}px) calc(50% + ${offset.y}px)`,
-              }}
-            />
-            <div className="pointer-events-none absolute inset-0 ring-1 ring-inset ring-white/70" />
-          </div>
-        </div>
-
-        <div className="flex h-12 shrink-0 items-center gap-2 px-3 sm:h-14 sm:px-5">
-          <button
-            type="button"
-            onClick={() => changeZoom(-0.15)}
-            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted hover:text-foreground"
-            aria-label="縮小"
-          >
-            −
-          </button>
-          <input
-            type="range"
-            min={PROFILE_CROP_LIMIT.min}
-            max={PROFILE_CROP_LIMIT.max}
-            step="0.01"
-            value={zoom}
-            onChange={(event) => updateTransform(Number(event.target.value), offsetRef.current)}
-            className="min-w-0 flex-1 accent-current"
-            aria-label="ズーム"
-          />
-          <button
-            type="button"
-            onClick={() => changeZoom(0.15)}
-            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted hover:text-foreground"
-            aria-label="拡大"
-          >
-            +
-          </button>
-        </div>
-      </div>
-    </div>,
-    document.body
-  );
-}
 
 export default function Settings() {
   const queryClient=useQueryClient();
@@ -483,6 +112,19 @@ export default function Settings() {
 
   const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
+  const desktop = useDesktopLayout();
+  const [settingsParams, setSettingsParams] = useSearchParams();
+  const [settingsSearch, setSettingsSearch] = useState('');
+  const selectedSection = SETTINGS_SECTIONS.find(section => section.id === settingsParams.get('section'));
+  const selectedGroup = settingsGroupForSection(selectedSection?.id ?? '') ?? SETTINGS_GROUPS.find(group => group.id === settingsParams.get('group')) ?? (desktop ? SETTINGS_GROUPS[0] : undefined);
+  const selectGroup = (id: string) => {
+    setSettingsParams(previous => { const next = new URLSearchParams(previous); next.set('group', id); next.delete('section'); return next; });
+    window.scrollTo(0, 0);
+  };
+  const selectSection = (id: string) => {
+    setSettingsParams(previous => { const next = new URLSearchParams(previous); next.set('section', id); next.set('group', settingsGroupForSection(id)!.id); return next; });
+    window.scrollTo(0, 0);
+  };
   const { mutateAsync, isPending } = useUpdateProfile(user?.id ?? '');
 
   const getInitialEmoji = () => {
@@ -490,12 +132,7 @@ export default function Settings() {
     return localStorage.getItem('lime_emoji_pref') ?? '';
   };
 
-  const [displayName, setDisplayName] = useState(user?.displayName ?? '');
-  const [bio, setBio] = useState(user?.bio ?? '');
-  const [location, setLocation] = useState(user?.location ?? '');
   const [isProfileLoading, setIsProfileLoading] = useState(true);
-  const [avatarUrl, setAvatarUrl] = useState(user?.avatarUrl ?? '');
-  const [coverUrl, setCoverUrl] = useState(user?.coverUrl ?? '');
   const [timelineBackgroundUrl, setTimelineBackgroundUrl] = useState(
     (user as any)?.timelineBackgroundUrl ??
       (user as any)?.timeline_background_url ??
@@ -511,19 +148,8 @@ export default function Settings() {
   const [botEnabled, setBotEnabled] = useState(user?.bot_enabled ?? false);
   const [botPrompt, setBotPrompt] = useState(user?.bot_prompt ?? '');
   const [botPromptLoaded, setBotPromptLoaded] = useState(false);
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const avatarRef = useRef<HTMLInputElement>(null);
-  const coverRef = useRef<HTMLInputElement>(null);
   const timelineBackgroundRef = useRef<HTMLInputElement>(null);
-  const [profileCropTarget, setProfileCropTarget] = useState<ProfileImageCropTarget | null>(null);
-  const [profileCropSrc, setProfileCropSrc] = useState('');
-  const profileCropObjectUrlRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    return () => {
-      if (profileCropObjectUrlRef.current) URL.revokeObjectURL(profileCropObjectUrlRef.current);
-    };
-  }, []);
   const [customEmojis, setCustomEmojis] = useState<CustomEmoji[]>([]);
   const [emojiName, setEmojiName] = useState('');
   const [emojiFile, setEmojiFile] = useState<File | null>(null);
@@ -617,11 +243,6 @@ export default function Settings() {
       if (error) throw error;
       if (!data) return;
 
-      setDisplayName(data.display_name ?? '');
-      setBio(data.bio ?? '');
-      setLocation(data.location ?? '');
-      setAvatarUrl(data.avatar_url ?? '');
-      setCoverUrl(data.cover_url ?? '');
       setBotEnabled(data.bot_enabled ?? false);
       // Apply all ordinary fields even when private Bot settings are unavailable.
       void getPrivateBotPrompt(userId).then(prompt => {
@@ -677,11 +298,6 @@ export default function Settings() {
 
     if (!user) return;
 
-    setDisplayName(user.displayName ?? '');
-    setBio(user.bio ?? '');
-    setLocation(user.location ?? '');
-    setAvatarUrl(user.avatarUrl ?? '');
-    setCoverUrl(user.coverUrl ?? '');
 
     const localTimelineBackgroundUrl = localStorage.getItem('lime_timeline_background_url') ?? '';
     const userTimelineBackgroundUrl =
@@ -774,44 +390,6 @@ export default function Settings() {
   }, [blueskyHandles,misskeyHandles]);
 
   if (!user) return null;
-
-  const onPickImage = (e: ChangeEvent<HTMLInputElement>, target: ProfileImageCropTarget) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-
-    if (!file.type.startsWith('image/')) {
-      toast.error('画像ファイルを選択してください');
-      return;
-    }
-
-    if (profileCropObjectUrlRef.current) {
-      URL.revokeObjectURL(profileCropObjectUrlRef.current);
-    }
-
-    const url = URL.createObjectURL(file);
-    profileCropObjectUrlRef.current = url;
-    setProfileCropTarget(target);
-    setProfileCropSrc(url);
-  };
-
-  const closeProfileCrop = () => {
-    setProfileCropTarget(null);
-    setProfileCropSrc('');
-    if (profileCropObjectUrlRef.current) {
-      URL.revokeObjectURL(profileCropObjectUrlRef.current);
-      profileCropObjectUrlRef.current = null;
-    }
-  };
-
-  const applyProfileCrop = (url: string) => {
-    if (profileCropTarget === 'avatar') {
-      setAvatarUrl(url);
-    } else if (profileCropTarget === 'cover') {
-      setCoverUrl(url);
-    }
-    closeProfileCrop();
-  };
 
   const notifyTimelineBackgroundChanged = (url: string) => {
     if (url) {
@@ -1149,10 +727,6 @@ export default function Settings() {
 
     try {
       await mutateAsync({
-        displayName,
-        bio,
-        avatarUrl,
-        coverUrl,
         emojiEffect,
         bot_enabled: botEnabled,
         ...(botPromptLoaded ? { bot_prompt: botPrompt } : {}),
@@ -1170,10 +744,6 @@ export default function Settings() {
 
     try {
       await mutateAsync({
-        displayName,
-        bio,
-        avatarUrl,
-        coverUrl,
         emojiEffect,
         bot_enabled: targetEnabled,
         ...(botPromptLoaded ? { bot_prompt: botPrompt } : {}),
@@ -1190,156 +760,43 @@ export default function Settings() {
     await updateBotSettings(checked);
   };
 
-  const submit = async () => {
-    const parsed = schema.safeParse({ displayName, bio, location });
-
-    if (!parsed.success) {
-      const fe: Record<string, string> = {};
-      parsed.error.issues.forEach((i) => {
-        fe[i.path[0] as string] = i.message;
-      });
-      setErrors(fe);
-      return;
-    }
-
-    const emojiCount = Array.from(emojiEffect).length;
-    if (emojiCount > 1) {
-      toast.error('エフェクトには1文字だけ入力してください');
-      return;
-    }
-
-    setErrors({});
-
-    try {
-      await mutateAsync({
-        displayName,
-        bio,
-        location: location.trim(),
-        avatarUrl,
-        coverUrl,
-        emojiEffect,
-        bot_enabled: botEnabled,
-        ...(botPromptLoaded ? { bot_prompt: botPrompt } : {}),
-      });
-      localStorage.setItem('lime_emoji_pref', emojiEffect);
-      toast.success('プロフィールを更新しました');
-    } catch (err) {
-      console.error('Settings Update Error:', err);
-      toast.error('保存に失敗しました。DBのカラム名を確認してください。');
-    }
-  };
-
   return (
-    <div className="space-y-6">
-      <h1 className="font-display text-2xl font-black">設定</h1>
-
-      <div className="overflow-hidden rounded-3xl border border-border/60 bg-card shadow-soft">
-        <div className="relative h-40 bg-gradient-cream sm:h-48">
-          {coverUrl && <img src={coverUrl} alt="" className="h-full w-full object-cover" />}
-          <button
-            type="button"
-            onClick={() => coverRef.current?.click()}
-            className="absolute inset-0 flex items-center justify-center bg-foreground/30 text-primary-foreground opacity-0 transition hover:opacity-100"
-          >
-            <ImagePlus className="mr-2 h-5 w-5" /> カバー画像を変更
+    <div className="settings-page" data-desktop={desktop}>
+      <nav className="settings-navigation" aria-label="設定項目" hidden={!desktop && !!selectedGroup}>
+        {desktop && <h1 className="settings-detail-heading">設定</h1>}
+        <div className="settings-search">
+          <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
+          <Input type="search" aria-label="検索設定" placeholder="検索設定" value={settingsSearch} onChange={event => setSettingsSearch(event.target.value)} />
+        </div>
+        {SETTINGS_GROUPS.filter(group => group.label.includes(settingsSearch.trim()) || SETTINGS_SECTIONS.some(section => (group.sections as readonly string[]).includes(section.id) && section.label.includes(settingsSearch.trim()))).map(group => (
+          <button key={group.id} type="button" className="settings-choice" aria-current={selectedGroup?.id === group.id ? 'page' : undefined} onClick={() => selectGroup(group.id)}>
+            <group.icon className="settings-choice-icon h-5 w-5 shrink-0 text-muted-foreground" />
+            <span className="settings-choice-label">
+              <span className="block">{group.label}</span>
+              <span className="mt-1 block text-xs font-normal leading-relaxed text-muted-foreground">{group.sections.map(id => SETTINGS_SECTIONS.find(section => section.id === id)!.label).join('、')}</span>
+            </span>
+            <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />
           </button>
-          <input
-            ref={coverRef}
-            type="file"
-            accept="image/*"
-            hidden
-            onChange={(e) => onPickImage(e, 'cover')}
-          />
+        ))}
+      </nav>
+      <div className="settings-detail" hidden={!selectedGroup}>
+        <div className="settings-detail-heading flex items-center gap-3">
+          {selectedSection && <Button variant="ghost" size="icon" aria-label="設定分類に戻る" onClick={() => selectGroup(selectedGroup!.id)}><ArrowLeft className="h-5 w-5" /></Button>}
+          <h2>{selectedGroup?.label}</h2>
         </div>
-
-        <div className="px-5 pb-6 pt-3 sm:px-6">
-          <div className="-mt-12 flex items-end gap-3 sm:-mt-14">
-            <div className="relative">
-              <Avatar className="h-24 w-24 border-4 border-card shadow-pop sm:h-28 sm:w-28">
-                <AvatarImage src={avatarUrl} alt={displayName} />
-                <AvatarFallback>{displayName.slice(0, 1)}</AvatarFallback>
-              </Avatar>
-              <button
-                type="button"
-                onClick={() => avatarRef.current?.click()}
-                className="absolute bottom-0 right-0 rounded-full bg-gradient-primary p-2 text-primary-foreground shadow-soft transition hover:scale-110"
-              >
-                <ImagePlus className="h-4 w-4" />
-              </button>
-              <input
-                ref={avatarRef}
-                type="file"
-                accept="image/*"
-                hidden
-                onChange={(e) => onPickImage(e, 'avatar')}
-              />
-            </div>
-          </div>
-
-          <div className="mt-6 space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="displayName">表示名</Label>
-              <Input
-                id="displayName"
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                maxLength={30}
-                className="rounded-full bg-background"
-              />
-              {errors.displayName && <p className="text-xs text-destructive">{errors.displayName}</p>}
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="username">ユーザー名</Label>
-              <Input id="username" value={user.username} disabled className="rounded-full bg-muted" />
-              <p className="text-xs text-muted-foreground">※ ユーザー名は変更できません</p>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="bio">自己紹介</Label>
-              <Textarea
-                id="bio"
-                value={bio}
-                onChange={(e) => setBio(e.target.value)}
-                rows={4}
-                maxLength={200}
-                className="resize-none rounded-2xl"
-              />
-              <div className="flex justify-end">
-                <span
-                  className={`text-xs ${bio.length > 160 ? 'font-bold text-destructive' : 'text-muted-foreground'}`}
-                >
-                  {bio.length} / 160
-                </span>
-              </div>
-              {errors.bio && <p className="text-xs text-destructive">{errors.bio}</p>}
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="profile-location">場所</Label>
-              <Input
-                id="profile-location"
-                disabled={isProfileLoading}
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                maxLength={100}
-                className="rounded-full"
-              />
-              {errors.location && <p className="text-xs text-destructive">{errors.location}</p>}
-            </div>
-
-            <Button
-              onClick={submit}
-              disabled={isPending || isProfileLoading}
-              className="w-full rounded-full bg-gradient-primary py-6 font-bold shadow-soft hover:shadow-pop"
-            >
-              {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : '保存する'}
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      <Separator />
+        <nav aria-label="分類内の設定項目" hidden={!!selectedSection}>
+          {selectedGroup?.sections.map(id => SETTINGS_SECTIONS.find(section => section.id === id)!).map(section => (
+            <button key={section.id} type="button" className="settings-choice" onClick={() => selectSection(section.id)}>
+              <section.icon className="h-5 w-5 shrink-0 text-muted-foreground" />
+              <span className="settings-choice-label">
+                <span className="block">{section.label}</span>
+                {SETTINGS_DESCRIPTIONS[section.id] && <span className="mt-1 block text-xs font-normal leading-relaxed text-muted-foreground">{SETTINGS_DESCRIPTIONS[section.id]}</span>}
+              </span>
+              <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />
+            </button>
+          ))}
+        </nav>
+      <section hidden={selectedSection?.id !== 'external'} aria-label={SETTINGS_SECTIONS.find(section => section.id === 'external')!.label}>
 
       <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
         <div className="flex items-center gap-2">
@@ -1523,7 +980,8 @@ export default function Settings() {
         </div>
       </div>
 
-      <Separator />
+      </section>
+      <section hidden={selectedSection?.id !== 'automatic'} aria-label={SETTINGS_SECTIONS.find(section => section.id === 'automatic')!.label}>
 
       <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
         <div className="flex items-center justify-between">
@@ -1574,7 +1032,8 @@ export default function Settings() {
         )}
       </div>
 
-      <Separator />
+      </section>
+      <section hidden={selectedSection?.id !== 'emoji'} aria-label={SETTINGS_SECTIONS.find(section => section.id === 'emoji')!.label}>
 
       <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
         <div className="flex items-center gap-2">
@@ -1686,7 +1145,8 @@ export default function Settings() {
         </div>
       </div>
 
-      <Separator />
+      </section>
+      <section hidden={selectedSection?.id !== 'appearance'} aria-label={SETTINGS_SECTIONS.find(section => section.id === 'appearance')!.label}>
 
       <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
         <h2 className="font-display text-base font-bold">外観の設定</h2>
@@ -1720,7 +1180,8 @@ export default function Settings() {
         </div>
       </div>
 
-      <Separator />
+      </section>
+      <section hidden={selectedSection?.id !== 'effects'} aria-label={SETTINGS_SECTIONS.find(section => section.id === 'effects')!.label}>
 
       <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
         <div className="flex items-center gap-2">
@@ -1774,7 +1235,8 @@ export default function Settings() {
         </div>
       </div>
 
-      <Separator />
+      </section>
+      <section hidden={selectedSection?.id !== 'pro'} aria-label={SETTINGS_SECTIONS.find(section => section.id === 'pro')!.label}>
 
       <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
         <div className="flex items-start gap-3">
@@ -1823,9 +1285,11 @@ export default function Settings() {
         </Button>
       </div>
 
-      <Separator />
+      </section>
+      <section hidden={selectedSection?.id !== 'notifications'} aria-label={SETTINGS_SECTIONS.find(section => section.id === 'notifications')!.label}>
       <NotificationSettings />
-      <Separator />
+      </section>
+      <section hidden={selectedSection?.id !== 'background'} aria-label={SETTINGS_SECTIONS.find(section => section.id === 'background')!.label}>
 
       <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
         <div className="flex items-start gap-3">
@@ -1896,7 +1360,11 @@ export default function Settings() {
         </div>
       </div>
 
+      </section>
+      <section hidden={selectedSection?.id !== 'companion'} aria-label="キャラクター">
       <CompanionSettings userId={user.id} />
+      </section>
+      <section hidden={selectedSection?.id !== 'account'} aria-label="アカウント">
 
       <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
         <h2 className="font-display text-base font-bold">アカウント</h2>
@@ -1917,6 +1385,8 @@ export default function Settings() {
           <LogOut className="mr-1.5 h-4 w-4" /> ログアウト
         </Button>
       </div>
+      </section>
+      </div>
       <Dialog open={exportOpen} onOpenChange={open=>{if(!exportBusy){setExportOpen(open);setExportPassword('');}}}>
         <DialogContent className="sm:max-w-md" onInteractOutside={event=>{if(exportBusy)event.preventDefault();}} onEscapeKeyDown={event=>{if(exportBusy)event.preventDefault();}}>
           <DialogHeader><DialogTitle>データをエクスポート</DialogTitle><DialogDescription>
@@ -1931,14 +1401,7 @@ export default function Settings() {
           </form>
         </DialogContent>
       </Dialog>
-      {profileCropTarget && profileCropSrc && (
-        <ProfileImageCropper
-          src={profileCropSrc}
-          target={profileCropTarget}
-          onApply={applyProfileCrop}
-          onClose={closeProfileCrop}
-        />
-      )}
+
     </div>
   );
 }

@@ -6,6 +6,24 @@ export function visualSimilarity(a:number[],b:number[]):number {
  const length=Math.hypot(...a)*Math.hypot(...b);
  return length?a.reduce((sum,value,i)=>sum+value*b[i],0)/length:0;
 }
+/** Reuse immutable vectors only within one synchronous scoring pass. */
+export function createVisualSimilarityComparator(){
+ const lengths=new WeakMap<number[],number>(),pairs=new WeakMap<number[],WeakMap<number[],number>>();
+ const norm=(vector:number[])=>{
+  const cached=lengths.get(vector);if(cached!==undefined)return cached;
+  const length=vector.length===512&&vector.every(Number.isFinite)?Math.hypot(...vector):0;
+  lengths.set(vector,length);return length;
+ };
+ return (a:number[],b:number[])=>{
+  const old=pairs.get(a)?.get(b);if(old!==undefined)return old;
+  const length=norm(a)*norm(b);let dot=0;
+  if(length)for(let i=0;i<512;i++)dot+=a[i]*b[i];
+  const score=length?dot/length:0;
+  let values=pairs.get(a);if(!values){values=new WeakMap();pairs.set(a,values);}values.set(b,score);
+  let inverse=pairs.get(b);if(!inverse){inverse=new WeakMap();pairs.set(b,inverse);}inverse.set(a,score);
+  return score;
+ };
+}
 const cache=new Map<string,RecommendationVisual>();
 const cacheKey='lime_recommendation_visual_cache_v1';
 let restored=false;

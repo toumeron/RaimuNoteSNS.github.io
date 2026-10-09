@@ -14,11 +14,11 @@ describe('explicit topic preferences',()=>{
   const prefs:RecommendationPreferences={authors:{},terms:{猫:100,音楽:2},followedTopics:['games'],dismissedTopics:['pets']};
   expect(recommendationQueries(prefs)).toContain('ゲーム');expect(recommendationQueries(prefs)).not.toContain('猫');
  });
- it('promotes both external providers for a followed topic and lowers dismissed interests',()=>{
+ it('promotes both external providers for a followed topic and excludes unrelated dismissed interests',()=>{
   const prefs:RecommendationPreferences={authors:{},terms:{},followedTopics:['pets'],dismissedTopics:['sports']};
   const ranked=rankRecommendations([post('sports','サッカーの試合','bluesky'),post('blue-cat','猫の写真','bluesky'),post('misskey-cat','犬の写真','misskey')],prefs,null);
   expect(ranked.slice(0,2).map(p=>p.id)).toEqual(expect.arrayContaining(['blue-cat','misskey-cat']));
-  expect(ranked.at(-1)?.id).toBe('sports');expect(topicAffinity('サッカー速報',{dismissed:['sports']})).toBeLessThan(0);
+  expect(ranked.map(post=>post.id)).not.toContain('sports');expect(topicAffinity('サッカー速報',{dismissed:['sports']})).toBeLessThan(0);
  });
  it('personalizes explore trends but preserves the source volume and rank metadata',()=>{
   const rows=[{title:'選挙',traffic:'100万',rank:1},{title:'猫の写真',traffic:'100',rank:2}];

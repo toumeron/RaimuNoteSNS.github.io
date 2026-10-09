@@ -19,7 +19,7 @@ async function setup(page:Page){
     const req=r.request(),url=new URL(req.url());const single=(req.headers().accept??'').includes('vnd.pgrst.object');let data:unknown=single?null:[];
     if(url.pathname.endsWith('/profiles'))data=single?profiles[0]:profiles;
     if(url.pathname.includes('get-trends'))data=trends;
-    if(url.pathname.endsWith('/news_summaries'))data=url.searchParams.has('source')?news.filter(item=>(item.source||'limenote')===url.searchParams.get('source')?.slice(3)).slice(0,Number(url.searchParams.get('limit')??1)):news;
+    if(url.pathname.endsWith('/news_summaries'))data=url.searchParams.has('source')?news.filter(item=>(item.source||'limenote')===url.searchParams.get('source')?.slice(3)).slice(0,Number(url.searchParams.get('limit')??1)):url.searchParams.has('id')?news.filter(item=>item.id===url.searchParams.get('id')?.slice(3)):news;
     if(url.pathname.endsWith('/posts'))data=[{id:basePost.id,user_id:profiles[0].id,content:basePost.content,created_at:viewer.createdAt,image_urls:[],likes_count:0,comments_count:0,reposts_count:0,visibility:'public',profiles:profiles[0]}];
     return r.fulfill({contentType:'application/json',body:req.method()==='HEAD'?'':JSON.stringify(data),headers:{'content-range':'0-0/0'}});
   });
@@ -152,4 +152,69 @@ test('timeline tabs are taller only on desktop and iPad and retain selection and
 test('missing LimeNote news is never replaced by another Bluesky article',async({page})=>{
  await page.route('**/rest/v1/news_summaries*',route=>{const source=new URL(route.request().url()).searchParams.get('source');return route.fulfill({contentType:'application/json',body:JSON.stringify(source==='eq.bluesky'?[news.find(item=>item.source==='bluesky'),{...news.find(item=>item.source==='bluesky'),id:'second-bsky',title:'もう一つの注目ニュース',created_at:'2026-10-03T07:00:00Z'}]:[])});});
  await page.goto('search');const section=page.locator('[data-lime-search-today-news]');await expect(section.locator('h3')).toHaveText(['Blueskyの人気ニュース']);await expect(section).not.toContainText('もう一つの注目ニュース');
+});
+
+
+test('news detail uses the shared header, flat article, ranked tabs and history menu',async({page},info)=>{
+ const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.route('**/src/api/posts.ts*',r=>r.fulfill({contentType:'application/javascript',body:`const authors=${JSON.stringify(authors)};const posts=[{id:'a',userId:'author-a',content:'新しい関連ポスト',createdAt:'2026-10-09T04:00:00Z',likesCount:1,commentsCount:0,repostsCount:0,imageUrls:[],author:authors[0]},{id:'b',userId:'author-b',content:'反応の多い関連ポスト',createdAt:'2026-10-09T03:00:00Z',likesCount:30,commentsCount:2,repostsCount:3,imageUrls:[],author:authors[1]}];export const getPostById=async id=>posts.find(p=>p.id===id)??null;export const getFeed=async()=>[],getFollowingFeed=getFeed,getPostsByUser=getFeed,getProfilePosts=getFeed,getLikedPostsByUser=getFeed,searchPosts=getFeed;export const toggleLike=async()=>({liked:true}),toggleRepost=async()=>({reposted:true}),deletePost=async()=>{},getPostLikers=async()=>[],createPost=async()=>posts[0];`}));
+ await page.goto('news?story=general');
+ const root=page.locator('[data-lime-news-detail]'),header=page.locator('header[data-lime-app-header]');
+ await expect(root.getByRole('heading',{name:'本日の注目ニュース',exact:true})).toBeVisible();
+ await expect(root.getByText('最終更新:',{exact:false})).toBeVisible();
+ await expect(header.getByRole('button',{name:'検索に戻る',exact:true})).toBeVisible();
+ await expect(header.getByRole('button',{name:'ニュースを共有',exact:true})).toBeVisible();
+ expect(await header.evaluate(e=>getComputedStyle(e).borderBottomWidth)).toBe('0px');
+ expect((await header.locator('[data-lime-header-row]').boundingBox())!.height).toBe(48);
+ for(const icon of await header.locator('[data-lime-header-row] button > svg').all())expect((await icon.boundingBox())!.width).toBe(24);
+ await expect(root.getByRole('tab')).toHaveText(['トップ','最新']);
+ await expect(root.locator('[data-news-post]')).toHaveCount(2);
+ await expect(root.locator('[data-news-post]').first()).toHaveAttribute('data-news-post','b');
+ await expect(root.getByRole('img',{name:'引用元A',exact:true}).first()).toHaveAttribute('src',authors[0].avatarUrl);
+ expect(await root.locator('.news-detail-article').evaluate(e=>getComputedStyle(e).borderRadius)).toBe('0px');
+ const box=await root.getByRole('tablist').boundingBox(),article=await root.locator('.news-detail-article').boundingBox();
+ expect(Math.abs(box!.x-article!.x)).toBeLessThan(1);expect(Math.abs(box!.width-article!.width)).toBeLessThan(1);
+ await root.getByRole('tab',{name:'最新',exact:true}).click();
+ await expect(root.locator('[data-news-post]').first()).toHaveAttribute('data-news-post','a');
+ await root.getByRole('tab',{name:'トップ',exact:true}).click();
+ await expect(root.locator('[data-news-post]').first()).toHaveAttribute('data-news-post','b');
+ await page.screenshot({path:info.outputPath('news-detail.png'),animations:'disabled'});
+ for(let i=0;i<2;i++){
+  await header.getByRole('button',{name:'ニュースのメニュー',exact:true}).click();
+  const item=page.getByRole('menuitem',{name:'トレンド履歴',exact:true});
+  await expect(item).toBeVisible();
+  await expect.poll(()=>item.evaluate(e=>{const b=e.getBoundingClientRect();return e.contains(document.elementFromPoint(b.x+b.width/2,b.y+b.height/2));})).toBe(true);
+  await item.click();
+  await expect(page).toHaveURL(/news\/history\?story=general/);
+  const history=page.locator('[data-lime-news-history]');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(header.getByRole('heading',{name:'トレンド履歴',exact:true})).toBeVisible();
+  await expect(history.getByRole('link',{name:/サッカー決勝のニュース/})).toBeVisible();
+  const box=await history.boundingBox();expect(box!.y).toBeGreaterThanOrEqual(48);expect(box!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+  await page.screenshot({path:info.outputPath('news-history.png'),animations:'disabled'});
+  if(i===0){await header.getByRole('button',{name:'ニュースに戻る',exact:true}).click();await expect(history).toHaveCount(0);}
+  else {await history.getByRole('link',{name:/サッカー決勝のニュース/}).click();await expect(history).toHaveCount(0);}
+ }
+ await expect(page).toHaveURL(/news\?story=sports$/);
+ await expect(root.getByRole('heading',{name:'サッカー決勝のニュース',exact:true})).toBeVisible();
+ await expect(root.locator('[data-news-post]')).toHaveCount(1);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+ expect(errors).toEqual([]);
+ await header.getByRole('button',{name:'検索に戻る',exact:true}).click();
+ await expect(page).toHaveURL(/news\/history\?story=general/);
+ await header.getByRole('button',{name:'ニュースに戻る',exact:true}).click();
+ await expect(page).toHaveURL(/news\?story=general/);
+});
+
+
+test('search settings outside-tap target never shades the search bar',async({page})=>{
+ for(const theme of ['light','dark']){
+  await page.addInitScript(value=>localStorage.setItem('theme',value),theme);await page.goto('search');
+  await page.getByRole('button',{name:page.viewportSize()!.width>=640?'詳細検索':'検索設定',exact:true}).click();
+  const dismiss=page.locator('[data-lime-dismiss-backdrop]');await expect(dismiss).toBeVisible();
+  await dismiss.hover({position:{x:2,y:2}});await expect(dismiss).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
+  await dismiss.dispatchEvent('pointerdown');await expect(dismiss).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
+  await expect(page.getByText('Blueskyの投稿を含めない',{exact:true})).toBeVisible();
+  await dismiss.click({position:{x:2,y:2}});await expect(dismiss).toHaveCount(0);
+ }
 });

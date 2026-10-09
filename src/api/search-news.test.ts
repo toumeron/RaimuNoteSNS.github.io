@@ -1,7 +1,9 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 const lookup = vi.hoisted(() => vi.fn());
+const summaries=vi.hoisted(()=>({rows:[] as any[]}));
+vi.mock('@/lib/supabase',()=>({supabase:{from:()=>{const q:any={select:()=>q,eq:()=>q,order:()=>q,limit:async()=>({data:summaries.rows,error:null})};return q;}}}));
 vi.mock('./posts', () => ({getPostById: lookup}));
-import { getNewsSources, latestNewsPerSource, type SearchNewsItem } from './search-news';
+import { getNewsRelatedPosts, getNewsSources, latestNewsPerSource, type SearchNewsItem } from './search-news';
 import {selectPopularPosts,validateSummary,selectNewsTopic} from '../../supabase/functions/generate-news/sources';
 const news = (id: string, refs: unknown): SearchNewsItem => ({id, title: 'ニュース', content: '', category: 'ニュース', created_at: '', related_post_ids: refs});
 beforeEach(() => {lookup.mockReset();});
@@ -80,4 +82,50 @@ it('collects a broad popular candidate pool without allowing stale or restricted
  expect(selectPopularPosts(input,now,200)).toHaveLength(200);
  expect(selectPopularPosts(input,now,200)[0].id).toContain('/240');
  expect(selectPopularPosts(input,now)).toHaveLength(10);
+});
+
+it('excludes year-old, future, missing-date and invalid-date source posts on either side of the five-day boundary',async()=>{
+ const {selectRecentNewsPosts,NEWS_POST_MAX_AGE_MS}=await import('../../supabase/functions/generate-news/sources');
+ const dated=(id:string,at?:number)=>({id,content:'発表',createdAt:at===undefined?undefined:new Date(at).toISOString()});
+ expect(selectRecentNewsPosts([dated('recent',now-1000),dated('boundary',now-NEWS_POST_MAX_AGE_MS),dated('too-old',now-NEWS_POST_MAX_AGE_MS-1),dated('last-year',now-365*86400000),dated('future',now+1),dated('missing'),{id:'invalid',content:'発表',createdAt:'invalid'}, {...dated('empty',now),content:' '}],now).map(post=>post.id)).toEqual(['recent','boundary']);
+});
+it.each([{},{query:'新作_100%'}, {ids:['recent','old']}])('bounds LimeNote discovery, supplemental search and final publication checks to recent public posts: %j',async options=>{
+ const {loadRecentLimeNewsPosts,recentNewsWindow}=await import('../../supabase/functions/generate-news/sources');
+ const calls:any[]=[];
+ const query:any={then:(resolve:any)=>Promise.resolve({data:[{id:'recent',content:'新作発表',created_at:new Date(now-1000).toISOString()},{id:'old',content:'昨年発表',created_at:new Date(now-365*86400000).toISOString()}],error:null}).then(resolve)};
+ for(const method of ['select','eq','gte','lte','ilike','in','order','limit'])query[method]=(...args:any[])=>{calls.push([method,...args]);return query;};
+ const posts=await loadRecentLimeNewsPosts({from:()=>query},{...options,now});
+ expect(posts.map(post=>post.id)).toEqual(['recent']);
+ expect(calls).toContainEqual(['eq','visibility','public']);
+ expect(calls).toContainEqual(['gte','created_at',recentNewsWindow(now).since]);
+ expect(calls).toContainEqual(['lte','created_at',recentNewsWindow(now).until]);
+ if('query' in options)expect(calls).toContainEqual(['ilike','content','%新作\\_100\\%%']);
+ if('ids' in options)expect(calls).toContainEqual(['in','id',options.ids]);
+});
+
+it('does not publish article rows until source metadata has finished loading',async()=>{
+ const {getLatestSearchNews}=await import('./search-news');
+ summaries.rows=[news('article',['public'])];
+ let release!:(post:any)=>void;
+ lookup.mockImplementation(()=>new Promise(resolve=>{release=resolve;}));
+ let settled=false;
+ const pending=getLatestSearchNews().then(data=>{settled=true;return data;});
+ await vi.waitFor(()=>expect(lookup).toHaveBeenCalled());expect(settled).toBe(false);
+ release({author:{id:'author',displayName:'作者',avatarUrl:'avatar.jpg'}});
+ expect((await pending).sources.article.authors[0].avatarUrl).toBe('avatar.jpg');
+});
+
+it('attempts scheduled news every five hours even when the previous generation failed',async()=>{
+ const {newsRefreshIsDue,NEWS_REFRESH_INTERVAL_MS}=await import('../../supabase/functions/generate-news/sources');
+ expect(newsRefreshIsDue(null,now)).toBe(true);
+ expect(newsRefreshIsDue({last_completed_at:new Date(now-86400000).toISOString(),last_attempted_at:new Date(now-1000).toISOString()},now)).toBe(false);
+ expect(newsRefreshIsDue({last_attempted_at:new Date(now-NEWS_REFRESH_INTERVAL_MS).toISOString()},now)).toBe(true);
+ expect(newsRefreshIsDue({last_completed_at:new Date(now-1000).toISOString(),last_attempted_at:new Date(now-86400000).toISOString()},now)).toBe(false);
+});
+
+it('news detail hydrates all unique original references and excludes inaccessible snapshots', async () => {
+  lookup.mockImplementation(async id => id === 'deleted' ? Promise.reject(new Error('deleted')) : id === 'private' ? null : {id, author:{id:'current-author'}});
+  const result = await getNewsRelatedPosts({...news('story', ['a','a','private']), source_post_ids:['b'], related_posts:[{id:'deleted',author:{id:'stale'}},{id:'a'}]});
+  expect(result.map(p=>p.id).sort()).toEqual(['a','b']);
+  expect(lookup).toHaveBeenCalledTimes(4);
 });

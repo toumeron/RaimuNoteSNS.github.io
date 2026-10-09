@@ -1,7 +1,7 @@
 import { secretMatches } from '../_shared/security.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { selectPopularPosts, validateSummary, selectNewsTopic, topicSelectionPrompt, focusedNewsPrompt, type NewsPost, type BlueskyPost } from './sources.ts';
+import { newsRefreshIsDue, loadRecentLimeNewsPosts, recentNewsWindow, selectRecentNewsPosts, selectPopularPosts, validateSummary, selectNewsTopic, topicSelectionPrompt, focusedNewsPrompt, type NewsPost, type BlueskyPost } from './sources.ts';
 
 serve(async (request:Request): Promise<Response> => {
   const headers = {'Content-Type': 'application/json', 'Cache-Control': 'no-store'};
@@ -13,9 +13,15 @@ serve(async (request:Request): Promise<Response> => {
     const service = Deno.env.get('PRIVATE_SERVICE_KEY') || Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
     if (!key || !url || !service) throw new Error('Missing news configuration');
     const db = createClient(url, service);
+    const newsDb = db as unknown as Parameters<typeof loadRecentLimeNewsPosts>[0];
     const input=await request.json().catch(()=>({}));
     const scheduled=input?.scheduled===true;
     const results = await Promise.allSettled(['limenote', 'bluesky'].map(async source => {
+      if(scheduled){
+        const state=await db.from('news_generation_state').select('last_completed_at,last_attempted_at').eq('source',source).maybeSingle();
+        if(state.error)throw new Error(state.error.message);
+        if(!newsRefreshIsDue(state.data))return {source,skipped:true};
+      }
       const claim=await db.rpc('claim_news_generation',{p_source:source,p_scheduled:scheduled});
       if(claim.error)throw new Error(claim.error.message);
       if(!claim.data)return {source,skipped:true};
@@ -24,12 +30,10 @@ serve(async (request:Request): Promise<Response> => {
       try{
       let posts: NewsPost[];
       if (source === 'limenote') {
-        const result = await db.from('posts').select('id, content, created_at').eq('visibility', 'public').order('created_at', {ascending: false}).limit(200);
-        if (result.error) throw new Error(result.error.message);
-        posts = (result.data || []).filter(p=>p.content?.trim()).map(p=>({id:p.id,content:p.content,createdAt:p.created_at}));
+        posts = await loadRecentLimeNewsPosts(newsDb);
       } else {
         const batches = await Promise.allSettled(['の', 'は', 'た', 'です'].map(async q => {
-          const params = new URLSearchParams({q, lang: 'ja', sort: 'top', since: new Date(Date.now() - 5 * 86400000).toISOString(), limit: '100'});
+          const params = new URLSearchParams({q, lang: 'ja', sort: 'top', since: recentNewsWindow().since, limit: '100'});
           for (const host of ['public.api.bsky.app', 'api.bsky.app']) {
             const response = await fetch(`https://${host}/xrpc/app.bsky.feed.searchPosts?${params}`, {signal: AbortSignal.timeout(15000)});
             if (response.ok) return (await response.json()).posts as BlueskyPost[];
@@ -69,12 +73,10 @@ serve(async (request:Request): Promise<Response> => {
         // Expand a sparse topic before writing, instead of publishing a one-post analysis.
         if(selection.query){
           if(source==='limenote'){
-            const term=selection.query.replace(/[\\%_]/g,'\\$&');
-            const extra=await db.from('posts').select('id,content,created_at').eq('visibility','public').ilike('content',`%${term}%`).order('created_at',{ascending:false}).limit(100);
-            if(extra.error)throw new Error(extra.error.message);
-            posts=[...new Map([...selection.posts,...(extra.data??[]).filter(p=>p.content?.trim()).map(p=>({id:p.id,content:p.content,createdAt:p.created_at}))].map(p=>[p.id,p])).values()];
+            const extra=await loadRecentLimeNewsPosts(newsDb,{query:selection.query,limit:100});
+            posts=[...new Map([...selection.posts,...extra].map(p=>[p.id,p])).values()];
           }else{
-            const params=new URLSearchParams({q:selection.query,lang:'ja',sort:'top',since:new Date(Date.now()-5*86400000).toISOString(),limit:'100'});
+            const params=new URLSearchParams({q:selection.query,lang:'ja',sort:'top',since:recentNewsWindow().since,limit:'100'});
             for(const host of ['public.api.bsky.app','api.bsky.app']){
               const response=await fetch(`https://${host}/xrpc/app.bsky.feed.searchPosts?${params}`,{signal:AbortSignal.timeout(15000)});
               if(response.ok){const extra=selectPopularPosts((await response.json()).posts,Date.now(),100);posts=[...new Map([...selection.posts,...extra].map(p=>[p.id,p])).values()];break;}
@@ -88,10 +90,13 @@ serve(async (request:Request): Promise<Response> => {
       }
       if(!selection || selection.posts.length<5)throw new Error(`${source}: fewer than five relevant public source posts after topic search`);
       const summary = validateSummary(await generate(focusedNewsPrompt(selection.topic, selection.posts)), selection.posts,5);
+      // Generation may outlive the freshness window; recheck before saving.
+      const currentSources=selectRecentNewsPosts(selection.posts);
+      if(summary.related_post_ids.some(id=>!currentSources.some(post=>post.id===id)))throw new Error('Source posts are no longer recent');
       // Recheck visibility after generation; the author may have restricted a post meanwhile.
       if (source === 'limenote') {
-        const check = await db.from('posts').select('id').in('id', summary.related_post_ids).eq('visibility', 'public');
-        if (check.error || check.data?.length !== summary.related_post_ids.length) throw new Error('Source visibility changed');
+        const check = await loadRecentLimeNewsPosts(newsDb,{ids:summary.related_post_ids});
+        if (check.length !== summary.related_post_ids.length) throw new Error('Source visibility or freshness changed');
       }
       const saved = await db.from('news_summaries').insert({...summary, source, public_sources_verified: true, source_post_ids: summary.related_post_ids});
       if (saved.error) throw new Error(saved.error.message);

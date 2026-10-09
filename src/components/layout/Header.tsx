@@ -1,3 +1,8 @@
+import { useMobilePostMenu } from '@/components/post/mobilePostMenu';
+import { FollowButton } from '@/components/profile/FollowButton';
+import { useFollowStats } from '@/hooks/useProfile';
+import { UnreadBadge } from '@/components/notifications/UnreadBadge';
+import { NewsHeaderActions } from '@/components/news/NewsHeaderActions';
 import { NotificationTabs } from '@/components/notifications/NotificationTabs';
 import { TopicTabs } from '@/components/topics/TopicTabs';
 import { usePostOverlay } from './PostOverlayContext';
@@ -7,7 +12,8 @@ import { useSpaces } from '@/components/spaces/SpaceContext';
 import { DesktopAccountFooter } from './DesktopAccountFooter';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal, flushSync } from 'react-dom';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
+import { SETTINGS_GROUPS, SETTINGS_SECTIONS, settingsGroupForSection } from '@/lib/settingsSections';
 import { Logo } from './Logo';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -27,6 +33,7 @@ import { searchExternalUsers } from '@/lib/bluesky';
 import type { User } from '@/types';
 import {
   ArrowLeft,
+  MoreHorizontal,
   LogOut,
   Settings as SettingsIcon,
   User as UserIcon,
@@ -43,6 +50,7 @@ import {
   PenSquare,
   Mic,
   Hash,
+  MapPin,
 } from 'lucide-react';
 
 type TimelineChromeTheme = 'light' | 'dark';
@@ -946,11 +954,12 @@ function useMobileDrawerMotion(
   // 書き換えるとレイアウト処理が詰まって「ワンテンポ遅れる」体感になる。
   const pendingShiftRef = useRef<number | null>(null);
   const rafIdRef = useRef<number | null>(null);
+  const drawerSettleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const getDrawerWidth = () => {
     if (typeof window === 'undefined') return 0;
     // サイドバー自体の表示幅を従来より広く確保する(全画面にはしない)。
-    return Math.min(Math.max(window.innerWidth * 0.78, 300), 420);
+    return Math.min(Math.max(window.innerWidth * 0.85, 300), 420);
   };
 
   const getSidebarEl = () => {
@@ -977,9 +986,14 @@ function useMobileDrawerMotion(
     const moveWrapper = moveWrapperRef.current;
     const clipWrapper = clipWrapperRef.current;
 
+    if (drawerSettleRef.current !== null) clearTimeout(drawerSettleRef.current);
+    const wasRevealed = (moveWrapper?.style.transform ?? "none") !== "none";
     const width = getDrawerWidth();
     const clamped = Math.max(0, Math.min(width, shift));
     const isRevealed = clamped > 0;
+    document.documentElement.style.setProperty('--lime-mobile-drawer-reveal', String(Math.min(1, clamped / 42)));
+    const isClosing = animate && !isRevealed && wasRevealed;
+    document.documentElement.style.setProperty('--lime-mobile-drawer-duration', animate ? '320ms' : '0ms');
 
     // 「動かす」のはmoveWrapper。clipWrapperはmoveWrapperの子なので、
     // 自身はtransformを持たなくても見た目上は一緒に動く。これにより、
@@ -989,7 +1003,9 @@ function useMobileDrawerMotion(
       moveWrapper.style.transition = animate
         ? 'transform 320ms cubic-bezier(0.22, 1, 0.36, 1)'
         : 'none';
-      moveWrapper.style.transform = `translateX(${clamped}px)`;
+      moveWrapper.style.transform = isRevealed || isClosing ? `translateX(${clamped}px)` : "none";
+      moveWrapper.style.position = "relative";
+      moveWrapper.style.zIndex = isRevealed || isClosing ? "101" : "";
       // will-change: transform は独立した合成レイヤーへの昇格を促し、
       // ブラウザによってはこの合成レイヤー化がクリップ表現(角丸)と
       // 干渉することがあるため、明示的なwill-changeの指定はしない。
@@ -1016,7 +1032,7 @@ function useMobileDrawerMotion(
     // 角丸のクリップと影は、transformを持たないclipWrapper側で行う。
     if (clipWrapper) {
       clipWrapper.style.transition = animate
-        ? 'border-radius 320ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 320ms cubic-bezier(0.22, 1, 0.36, 1)'
+        ? 'clip-path 320ms cubic-bezier(0.22, 1, 0.36, 1)'
         : 'none';
       clipWrapper.style.borderRadius = isRevealed ? '42px 0 0 42px' : '0px';
       // overflow:hidden にすると、スクロール位置が下にあるとき
@@ -1024,7 +1040,13 @@ function useMobileDrawerMotion(
       // タイムラインのタブが画面外へ消える。境界の横あふれは html の
       // overflow-x:hidden で抑え、ここでは overflow を visible のままにする。
       clipWrapper.style.overflow = 'visible';
-      clipWrapper.style.boxShadow = isRevealed ? '-10px 0 28px rgba(0,0,0,0.34)' : 'none';
+      // Clip the visible viewport without creating a new scroll container.
+      const contentHeight = Math.max(root.scrollHeight, window.innerHeight + window.scrollY);
+      clipWrapper.style.height = isRevealed || isClosing ? `${contentHeight}px` : '100%';
+      clipWrapper.style.clipPath = isRevealed || isClosing ? `inset(${window.scrollY}px 0 ${Math.max(0, contentHeight - window.scrollY - window.innerHeight)}px round ${isRevealed ? 42 : 0}px 0 0 ${isRevealed ? 42 : 0}px)` : 'none';
+      clipWrapper.style.background = isRevealed || isClosing ? 'hsl(var(--background))' : ''; 
+      clipWrapper.style.boxShadow = 'none';
+      document.documentElement.style.setProperty('--lime-mobile-drawer-radius', isRevealed ? '42px' : '0px');
     }
 
     // Body直下へportalされるBottomNavも同じ距離だけ右へ追従させる。
@@ -1046,9 +1068,15 @@ function useMobileDrawerMotion(
     // 「何も見えないまま」になってしまう。
     const sidebar = getSidebarEl();
     if (sidebar) {
-      sidebar.style.visibility = isRevealed ? 'visible' : 'hidden';
+      sidebar.style.visibility = isRevealed || isClosing ? 'visible' : 'hidden';
       sidebar.style.pointerEvents = isRevealed ? 'auto' : 'none';
     }
+    if (isClosing) drawerSettleRef.current = setTimeout(() => {
+      drawerSettleRef.current = null;
+      if (moveWrapper) { moveWrapper.style.transform = 'none'; moveWrapper.style.zIndex = ''; }
+      if (clipWrapper) {clipWrapper.style.clipPath = 'none'; clipWrapper.style.height = '100%'; clipWrapper.style.background = ''; }
+      if (sidebar) sidebar.style.visibility = 'hidden';
+    }, 340);
   };
 
   // touchmove中の見た目の更新はrequestAnimationFrameで1フレームに1回だけ
@@ -1108,18 +1136,23 @@ function useMobileDrawerMotion(
       const clipWrapper = clipWrapperRef.current;
       if (clipWrapper) {
         clipWrapper.style.removeProperty('border-radius');
+        clipWrapper.style.removeProperty('clip-path');
+        clipWrapper.style.height = '100%';
         clipWrapper.style.removeProperty('overflow');
         clipWrapper.style.removeProperty('box-shadow');
         clipWrapper.style.removeProperty('transition');
       }
 
+      document.documentElement.style.removeProperty('--lime-mobile-drawer-radius');
       document.documentElement.style.removeProperty('--lime-mobile-drawer-shift');
       document.documentElement.style.removeProperty('--lime-mobile-drawer-transition');
       html.style.overflowX = previousOverflowX;
     }
 
     return () => {
+      if (drawerSettleRef.current !== null) clearTimeout(drawerSettleRef.current);
       html.style.overflowX = previousOverflowX;
+      document.documentElement.style.removeProperty('--lime-mobile-drawer-radius');
       document.documentElement.style.removeProperty('--lime-mobile-drawer-shift');
       document.documentElement.style.removeProperty('--lime-mobile-drawer-transition');
       root.style.removeProperty('transform');
@@ -1145,11 +1178,21 @@ function useMobileDrawerMotion(
       const clipWrapper = clipWrapperRef.current;
       if (clipWrapper) {
         clipWrapper.style.removeProperty('border-radius');
+        clipWrapper.style.removeProperty('clip-path');
+        clipWrapper.style.height = '100%';
         clipWrapper.style.removeProperty('overflow');
         clipWrapper.style.removeProperty('box-shadow');
         clipWrapper.style.removeProperty('transition');
       }
     };
+  }, []);
+
+  useEffect(() => {
+    if (!window.matchMedia("(max-width: 639px)").matches || !rootRef.current) return;
+    const wrappers = ensureRootShiftWrappers(rootRef.current);
+    moveWrapperRef.current = wrappers?.moveWrapper ?? null;
+    clipWrapperRef.current = wrappers?.clipWrapper ?? null;
+    setRootVisual(isOpen ? getDrawerWidth() : 0, true);
   }, [isOpen]);
 
   // サイドバーが開いている間、背後のタイムラインを指で縦スクロールできないようにする。
@@ -1424,6 +1467,12 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   );
   const { registerLabelRef: registerFeedTabLabelRef, widths: feedTabUnderlineWidths } = useFeedTabUnderlineWidths();
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const {data: sidebarFollowStats} = useFollowStats(isMobileSidebarOpen && !desktopLayout ? user?.id : undefined);
+  useEffect(() => {
+    const open = () => setIsMobileSidebarOpen(true);
+    window.addEventListener('lime-mobile-menu-open', open);
+    return () => window.removeEventListener('lime-mobile-menu-open', open);
+  }, []);
   const [isSidebarMoreOpen, setIsSidebarMoreOpen] = useState(false);
   const createSpaceAfterMenuClose = useRef(false);
   const [isFeedTabChanging, setIsFeedTabChanging] = useState(false);
@@ -2037,9 +2086,63 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   const isSearchPage = normalizeAppPath(location.pathname) === '/u/LimeBiz';
   const isChatPage = normalizeAppPath(location.pathname) === '/chat';
   const isNotificationsPage = normalizeAppPath(location.pathname) === '/notifications';
+  const isMapsPage = normalizeAppPath(location.pathname) === '/maps';
+  const isNewsHistoryPage = normalizeAppPath(location.pathname) === '/news/history';
+  const isNewsPage = normalizeAppPath(location.pathname) === '/news' || isNewsHistoryPage;
+  const isSettingsPage = normalizeAppPath(location.pathname) === '/settings';
+  const [settingsParams, setSettingsParams] = useSearchParams();
+  const settingsSection = SETTINGS_SECTIONS.find(section => section.id === settingsParams.get('section'));
+  const settingsGroup = settingsGroupForSection(settingsSection?.id ?? '') ?? SETTINGS_GROUPS.find(group => group.id === settingsParams.get('group'));
   const isTopicsPage = normalizeAppPath(location.pathname) === '/topics';
   const accountAboutMatch = normalizeAppPath(location.pathname).match(/^\/u\/([^/]+)\/about\/?$/);
-  const hideHeaderOnMobileProfile = isGithubPagesProfilePath(location.pathname);
+  const mobileProfileViewport = useMobilePostMenu();
+  const hideHeaderOnMobileProfile = mobileProfileViewport && isProfilePath(location.pathname);
+  const [mobileProfileInfo, setMobileProfileInfo] = useState<{user: User; posts: number; following: boolean} | null>(null);
+  const [profileTitleVisible, setProfileTitleVisible] = useState(false);
+  const [profileCoverHidden, setProfileCoverHidden] = useState(false);
+  const [profileSummaryOffscreen, setProfileSummaryOffscreen] = useState(false);
+  useLayoutEffect(() => {
+    setMobileProfileInfo(null);
+    if (!hideHeaderOnMobileProfile) return;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const bar = document.querySelector('header[data-lime-mobile-profile-header-hidden="true"] [data-lime-header-row]');
+      const bottom = bar?.getBoundingClientRect().bottom ?? 56;
+      const cover = document.querySelector('.profile-header-cover-avatar-gap');
+      const name = document.querySelector('[data-lime-profile-name]');
+      const summary = document.querySelector('[data-lime-profile-header]');
+      const titleProgress = name ? Math.max(0, Math.min(1, (bottom - name.getBoundingClientRect().bottom) / 24)) : 0;
+      const coverProgress = cover ? Math.max(0, Math.min(1, (bottom - cover.getBoundingClientRect().bottom) / 32)) : 0;
+      if (bar instanceof HTMLElement) {
+        bar.style.setProperty('--lime-profile-title-progress', String(titleProgress));
+        bar.style.setProperty('--lime-profile-cover-progress', String(coverProgress));
+      }
+      const background = bar?.querySelector<HTMLElement>(".lime-profile-bar-background");
+      if (background) background.hidden = coverProgress === 0;
+      setProfileCoverHidden(!!cover && cover.getBoundingClientRect().bottom <= bottom);
+      setProfileTitleVisible(titleProgress === 1);
+      setProfileSummaryOffscreen(!!summary && summary.getBoundingClientRect().bottom <= bottom);
+    };
+    const scroll = () => { if (!frame) frame = requestAnimationFrame(measure); };
+    const info = (event: Event) => {
+      const detail = (event as CustomEvent<{user: User; posts: number; following: boolean; pathname: string}>).detail;
+      if (detail.pathname !== location.pathname) return;
+      setMobileProfileInfo(detail);scroll();
+    };
+    setProfileTitleVisible(false);
+    setProfileCoverHidden(false);
+    setProfileSummaryOffscreen(false);
+    scroll();
+    const resize = new ResizeObserver(scroll);
+    resize.observe(document.body);
+    window.addEventListener('lime-profile-header-info', info);
+    window.dispatchEvent(new CustomEvent('lime-profile-header-request'));
+    window.addEventListener('pageshow', scroll);
+    window.addEventListener('resize', scroll);
+    window.addEventListener('scroll', scroll, {passive: true});
+    return () => {cancelAnimationFrame(frame);resize.disconnect();window.removeEventListener('pageshow', scroll);window.removeEventListener('resize', scroll);window.removeEventListener('lime-profile-header-info', info);window.removeEventListener('scroll', scroll);};
+  }, [hideHeaderOnMobileProfile, location.pathname]);
   // ポスト詳細ページはモバイルで専用ヘッダー(戻る・タイトル・もっと見る)を
   // PostDetail.tsx側が表示するため、共通のHeaderはモバイルでのみ非表示にする。
   const hidePostDetailHeaderOnMobile = isPostDetailPath(location.pathname);
@@ -2056,7 +2159,13 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   // 必ず表示する。スクロール中にヘッダーが既に非表示状態だと、そのまま
   // サイドバーを開いた瞬間にタブまで一緒に translateY(-100%) へ移動して
   // 「全てのタブが消えた」ように見えるため。
-  const shouldHideMobileHeader = isHiddenOnMobile && !isMobileSidebarOpen;
+  const [postActionSheetOpen, setPostActionSheetOpen] = useState(false);
+  useEffect(() => {
+    const update = (event: Event) => setPostActionSheetOpen((event as CustomEvent<boolean>).detail);
+    window.addEventListener('lime-post-action-sheet-open', update);
+    return () => window.removeEventListener('lime-post-action-sheet-open', update);
+  }, []);
+  const shouldHideMobileHeader = isHiddenOnMobile && !isMobileSidebarOpen && !postActionSheetOpen;
 
   // 検索ページから離れたら、次にメイン検索ページへ戻ったときは未検索状態から開始する。
   useEffect(() => {
@@ -2245,7 +2354,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
       : 'bg-zinc-200'
     : undefined;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (typeof document === 'undefined') {
       return;
     }
@@ -2254,13 +2363,16 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
 
     if (hideHeaderOnMobileProfile) {
       root.setAttribute('data-lime-mobile-profile-page', 'true');
+      if (/iPhone|iPod/.test(navigator.userAgent)) root.setAttribute('data-lime-iphone-profile', 'true');
     } else {
       root.removeAttribute('data-lime-mobile-profile-page');
+      root.removeAttribute('data-lime-iphone-profile');
     }
 
     return () => {
       if (root.getAttribute('data-lime-mobile-profile-page') === 'true') {
         root.removeAttribute('data-lime-mobile-profile-page');
+      root.removeAttribute('data-lime-iphone-profile');
       }
     };
   }, [hideHeaderOnMobileProfile]);
@@ -2311,7 +2423,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
           </DropdownMenuItem>
 
           <DropdownMenuItem onClick={() => navigate('/notifications')} className={menuItemClass}>
-            <Bell className="mr-2 h-4 w-4" /> 通知
+            <span className="relative mr-2 inline-flex"><Bell className="h-4 w-4" /><UnreadBadge /></span> 通知
           </DropdownMenuItem>
 
           <DropdownMenuItem onClick={() => navigate('/chat')} className={menuItemClass}>
@@ -2444,6 +2556,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
               <>
                 <button
                   type="button"
+                  data-lime-dismiss-backdrop
                   aria-label="検索設定を閉じる"
                   className="fixed inset-0 z-[550] cursor-default"
                   onClick={() => setIsHeaderSearchSettingsOpen(false)}
@@ -2646,6 +2759,8 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
           icon: Bookmark,
           onClick: () => navigate('/bookmarks'),
         }, {
+          label: 'LimeMaps', path: '/maps', icon: MapPin, onClick: () => navigate('/maps'),
+        }, {
           label: 'トピック',
           path: '/topics',
           icon: Hash,
@@ -2694,21 +2809,38 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
 
     return createPortal(
       <>
+        <style>{`
+          @media (max-width: 639px) {
+            aside[data-lime-mobile-sidebar]:not([data-lime-desktop-sidebar]) { border-right: 0; }
+            aside[data-lime-mobile-sidebar]:not([data-lime-desktop-sidebar]) [data-lime-sidebar-profile] { padding: calc(24px + env(safe-area-inset-top)) 28px 0; }
+            [data-lime-sidebar-profile-layout] { flex-wrap: wrap; gap: 12px; align-items: center; }
+            [data-lime-sidebar-profile-layout] > [data-lime-sidebar-profile-name] { flex: 0 0 100%; order: 3; }
+            [data-lime-sidebar-profile-name] > div:first-child { font-size: 22px; margin-bottom: 6px; }
+            [data-lime-sidebar-profile-name] > div:last-child { font-size: 18px; }
+            [data-lime-sidebar-follow-stats] { margin-top: 16px; font-size: 15px; }
+            [data-lime-mobile-account-shortcuts] { gap: 10px; }
+            aside[data-lime-mobile-sidebar]:not([data-lime-desktop-sidebar]) nav { padding: 28px 28px max(24px, env(safe-area-inset-bottom)); }
+            [data-lime-mobile-nav-path] { min-height: 56px; gap: 28px; border-radius: 0; padding-block: 14px; }
+            [data-lime-mobile-nav-path] > span:first-child svg { width: 24px; height: 24px; }
+            [data-lime-mobile-nav-path] > span:last-child { font-size: 20px; font-weight: 700; white-space: normal; }
+            [data-lime-mobile-nav-path="/settings"] { margin-top: 16px; }
+            [data-lime-settings-mobile-title] { margin-left: 0; text-align: center; padding-right: 40px; }
+            header:has([data-lime-settings-mobile-title]) { border-bottom: 0; }
+          }
+        `}</style>
         {/* サイドバーが開いている間だけ、右側に見えている本文の上に透明なオーバーレイを置く。
             - 本文タップでサイドバーを閉じられる。
             - 本文側のリンク/ボタンを誤タップして意図しない遷移をするのを防ぐ。
             - 本文側から左へドラッグして閉じる操作も、このオーバーレイ上で受け付ける
               (ジェスチャー処理は useMobileDrawerMotion が document レベルで担当)。
             左端はサイドバーの幅(aside の width と同じ clamp)に合わせている。 */}
-        {isMobileSidebarOpen && (
-          <div
+        <div
             aria-hidden="true"
             data-lime-mobile-sidebar-overlay="true"
             onClick={() => setIsMobileSidebarOpen(false)}
-            className="fixed inset-y-0 right-0 z-[99] sm:hidden"
-            style={{ left: 'clamp(300px, 78vw, 420px)', touchAction: 'none' }}
+            className="fixed inset-y-0 right-0 z-[110] sm:hidden"
+            style={{ left: 0, transform: 'translateX(var(--lime-mobile-drawer-shift, 0px))', touchAction: 'none', pointerEvents: isMobileSidebarOpen ? 'auto' : 'none', opacity: 'var(--lime-mobile-drawer-reveal, 0)', transition: 'var(--lime-mobile-drawer-transition, none), opacity 320ms ease', borderRadius: '42px 0 0 42px', boxShadow: '-10px 0 28px rgb(0 0 0 / .18)' }}
           />
-        )}
         <aside
           ref={desktopAsideRef}
           {...(!desktopLayout && !isMobileSidebarOpen ? { inert: '' } : {})}
@@ -2719,7 +2851,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
             // 角丸は本画面側(root要素をtransformを持たないラッパーで包み、
             // ラッパーにborder-radius+overflow:hiddenを付与)に付けるものなので、
             // ここ(サイドバー本体)には付けない。
-            'fixed inset-y-0 left-0 z-[100] flex w-[clamp(300px,78vw,420px)] flex-col border-r sm:hidden',
+            'fixed inset-y-0 left-0 z-[100] flex w-[clamp(300px,85vw,420px)] flex-col border-r sm:hidden',
             sidebarDarkClasses,
             isMobileSidebarOpen
               ? 'visible pointer-events-auto'
@@ -2730,12 +2862,12 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {desktopLayout && <div data-lime-sidebar-logo className="shrink-0"><Logo size="md" /></div>}
             <div data-lime-sidebar-profile className="shrink-0 px-[clamp(24px,8vw,68px)] pt-[max(18px,env(safe-area-inset-top))]">
-              <div className="flex items-start gap-4">
+              <div data-lime-sidebar-profile-layout className="flex items-start gap-4">
                 <Avatar userId={user.id} className="h-12 w-12 shrink-0 border-0">
                   <AvatarImage src={user.avatarUrl} alt={user.displayName} />
                   <AvatarFallback>{user.displayName?.slice(0, 1)}</AvatarFallback>
                 </Avatar>
-                <div className="min-w-0 flex-1 pt-0.5">
+                <div data-lime-sidebar-profile-name className="min-w-0 flex-1 pt-0.5">
                   <div className={cn("truncate text-[18px] font-extrabold leading-tight", sidebarIconText)}>
                     {user.displayName}
                   </div>
@@ -2745,6 +2877,10 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
                 </div>
                 {!desktopLayout && <MobileAccountShortcuts onDone={() => setIsMobileSidebarOpen(false)} />}
               </div>
+              {!desktopLayout && <div data-lime-sidebar-follow-stats className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-sm text-muted-foreground">
+                <Link to={`/u/${user.username}/followers_following?tab=following`} onClick={() => setIsMobileSidebarOpen(false)}><strong className="text-foreground">{sidebarFollowStats?.following ?? '–'}</strong> フォロー中</Link>
+                <Link to={`/u/${user.username}/followers_following?tab=followers`} onClick={() => setIsMobileSidebarOpen(false)}><strong className="text-foreground">{sidebarFollowStats?.followers ?? '–'}</strong> フォロワー</Link>
+              </div>}
             </div>
 
             <nav className="min-h-0 flex-1 overflow-y-auto px-[clamp(24px,8vw,68px)] pb-4 pt-7 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
@@ -2767,15 +2903,16 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
                       aria-label={desktopLayout ? item.label : undefined}
                       title={desktopLayout ? item.label : undefined}
                       aria-current={isCurrent ? 'page' : undefined}
+                      data-lime-mobile-nav-path={item.path}
                       data-lime-sidebar-item={desktopItemAttr}
                       type="button"
                       onClick={item.onClick}
                       className={cn("flex w-full items-center gap-6 rounded-xl py-3 text-left transition-colors", sidebarHover)}
                     >
-                      <Icon
+                      <span className="relative inline-flex shrink-0"><Icon
                         data-lime-sidebar-item-icon={desktopItemAttr}
                         className={cn("h-6 w-6 shrink-0 stroke-[2]", sidebarIconText)}
-                      />
+                      />{item.path === '/notifications' && <UnreadBadge />}</span>
                       <span
                         data-lime-sidebar-item-label={desktopItemAttr}
                         className={cn("whitespace-nowrap text-[18px] font-bold leading-tight", sidebarIconText)}
@@ -2799,6 +2936,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
                     <DropdownMenuItem className="gap-3 rounded-xl px-4 py-4 text-base font-bold" onClick={() => navigate('/bookmarks')}>
                       <Bookmark className="h-6 w-6 shrink-0 stroke-[2]" />ブックマーク
                     </DropdownMenuItem>
+                    <DropdownMenuItem className="gap-3 rounded-xl px-4 py-4 text-base font-bold" onClick={() => navigate('/maps')}><MapPin className="h-6 w-6 shrink-0 stroke-[2]" />LimeMaps</DropdownMenuItem>
                     <DropdownMenuItem className="gap-3 rounded-xl px-4 py-4 text-base font-bold" onClick={() => navigate('/topics')}>
                       <Hash className="h-6 w-6 shrink-0 stroke-[2]" />トピック
                     </DropdownMenuItem>
@@ -2815,7 +2953,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
                   <span>ポストする</span>
                 </button>
               )}
-              <div data-lime-sidebar-divider={desktopLayout || undefined} className={cn("my-6 border-t", useTimelineChromeDesign ? (isTimelineDark ? "border-white/[0.08]" : "border-black/[0.08]") : "border-black/[0.08] dark:border-white/[0.08]")} />
+              {desktopLayout && <div data-lime-sidebar-divider className={cn("my-6 border-t", useTimelineChromeDesign ? (isTimelineDark ? "border-white/[0.08]" : "border-black/[0.08]") : "border-black/[0.08] dark:border-white/[0.08]")} />}
 
             </nav>
             {desktopLayout && <div data-lime-sidebar-footer className="shrink-0"><DesktopAccountFooter /></div>}
@@ -2828,17 +2966,22 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
 
 
 
-  return (
-    <>
+  const headerContent = (
       <header
       data-lime-app-header="true"
+      data-lime-news-header={isNewsPage || undefined}
+      data-lime-profile-scrolled={hideHeaderOnMobileProfile && profileCoverHidden || undefined}
+      data-lime-profile-no-cover={hideHeaderOnMobileProfile && mobileProfileInfo && !mobileProfileInfo.user.coverUrl || undefined}
+      data-lime-profile-title-visible={hideHeaderOnMobileProfile && profileTitleVisible || undefined}
       data-lime-mobile-profile-header-hidden={hideHeaderOnMobileProfile ? 'true' : undefined}
       data-lime-mobile-post-detail-header-hidden={hidePostDetailHeaderOnMobile ? 'true' : undefined}
       data-lime-chat-header-hidden-mobile={isChatPage ? 'true' : undefined}
-      className={cn(
+      className={hideHeaderOnMobileProfile && !desktopLayout ? 'lime-profile-controls-host' : cn(
         isChatPage
           ? 'fixed left-0 right-0 top-0 z-[500] border-b backdrop-blur-md'
-          : 'sticky top-0 z-[500] border-b backdrop-blur-md',
+          : hideHeaderOnMobileProfile && !desktopLayout
+            ? 'sticky top-0 z-[500] border-0'
+            : 'sticky top-0 z-[500] border-b backdrop-blur-md',
         // モバイルのタイムライン、または検索バーがある検索ページのときだけ、
         // スクロール方向に応じてヘッダー全体をスライドして隠す。
         // 他のページ、およびPC(sm以上)では常に translate-y-0。
@@ -3294,14 +3437,26 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
           }
 
           @media (max-width: 639px) {
-            header[data-lime-app-header="true"][data-lime-mobile-profile-header-hidden="true"],
-            html[data-lime-mobile-profile-page="true"] header[data-lime-app-header="true"] {
-              display: none !important;
+            header[data-lime-app-header="true"][data-lime-mobile-profile-header-hidden="true"] {
+              display: contents !important; view-transition-name: none !important;
+              border: 0 !important; box-shadow: none !important; outline: none !important; background: transparent !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
               height: 0 !important;
-              min-height: 0 !important;
-              border: 0 !important;
-              overflow: hidden !important;
             }
+            header[data-lime-mobile-profile-header-hidden="true"] [data-lime-header-row] { position: fixed; inset: 0 0 auto; width: 100%; max-width: none; z-index: 500; background: transparent !important; transform: translateX(var(--lime-mobile-drawer-shift, 0px)); border: 0 !important; box-shadow: none !important; padding-top: env(safe-area-inset-top); height: calc(56px + env(safe-area-inset-top)); }
+            .lime-profile-bar-background { pointer-events: none; position: absolute; inset: 0; overflow: hidden; opacity: var(--lime-profile-cover-progress, 0); }
+            .lime-profile-bar-background img { width: 100%; height: 100%; object-fit: cover; filter: blur(18px) brightness(.85); transform: scale(1.2); }
+            .lime-profile-bar-background { background: #272421; }
+            [data-lime-profile-no-cover] .lime-profile-bar-background { background: #b4b2b2; }
+            .dark [data-lime-profile-no-cover] .lime-profile-bar-background { background: #646262; }
+            .lime-profile-bar-title { pointer-events: none; opacity: var(--lime-profile-title-progress, 0); transform: translateY(calc((1 - var(--lime-profile-title-progress, 0)) * 20px)); min-width: 0; flex: 1; color: white; }
+            .lime-profile-bar-control { transition: width 180ms ease, opacity 180ms ease, margin 180ms ease; }
+            .lime-profile-bar-control.is-collapsed { width: 0; opacity: 0; margin-right: -8px; pointer-events: none; overflow: hidden; }
+            .lime-profile-bar-follow { width: 0; opacity: 0; overflow: hidden; flex-shrink: 0; margin-left: -8px; transition: width 180ms ease, opacity 180ms ease, margin 180ms ease; }
+            .lime-profile-bar-follow.is-visible { width: 124px; opacity: 1; margin-left: 0; }
+            .lime-profile-bar-follow button { width: 124px; height: 40px; color: white; background: rgb(0 0 0 / .45); border: 0; }
+            .lime-profile-bar-control { position: relative; display: flex; width: 40px; height: 40px; z-index: 1; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 50%; background: rgb(0 0 0 / .45); color: white; }
+            html[data-lime-iphone-profile="true"] body { padding-top: 0 !important; }
+
           }
 
           /* ポスト詳細ページはモバイルのみ、PostDetail.tsx側の専用ヘッダーに
@@ -3329,7 +3484,26 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
               +設定歯車アイコンを配置する。ロゴはモバイルでは表示しない。
             - PC(sm以上): ロゴを左端、アバターを右端、その間(中央)にタブを配置。 */}
         <div data-lime-header-row className="relative mx-auto flex h-14 max-w-5xl items-center gap-2 px-3 sm:h-16 sm:px-4">
-          {isTopicsPage ? <>
+          {hideHeaderOnMobileProfile && !desktopLayout ? <>
+            <div aria-hidden="true" className="lime-profile-bar-background">{mobileProfileInfo?.user.coverUrl && <img src={mobileProfileInfo.user.coverUrl} alt="" />}</div>
+            <button className="lime-profile-bar-control" aria-label="戻る" onClick={() => window.history.state?.idx > 0 ? navigate(-1) : navigate('/')}><ArrowLeft className="h-5 w-5" /></button>
+            <div className="lime-profile-bar-title relative"><div className="truncate text-base font-bold">{mobileProfileInfo?.user.displayName}</div><div className="text-xs">{mobileProfileInfo?.posts.toLocaleString()}件のポスト</div></div>
+            <Link className={`lime-profile-bar-control ${profileSummaryOffscreen && mobileProfileInfo?.user.id !== user?.id ? 'is-collapsed' : ''}`} aria-hidden={profileSummaryOffscreen && mobileProfileInfo?.user.id !== user?.id || undefined} tabIndex={profileSummaryOffscreen && mobileProfileInfo?.user.id !== user?.id ? -1 : undefined} aria-label="プロフィールを検索" to={`/search?q=${encodeURIComponent(`@${mobileProfileInfo?.user.username ?? ''}`)}`}><Search className="h-5 w-5" /></Link>
+            <DropdownMenu modal={false}><DropdownMenuTrigger asChild><button className="lime-profile-bar-control" aria-label="プロフィールのその他のメニュー"><MoreHorizontal className="h-5 w-5" /></button></DropdownMenuTrigger><DropdownMenuContent align="end" className="z-[600]" onCloseAutoFocus={event => event.preventDefault()}><DropdownMenuItem onClick={() => {void navigator.clipboard.writeText(window.location.href);toast.success('リンクをコピーしました');}}>リンクをコピー</DropdownMenuItem><DropdownMenuItem onClick={() => { if (navigator.share) void navigator.share({title: mobileProfileInfo?.user.displayName, url: window.location.href}).catch(() => {}); else {void navigator.clipboard.writeText(window.location.href);toast.success('リンクをコピーしました');} }}>プロフィールを共有</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
+            {mobileProfileInfo && mobileProfileInfo.user.id !== user?.id && <div className={`relative lime-profile-bar-follow ${profileSummaryOffscreen ? 'is-visible' : ''}`} ref={element => element?.toggleAttribute('inert', !(profileSummaryOffscreen))} aria-hidden={!(profileSummaryOffscreen)}><FollowButton userId={mobileProfileInfo.user.id} externalProfile={mobileProfileInfo.user.id.startsWith('did:') || mobileProfileInfo.user.id.startsWith('misskey-user:') ? mobileProfileInfo.user : undefined} /></div>}
+          </> : isMapsPage ? <>
+            <Button variant="ghost" size="icon" className="shrink-0 rounded-full" aria-label="戻る" onClick={() => window.history.state?.idx > 0 ? navigate(-1) : navigate('/')}><ArrowLeft className="h-5 w-5" /></Button><h1 className="ml-2 flex-1 text-xl font-bold">LimeMaps</h1>
+          </> : isNewsPage ? <>
+            <Button variant="ghost" size="icon" className="shrink-0 rounded-full" aria-label={isNewsHistoryPage ? 'ニュースに戻る' : '検索に戻る'} onClick={() => window.history.state?.idx > 0 ? navigate(-1) : navigate(isNewsHistoryPage ? `/news${settingsParams.get('story') ? `?story=${encodeURIComponent(settingsParams.get('story')!)}` : ''}` : '/search')}><ArrowLeft className="h-5 w-5" /></Button>
+            {isNewsHistoryPage ? <h1 className="ml-2 flex-1 text-lg font-bold">トレンド履歴</h1> : <NewsHeaderActions />}
+          </> : isSettingsPage ? <>
+            <Button variant="ghost" size="icon" className="shrink-0 rounded-full" aria-label="戻る" onClick={() => {
+              if (settingsSection) setSettingsParams(previous => { const next = new URLSearchParams(previous); next.set('group', settingsGroup!.id); next.delete('section'); return next; });
+              else if (settingsGroup) setSettingsParams(previous => { const next = new URLSearchParams(previous); next.delete('group'); return next; });
+              else window.history.state?.idx > 0 ? navigate(-1) : navigate('/');
+            }}><ArrowLeft className="h-5 w-5" /></Button>
+            <div data-lime-settings-mobile-title className="ml-2 min-w-0 flex-1"><h1 className="truncate text-xl font-bold">{settingsSection?.label ?? settingsGroup?.label ?? '設定'}</h1><span className="text-xs text-muted-foreground">@{user?.username}</span></div>
+          </> : isTopicsPage ? <>
             <Button variant="ghost" size="icon" className="shrink-0 rounded-full" aria-label="戻る" onClick={() => window.history.state?.idx > 0 ? navigate(-1) : navigate('/')}><ArrowLeft className="h-5 w-5" /></Button>
             <h1 className="ml-2 min-w-0 flex-1 text-xl font-bold">トピック</h1>
           </> : isNotificationsPage ? <>
@@ -3454,9 +3628,9 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
         </div>
       )}
       </header>
-
-      {/* サイドバーは header の外に置いて fixed をビューポート基準にする。 */}
-      {renderMobileSidebar()}
-    </>
   );
+  return <>
+    {hideHeaderOnMobileProfile && !desktopLayout ? createPortal(headerContent, document.body) : headerContent}
+    {renderMobileSidebar()}
+  </>;
 };

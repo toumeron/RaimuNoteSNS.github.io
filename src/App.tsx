@@ -32,6 +32,7 @@ const AccountAboutPage = lazy(() => import("./pages/AccountAboutPage"));
 const FollowersFollowingPage = lazy(() => import("./pages/FollowersFollowingPage"));
 const SpacePage = lazy(() => import("./pages/SpacePage"));
 import { SpaceProvider } from '@/components/spaces/SpaceProvider';
+const LimeMaps = lazy(() => import('./pages/LimeMaps'));
 const NewsPage = lazy(() => import("./pages/NewsPage"));
 const ChatPage = lazy(() => import("./pages/ChatPage"));
 const TermsPage = lazy(() => import("./pages/terms"));
@@ -2651,6 +2652,8 @@ const FloatingComposeButton = ({ hidden, onOpen }: { hidden: boolean; onOpen: ()
       style={{
         right: 'max(1.5rem, env(safe-area-inset-right, 0px))',
         bottom: 'calc(6rem + env(safe-area-inset-bottom, 0px))',
+        translate: 'var(--lime-mobile-drawer-shift, 0px) 0',
+        transition: 'translate var(--lime-mobile-drawer-duration, 0ms) cubic-bezier(0.22, 1, 0.36, 1), transform 500ms, opacity 500ms',
       }}
       aria-hidden={hidden}
       tabIndex={hidden ? -1 : 0}
@@ -2686,7 +2689,7 @@ const isPostDetailPage = lowerPath.includes("/post/");
 const isMediaPage = lowerPath === "/media" || lowerPath.startsWith("/media/");
 
 // いずれかの非表示対象ページであるか、またはスクロールによって非表示にするか
-const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage || isMediaPage || isPostDetailPage || lowerPath === '/topics';
+const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage || isMediaPage || isPostDetailPage || lowerPath === '/topics' || lowerPath === '/maps';
 
   return (
     <PostOverlayContext.Provider value={openPostOverlay}>
@@ -2707,6 +2710,8 @@ const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage |
             <Route path="/" element={<Feed />} />
             <Route path="/notifications" element={<Suspense fallback={<RouteLoading />}><Notifications /></Suspense>} />
             <Route path="/search" element={<Suspense fallback={<RouteLoading />}><SearchPage /></Suspense>} />
+            <Route path="/news/history" element={<Suspense fallback={<RouteLoading />}><NewsPage /></Suspense>} />
+            <Route path="/maps" element={<Suspense fallback={<RouteLoading />}><LimeMaps /></Suspense>} />
             <Route path="/news" element={<Suspense fallback={<RouteLoading />}><NewsPage /></Suspense>} />
             <Route path="/chat" element={<Suspense fallback={<RouteLoading />}><ChatPage /></Suspense>} /> {/* AIチャットページのルーティングを追加 */}
             <Route path="/post/:id" element={<Suspense fallback={<RouteLoading />}><PostDetail /></Suspense>} />

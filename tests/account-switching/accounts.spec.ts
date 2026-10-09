@@ -158,3 +158,63 @@ test('mobile account controls preserve touch targets for switching and adding',a
  expect(await page.evaluate(()=>window.__accountCaptures)).toBe(0);
  await page.getByLabel('メールアドレス',{exact:true}).tap();await expect(page.getByLabel('メールアドレス',{exact:true})).toBeFocused();
 });
+
+test('unread badges exclude viewed notifications and keep saved-account sessions isolated',async({page},info)=>{
+ await setup(page,info.project.name.includes('PWA'));
+ const rows=Array.from({length:4},(_,index)=>({id:`notification-${index}`,user_id:index===3?ids[1]:ids[0],actor_id:ids[1],post_id:null,type:index===1?'mention':'follow',actor_name:'Bob',actor_username:'bob',actor_avatar_url:'',content_preview:null,is_read:index===2,created_at:new Date().toISOString()}));
+ const identities:string[]=[];
+ await page.route('**/*.supabase.co/rest/v1/notifications*',async route=>{
+  const req=route.request(),url=new URL(req.url());
+  if(req.method()==='OPTIONS')return route.fulfill({status:204,headers:{'access-control-allow-origin':'*','access-control-allow-methods':'GET,HEAD,PATCH,OPTIONS','access-control-allow-headers':req.headers()['access-control-request-headers']??'*'}});
+  const userId=url.searchParams.get('user_id')?.replace(/^eq\./,'');
+  const jwt=req.headers().authorization?.replace(/^Bearer /,'')??'';
+  const identity=JSON.parse(Buffer.from(jwt.split('.')[1],'base64url').toString()).sub;
+  identities.push(identity);expect(identity).toBe(userId);
+  if(req.method()==='PATCH'){
+   const filter=url.searchParams.get('id')??'';
+   rows.filter(row=>row.user_id===userId&&filter.includes(row.id)).forEach(row=>{row.is_read=true;});
+   return route.fulfill({status:204,body:''});
+  }
+  const result=rows.filter(row=>row.user_id===userId&&(url.searchParams.get('is_read')!=='eq.false'||!row.is_read));
+  return route.fulfill({contentType:'application/json',headers:{'content-range':`0-0/${result.length}`,'access-control-expose-headers':'content-range'},body:req.method()==='HEAD'?'':JSON.stringify(result)});
+ });
+ await page.goto('./');await expect(page.getByText('aliceのみの投稿',{exact:true})).toBeVisible();
+ const notificationControl=()=> (page.viewportSize()?.width??0)>=768?page.getByRole('button',{name:'通知',exact:true}).filter({visible:true}).first():page.locator('a[href$="/notifications"]').filter({visible:true}).first();
+ const notification=notificationControl();
+ await expect(notification.locator('[data-lime-unread-count="2"]')).toBeVisible();
+ await expect(notification.locator('[data-lime-unread-count="2"]')).toHaveCSS('font-size','9px');
+ await openAccounts(page);
+ await expect(page.getByRole('button',{name:'Bob @bobに切り替える',exact:true}).locator('[data-lime-unread-count="1"]')).toBeVisible();
+ await expect(page.locator('[data-lime-account-list]').getByRole('button',{pressed:true}).locator('[data-lime-unread-count="2"]')).toBeVisible();
+ expect(await page.evaluate(key=>JSON.parse(localStorage.getItem(key)??'{}').user?.id,authKey)).toBe(ids[0]);
+ expect(identities).toContain(ids[1]);
+ await page.screenshot({path:info.outputPath('unread-account-counts.png')});
+ await page.goto('notifications?tab=mention');
+ await expect.poll(()=>rows.filter(row=>row.user_id===ids[0]&&!row.is_read).length).toBe(1);
+ await expect(notificationControl().locator('[data-lime-unread-count="1"]')).toBeVisible();
+ await page.goto('notifications');
+ await expect.poll(()=>rows.filter(row=>row.user_id===ids[0]&&!row.is_read).length).toBe(0);
+ await expect(notificationControl().locator('[data-lime-unread-count]')).toHaveCount(0);
+ await page.screenshot({path:info.outputPath('notifications-read.png')});
+ await page.goto('./');await expect(page.getByText('aliceのみの投稿',{exact:true})).toBeVisible();
+ await openAccounts(page);
+ await expect(page.getByRole('button',{name:'Bob @bobに切り替える',exact:true}).locator('[data-lime-unread-count="1"]')).toBeVisible();
+ await expect(page.locator('[data-lime-account-list]').getByRole('button',{pressed:true}).locator('[data-lime-unread-count]')).toHaveCount(0);
+});
+
+test('mobile sidebar places identity below avatars and keeps existing navigation labels',async({page},info)=>{
+ test.skip((page.viewportSize()?.width??0)>=768,'Mobile drawer only');
+ await setup(page,info.project.name.includes('PWA'));await page.goto('./');await expect(page.getByText('aliceのみの投稿',{exact:true})).toBeVisible();
+ await press(page,page.getByRole('button',{name:'メニューを開く',exact:true}));
+ const drawer=page.locator('aside[data-lime-mobile-sidebar]:not([data-lime-desktop-sidebar])');
+ await expect(drawer).toBeVisible();
+ const name=await drawer.locator('[data-lime-sidebar-profile-name]').boundingBox(),avatar=await drawer.locator('[data-lime-sidebar-profile-layout] > span').first().boundingBox();
+ expect(name!.y).toBeGreaterThan(avatar!.y+avatar!.height);
+ await expect(drawer.getByRole('button',{name:'アカウント一覧を開く',exact:true}).locator('.lucide-circle-ellipsis')).toBeVisible();
+ await expect(drawer.getByRole('button',{name:'LimeMaps',exact:true})).toBeVisible();
+ await expect(drawer.getByRole('link',{name:/フォロー中/})).toBeVisible();
+ await page.screenshot({path:info.outputPath('mobile-sidebar.png')});
+ await drawer.getByRole('button',{name:'設定',exact:true}).scrollIntoViewIfNeeded();await press(page,drawer.getByRole('button',{name:'設定',exact:true}));
+ await expect(page).toHaveURL(/settings$/);await expect(page.locator('[data-lime-settings-mobile-title]')).toContainText('@alice');
+ await page.screenshot({path:info.outputPath('mobile-settings.png')});
+});

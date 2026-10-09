@@ -14,6 +14,13 @@ import { isIpad } from '@/lib/utils';
 export function AppLayout() {
   const { user, loading } = useAuth();
   const location = useLocation();
+  const [mapSidebarClosed, setMapSidebarClosed] = useState(false);
+  useEffect(() => {
+    const toggle = (event: Event) => setMapSidebarClosed((event as CustomEvent<boolean>).detail === true);
+    window.addEventListener('lime-maps-sidebar-toggle', toggle);
+    return () => window.removeEventListener('lime-maps-sidebar-toggle', toggle);
+  }, []);
+  useEffect(() => setMapSidebarClosed(false), [location.pathname]);
   const [desktopSidebarContainer, setDesktopSidebarContainer] = useState<HTMLDivElement | null>(null);
   const [isDesktop, setIsDesktop] = useState(() => window.matchMedia(isIpad() ? '(min-width: 640px)' : '(min-width: 768px)').matches);
   useEffect(() => {
@@ -45,7 +52,8 @@ export function AppLayout() {
 
   // ページのパスに応じてメインコンテナのクラス名を切り替える
   let mainClassName = 'mx-auto max-w-2xl px-4 py-6';
-  if (location.pathname === '/notifications' || location.pathname === '/topics') mainClassName = 'w-full max-w-none px-0 py-0';
+  if (location.pathname === '/maps' || location.pathname === '/notifications' || location.pathname === '/topics' || location.pathname === '/settings' || location.pathname.startsWith('/news')) mainClassName = 'w-full max-w-none px-0 py-0';
+  if (/^\/u\/[^/]+$/.test(location.pathname)) mainClassName = 'mx-auto max-w-2xl px-4 py-6 max-sm:pt-0';
   if (isAccountAboutPage) mainClassName = 'mx-auto max-w-2xl px-0 py-0';
   
   if (isLimeProPage) {
@@ -59,14 +67,15 @@ export function AppLayout() {
 
   if (isDesktop) {
     const isWorkspacePage = location.pathname === '/chat' || location.pathname.startsWith('/media');
-    const hideHeader = (location.pathname.startsWith('/u/') && !isAccountAboutPage) || ['/search', '/settings', '/chat', '/bookmarks'].includes(location.pathname) || location.pathname.startsWith('/media') || isPostDetailPage;
-    const showRightSidebar = !['/chat', '/settings'].includes(location.pathname);
-    const isEdgePage = location.pathname === '/notifications' || location.pathname === '/topics' || isWorkspacePage || location.pathname === '/bookmarks' || location.pathname === '/' || location.pathname.startsWith('/u/') || isPostDetailPage;
+    const hideHeader = location.pathname === '/maps' || (location.pathname.startsWith('/u/') && !isAccountAboutPage) || ['/search', '/settings', '/chat', '/bookmarks'].includes(location.pathname) || location.pathname.startsWith('/media') || isPostDetailPage;
+    const showRightSidebar = !['/chat', '/settings', '/maps'].includes(location.pathname);
+    const isEdgePage = location.pathname === '/maps' || location.pathname.startsWith('/news') || location.pathname === '/settings' || location.pathname === '/notifications' || location.pathname === '/topics' || isWorkspacePage || location.pathname === '/bookmarks' || location.pathname === '/' || location.pathname.startsWith('/u/') || isPostDetailPage;
     return (
       <CallSessionProvider>
         <PageCompanion userId={user.id} />
         <DesktopLayoutContext.Provider value={true}>
         <div className="lime-app-shell" data-lime-page={location.pathname}
+          data-lime-map-sidebar-collapsed={location.pathname === '/maps' && mapSidebarClosed && !isIpad() || undefined}
           data-lime-ipad={isIpad() || undefined}
           data-lime-workspace={location.pathname === '/chat' || undefined}
           data-lime-hide-header={hideHeader || undefined}
@@ -88,7 +97,7 @@ export function AppLayout() {
     // LimeProページの場合はボトムナビゲーション用の余白(pb-20)を削除する
     <CallSessionProvider>
         <PageCompanion userId={user.id} />
-      <div className={`min-h-screen ${isLimeProPage ? 'pb-0' : location.pathname === '/topics' ? 'pb-[var(--lime-bottom-nav-height,64px)] md:pb-0' : 'pb-20 md:pb-0'}`}>
+      <div className={`min-h-screen ${isLimeProPage || location.pathname === '/maps' ? 'pb-0' : location.pathname === '/topics' ? 'pb-[var(--lime-bottom-nav-height,64px)] md:pb-0' : 'pb-20 md:pb-0'}`}>
       
         {/* LimeProページ以外でのみヘッダーを表示する */}
         {!isLimeProPage && location.pathname !== '/bookmarks' && <Header />}

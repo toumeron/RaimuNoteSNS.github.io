@@ -3,3 +3,14 @@
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
+@media (prefers-reduced-motion: reduce) { .news-history-enter { animation: none; } }
+.news-detail-article { padding: 20px 16px 24px; }
+.news-detail-post { border-bottom: 1px solid hsl(var(--border)); }
+.news-detail-post > article[data-lime-post-card] { margin: 0; padding: 16px; border: 0 !important; border-radius: 0; background: transparent; box-shadow: none; }
+@media (min-width: 640px) { .news-detail-article { padding: 24px; } .news-detail-post > article[data-lime-post-card] { padding: 20px 24px; } }
+
+.news-detail-post > article[data-lime-post-card] > .pointer-events-none.absolute.bottom-0 { display: none; }
+
+header[data-lime-news-header] { border-bottom: 0 !important; }
+header[data-lime-news-header] [data-lime-header-row] { height: 48px !important; }
+header[data-lime-news-header] [data-lime-header-row] button > svg { width: 24px; height: 24px; }

@@ -15,7 +15,7 @@ export default function Notifications(){
  const query=useInfiniteQuery({queryKey:key,enabled:!!user?.id,initialPageParam:0,queryFn:({pageParam})=>getNotifications(user!.id,pageParam),getNextPageParam:(last,_,page)=>last.length===50?page+1:undefined});
  const rows=useMemo(()=>query.data?.pages.flat()??[],[query.data]);
  useEffect(()=>{if(!user?.id)return;const channel=supabase.channel(`notification-page-${user.id}`).on('postgres_changes',{event:'*',schema:'public',table:'notifications',filter:`user_id=eq.${user.id}`},()=>void queryClient.invalidateQueries({queryKey:['notifications',user.id]})).subscribe();return()=>{void supabase.removeChannel(channel);};},[user?.id,queryClient]);
- useEffect(()=>{if(!user?.id)return;const ids=rows.filter(n=>!n.is_read).map(n=>n.id);if(ids.length)void markNotificationsRead(user.id,ids).catch(()=>{});},[rows,user?.id]);
+ useEffect(()=>{if(!user?.id)return;const ids=rows.filter(n=>!n.is_read&&(tab==='all'||n.type==='mention')).map(n=>n.id);if(ids.length)void markNotificationsRead(user.id,ids).catch(()=>{});},[rows,user?.id,tab]);
  const groups=groupNotifications(rows.filter(n=>tab==='all'||n.type==='mention'));
  return <div className="w-full" data-lime-notifications>
   <div role="tabpanel" id="notification-list" aria-labelledby={`notification-tab-${tab}`}>

@@ -1,7 +1,7 @@
 import {beforeEach,expect,it} from 'vitest';
 import fixtures from './fixtures/recommendationVisual.json';
 import {classifyRecommendationVisual} from './recommendationVisualInference';
-import {visualSimilarity} from './recommendationVisual';
+import {visualSimilarity,createVisualSimilarityComparator} from './recommendationVisual';
 import {recommendationIsEligible} from './recommendationEligibility';
 import {addRecommendationInterest,rankRecommendations,recordRecommendationLike,readRecommendationLikes,type RecommendationPreferences} from './recommendations';
 import {topicAuthorCandidates} from './recommendationSignals';
@@ -57,3 +57,12 @@ it('retains a liked image URL and full sample when an ID-only state synchronizat
  recordRecommendationLike({id:'liked',content:''} as PostWithAuthor,true,'viewer');
  const [sample]=readRecommendationLikes('viewer');expect(sample.imageUrls).toEqual(original.imageUrls);expect(sample.userId).toBe(original.userId);expect(sample.recommendationVisual?.vector).toEqual(original.recommendationVisual?.vector);
 });
+
+ it('reuses vector comparisons within a pass and creates fresh comparisons for changed evidence',()=>{
+ const a=Array.from({length:512},(_,i)=>Math.sin(i)),b=Array.from({length:512},(_,i)=>Math.cos(i));
+ const compare=createVisualSimilarityComparator();
+ expect(compare(a,b)).toBeCloseTo(visualSimilarity(a,b),12);expect(compare(b,a)).toBeCloseTo(visualSimilarity(b,a),12);
+ b.fill(0);b[0]=1;
+ expect(createVisualSimilarityComparator()(a,b)).toBeCloseTo(visualSimilarity(a,b),12);
+ expect(compare(a,Array(512).fill(NaN))).toBe(0);expect(compare(a,[])).toBe(0);
+ });

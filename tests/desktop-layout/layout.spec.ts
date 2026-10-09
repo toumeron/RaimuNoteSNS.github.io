@@ -275,6 +275,13 @@ test('mobile sidebar retains its existing photo and settings items',async({page}
   await expect(sidebar.getByRole('button',{name:'フォト',exact:true})).toBeVisible();
   await expect(sidebar.getByRole('button',{name:'設定',exact:true})).toBeVisible();
   await expect(sidebar.getByRole('button',{name:'もっと見る',exact:true})).toHaveCount(0);
+  await expect(sidebar.locator('[data-lime-mobile-nav-path="/settings"]')).toHaveCSS('border-top-width','0px');
+  await expect(sidebar.locator('[data-lime-sidebar-divider]')).toHaveCount(0);
+  await expect(page.locator('[data-lime-bottom-nav-root] a').first()).toHaveAttribute('aria-label','ホーム');
+  expect(await page.locator('[data-lime-bottom-nav-root] ul').innerText()).not.toContain('ホーム');
+  await expect(page.locator('[data-lime-mobile-sidebar-overlay]')).toHaveCSS('border-top-left-radius','42px');
+  await expect(page.locator('[data-lime-mobile-sidebar-overlay]')).not.toHaveCSS('box-shadow','none');
+  await page.screenshot({path:test.info().outputPath('mobile-sidebar.png')});
 });
 for (const width of [768, 1024, 1440]) {
   test(`every app page keeps its menu stable and required sidebars visible at ${width}px`, async ({ page }) => {
@@ -936,11 +943,13 @@ test('news history animates every time it opens from the search news page',async
   await page.getByText('最新のニュース',{exact:true}).click();
   await expect(page).toHaveURL(/\/news(?:\?story=latest)?$/);
   for(let i=0;i<2;i++) {
-    await page.getByRole('button',{name:'履歴を見る',exact:true}).click();
+    await page.getByRole('button',{name:'ニュースのメニュー',exact:true}).click();
+    await page.getByRole('menuitem',{name:'トレンド履歴',exact:true}).click();
     const history=page.locator('[data-lime-news-history]');
     await expect(history).toContainText('過去の記事');
     expect(await history.evaluate(el=>({name:getComputedStyle(el).animationName,duration:getComputedStyle(el).animationDuration}))).toEqual({name:'newsHistoryEnter',duration:'0.3s'});
-    await history.getByRole('button').click();await expect(history).toHaveCount(0);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await page.getByRole('button',{name:'ニュースに戻る',exact:true}).click();await expect(history).toHaveCount(0);
   }
 });
 
@@ -1291,4 +1300,29 @@ for(const width of [390,820,1440])test(`offline LimeNote iPad keeps private spac
  if(width>=640){await page.locator('#more-nav').click();await page.locator('#details').getByRole('button',{name:'スペース',exact:true}).click();}else await page.locator('#nav').getByRole('button',{name:'スペース',exact:true}).click();await expect(page.getByText('自分が作成したスペース',{exact:true})).toBeVisible();await expect(page.getByText('他人のスペースをコピーしない',{exact:true})).toHaveCount(0);await expect(page.getByText('参加した他人のスペース',{exact:true})).toHaveCount(0);
  expect(await page.locator('#feed').textContent()).not.toContain('INTERNAL_HEARTBEAT');expect(await page.locator('#feed').textContent()).not.toContain('host_id');expect(await page.locator('pre')).toHaveCount(0);expect(errors).toEqual([]);
  }finally{await rm(folder,{recursive:true,force:true});}
+});
+
+for(const width of [390,1440])test(`post detail header has no bottom border at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:844});
+ await page.goto('post/post-0');
+ const bar=page.locator('.post-detail-mobile-topbar');
+ await expect(bar).toBeVisible();
+ expect(await bar.evaluate(e=>getComputedStyle(e).borderBottomWidth)).toBe('0px');
+ await expect(bar.getByRole('button',{name:'戻る',exact:true})).toBeVisible();
+});
+
+test('mobile drawer keeps the main page above the sidebar throughout opening and closing',async({page})=>{
+ await page.setViewportSize({width:390,height:844});await page.goto('./');
+ await page.getByRole('button',{name:'メニューを開く',exact:true}).click();
+ const mover=page.locator('[data-lime-root-move-wrapper]');
+ await expect(mover).toHaveCSS('z-index','101');
+ await expect.poll(()=>page.getByRole('button',{name:'新規投稿',exact:true}).evaluate(el=>el.getBoundingClientRect().x)).toBeGreaterThan(600);
+ await expect.poll(()=>mover.evaluate(el=>new DOMMatrixReadOnly(getComputedStyle(el).transform).m41)).toBeGreaterThan(325);
+ await page.locator('[data-lime-mobile-sidebar-overlay]').click({position:{x:10,y:100}});
+ await expect(page.locator('[data-lime-mobile-sidebar]')).toBeVisible();
+ await expect(mover).toHaveCSS('z-index','101');
+ await page.screenshot({path:test.info().outputPath('drawer-closing.png')});
+ await expect(mover).toHaveCSS('transform','none');
+ await expect(page.locator('[data-lime-mobile-sidebar]')).toBeHidden();
+ await expect(page.locator('[data-lime-bottom-nav-root]')).toBeVisible();
 });

@@ -266,6 +266,26 @@ export default function Feed() {
     isFetchNextPageError,
   } = activeTab === 'recommended' ? recommendedFeed : timelineFeed;
 
+  const [recommendationScrollIntent,setRecommendationScrollIntent]=useState(0);
+  const recommendationPageIntent=useRef(-1);
+  useEffect(()=>{
+    if(activeTab!=='recommended')return;
+    recommendationPageIntent.current=-1;
+    const scrollIntent=(event:Event)=>{
+      if(event instanceof WheelEvent&&event.deltaY<=0)return;
+      if(event instanceof KeyboardEvent){
+        const target=event.target as HTMLElement|null;
+        if(target?.matches('input,textarea,[contenteditable="true"]')||!['ArrowDown','PageDown','End',' '].includes(event.key))return;
+      }
+      if(event instanceof PointerEvent&&(event.buttons!==1||event.clientX<document.documentElement.clientWidth-20))return;
+      setRecommendationScrollIntent(version=>version+1);
+    };
+    window.addEventListener('wheel',scrollIntent,{passive:true});
+    window.addEventListener('touchmove',scrollIntent,{passive:true});
+    window.addEventListener('keydown',scrollIntent);
+    window.addEventListener('pointermove',scrollIntent,{passive:true});
+    return()=>{window.removeEventListener('wheel',scrollIntent);window.removeEventListener('touchmove',scrollIntent);window.removeEventListener('keydown',scrollIntent);window.removeEventListener('pointermove',scrollIntent);};
+  },[activeTab]);
   const { ref, inView } = useInView({
     rootMargin: '300px 0px 500px 0px',
   });
@@ -950,11 +970,16 @@ export default function Feed() {
 
     // A single request owns both sources and publishes the merged page only
     // when its lookahead is ready. Do not launch overlapping pages/refetches.
-    if (inView && hasNextPage && !isFetching && !isFetchNextPageError) {
-      void fetchNextPage();
+    const recommendationCount=recommendedFeed.data?.pages.reduce((count,page)=>count+page.posts.length,0)??0;
+    // Layout/scroll anchoring can keep the bottom sentinel visible after new
+    // cards arrive. Consume one scroll intent, rather than chaining all pages.
+    const allowRecommended=activeTab!=='recommended'||!recommendedFeed.automaticPaused&&(recommendationCount>=6||recommendationScrollIntent>0)&&recommendationPageIntent.current!==recommendationScrollIntent;
+    if (inView && hasNextPage && !isFetching && !isFetchNextPageError && allowRecommended) {
+      if(activeTab==='recommended')recommendationPageIntent.current=recommendationScrollIntent;
+      void fetchNextPage({cancelRefetch:false});
     }
   }, [
-    activeTab, inView, hasNextPage, isFetching, isFetchNextPageError, fetchNextPage,
+    activeTab, inView, hasNextPage, isFetching, isFetchNextPageError, fetchNextPage, recommendedFeed.automaticPaused, recommendationScrollIntent,
     trendingHasMore, trendingLoading, loadTrendingPosts,
   ]);
 
@@ -1093,9 +1118,13 @@ export default function Feed() {
 
   // 初回ローディング表示(スケルトン)を出すかどうかは、タブごとに参照する
   // データソースが違うため個別に判定する。
+  const preparingRecommendations = activeTab === 'recommended' && (
+    recommendedFeed.isPending || recommendedFeed.isFetching || recommendedFeed.isFilling ||
+    recommendedFeed.data?.pages.at(-1)?.pendingAnalysis
+  );
   const isInitialLoading = activeTab === 'trending'
     ? trendingLoading && allPosts.length === 0
-    : (isLoading || (activeTab==='recommended'&&recommendedFeed.data?.pages.at(-1)?.pendingAnalysis)) && allPosts.length === 0;
+    : (isLoading || preparingRecommendations) && allPosts.length === 0;
 
   // 初回表示の「ふわっと浮かび上がる」アニメーションは、再読み込み後の最初のフィード表示だけに限定。
   // タブを切り替えた後のフィードには animate-float-up を付けない。
@@ -1603,7 +1632,7 @@ export default function Feed() {
                   : canReleaseToRefresh || showRefreshDone
                     ? 'rotate-180'
                     : ''
-              } transition-transform duration-150`}
+              } ${isRefreshing ? "" : "transition-transform duration-150"}`}
             />
             <span>
               {isRefreshing
@@ -1663,7 +1692,7 @@ export default function Feed() {
             {/* スマホ専用の LimeNoteBeta ボックス */}
             <span className="ribbon-tag sm:hidden">
               <Sparkles className="h-3 w-3" />
-              LimeNote 2.7.4
+              LimeNote 2.7.9
             </span>
           </div>
 
@@ -1672,7 +1701,7 @@ export default function Feed() {
         {/* PC専用の LimeNoteBeta ボックス */}
         <span className="ribbon-tag hidden sm:inline-flex">
           <Sparkles className="h-3 w-3" />
-          LimeNote 2.7.4
+          LimeNote 2.7.9
         </span>
       </div>
 
@@ -1702,7 +1731,7 @@ export default function Feed() {
           </div>
         )}
 
-        {!isInitialLoading && !isBusyLoadingMore && allPosts.length === 0 && (
+        {!isInitialLoading && !isBusyLoadingMore && !isError && allPosts.length === 0 && (activeTab!=='recommended'||!recommendedFeed.hasNextPage) && (
           <div className="rounded-3xl border border-dashed border-border/50 bg-card/40 p-10 text-center text-muted-foreground">
             {emptyStateMessage}
           </div>
@@ -1719,8 +1748,8 @@ export default function Feed() {
         )}
 
         <div ref={ref} className="py-10 flex justify-center">
-          {isBusyLoadingMore ? (
-            <div className="flex items-center gap-2 text-muted-foreground animate-pulse">
+          {isBusyLoadingMore && !(activeTab==='recommended'&&isInitialLoading) ? (
+            <div className={`flex items-center gap-2 text-muted-foreground ${activeTab==='recommended'?'':'animate-pulse'}`}>
               <Loader2 className="h-5 w-5 animate-spin" />
               <span className="text-sm font-medium">読み込み中...</span>
             </div>

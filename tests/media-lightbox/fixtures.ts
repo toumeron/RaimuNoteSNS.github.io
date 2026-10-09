@@ -13,6 +13,7 @@ export async function setup(page:Page,standalone:boolean){
   await page.route('**/src/lib/currentUser.ts*',route=>route.fulfill({contentType:'application/javascript',body:`export const getCurrentUserId=async()=> '${user.id}';`}));
   await page.route('**/src/api/posts.ts*',route=>route.fulfill({contentType:'application/javascript',body:`const posts=${JSON.stringify(posts)};
     export const getFeed=async()=>posts,getFollowingFeed=getFeed,getPostsByUser=getFeed,getLikedPostsByUser=getFeed,searchPosts=getFeed;
+    export const getHighlightedPosts=async()=>[];
     export const getProfilePosts=async(id,page=0,limit=30)=>(await fetch('/__bookmark-fixture/profile-posts?page='+page+'&limit='+limit)).json();
     export const getPostById=async id=>(await fetch('/__bookmark-fixture/post/'+encodeURIComponent(id))).json();export const createPost=async()=>posts[0],toggleLike=async()=>({liked:true}),toggleRepost=async()=>({reposted:true}),deletePost=async()=>{},getPostLikers=async()=>[];`}));
   await page.route('**/__bookmark-fixture/profile-posts?**',route=>{const url=new URL(route.request().url()),page=Number(url.searchParams.get('page')),limit=Number(url.searchParams.get('limit'));return route.fulfill({contentType:'application/json',body:JSON.stringify((state.profilePosts??posts).slice(page*limit,(page+1)*limit))});});

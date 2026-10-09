@@ -1,3 +1,4 @@
+import { mobilePostMenuOS } from '@/components/post/mobilePostMenu';
 import {ExternalLikeButton} from '@/components/post/ExternalLikeButton';
 import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
 import { openMediaViewer } from '@/components/media/openMediaViewer';
@@ -1348,7 +1349,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
             /* ダーク/ライト両方のテーマトークンに追従させる（他の要素と同じ --background 系変数を使用） */
             background: hsl(var(--background));
             color: hsl(var(--foreground));
-            border-bottom: 1px solid hsl(var(--border) / 0.6);
+            border-bottom: 0;
           }
 
           .post-detail-mobile-simple-back {
@@ -1639,7 +1640,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                 {showMenu && typeof document !== 'undefined' && createPortal(
                   <>
                     <div
-                      className="fixed inset-0 bg-transparent"
+                      className="lime-post-options-backdrop fixed inset-0 bg-transparent"
                       style={{ zIndex: 2147483646 }}
                       onPointerDown={(e) => {
                         e.preventDefault();
@@ -1654,7 +1655,8 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                     />
                     <div
                       ref={moreMenuRef}
-                      className="fixed w-44 rounded-xl border border-border bg-card p-1 shadow-lg overflow-hidden animate-in fade-in zoom-in duration-100"
+                      data-post-menu-os={mobilePostMenuOS()}
+                        className="fixed lime-post-options rounded-xl bg-card shadow-lg overflow-hidden animate-in fade-in zoom-in duration-100"
                       style={{
                         top: moreMenuPosition?.top ?? 0,
                         right: moreMenuPosition?.right ?? 8,
@@ -2132,7 +2134,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
               {showShareMenu && typeof document !== 'undefined' && createPortal(
                 <>
                   <div
-                    className="fixed inset-0 bg-transparent"
+                    className="lime-post-action-sheet-backdrop-mobile fixed inset-0 bg-transparent"
                     style={{ zIndex: 2147483646 }}
                     onPointerDown={(e) => {
                       e.preventDefault();
@@ -2146,7 +2148,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                   />
                   <div
                     ref={shareMenuRef}
-                    className="fixed w-[min(calc(100vw-16px),16rem)] rounded-xl border border-border bg-card p-1 shadow-lg overflow-hidden animate-in fade-in zoom-in duration-100"
+                    className="lime-post-share-menu fixed w-[min(calc(100vw-16px),16rem)] rounded-xl border border-border bg-card p-1 shadow-lg overflow-hidden animate-in fade-in zoom-in duration-100"
                     style={{
                       top: shareMenuPosition?.top ?? 0,
                       right: shareMenuPosition?.right ?? 8,

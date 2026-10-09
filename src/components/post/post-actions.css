@@ -70,3 +70,79 @@
   border-bottom: 1px solid hsl(var(--border)) !important;
   padding-inline: 16px !important;
 }
+
+/* Shared three-dot menu for timeline posts, details, replies and media. */
+.lime-post-options {
+  width: max-content;
+  max-width: min(280px, calc(100vw - 16px));
+  padding: 3px 0;
+  border: 0;
+  border-radius: 10px;
+  color: hsl(var(--foreground));
+  box-shadow: 0 2px 16px hsl(var(--foreground) / .15);
+  overscroll-behavior: contain;
+}
+.dark .lime-post-options {
+  background: #161616;
+  box-shadow: 0 2px 16px rgb(0 0 0 / .35);
+}
+.lime-post-options > button {
+  gap: 8px;
+  min-height: 40px;
+  padding: 9px 12px;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  text-align: left;
+}
+.lime-post-options > button > svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.lime-post-options > button:not(.text-destructive):is(:hover, :focus-visible) {
+  background: hsl(var(--foreground) / .06);
+  color: hsl(var(--foreground));
+}
+.lime-post-options > button:focus-visible {
+  outline: 2px solid hsl(var(--foreground) / .35);
+  outline-offset: -2px;
+}
+.lime-post-options > button:disabled {
+  opacity: .5;
+}
+
+/* Phone-only OS-style context menus and action sheets. Desktop stays compact. */
+@media (max-width: 639px) {
+  .lime-post-options-backdrop, .lime-post-options-backdrop[data-lime-media-sheet-backdrop] { background: transparent !important; }
+  .lime-post-options { max-width: min(240px, calc(100vw - 16px)); max-height: calc(100dvh - 24px); overflow-y: auto; }
+  .lime-post-options > button { min-height: 44px; padding: 10px 14px; gap: 12px; font-size: 14px; line-height: 20px; }
+  .lime-post-options > button > svg { width: 20px; height: 20px; }
+  .lime-post-options[data-post-menu-os="ios"] { padding: 0; border-radius: 14px; background: hsl(var(--card) / .92); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); }
+  .lime-post-options[data-post-menu-os="ios"] > button { flex-direction: row-reverse; justify-content: space-between; border-bottom: 1px solid hsl(var(--foreground) / .12); }
+  .lime-post-options[data-post-menu-os="ios"] > button:last-child { border-bottom: 0; }
+  .lime-post-options[data-post-menu-os="android"] { border-radius: 16px; padding-block: 6px; }
+  .lime-post-action-sheet {
+    position: fixed !important; top: auto !important; bottom: 8px !important; left: 8px !important; right: 8px !important;
+    width: auto !important; max-width: none !important; max-height: calc(85dvh - env(safe-area-inset-top));
+    display: block; overflow-y: auto; overscroll-behavior: contain;
+    transform: none !important; padding: 16px 8px calc(20px + env(safe-area-inset-bottom));
+    border: 0; border-radius: 28px; background: hsl(var(--background)); color: hsl(var(--foreground));
+    box-shadow: 0 -4px 24px rgb(0 0 0 / .15); z-index: 2147483647;
+    animation: lime-post-sheet-enter 180ms ease-out;
+  }
+  .dark .lime-post-action-sheet { background: #161616; }
+  .lime-post-action-sheet > button {
+    display: flex; width: 100%; align-items: center; gap: 16px; min-height: 56px; padding: 14px 16px;
+    border: 0; border-radius: 12px; font-size: 16px; font-weight: 600; line-height: 24px; text-align: left;
+  }
+  .lime-post-action-sheet > button > svg { width: 24px; height: 24px; margin: 0; flex-shrink: 0; }
+  .lime-post-action-sheet > button:is(:hover, :focus-visible) { background: hsl(var(--foreground) / .06); outline: none; }
+  .lime-post-action-sheet-backdrop-mobile, .lime-post-action-sheet-backdrop-mobile[data-lime-media-sheet-backdrop] { position: fixed; inset: 0; background: transparent !important; z-index: 2147483646; }
+  .lime-post-action-sheet-backdrop { position: fixed; inset: 0; border: 0; border-radius: 0; background: rgb(0 0 0 / .35) !important; z-index: 2147483646; }
+}
+@keyframes lime-post-sheet-enter { from { translate: 0 100%; } to { translate: 0 0; } }
+@media (prefers-reduced-motion: reduce) { .lime-post-action-sheet { animation: none; } }

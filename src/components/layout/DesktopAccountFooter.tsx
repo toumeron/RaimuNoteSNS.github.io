@@ -1,3 +1,4 @@
+import { useSavedAccountUnreadTotal } from '@/hooks/useUnreadNotifications';
 import { AccountSwitcherMenu } from './AccountSwitcher';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
@@ -6,6 +7,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 
 export function DesktopAccountFooter() {
   const { user } = useAuth();
+  const unreadTotal = useSavedAccountUnreadTotal();
   const { data: profile } = useQuery({
     queryKey: ['desktop-account-profile', user?.id],
     enabled: !!user,
@@ -22,7 +24,7 @@ export function DesktopAccountFooter() {
   const username = profile?.username || user.username || '';
   const badge = `${import.meta.env.BASE_URL}verified.png`;
   return (
-    <AccountSwitcherMenu><button type="button" className="w-full text-left" data-lime-sidebar-account aria-label={`ログイン中のアカウント: ${name}（アカウント切り替え）`}>
+    <AccountSwitcherMenu><button type="button" className="relative w-full text-left" data-lime-sidebar-account aria-label={`ログイン中のアカウント: ${name}（アカウント切り替え）`}>
       <div className="relative shrink-0">
         <Avatar userId={user.id} className="h-11 w-11 border-0">
           <AvatarImage src={profile?.avatar_url || user.avatarUrl} alt={name} />
@@ -37,6 +39,7 @@ export function DesktopAccountFooter() {
         </div>
         <div className="truncate text-[15px] text-muted-foreground">@{username}</div>
       </div>
+      {unreadTotal > 0 && <span aria-label="保存済みアカウントに未読通知があります" className="absolute right-2 top-2 h-2 w-2 rounded-full bg-primary" />}
     </button></AccountSwitcherMenu>
   );
 }

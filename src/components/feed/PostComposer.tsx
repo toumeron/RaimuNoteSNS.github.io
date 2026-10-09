@@ -79,6 +79,7 @@ const getQuotedPostCached = async (postId: string, viewerId?: string) => {
 };
 
 interface PostComposerProps {
+  mapLocation?: import('@/lib/mapLocation').MapLocation;
   homeInline?:boolean;
   imageEditor?: { src: string; onApply: (url: string) => void; onClose: () => void };
   initialQuotedPost?: PostWithAuthor | null;
@@ -165,7 +166,7 @@ function getCaretCoordinates(element: HTMLTextAreaElement, position: number) {
   return coordinates;
 }
 
-function PostComposerComponent({ initialQuotedPost, initialContent = '', onSuccess, timelineGlass = false, homeInline = false, imageEditor }: PostComposerProps) {
+function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent = '', onSuccess, timelineGlass = false, homeInline = false, imageEditor }: PostComposerProps) {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const quoteId = imageEditor ? null : searchParams.get('quote');
@@ -1259,6 +1260,7 @@ function PostComposerComponent({ initialQuotedPost, initialContent = '', onSucce
     try {
       // 投稿処理を先に実行し、確実に完了を待つ (visibilityを追加)
       await mutateAsync({ 
+        ...(mapLocation ? {mapLocation} : {}),
         content: trimmed, 
         imageUrls: previews,
         parentId: quotedPost?.id,

@@ -7,7 +7,7 @@ import {useBlueskySession} from '@/hooks/useBlueskySession';
 import {getExternalLikeState,setExternalLike} from '@/api/external-likes';
 import {fetchBlueskyPostViewerState,getBlueskyUriFromPostId,likeBlueskyPost,unlikeBlueskyPost} from '@/lib/bluesky';
 import {recommendationIdentity,recommendationFingerprint} from '@/lib/recommendationIdentity';
-import {recordRecommendationLike,addRecommendationInterest} from '@/lib/recommendations';
+import {recordRecommendationLike,addRecommendationInterest,selectRecommendationLikeSamples} from '@/lib/recommendations';
 import type {PostWithAuthor} from '@/types';
 export function ExternalLikeButton({post,onChange}:{post:PostWithAuthor;onChange?:(state:{liked:boolean;count:number})=>void}){
  const {user}=useAuth(),session=useBlueskySession(post.id),client=useQueryClient();
@@ -41,7 +41,7 @@ export function ExternalLikeButton({post,onChange}:{post:PostWithAuthor;onChange
    if(liked&&!preferences.likedPostIds?.includes(post.id))addRecommendationInterest(preferences,post,2);
    if(liked)preferences.feedback=(preferences.feedback??[]).filter((row:any)=>row.id!==recommendationIdentity(post)&&(!row.fingerprint||row.fingerprint!==recommendationFingerprint(post)));
    preferences.likedPostIds=[...(preferences.likedPostIds??[]).filter((id:string)=>id!==post.id),...(liked?[post.id]:[])];
-   preferences.likedSamples=[...(preferences.likedSamples??[]).filter((row:PostWithAuthor)=>row.id!==post.id),...(liked?[{...post,engagedAt:new Date().toISOString()}]:[])].slice(-24);
+   preferences.likedSamples=selectRecommendationLikeSamples([...(liked?[{...post,engagedAt:new Date().toISOString()}]:[]),...(preferences.likedSamples??[]).filter((row:PostWithAuthor)=>row.id!==post.id)]);
    return {...page,preferences,next:page.next?{...page.next,preferences}:undefined};
   })}:current);
   return {liked:saved.liked,count:count+saved.unmirroredCount};

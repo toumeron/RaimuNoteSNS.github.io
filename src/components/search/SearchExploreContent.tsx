@@ -27,9 +27,9 @@ export function SearchExploreContent({tab, preferences, viewerId, news, sources,
       <h2 className="px-4 pb-2 pt-4 text-xl font-extrabold">本日のニュース</h2>
       {newsLoading ? <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div> : visibleNews.length ? visibleNews.map(item => <button key={item.id} type="button" onClick={() => onNews(item.id)} className="block w-full px-4 py-4 text-left transition-colors hover:bg-muted/40">
         <h3 className="text-base font-bold leading-snug sm:text-lg">{item.title}</h3>
-        <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+        <div className="mt-2 flex min-h-6 items-center gap-2 text-sm text-muted-foreground">
           {!!sources[item.id]?.authors.length && <span data-lime-news-source-avatars className="flex shrink-0 -space-x-2">{sources[item.id].authors.map(author => <Avatar key={author.id} className="h-6 w-6 border-2 border-background"><AvatarImage src={author.avatarUrl} alt={author.displayName} /><AvatarFallback className="text-[10px]">{author.displayName.slice(0, 1)}</AvatarFallback></Avatar>)}</span>}
-          <span>{item.category || 'ニュース'}{sources[item.id]?.postsCount > 0 && <> · {sources[item.id].postsCount.toLocaleString()}件のポスト</>}</span>
+          <span className="min-w-0 truncate">{item.category || 'ニュース'}{sources[item.id]?.postsCount > 0 && <> · {sources[item.id].postsCount.toLocaleString()}件のポスト</>}</span>
         </div>
       </button>) : <p className="px-4 py-6 text-sm text-muted-foreground">現在、表示できるニュースはありません</p>}
     </section>}

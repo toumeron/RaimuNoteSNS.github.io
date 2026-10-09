@@ -14,6 +14,7 @@
   .lime-app-shell[data-lime-timeline] { --desktop-header-height: 40px; }
   .lime-app-shell[data-lime-timeline] [data-lime-header-row] { display: none; }
   .lime-app-shell[data-lime-workspace] .lime-desktop-column { grid-column: 2 / 4; }
+  .lime-app-shell[data-lime-page="/settings"] .lime-desktop-column { grid-column: 2 / 4; }
   .lime-app-shell[data-lime-hide-header] { --desktop-header-height: 0px; }
   .lime-app-shell[data-lime-hide-header] [data-lime-app-header] { display: none; }
   .lime-desktop-column {
@@ -45,7 +46,7 @@
   .lime-app-shell [data-lime-desktop-sidebar] nav button { gap: 20px; padding-inline: 0; background: transparent !important; }
 
   .lime-app-shell [data-lime-desktop-sidebar] nav button svg { width: 28px; height: 28px; }
-  .lime-app-shell [data-lime-desktop-sidebar] nav button span { font-size: 20px; }
+  .lime-app-shell [data-lime-desktop-sidebar] nav button span:not([data-lime-unread-count]) { font-size: 20px; }
   .lime-desktop-discover h2 { font-size: 22px; }
   .lime-desktop-discover button .font-bold { font-size: 17px; }
 
@@ -198,7 +199,7 @@
             background: hsl(var(--background));
             backdrop-filter: none;
             color: hsl(var(--foreground));
-            border-bottom: 1px solid var(--desktop-line);
+            border-bottom: 0;
           }
 
           .lime-app-shell .post-detail-mobile-simple-back {
@@ -460,7 +461,7 @@
   .lime-app-shell:not([data-lime-workspace]) [data-lime-sidebar-account] { padding-inline: 16px; }
   .lime-app-shell:not([data-lime-workspace]) [data-lime-desktop-sidebar] nav button { gap: 16px; }
   .lime-app-shell [data-lime-desktop-sidebar] nav button svg { width: 26px; height: 26px; }
-  .lime-app-shell [data-lime-desktop-sidebar] nav button span { font-size: 19px; }
+  .lime-app-shell [data-lime-desktop-sidebar] nav button span:not([data-lime-unread-count]) { font-size: 19px; }
 }
 @media (min-width: 640px) and (max-width: 899px) {
   /* Photo controls stack as on mobile when the content column is narrow. */
@@ -482,3 +483,7 @@
   .lime-app-shell[data-lime-ipad]:not([data-lime-workspace]) { grid-template-columns: 72px minmax(0, 1fr) clamp(210px, 25vw, 380px); }
   .lime-app-shell[data-lime-ipad] [data-lime-sidebar-logo] { display: none !important; }
 }
+
+/* Account footer typography must not enlarge unread numerals. */
+[data-lime-desktop-sidebar] [data-lime-unread-count],
+.lime-app-shell [data-lime-desktop-sidebar][data-lime-sidebar-expanded] [data-lime-sidebar-footer] [data-lime-unread-count] { font-size: 9px !important; line-height: 1 !important; }

@@ -20,7 +20,9 @@ import { useJoinMembership, useLeaveMembership, useMembershipStatus } from '@/ho
 import { usePostNotificationSubscription } from '@/hooks/usePostNotifications';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
+import { Dialog } from '@/components/ui/dialog';
+const ProfileEditor = lazy(() => import('./ProfileEditor'));
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import type { User } from '@/types';
@@ -102,6 +104,7 @@ export function ProfileHeader({
     queryFn: () => getAccountReviews(user.id),
     enabled: !isBlueskyProfile && user.review === true,
   });
+
   const isMe = me?.id === user.id;
   // 自分がこのユーザーをフォローしているか（通知ベルボタンの表示条件に使用）
   // FollowButton と同じく useFollowStats の followedByMe を参照する。
@@ -118,6 +121,12 @@ export function ProfileHeader({
   const isFollowing = isBlueskyProfile?externalFollowing:stats?.followedByMe ?? false;
   const navigate = useNavigate();
   const location = useLocation();
+  useEffect(() => {
+    const publish = () => window.dispatchEvent(new CustomEvent('lime-profile-header-info', {detail: {user, posts: activityCount ?? blueskyStats?.posts ?? 0, following: isFollowing, pathname: location.pathname}}));
+    window.addEventListener('lime-profile-header-request', publish);
+    publish();
+    return () => window.removeEventListener('lime-profile-header-request', publish);
+  }, [user, activityCount, blueskyStats?.posts, isFollowing, location.pathname]);
   const liftCoverToMobileTop = isGithubPagesProfilePath(location.pathname);
   const normalizedUsername = user.username.trim().replace(/^@+/, '').toLowerCase();
   const showSubscriptionButton = !isMe && (normalizedUsername === 'cat' || normalizedUsername === 'limenote');
@@ -133,6 +142,7 @@ export function ProfileHeader({
   } = usePostNotificationSubscription(showPostNotificationButton ? user.id : undefined, isBlueskyProfile ? {provider:user.id.startsWith('misskey-user:')?'misskey':'bluesky',actor:user.username,name:user.displayName,avatarUrl:user.avatarUrl} : undefined);
   const [isSubscriptionOpen, setIsSubscriptionOpen] = useState(false);
   const [isAvatarOpen, setIsAvatarOpen] = useState(false);
+  const [isProfileEditorOpen, setIsProfileEditorOpen] = useState(false);
   const [isCoverOpen, setIsCoverOpen] = useState(false);
   const [membershipError, setMembershipError] = useState<string | null>(null);
   const [isLinkCopied, setIsLinkCopied] = useState(false);
@@ -329,12 +339,11 @@ export function ProfileHeader({
     <>
       <style>{`
         @media (max-width: 639px) {
+          html[data-lime-mobile-profile-page="true"] [data-lime-profile-cover-controls], html[data-lime-mobile-profile-page="true"] [data-lime-profile-cover-shade] { display: none; }
+          [data-lime-profile-no-cover] .profile-header-cover-avatar-gap, [data-lime-profile-no-cover] .profile-header-cover-avatar-gap > button > div { background: linear-gradient(#969494, #b4b2b2); }
+          .dark [data-lime-profile-no-cover] .profile-header-cover-avatar-gap, .dark [data-lime-profile-no-cover] .profile-header-cover-avatar-gap > button > div { background: linear-gradient(#454444, #646262); }
           .profile-header-mobile-cover-to-top {
-            margin-top: -1.5rem !important;
-          }
-          .profile-header-cover-avatar-gap {
-            -webkit-mask-image: radial-gradient(circle 48px at 64px 150px, transparent 47.5px, #000 48px);
-            mask-image: radial-gradient(circle 48px at 64px 150px, transparent 47.5px, #000 48px);
+            margin-top: 0 !important;
           }
         }
         @media (min-width: 640px) {
@@ -346,6 +355,7 @@ export function ProfileHeader({
       `}</style>
       <section
         data-lime-profile-header
+        data-lime-profile-no-cover={!user.coverUrl || undefined}
         data-lime-mobile-profile-cover-top={liftCoverToMobileTop ? 'true' : undefined}
         className={`relative left-1/2 ${liftCoverToMobileTop ? 'profile-header-mobile-cover-to-top -mt-0' : '-mt-0'} w-screen -translate-x-1/2 overflow-hidden bg-transparent text-foreground sm:left-auto sm:mt-0 sm:w-auto sm:translate-x-0 sm:rounded-3xl sm:border sm:border-border/60 sm:bg-card sm:shadow-soft`}
       >
@@ -425,7 +435,7 @@ export function ProfileHeader({
         <div className={`relative flex min-h-[52px] items-start justify-between gap-3 ${showSubscriptionButton ? 'max-sm:gap-1' : ''}`}>
           <button
             type="button"
-            aria-label={`${user.displayName}のプロフィール画像を拡大表示`}
+            data-lime-profile-avatar aria-label={`${user.displayName}のプロフィール画像を拡大表示`}
             onClick={() => setIsAvatarOpen(true)}
             className="-mt-[48px] box-border h-[96px] w-[96px] shrink-0 cursor-pointer rounded-full border-4 border-solid border-transparent bg-transparent p-0 text-left outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 sm:-mt-14 sm:h-28 sm:w-28"
           >
@@ -477,22 +487,25 @@ export function ProfileHeader({
               <FollowButton userId={user.id} externalProfile={user} />
             ) : isMe ? (
               <Button
-                asChild
+                onClick={() => setIsProfileEditorOpen(true)}
                 variant="outline"
                 className="h-9 rounded-full border-primary/40 px-4 text-sm font-bold text-primary hover:bg-primary-soft sm:h-10"
               >
-                <Link to="/settings">プロフィールを編集</Link>
+                プロフィールを編集
               </Button>
             ) : (
               <FollowButton userId={user.id} />
             )}
+            {isMe && <Dialog open={isProfileEditorOpen} onOpenChange={setIsProfileEditorOpen}>
+              {isProfileEditorOpen && <Suspense fallback={null}><ProfileEditor onSaved={() => setIsProfileEditorOpen(false)} /></Suspense>}
+            </Dialog>}
           </div>
         </div>
         <div className="mt-2 min-w-0">
           <div className="flex min-w-0 flex-col">
             {/* 名前が長すぎてもバッジを押し出さないよう min-w-0 を追加 */}
             <div className="flex min-w-0 items-center gap-1">
-              <h1 className="min-w-0 truncate font-display text-[22px] font-black leading-tight text-foreground sm:text-2xl">
+              <h1 data-lime-profile-name className="min-w-0 truncate font-display text-[22px] font-black leading-tight text-foreground sm:text-2xl">
                 {user.displayName}
               </h1>
               {user.isOfficial && (

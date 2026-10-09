@@ -227,3 +227,17 @@ body {
 /* The two attachment tools share the same glyph size across composers. */
 [data-lime-attachment-tool] svg { width:20px; height:20px; flex-shrink:0; }
 @media(prefers-reduced-motion:reduce){[data-lime-reply-composer][data-compact="true"],[data-lime-reply-composer] .reply-attachment-tools,[data-lime-reply-composer] .reply-submit{transition:none!important}}
+
+/* Back and dismiss controls use neutral feedback, including touch and keyboard focus. */
+:is(button, a):not([data-lime-dismiss-backdrop]):is([aria-label*="戻る"], [aria-label*="閉じる"], .neutral-dismiss, :has(> svg.lucide-arrow-left), :has(> svg.lucide-x)) {
+  -webkit-tap-highlight-color: transparent;
+  --tw-ring-color: hsl(var(--muted-foreground));
+}
+:is(button, a):not([data-lime-dismiss-backdrop]):is([aria-label*="戻る"], [aria-label*="閉じる"], .neutral-dismiss, :has(> svg.lucide-arrow-left), :has(> svg.lucide-x)):is(:hover, :active) {
+  background-color: rgb(128 128 128 / .16) !important;
+  color: inherit;
+}
+:is(button, a):not([data-lime-dismiss-backdrop]):is([aria-label*="戻る"], [aria-label*="閉じる"], .neutral-dismiss, :has(> svg.lucide-arrow-left), :has(> svg.lucide-x)):focus-visible {
+  --tw-ring-color: hsl(var(--muted-foreground)) !important;
+  outline-color: hsl(var(--muted-foreground));
+}

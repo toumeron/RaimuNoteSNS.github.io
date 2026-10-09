@@ -203,14 +203,22 @@ it('retains repeated negative author feedback until a newer explicit like rather
  expect(rankRecommendations([row],{authors:{[row.userId]:100},terms:{},feedback},'viewer',now)).toEqual([]);
 });
 
-it('excludes delivered IDs and the same image under a new ID across reloads, per viewer',async()=>{
+it('reserves delivered IDs and image copies briefly in this document, per viewer',async()=>{
  const {recordRecommendationDelivery}=await import('./recommendations');
  const work={...post('delivered','', 'liked-author'),imageUrls:['https://cdn.example/art.png']};
  const prefs={authors:{'liked-author':4},terms:{}};
- recordRecommendationDelivery([work],'delivery-viewer');
+ const now=Date.now();recordRecommendationDelivery([work],'delivery-viewer',now);
  expect(rankRecommendations([work,{...work,id:'other-copy'}],prefs,'delivery-viewer')).toEqual([]);
  expect(rankRecommendations([work],prefs,'different-viewer')).toHaveLength(1);
- localStorage.clear();expect(rankRecommendations([work],prefs,'delivery-viewer')).toHaveLength(1);
+ expect(rankRecommendations([work],prefs,'delivery-viewer',now+120001)).toHaveLength(1);
+});
+it('does not treat legacy persisted delivery records as actual views',()=>{
+ const work={...post('unseen','猫','favorite'),imageUrls:['https://cdn.example/unseen.png']};
+ const viewer='legacy-delivery-viewer',prefs={authors:{favorite:4},terms:{}};
+ localStorage.setItem(`lime_recommendation_deliveries:${viewer}`,JSON.stringify({[work.id]:{at:Date.now(),userId:work.userId,fingerprint:recommendationFingerprint(work)}}));
+ expect(rankRecommendations([work],prefs,viewer)).toHaveLength(1);
+ recordRecommendationImpression(work.id,viewer,Date.now(),recommendationFingerprint(work));
+ expect(rankRecommendations([work],prefs,viewer)).toEqual([]);
 });
 it('limits creator runs to three across page boundaries without filling with unrelated posts',async()=>{
  const {selectRecommendationPage}=await import('./recommendations');
@@ -274,3 +282,35 @@ it('retains older distinct authors as references instead of only the latest prol
  expect(samples).toHaveLength(128);expect(new Set(samples.map(row=>row.userId)).size).toBe(81);
  expect(samples.some(row=>row.id==='older-79')).toBe(true);
 });
+
+
+it('learns creator topics from a liked keyword-free image and preserves them in compact history',async()=>{
+ const {selectRecommendationLikeSamples}=await import('./recommendations');
+ const liked={...post('liked-image','','did:plc:favorite'),imageUrls:['https://images.example/liked.jpg'],languages:['ja'],recommendationAuthorTopics:['digital-illustration'],recommendationSources:['creator:did:plc:favorite']};
+ const preferences:import('./recommendations').RecommendationPreferences={authors:{},terms:{},followedTopics:['digital-illustration']};
+ const samples=selectRecommendationLikeSamples([liked]);
+ expect(samples[0].recommendationAuthorTopics).toEqual(['digital-illustration']);
+ expect(samples[0].recommendationSources).toEqual(liked.recommendationSources);
+ addRecommendationInterest(preferences,samples[0],4);
+ expect(preferences.authorTopics?.[liked.userId]?.['digital-illustration']).toBe(4);
+ const candidate={...liked,id:'new-image',imageUrls:['https://images.example/new.jpg'],recommendationAuthorTopics:undefined,recommendationSources:undefined};
+ expect(rankRecommendations([candidate],preferences,'viewer').map(row=>row.id)).toEqual(['new-image']);
+});
+it('does not replace confident visual evidence with a liked creators broader topic hint',()=>{
+ const preferences:import('./recommendations').RecommendationPreferences={authors:{},terms:{}};
+ addRecommendationInterest(preferences,{userId:'artist',recommendationAuthorTopics:['digital-illustration'],recommendationVisual:{version:1,kind:'food',topics:['food'],confidence:.9,similarity:.5,vector:Array(512).fill(0)}},4);
+ expect(preferences.authorTopics?.artist.food).toBe(4);
+ expect(preferences.authorTopics?.artist['digital-illustration']).toBeUndefined();
+});
+
+ it('bounds scoring work with a large preference profile on successive small pages',()=>{
+ const vector=(seed:number)=>Array.from({length:512},(_,i)=>i===seed%512?1:0);
+ const make=(id:string,i:number)=>({...post(id,`猫の写真 ${i}`,`author-${i}`),languages:['ja'],imageUrls:[`https://example.com/${id}.jpg`],recommendationVisual:{version:1,kind:'pets',topics:['pets'],confidence:.9,similarity:1,vector:vector(i)}}) as any;
+ const samples=Array.from({length:128},(_,i)=>make(`liked-${i}`,i));
+ const prefs={authors:{},terms:Object.fromEntries(Array.from({length:10000},(_,i)=>[`word${i}`,i+1])),likedSamples:samples,visualInterests:samples.map(post=>post.recommendationVisual.vector),feedback:Array.from({length:200},(_,i)=>({id:`bad-${i}`,userId:`bad-author-${i}`,createdAt:new Date().toISOString(),vector:vector(i+256)}))};
+ for(let page=0;page<6;page++){
+  const started=performance.now();const ranked=rankRecommendations(Array.from({length:32},(_,i)=>make(`page-${page}-${i}`,i)),prefs,'viewer',Date.now(),[],40);expect(ranked).toHaveLength(32);
+  console.log(`scoring small page ${page+1}: ${Math.round(performance.now()-started)} ms`);
+  expect(performance.now()-started).toBeLessThan(1000);
+ }
+ });

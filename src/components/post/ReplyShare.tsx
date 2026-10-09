@@ -1,3 +1,4 @@
+import '@/components/post/post-actions.css';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Send, Link as LinkIcon, Upload, X } from 'lucide-react';
@@ -315,7 +316,7 @@ export function ReplyShare({ comment, currentUserId, className = '' }: { comment
                 {showShareMenu && typeof document !== 'undefined' && createPortal(
                   <>
                     <div
-                      className="fixed inset-0 bg-transparent"
+                      className="lime-post-action-sheet-backdrop-mobile fixed inset-0 bg-transparent"
                       style={{ zIndex: 2147483646 }}
                       onPointerDown={(e) => {
                         e.preventDefault();
@@ -329,7 +330,7 @@ export function ReplyShare({ comment, currentUserId, className = '' }: { comment
                     />
                     <div
                       ref={shareMenuRef}
-                      className="fixed w-[min(calc(100vw-16px),16rem)] rounded-xl border border-border bg-card p-1 shadow-lg overflow-hidden animate-in fade-in zoom-in duration-100"
+                      className="lime-post-share-menu fixed w-[min(calc(100vw-16px),16rem)] rounded-xl border border-border bg-card p-1 shadow-lg overflow-hidden animate-in fade-in zoom-in duration-100"
                       style={{
                         top: shareMenuPosition?.top ?? 0,
                         right: shareMenuPosition?.right ?? 8,

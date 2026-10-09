@@ -363,6 +363,7 @@ const usePullToRefresh = (onRefresh: () => Promise<void> | void, enabled: boolea
   const startYRef = useRef<number | null>(null);
   const draggingRef = useRef(false);
   const pullDistanceRef = useRef(0);
+  const pullFrameRef = useRef<number | null>(null);
   const isRefreshingRef = useRef(false);
   const onRefreshRef = useRef(onRefresh);
 
@@ -372,13 +373,18 @@ const usePullToRefresh = (onRefresh: () => Promise<void> | void, enabled: boolea
 
   const applyPullDistance = useCallback((value: number) => {
     pullDistanceRef.current = value;
-    setPullDistance(value);
+    if (pullFrameRef.current === null) {
+      pullFrameRef.current = window.requestAnimationFrame(() => {
+        pullFrameRef.current = null;
+        setPullDistance(pullDistanceRef.current);
+      });
+    }
   }, []);
 
   useEffect(() => {
     if (!enabled || typeof window === 'undefined') return;
 
-    const getScrollTop = () => window.scrollY || document.documentElement.scrollTop || 0;
+    const getScrollTop = () => Math.max(0, window.scrollY || document.documentElement.scrollTop || 0);
 
     const beginDrag = (clientY: number) => {
       if (getScrollTop() > 0 || isRefreshingRef.current) {
@@ -416,7 +422,7 @@ const usePullToRefresh = (onRefresh: () => Promise<void> | void, enabled: boolea
 
       setIsPulling(true);
       // 引っ張るほど抵抗が強くなるようにダンピングをかける（Twitter等と同様の挙動）
-      applyPullDistance(Math.min(PULL_REFRESH_MAX, delta * 0.5));
+      applyPullDistance(window.matchMedia("(max-width: 639px)").matches ? Math.min(180, delta * .65) : Math.min(PULL_REFRESH_MAX, delta * .5));
     };
 
     const endDrag = async () => {
@@ -448,7 +454,10 @@ const usePullToRefresh = (onRefresh: () => Promise<void> | void, enabled: boolea
     };
 
     const handleTouchStart = (event: TouchEvent) => {
-      if (event.touches.length !== 1 || (event.target as HTMLElement)?.closest('.lime-media-lightbox')) return;
+      const target = event.target as HTMLElement | null;
+      if (event.touches.length !== 1 || target?.closest('.lime-media-lightbox, [role=dialog], .lime-post-action-sheet-backdrop, input, textarea, select, [contenteditable=true]')) return;
+      // The cover is itself an image button; a vertical pull there must still refresh.
+      if (target?.closest('button, a') && !target.closest('.profile-header-cover-avatar-gap')) return;
       beginDrag(event.touches[0].clientY);
     };
 
@@ -462,6 +471,7 @@ const usePullToRefresh = (onRefresh: () => Promise<void> | void, enabled: boolea
     };
 
     const handleMouseDown = (event: MouseEvent) => {
+      if (window.matchMedia("(pointer: coarse)").matches) return;
       // 左クリックのみ対象。入力欄・ボタン・リンク上でのドラッグ開始は無視して
       // 既存の操作（テキスト選択やクリック）を邪魔しないようにする。
       if (event.button !== 0) return;
@@ -475,28 +485,33 @@ const usePullToRefresh = (onRefresh: () => Promise<void> | void, enabled: boolea
     };
 
     const handleMouseMove = (event: MouseEvent) => {
+      if (window.matchMedia("(pointer: coarse)").matches) return;
       if (!draggingRef.current) return;
       updateDrag(event.clientY, event);
     };
 
     const handleMouseUp = () => {
+      if (window.matchMedia("(pointer: coarse)").matches) return;
       void endDrag();
     };
 
     window.addEventListener('touchstart', handleTouchStart, { passive: true });
     window.addEventListener('touchmove', handleTouchMove, { passive: false });
     window.addEventListener('touchend', handleTouchEnd, { passive: true });
-    window.addEventListener('touchcancel', handleTouchEnd, { passive: true });
+    const cancelDrag = () => {draggingRef.current=false;startYRef.current=null;setIsPulling(false);if(!isRefreshingRef.current)applyPullDistance(0);};
+    window.addEventListener('touchcancel', cancelDrag, { passive: true });
 
     window.addEventListener('mousedown', handleMouseDown);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
 
     return () => {
+      if (pullFrameRef.current !== null) window.cancelAnimationFrame(pullFrameRef.current);
+      pullFrameRef.current = null;
       window.removeEventListener('touchstart', handleTouchStart);
       window.removeEventListener('touchmove', handleTouchMove);
       window.removeEventListener('touchend', handleTouchEnd);
-      window.removeEventListener('touchcancel', handleTouchEnd);
+      window.removeEventListener('touchcancel', cancelDrag);
 
       window.removeEventListener('mousedown', handleMouseDown);
       window.removeEventListener('mousemove', handleMouseMove);
@@ -2522,6 +2537,26 @@ const ProfileVirtualizedMediaImage = memo(function ProfileVirtualizedMediaImage(
 });
 
 const PROFILE_PAGE_STYLES = `
+          @media (max-width: 639px) {
+            [data-lime-profile-tabs-header] { margin-top: 0 !important; background: hsl(var(--background)); height: 44px !important; top: calc(56px + env(safe-area-inset-top)) !important; }
+            [data-lime-profile-page] .profile-header-cover-avatar-gap { height: calc(150px + env(safe-area-inset-top) + var(--lime-profile-pull, 0px)); transition: height 280ms cubic-bezier(.22,.61,.36,1); }
+            [data-lime-profile-tabs-backdrop] { background: hsl(var(--background)); backdrop-filter: none; }
+            [data-lime-profile-mobile-tabs] .profile-tabs-trigger { min-height: 0; font-size: 13px; }
+            [data-lime-profile-mobile-tabs] .profile-tabs-underline { bottom: 0; height: 3px; }
+            [data-lime-profile-tabs-divider] { bottom: 0; }
+            [data-lime-profile-page] .profile-header-cover-avatar-gap img { filter: var(--lime-profile-cover-filter, none); transform: var(--lime-profile-cover-transform, none); transition: filter 280ms ease-out, transform 280ms ease-out; }
+            [data-lime-profile-page] [data-lime-profile-avatar] { border-color: hsl(var(--background)); transform: scale(var(--lime-profile-avatar-scale, 1)); transform-origin: center center; transition: transform 280ms ease-out; }
+            [data-lime-profile-dragging] [data-lime-profile-avatar], [data-lime-profile-dragging] .profile-header-cover-avatar-gap img { transition: none; }
+            [data-lime-profile-dragging] .profile-header-cover-avatar-gap { transition: none; }
+            [data-lime-profile-pull-indicator] { position: absolute; top: calc(68px + env(safe-area-inset-top)); transform: translate(-50%, calc(var(--lime-profile-pull, 0px) / 2)) !important; }
+            [data-lime-profile-pull-indicator] > div { border: 0; box-shadow: none; background: transparent; backdrop-filter: none; }
+            [data-lime-profile-pull-indicator] svg { color: white; }
+            .lime-profile-refresh-spinner { position: relative; width: 18px; height: 18px; animation: lime-profile-spinner 850ms linear infinite; will-change: transform; }
+            .lime-profile-refresh-spinner i { position: absolute; left: 8px; top: 7px; height: 5px; width: 2px; border-radius: 2px; background: white; transform-origin: 1px 2px; }
+            
+            @keyframes lime-profile-spinner { to { transform: rotate(360deg); } }
+          }
+
           .profile-tabs-trigger[data-state='active'] {
             color: hsl(var(--foreground));
             font-weight: 1000;
@@ -2842,7 +2877,6 @@ export default function Profile() {
         tasks.push(refetchCurrentQuery());
       }
 
-      if (activeTab !== 'highlights') tasks.push(highlightsQuery.refetch());
 
       if (activeTab === 'posts') {
         setProfileRepliesRefreshKey((value) => value + 1);
@@ -2850,7 +2884,7 @@ export default function Profile() {
     }
 
     await Promise.all(tasks);
-  }, [isBlueskyProfile, refetchBlueskyFeed, refetchCurrentQuery, highlightsQuery.refetch, activeTab, queryClient, user?.id]);
+  }, [isBlueskyProfile, refetchBlueskyFeed, refetchCurrentQuery, activeTab, queryClient, user?.id]);
 
   // モーダル表示中や初期ロード中はプルダウン更新を無効化する
   const isPullToRefreshEnabled = !userLoading;
@@ -3187,20 +3221,22 @@ export default function Profile() {
     setFailedThreadImageUrls((prev) => (prev.includes(url) ? prev : [...prev, url]));
   }, []);
 
-  const profilePostsLoading = activeTab === 'posts'
+  const profileAuxiliaryLoading = activeTab === 'posts'
     ? contentLoading || !profileRepliesReady || (!isBlueskyProfile && (pinQuery.isPending || (!!pinQuery.data && pinnedPostQuery.isPending)))
     : contentLoading;
-  const profilePostsEmpty = !profilePostsLoading && !contentError && !isFetchingNextPage && items.length === 0 && !pinnedPost;
+  // Keep already fetched posts visible while replies and pinned posts refresh.
+  const profilePostsLoading = profileAuxiliaryLoading && items.length === 0 && !pinnedPost;
+  const profilePostsEmpty = !profileAuxiliaryLoading && !contentError && !isFetchingNextPage && items.length === 0 && !pinnedPost;
 
   if (userLoading) {
     return (
       <div
-        className="-mt-[0px] space-y-0 sm:mt-0 sm:space-y-5"
+        className="relative -mt-[0px] space-y-0 sm:mt-0 sm:space-y-5"
         style={{ visibility: isViewportReady ? 'visible' : 'hidden' }}
       >
-        <Skeleton className="h-72 w-full rounded-none sm:rounded-3xl" />
+        <div className="sm:hidden"><Skeleton className="h-[150px] w-full rounded-none" /><div className="px-4 pb-5"><Skeleton className="-mt-10 relative h-20 w-20 rounded-full" /><Skeleton className="mt-5 h-6 w-48" /><Skeleton className="mt-2 h-4 w-32" /><Skeleton className="mt-5 h-16 w-full" /></div></div><Skeleton className="hidden h-72 w-full rounded-3xl sm:block" />
 
-        <div className="h-16 w-full sm:hidden">
+        <div className="h-11 w-full sm:hidden">
           <div className="grid h-full w-full grid-cols-4 rounded-none bg-transparent p-0">
             <Skeleton className="h-full rounded-none bg-muted/40" />
             <Skeleton className="h-full rounded-none bg-muted/40" />
@@ -3237,8 +3273,11 @@ export default function Profile() {
 
   return (
     <div
-      className="-mt-[0px] space-y-0 sm:mt-0 sm:space-y-5"
-      style={{ visibility: isViewportReady ? 'visible' : 'hidden' }}
+      data-lime-profile-page
+      data-lime-profile-pulling={isPulling || isPullRefreshing || undefined}
+      data-lime-profile-dragging={isPulling || undefined}
+      className="relative -mt-[0px] space-y-0 sm:mt-0 sm:space-y-5"
+      style={{ visibility: isViewportReady ? 'visible' : 'hidden', '--lime-profile-pull': `${pullDistance}px`, '--lime-profile-cover-filter': pullDistance > 0 ? `blur(${Math.min(24, pullDistance / 5)}px)` : 'none', '--lime-profile-cover-transform': pullDistance > 0 ? `scale(${1 + pullDistance / 700})` : 'none', '--lime-profile-avatar-scale': Math.max(.55, 1 - pullDistance / 280), '--lime-profile-avatar-radius': `${48 * Math.max(.55, 1 - pullDistance / 280)}px` } as React.CSSProperties}
     >
       <style>{PROFILE_PAGE_STYLES}</style>
 
@@ -3246,6 +3285,7 @@ export default function Profile() {
           PCのマウスドラッグどちらでも、タイムライン最上部から下へ引っ張ると表示される。 */}
       <div
         aria-hidden="true"
+        data-lime-profile-pull-indicator
         className="pointer-events-none fixed left-1/2 top-0 z-[70] flex justify-center"
         style={{
           transform: `translate(-50%, ${(isPullRefreshing ? PULL_REFRESH_THRESHOLD : pullDistance) - 36}px)`,
@@ -3256,8 +3296,9 @@ export default function Profile() {
         }}
       >
         <div className="mt-2 flex h-10 w-10 items-center justify-center rounded-full border border-border/70 bg-card/95 shadow-lg backdrop-blur-sm">
+          <span className="lime-profile-refresh-spinner sm:hidden" data-refreshing={isPullRefreshing || undefined}>{Array.from({length:12}, (_,i) => <i key={i} style={{transform:`rotate(${i * 30}deg) translateY(-6px)`,opacity:(i + 1) / 12}} />)}</span>
           <Loader2
-            className={`h-5 w-5 text-pink-500 ${isPullRefreshing ? 'animate-spin' : ''}`}
+            className={`max-sm:hidden h-5 w-5 text-pink-500 ${isPullRefreshing ? 'animate-spin' : ''}`}
             style={
               isPullRefreshing
                 ? undefined

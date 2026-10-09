@@ -1,3 +1,5 @@
+import { mobilePostMenuOS } from '@/components/post/mobilePostMenu';
+import '@/components/post/post-actions.css';
 import { openMediaViewer } from '@/components/media/openMediaViewer';
 import {LinkPreviewCard,useLinkPreview} from '@/components/post/LinkPreviewCard';
 import {OfflineBookmarkContext} from '@/components/stickers/OfflineBookmarkContext';
@@ -6,7 +8,7 @@ import { hasStickers } from '@/lib/stickers';
 import { useState, useContext, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
-import { MoreHorizontal, ChartBarBig, Trash2, CalendarDays, X, Plus, MessageCircle } from 'lucide-react';
+import { MoreHorizontal, Download, Link as LinkIcon, ChartBarBig, Trash2, CalendarDays, X, Plus, MessageCircle } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
 import { ReplyShare } from '@/components/post/ReplyShare';
@@ -760,7 +762,7 @@ export function CommentCard({
                     <>
                       <div
                         data-lime-media-sheet-backdrop={mediaPresentation || undefined}
-                        className="fixed inset-0 z-10"
+                        className="lime-post-options-backdrop fixed inset-0 z-10"
                         onClick={(e) => {
                           e.stopPropagation();
                           setShowMenu(false);
@@ -769,11 +771,12 @@ export function CommentCard({
 
                       <div
                         data-lime-media-sheet={mediaPresentation ? 'menu' : undefined}
-                        className="absolute right-0 mt-1 w-44 rounded-xl border border-border bg-card p-1 shadow-lg z-20 overflow-hidden animate-in fade-in zoom-in duration-100"
+                        data-post-menu-os={mobilePostMenuOS()}
+                        className="absolute right-0 mt-1 lime-post-options rounded-xl bg-card shadow-lg z-20 overflow-hidden animate-in fade-in zoom-in duration-100"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        {mediaPresentation && <button onClick={() => navigate(commentThreadUrl(comment.postId, comment.id))} className="flex w-full items-center rounded-lg px-3 py-2 text-sm font-bold hover:bg-muted">ポストに移動</button>}
-                        {mediaDownload && <button onClick={() => {setShowMenu(false);mediaDownload();}} className="flex w-full items-center rounded-lg px-3 py-2 text-sm font-bold hover:bg-muted">画像を保存</button>}
+                        {mediaPresentation && <button onClick={() => navigate(commentThreadUrl(comment.postId, comment.id))} className="flex w-full items-center rounded-lg px-3 py-2 text-sm font-bold hover:bg-muted"><LinkIcon className="h-4 w-4" />ポストに移動</button>}
+                        {mediaDownload && <button onClick={() => {setShowMenu(false);mediaDownload();}} className="flex w-full items-center rounded-lg px-3 py-2 text-sm font-bold hover:bg-muted"><Download className="h-4 w-4" />画像を保存</button>}
                         <button onClick={(event) => { event.stopPropagation(); navigate(`/post/${comment.postId}/activity?reply=${encodeURIComponent(comment.id)}`); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"><ChartBarBig className="h-4 w-4" />ポストアクティビティ</button>
                         {isMyComment && (
                         <button

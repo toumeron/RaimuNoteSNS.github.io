@@ -10,7 +10,7 @@ import { SearchExploreContent } from '@/components/search/SearchExploreContent';
 import { SearchExploreTabs } from '@/components/search/SearchExploreTabs';
 import { SearchTabIndicator } from '@/components/search/SearchTabIndicator';
 import { useSearchExploreTab } from '@/hooks/useSearchExploreTab';
-import { getNewsSources, latestNewsPerSource, type SearchNewsItem, type NewsSources } from '@/api/search-news';
+import {useSearchNews} from '@/hooks/useSearchNews';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -1489,8 +1489,7 @@ const readStoredSearchPageTab = (): SearchTab => {
 const desktopTabTriggerClass =
   "relative h-full bg-transparent text-[15px] font-medium text-[rgb(83,100,113)] dark:text-gray-400 data-[state=active]:text-[rgb(15,20,25)] dark:data-[state=active]:text-white data-[state=active]:font-bold data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-black/[0.03] dark:hover:bg-white/5 transition-colors";
 
-// ニュースアイテムの型定義
-type NewsItem = SearchNewsItem;
+
 
 // PC版の検索バーのサジェスト行(検索キーワード or ユーザー)の型定義
 type SuggestionRow =
@@ -1539,11 +1538,8 @@ export default function SearchPage() {
   // トレンド用ステート
   const { data: trends = [], isPending: isTrendsLoading } = useTrends();
 
-  // ニュース用ステート
-  const [newsSources, setNewsSources] = useState<Record<string, NewsSources>>({});
+  // 探索画面のタブ
   const [exploreTab] = useSearchExploreTab();
-  const [newsItems, setNewsItems] = useState<NewsItem[]>([]);
-  const [isNewsLoading, setIsNewsLoading] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestBoxRef = useRef<HTMLDivElement>(null);
@@ -1554,6 +1550,9 @@ export default function SearchPage() {
   const appliedSearchHomeTokenRef = useRef<number | null>(null);
 
   const { user } = useAuth();
+  const {data:newsData,isPending:isNewsLoading}=useSearchNews(user?.id??null);
+  const newsItems=newsData?.items??[];
+  const newsSources=newsData?.sources??{};
   const {data:preferences={authors:{},terms:{}}}=useQuery<RecommendationPreferences>({queryKey:['recommendation-preferences',user?.id??null],queryFn:()=>getRecommendationPreferences(user?.id??null),staleTime:0});
 
   // Both external providers share the same suggestion slots and cancellation.
@@ -1593,32 +1592,7 @@ export default function SearchPage() {
     return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
 
-  // ニュース取得用Effect
-  useEffect(() => {
-    let cancelled = false;
-    async function fetchLatestNews() {
-      setIsNewsLoading(true);
-      try {
-        const results = await Promise.all(['limenote', 'bluesky'].map(source => supabase
-          .from('news_summaries').select('*').eq('source', source)
-          .eq('public_sources_verified', true).order('created_at', {ascending: false}).limit(1)));
-        const error = results.find(result => result.error)?.error;
-        const data = results.flatMap(result => result.data || []);
 
-        if (error) throw error;
-        if (cancelled) return;
-        const newsItems = Array.isArray(data) ? data : [];
-        setNewsItems(newsItems);
-        void getNewsSources(latestNewsPerSource(newsItems)).then(sources => { if (!cancelled) setNewsSources(sources); });
-      } catch (err) {
-        console.error('Failed to fetch news:', err);
-      } finally {
-        if (!cancelled) setIsNewsLoading(false);
-      }
-    }
-    fetchLatestNews();
-    return () => { cancelled = true; };
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1944,6 +1918,7 @@ export default function SearchPage() {
               <>
                 <button
                   type="button"
+                  data-lime-dismiss-backdrop
                   aria-label="詳細検索を閉じる"
                   className="fixed inset-0 z-[55] cursor-default"
                   onClick={() => setIsSearchSettingsOpen(false)}

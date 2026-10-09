@@ -185,10 +185,12 @@ export const useCreatePost = () => {
       if (post.parentPost?.id) qc.invalidateQueries({ queryKey: ['repost-state', post.parentPost.id] });
       // 'feed' から始まる全てのキャッシュ（最新・フォロー中両方）を無効化
       qc.invalidateQueries({ queryKey: feedKey });
+      qc.invalidateQueries({ queryKey: ['map-posts'] });
       qc.invalidateQueries({ queryKey: ['posts', 'user'] });
       toast.success('投稿しました');
     },
-    onError: () => toast.error('投稿に失敗しました。もう一度お試しください。'),
+    onError: (error, input) => toast.error(input.mapLocation && ['42703', 'PGRST204'].includes(String((error as {code?:string}).code))
+      ? '位置付きポストの保存設定が未適用です。' : '投稿に失敗しました。もう一度お試しください。'),
   });
 };
 

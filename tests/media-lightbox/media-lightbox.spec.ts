@@ -11,17 +11,23 @@ test('shared viewer opens from posts and detail; controls operate the image and 
  await viewer.locator('.lime-media-stage').dblclick();await expect(viewer.getByAltText('拡大画像 2')).toHaveCSS('transform',/2.5/);await viewer.locator('.lime-media-stage').dblclick();await expect(viewer).not.toHaveClass(/lime-media-controls-hidden/);
  const actions=viewer.locator('.lime-media-bottom .lime-media-actions');
  await press(page,actions.locator('[data-lime-bookmark-button]'));await expect.poll(()=>state.rows.length).toBe(1);await expect(actions.locator('[data-lime-bookmark-button]')).toHaveAttribute('aria-pressed','true');
- await press(page,actions.locator('[data-lime-post-action="repost"]'));await expect(page.getByRole('menuitem',{name:'リポストする',exact:true})).toBeVisible();await press(page,page.getByRole('menuitem',{name:'リポストする',exact:true}));
+ await press(page,actions.locator('[data-lime-post-action="repost"]'));const repostChoice=page.getByRole((page.viewportSize()?.width??0)<640?'button':'menuitem',{name:'リポストする',exact:true});await expect(repostChoice).toBeVisible();await press(page,repostChoice);
  await press(page,actions.getByRole('link',{name:'返信',exact:true}));
  const replyScope=(page.viewportSize()?.width??0)<768?page.getByRole('dialog',{name:'返信を作成',exact:true}):viewer;const replyInput=replyScope.locator('textarea:visible,input:visible').first();await expect(replyInput).toBeFocused();
  await replyInput.fill('ビューアーからの返信');await press(page,replyScope.getByRole('button',{name:'コメントを送信',exact:true}).filter({visible:true}).first());await expect.poll(()=>state.writes.some(write=>write.table==='comments'&&write.body?.content==='ビューアーからの返信'&&write.body?.post_id==='native')).toBe(true);
  await press(page,actions.locator('[data-lime-post-action=like]'));await expect.poll(()=>state.writes.some(write=>write.table==='likes'&&write.body?.post_id==='native')).toBe(true);
  await expect(actions.locator('[data-lime-post-action=like]')).toHaveClass(/text-pink-500/);
  await page.screenshot({path:info.outputPath('viewer.png'),animations:'disabled'});
- await press(page,actions.getByRole('button',{name:'ポストを共有',exact:true}));await press(page,page.getByText('その他の方法でポストを送信',{exact:true}));await expect.poll(()=>page.evaluate(()=>(window as any).__mediaShared?.url)).toContain('/post/native');
+ await press(page,actions.getByRole('button',{name:'ポストを共有',exact:true}));if((page.viewportSize()?.width??0)<640)await expect(page.locator('.lime-post-action-sheet-backdrop-mobile')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await press(page,page.getByText('その他の方法でポストを送信',{exact:true}));await expect.poll(()=>page.evaluate(()=>(window as any).__mediaShared?.url)).toContain('/post/native');
  await press(page,viewer.getByRole('button',{name:'ポストのメニュー'}).filter({visible:true}));
- const save=page.getByRole('button',{name:'画像を保存',exact:true}).filter({visible:true});const download=page.waitForEvent('download');await press(page,save);expect((await download).suggestedFilename()).toContain('LimeNote-2');
+ const download=page.waitForEvent('download');
+ await press(page,page.getByRole('button',{name:'画像を保存',exact:true}).filter({visible:true}));expect((await download).suggestedFilename()).toContain('LimeNote-2');
  await press(page,viewer.getByRole('button',{name:'画像を閉じる'}));await expect(viewer).toHaveCount(0);await expect.poll(()=>page.evaluate(()=>document.body.style.overflow)).not.toBe('hidden');
+ await press(page,post.getByRole('button',{name:'ポストを共有',exact:true}));
+ const shareMenu=page.locator('.lime-post-share-menu');await expect(shareMenu).toBeVisible();
+ expect((await shareMenu.boundingBox())!.width).toBeLessThanOrEqual(256);
+ await expect(shareMenu).toHaveCSS('padding-top','4px');
+ await press(page,page.getByText('その他の方法でポストを送信',{exact:true}));await expect(shareMenu).toHaveCount(0);
  await page.goto('post/native');await press(page,page.locator('[data-lime-post-detail-card] img').filter({hasNot:page.locator('none')}).filter({visible:true}).last());
  await expect(viewer).toBeVisible();await press(page,viewer.getByRole('button',{name:'画像を閉じる'}));
 });
@@ -151,12 +157,14 @@ test('image swipe animates the adjacent image before changing its selected dot',
  await expect(viewer.locator('.lime-media-image-track')).toHaveCSS('transform','matrix(1, 0, 0, 1, 0, 0)');
 });
 
- test('mobile image menu is a bottom sheet and its post link navigates to the real post',async({page})=>{
+ test('image three-dot menu preserves navigation and a transparent mobile backdrop',async({page})=>{
  await setup(page,false);await page.goto('./');await press(page,page.locator('[data-lime-post-card]').filter({hasText:'写真の投稿'}).first().locator('[data-lime-post-body] img').first());
- const viewer=page.getByRole('dialog',{name:'メディアを拡大表示'});await press(page,viewer.getByRole('button',{name:'ポストのメニュー'}).filter({visible:true}));
- const sheet=page.locator('[data-lime-media-sheet=menu]');await expect(sheet).toBeVisible();
- if((page.viewportSize()?.width??0)<768){const rect=(await sheet.boundingBox())!;expect(rect.x).toBe(0);expect(rect.width).toBe(page.viewportSize()!.width);expect(Math.abs(rect.y+rect.height-page.viewportSize()!.height)).toBeLessThan(2);}
- await press(page,sheet.getByRole('button',{name:'ポストに移動',exact:true}));await expect(page).toHaveURL(/post\/native$/);await expect(viewer).toHaveCount(0);
+ const viewer=page.getByRole('dialog',{name:'メディアを拡大表示'});
+ await press(page,viewer.getByRole('button',{name:'ポストのメニュー'}).filter({visible:true}));
+ await expect(page.locator('[data-lime-media-sheet=menu]')).toBeVisible();
+ if((page.viewportSize()?.width??0)<640)await expect(page.locator('.lime-post-options-backdrop')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
+ await press(page,page.getByRole('button',{name:'ポストに移動',exact:true}));
+ await expect(page).toHaveURL(/post\/native$/);await expect(viewer).toHaveCount(0);
  });
 
 
@@ -270,4 +278,141 @@ test('native URL cards restore saved metadata and image after reloading',async({
  const requests:string[]=[];page.on('request',request=>{if(request.url().includes('/functions/v1/link-preview')||request.url()==='https://preview.example/cover.svg')requests.push(request.url());});
  await page.reload();await expect(card).toBeVisible();await expect(card.locator('img')).toHaveAttribute('src',/^blob:/);
  expect(requests).toEqual([]);
+});
+
+
+test('reply options preserve activity navigation on all devices',async({page})=>{
+ await setup(page,false);await page.goto('post/native');
+ await press(page,page.getByRole('button',{name:'コメントのメニュー',exact:true}).first());await press(page,page.getByRole('button',{name:'ポストアクティビティ',exact:true}));
+ await expect(page).toHaveURL(/activity\?reply=child$/);
+});
+
+test('mobile repost sheet floats over dimmed background without hiding navigation',async({page},info)=>{
+ test.skip((page.viewportSize()?.width??0)>=640,'Phone action sheet');
+ await setup(page,false);await page.addInitScript(()=>localStorage.setItem('theme','light'));await page.goto('./');
+ const post=page.locator('[data-lime-post-card]').filter({hasText:'写真の投稿'}).first();
+ const trigger=post.locator('[data-lime-post-action="repost"]');
+ await press(page,trigger);
+ const sheet=page.locator('.lime-post-action-sheet'),backdrop=page.locator('.lime-post-action-sheet-backdrop');
+ await expect(sheet).toBeVisible();await expect(backdrop).toHaveCSS('background-color','rgba(0, 0, 0, 0.35)');
+ await expect(page.locator('[data-lime-bottom-nav-root]')).toBeVisible();
+ await expect(page.locator('[data-lime-app-header]')).toBeVisible();
+ const box=await sheet.boundingBox();expect(Math.abs(box!.y+box!.height-(page.viewportSize()!.height-8))).toBeLessThan(2);expect(box!.x).toBe(8);
+ await page.screenshot({path:info.outputPath('repost-sheet-light.png')});
+ await expect(sheet.locator('.lime-post-sheet-close')).toHaveCount(0);await backdrop.tap({position:{x:10,y:80}});await expect(sheet).toHaveCount(0);
+ await press(page,trigger);await expect(sheet).toBeVisible();
+ await backdrop.tap({position:{x:10,y:80}});await expect(sheet).toHaveCount(0);
+ await press(page,post.locator('[data-lime-post-body] img').first());
+ const viewer=page.getByRole('dialog',{name:'メディアを拡大表示'});
+ await press(page,viewer.locator('.lime-media-bottom [data-lime-post-action="repost"]'));await expect(sheet).toBeVisible();
+ await expect(sheet.locator('.lime-post-sheet-close')).toHaveCount(0);await backdrop.tap({position:{x:10,y:80}});await expect(sheet).toHaveCount(0);await expect(viewer).toBeVisible();
+});
+
+test('mobile profile cover reaches the top, header stays when scrolling, and pull stretches cover',async({page},info)=>{
+ test.skip((page.viewportSize()?.width??0)>=640,'Mobile profile');
+ const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>{if(message.type()==='error' && message.text().includes('inert'))errors.push(message.text());});
+ let profileReads=0;page.on('request',request=>{if(request.url().includes('/__bookmark-fixture/profile-posts?'))profileReads++;});
+ await setup(page,false);
+ await page.addInitScript(()=>document.addEventListener('DOMContentLoaded',()=>{const style=document.createElement('style');style.textContent='body { padding-top: 44px !important; }';document.head.append(style);}));
+ await page.route('**/*.supabase.co/rest/v1/profiles*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({id:'11111111-1111-1111-1111-111111111111',username:'lime',display_name:'Lime Note',avatar_url:'',cover_url:'https://media.example/one.svg',created_at:'2026-10-01T00:00:00Z',bio:'プロフィールの自己紹介',location:'東京都'})}));
+ await page.goto('u/lime');
+ const cover=page.locator('.profile-header-cover-avatar-gap'),header=page.locator('header[data-lime-mobile-profile-header-hidden=true]');
+ await expect(cover).toBeVisible();await expect(header.locator("[data-lime-header-row]")).toBeVisible();
+ if(info.project.name==='WebKit-iPhone')expect((await cover.boundingBox())!.y).toBe(0);
+ await expect(header.getByText('Lime Note',{exact:true})).toHaveCount(1);
+ expect((await header.locator('[data-lime-header-row]').boundingBox())!.height).toBeLessThanOrEqual(56);
+ await expect(page.locator('[data-lime-profile-tabs-header]')).toHaveCSS('height','44px');
+ await press(page,header.getByRole('button',{name:'プロフィールのその他のメニュー'}));
+ const copy=page.getByRole('menuitem',{name:'リンクをコピー',exact:true});await expect(copy).toBeVisible();
+ expect(await copy.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
+ await page.keyboard.press('Escape');
+ await page.screenshot({path:info.outputPath('profile-top.png')});
+ await page.evaluate(()=>window.scrollTo(0,280));await expect(header).toHaveAttribute('data-lime-profile-scrolled','true');await expect(header.locator('.lime-profile-bar-title')).toHaveCSS('opacity','1');
+ await expect(header.locator('.lime-profile-bar-background')).toHaveCSS('opacity','1');
+ expect((await header.locator('[data-lime-header-row]').boundingBox())!.y).toBe(0);
+ await page.screenshot({path:info.outputPath('profile-scrolled.png'),animations:'disabled'});
+ await page.evaluate(()=>window.scrollTo(0,0));
+ for(let i=0;i<4;i++){
+  await page.evaluate(()=>window.scrollTo(0,600));
+  await expect(header.locator('.lime-profile-bar-background')).toBeVisible();
+  await page.evaluate(()=>window.scrollTo(0,0));
+  await expect(header.locator('.lime-profile-bar-background')).toBeHidden();
+ }
+ await expect(cover).toHaveCSS('mask-image','none');
+ await expect(cover.locator('img').first()).toHaveCSS('filter','none');
+ await expect(cover.locator('img').first()).toHaveCSS('transform','none');
+ await page.screenshot({path:info.outputPath('profile-returned-to-top.png')});
+ await expect(page.locator('[data-lime-profile-posts]').getByText('写真の投稿',{exact:true}).first()).toBeVisible();
+ const readsBeforePull=profileReads;
+ const initial=(await cover.boundingBox())!.height;
+ await cover.evaluate(el=>{
+  const target=el.querySelector('img') ?? el.querySelector('button') ?? el;
+  const touch=(type:string,y:number)=>{const event=new Event(type,{bubbles:true,cancelable:true});Object.defineProperty(event,'touches',{value:[{identifier:1,target,clientX:150,clientY:y}]});target.dispatchEvent(event);};
+  touch('touchstart',100);touch('touchmove',260);
+ });
+ await expect(page.locator('[data-lime-profile-page]')).toHaveAttribute('data-lime-profile-pulling','true');
+ await expect.poll(async()=>(await cover.boundingBox())!.height).toBeGreaterThan(initial+60);
+ await expect(page.locator('[data-lime-profile-pull-indicator]')).toHaveCSS('opacity','1');
+ await page.screenshot({path:info.outputPath('profile-pull.png')});
+ await cover.evaluate(el=>el.dispatchEvent(new Event('touchend',{bubbles:true})));
+ await expect(page.locator('[data-lime-profile-page]')).not.toHaveAttribute('data-lime-profile-pulling','true');
+ await expect.poll(async()=>(await cover.boundingBox())!.height).toBe(initial);
+ await expect.poll(()=>profileReads).toBeGreaterThan(readsBeforePull);
+ await expect(page.locator('[data-lime-bottom-nav-root]')).toBeVisible();
+ expect(errors).toEqual([]);
+ await page.goto('settings');
+ if(info.project.name==='WebKit-iPhone')await expect(page.locator('body')).toHaveCSS('padding-top','44px');
+ await expect(page.locator('html')).not.toHaveAttribute('data-lime-iphone-profile','true');
+});
+
+for (const theme of ['light','dark']) test(`mobile profile without a cover uses a grey borderless header and restores the follow transition (${theme})`,async({page},info)=>{
+ test.skip((page.viewportSize()?.width??0)>=640,'Phone profile');
+ const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error'&&m.text().includes('Warning:'))errors.push(m.text());});
+ await setup(page,false);await page.addInitScript(theme=>localStorage.setItem('theme',theme),theme);
+ await page.route('**/src/api/follows.ts*',route=>route.fulfill({contentType:'application/javascript',body:'export const getFollowStats=async()=>({following:22,followers:86,followedByMe:true});export const toggleFollow=async()=>({following:false});export const getFollowing=async()=>[];export const getFollowers=async()=>[];'}));
+ await page.route('**/*.supabase.co/rest/v1/profiles*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({id:'22222222-2222-2222-2222-222222222222',username:'other',display_name:'User',avatar_url:'',cover_url:null,created_at:'2026-10-01T00:00:00Z'})}));
+ await page.goto('u/other');
+ const header=page.locator('header[data-lime-mobile-profile-header-hidden=true]');
+ await expect(header).toHaveAttribute('data-lime-profile-no-cover','true');
+ await expect(header.locator('.lime-profile-bar-background')).toHaveCSS('background-color',theme==='light'?'rgb(180, 178, 178)':'rgb(100, 98, 98)');
+ await page.screenshot({path:info.outputPath('no-cover-top.png')});
+ await page.evaluate(()=>window.scrollTo(0,600));
+ await expect(header.locator('.lime-profile-bar-title')).toHaveCSS('opacity','1');
+ await expect(header).toHaveCSS('border-bottom-width','0px');
+ await expect(header).toHaveCSS('box-shadow','none');
+ await expect(header).toHaveCSS('backdrop-filter','none');
+ if(info.project.name==='WebKit-iPhone')await expect(header).toHaveCSS('-webkit-backdrop-filter','none');
+ await expect(header.locator('.lime-profile-bar-follow')).toHaveCSS('width','124px');
+ await expect(header.locator('.lime-profile-bar-follow')).toHaveCSS('transition-duration','0.18s, 0.18s, 0.18s');
+ await expect(header.locator('.lime-profile-bar-follow')).not.toHaveAttribute('inert','');
+ await expect(page.locator('[data-lime-profile-tabs-header]')).toHaveCSS('height','44px');
+ await page.screenshot({path:info.outputPath('no-cover-scrolled.png')});
+ await page.evaluate(()=>window.scrollTo(0,0));await expect(header.locator('.lime-profile-bar-title')).toHaveCSS('opacity','0');
+ await expect(header.locator('.lime-profile-bar-follow')).toHaveCSS('width','0px');
+ await expect(header.locator('.lime-profile-bar-follow')).toHaveAttribute('inert','');
+ expect(errors).toEqual([]);
+});
+
+test('profile cover has no horizontal band at the control row boundary',async({page},info)=>{
+ test.skip(info.project.name!=='mobile','Reproduce the supplied width');
+ await page.setViewportSize({width:556,height:994});await setup(page,false);
+ await page.route('**/*.supabase.co/rest/v1/profiles*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({id:'11111111-1111-1111-1111-111111111111',username:'lime',display_name:'Lime Note',avatar_url:'',cover_url:'https://media.example/one.svg',created_at:'2026-10-01T00:00:00Z'})}));
+ await page.goto('u/lime');await expect(page.locator('.profile-header-cover-avatar-gap img')).toBeVisible();
+ await page.screenshot({path:info.outputPath('cover-boundary.png')});
+ const header=page.locator('header[data-lime-mobile-profile-header-hidden=true]');
+ await expect(header).toHaveCSS('display','contents');
+ await expect(header.locator('[data-lime-header-row]')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
+ await expect(header.locator('[data-lime-header-row]')).toHaveCSS('border-bottom-width','0px');
+ const row=await header.locator('[data-lime-header-row]').boundingBox();
+ const points=await page.evaluate(y=>[100,200,300,400,500].map(x=>{const el=document.elementFromPoint(x,y);return !!el?.closest('.profile-header-cover-avatar-gap');}),row!.y+row!.height+1);
+ expect(points).toEqual([true,true,true,true,true]);
+});
+
+test('profile header requests metadata when mounted after the profile',async({page},info)=>{
+ test.skip(info.project.name!=='mobile','Viewport lifecycle');
+ await setup(page,false);await page.setViewportSize({width:900,height:900});await page.goto('u/lime');
+ await expect(page.locator('[data-lime-profile-name]')).toContainText('Lime Note');
+ await page.setViewportSize({width:390,height:844});
+ const header=page.locator('header[data-lime-mobile-profile-header-hidden=true]');
+ await expect(header.locator('.lime-profile-bar-title')).toContainText('Lime Note');
 });

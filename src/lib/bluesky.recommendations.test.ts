@@ -1,4 +1,4 @@
-import {splitMentionText,mentionProfileHandle,externalRead} from './utils';
+import {splitMentionText,mentionProfileHandle,externalRead,externalFetch} from './utils';
 import { afterEach, expect, it, vi } from 'vitest';
 import { fetchBlueskyTopicPosts, fetchBlueskyAuthorFeed, fetchBlueskyPostThread, fetchBlueskyProfile, likeBlueskyPost, unlikeBlueskyPost, followBlueskyUser, unfollowBlueskyUser, getConfiguredExternalHandles, fetchTrendingJapaneseBlueskyPosts, searchExternalUsers } from './bluesky';
 import { configuredMisskeyHandles, mapMisskeyNote, type MisskeyNote, searchMisskey } from './misskey';
@@ -185,3 +185,22 @@ it('reads only the authenticated account likes with the existing AppView proxy',
  const rows=await fetchBlueskyLikedPosts();expect(rows[0].imageUrls).toEqual(['https://images.example/liked.jpg']);
  const url=new URL(fetcher.mock.calls[0][0]);expect(url.searchParams.get('actor')).toBe('did:plc:own-likes-test');expect(url.searchParams.get('limit')).toBe('100');expect(url.pathname).toContain('getActorLikes');expect(fetcher.mock.calls[0][1].headers['atproto-proxy']).toBe('did:web:api.bsky.app#bsky_appview');
 });
+
+it('keeps an external response body abortable after fetch has returned headers',async()=>{
+ const controller=new AbortController();let received!:AbortSignal;
+ const fetcher=vi.fn(async(_url:any,init:any)=>{received=init.signal;return new Response(new ReadableStream({start(stream){received.addEventListener('abort',()=>stream.error(received.reason),{once:true});}}));});
+ vi.stubGlobal('fetch',fetcher);
+ const response=await externalFetch('https://example.com/slow-body',{signal:controller.signal});
+ const stopped=expect(response.json()).rejects.toMatchObject({name:'AbortError'});
+ controller.abort();await stopped;expect(received.aborted).toBe(true);
+});
+
+ it('limits recommendation trending discovery to one eight-row query per continuation',async()=>{
+ const fetcher=vi.fn(async(_url:string)=>new Response(JSON.stringify({posts:[],cursor:'next'})));vi.stubGlobal('fetch',fetcher);
+ const first=await fetchTrendingJapaneseBlueskyPosts({limit:8,queryLimit:1});
+ const firstSearch=fetcher.mock.calls.filter(([url])=>String(url).includes('searchPosts'));
+ expect(firstSearch).toHaveLength(1);expect(new URL(String(firstSearch[0][0])).searchParams.get('limit')).toBe('8');
+ const before=fetcher.mock.calls.length;await fetchTrendingJapaneseBlueskyPosts({limit:8,queryLimit:1,cursor:first.cursor});
+ const secondSearch=fetcher.mock.calls.slice(before).filter(([url])=>String(url).includes('searchPosts'));
+ expect(secondSearch).toHaveLength(1);expect(new URL(String(secondSearch[0][0])).searchParams.get('q')).not.toBe(new URL(String(firstSearch[0][0])).searchParams.get('q'));
+ });

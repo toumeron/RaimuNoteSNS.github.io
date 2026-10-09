@@ -66,11 +66,17 @@ export function accountSearchScore(user: {username:string;displayName:string}, q
 
 export async function externalFetch(url:string,init:RequestInit={},priority:ExternalReadPriority='supplementary'):Promise<Response> {
   return externalRead(async()=>{
-    const controller=new AbortController();
-    const abort=()=>controller.abort(init.signal?.reason);
-    init.signal?.addEventListener('abort',abort,{once:true});
-    const timer=setTimeout(()=>controller.abort(new DOMException('External read timed out','TimeoutError')),12000);
-    try {return await fetch(url,{...init,signal:controller.signal});}
-    finally {clearTimeout(timer);init.signal?.removeEventListener('abort',abort);}
+    // Keep cancellation attached through response-body consumption; fetch()
+    // resolves at headers, before json()/blob() has finished downloading.
+    const timeout=AbortSignal.timeout(12000);
+    let signal:AbortSignal;
+    if(typeof AbortSignal.any==='function')signal=AbortSignal.any(init.signal?[init.signal,timeout]:[timeout]);
+    else{
+      const controller=new AbortController();
+      const abort=()=>{controller.abort(init.signal?.aborted?init.signal.reason:timeout.reason);init.signal?.removeEventListener('abort',abort);timeout.removeEventListener('abort',abort);};
+      init.signal?.addEventListener('abort',abort,{once:true});timeout.addEventListener('abort',abort,{once:true});
+      if(init.signal?.aborted)abort();signal=controller.signal;
+    }
+    return fetch(url,{...init,signal});
   },init.signal ?? undefined,priority);
 }

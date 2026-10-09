@@ -1,3 +1,4 @@
+import { mobilePostMenuOS } from '@/components/post/mobilePostMenu';
 import { toast } from 'sonner';
 import {ExternalLikeButton} from '@/components/post/ExternalLikeButton';
 import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
@@ -17,10 +18,10 @@ import { RepostButton } from '@/components/feed/RepostButton';
 import { QuotedPost } from '@/components/feed/QuotedPost';
 import { RepostIcon } from '@/components/feed/RepostIcon';
 import { useDesktopLayout } from '@/components/layout/DesktopLayoutContext';
-import { memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
-import { Download, MessageCircle, MoreHorizontal, Trash2, CalendarDays, ChartBarBig, X, Globe, Lock, Sparkles, Plus, Link as LinkIcon, Upload, Send, Heart, Users, Pin } from 'lucide-react';
+import { Download, EyeOff, MessageCircle, MoreHorizontal, Trash2, CalendarDays, ChartBarBig, X, Globe, Lock, Sparkles, Plus, Link as LinkIcon, Upload, Send, Heart, Users, Pin, Pencil } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { LikeButton } from '@/components/post/LikeButton';
 import { PostImages } from './PostImages';
@@ -43,6 +44,8 @@ import { FollowButton } from '../profile/FollowButton';
 import { useFollowStats } from '@/hooks/useProfile';
 import { useBlueskySession } from '@/hooks/useBlueskySession';
 import { getBlueskyUriFromPostId } from '@/lib/bluesky';
+
+const PostLocationEditor = lazy(() => import('@/components/maps/PostLocationEditor'));
 
 // --- 公開範囲 ---
 // public    = 全体公開
@@ -901,6 +904,7 @@ function getIsMobileViewport() {
 }
 
 function PostCardComponent({ post, timelineGlass = false, thread = false, embedded = false, repostedByLabel, pinned = false, mediaPresentation, onMediaReply, onMediaLikeChange, mediaDownload,onNotInterested }: { post: PostWithAuthor; timelineGlass?: boolean; thread?: boolean; embedded?: boolean; repostedByLabel?: string; pinned?:boolean; mediaPresentation?: 'actions' | 'menu'; onMediaReply?: () => void; onMediaLikeChange?: (state:{liked:boolean;count:number})=>void; mediaDownload?:()=>void;onNotInterested?:(post:PostWithAuthor)=>Promise<void> }) {
+  const [editLocationOpen,setEditLocationOpen] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [moreMenuPosition, setMoreMenuPosition] = useState<{ top: number; right: number } | null>(null);
   const [showShareMenu, setShowShareMenu] = useState(false);
@@ -2195,6 +2199,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
     : 'bg-white dark:bg-[#1e222b]';
 
   const postMenu = (<>                {!embedded && <div className="relative shrink-0">
+                  
                   <button
                     ref={moreButtonRef}
                     aria-label="ポストのメニュー"
@@ -2223,12 +2228,13 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                   >
                     <MoreHorizontal className="h-5 w-5" />
                   </button>
+                  
 
                   {showMenu && typeof document !== 'undefined' && createPortal(
                     <>
                       <div
                         data-lime-media-sheet-backdrop={mediaPresentation || undefined}
-                        className="fixed inset-0 bg-transparent"
+                        className="lime-post-options-backdrop fixed inset-0 bg-transparent"
                         style={{ zIndex: 2147483646 }}
                         onPointerDown={(e) => {
                           e.preventDefault();
@@ -2245,7 +2251,8 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                       <div
                         ref={moreMenuRef}
                         data-lime-media-sheet={mediaPresentation ? 'menu' : undefined}
-                        className="fixed w-44 rounded-xl border border-border bg-card p-1 shadow-lg overflow-hidden animate-in fade-in zoom-in duration-100"
+                        data-post-menu-os={mobilePostMenuOS()}
+                        className="fixed lime-post-options rounded-xl bg-card shadow-lg overflow-hidden animate-in fade-in zoom-in duration-100"
                         style={{
                           top: moreMenuPosition?.top ?? 0,
                           right: moreMenuPosition?.right ?? 8,
@@ -2264,7 +2271,8 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                           {isBlueskyPost ? (post.id.startsWith('misskey:') ? 'Misskeyで見る' : 'Blueskyで見る') : 'ポストアクティビティー'}
                         </button>
 
-                        {onNotInterested&&<button onClick={async event=>{event.stopPropagation();try{await onNotInterested(post);setShowMenu(false);}catch{toast.error('興味なしを保存できませんでした');}}} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold hover:bg-muted">興味なし</button>}
+                        {onNotInterested&&<button onClick={async event=>{event.stopPropagation();try{await onNotInterested(post);setShowMenu(false);}catch{toast.error('興味なしを保存できませんでした');}}} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold hover:bg-muted"><EyeOff className="h-4 w-4" />興味なし</button>}
+                        {isMyPost && !isBlueskyPost && !post.replyId && <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted" onClick={e=>{e.stopPropagation();setShowMenu(false);setEditLocationOpen(true);}}><Pencil className="h-4 w-4"/>編集</button>}
                         {isMyPost && !isBlueskyPost && !post.replyId && <PinPostMenuButton userId={post.userId} postId={post.id} onClose={()=>setShowMenu(false)}/>}
                         {isMyPost && !isBlueskyPost && !post.replyId && <HighlightPostMenuButton userId={post.userId} postId={post.id} onClose={()=>setShowMenu(false)}/>}
                         {isMyPost && currentVisibility !== 'public' && (
@@ -2617,7 +2625,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                   <>
                     <div
                       data-lime-media-sheet-backdrop={mediaPresentation || undefined}
-                      className="fixed inset-0 bg-transparent"
+                      className="lime-post-action-sheet-backdrop-mobile fixed inset-0 bg-transparent"
                       style={{ zIndex: 2147483646 }}
                       onPointerDown={(e) => {
                         e.preventDefault();
@@ -2632,7 +2640,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                     <div
                       ref={shareMenuRef}
                       data-lime-media-sheet={mediaPresentation ? 'share' : undefined}
-                      className="fixed w-[min(calc(100vw-16px),16rem)] rounded-xl border border-border bg-card p-1 shadow-lg overflow-hidden animate-in fade-in zoom-in duration-100"
+                      className="lime-post-share-menu fixed w-[min(calc(100vw-16px),16rem)] rounded-xl border border-border bg-card p-1 shadow-lg overflow-hidden animate-in fade-in zoom-in duration-100"
                       style={{
                         top: shareMenuPosition?.top ?? 0,
                         right: shareMenuPosition?.right ?? 8,
@@ -3082,6 +3090,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
         </div>,
         document.body
       )}
+      {editLocationOpen && <Suspense fallback={null}><PostLocationEditor post={post} onClose={()=>setEditLocationOpen(false)}/></Suspense>}
     </>
   );
 }

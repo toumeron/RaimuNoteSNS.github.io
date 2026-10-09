@@ -46,7 +46,7 @@ async function setup(page:Page) {
 }
 test('selection, cloud persistence, follow and dismiss work through the existing navigation',async({page},info)=>{
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));const state=await setup(page);
- await page.goto('settings');
+ await page.goto('');
  if(info.project.name==='desktop')await page.getByRole('button',{name:'もっと見る',exact:true}).click();else await page.getByRole('button',{name:'メニューを開く',exact:true}).click();
  await page.getByText('トピック',{exact:true}).filter({visible:true}).click();
  await expect(page).toHaveURL(/\/topics$/);await expect(page.getByRole('heading',{name:'トピック',exact:true})).toHaveCount(1);
@@ -126,7 +126,7 @@ test('selection footer touches the mobile navigation without a gap and digital i
 });
 
 test('Bluesky login survives reload and account initialization without restoring a stale snapshot',async({page})=>{
- await setup(page);await page.goto('settings');
+ await setup(page);await page.goto('settings?section=external');
  await page.evaluate(async()=>{
   const accounts=await import('/RaimuNoteSNS.github.io/src/lib/savedAccounts.ts');
   localStorage.setItem('lime_bluesky_session',JSON.stringify({did:'did:plc:browser-test',handle:'old.bsky.social',accessJwt:'fake-old',refreshJwt:'fake-old-refresh'}));
@@ -201,7 +201,7 @@ test('a four-post qualified result continues loading toward a usable first page'
  });
  await page.route('**/images.example/**',route=>route.fulfill({headers:{'access-control-allow-origin':'*'},contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="30" height="20"><rect width="30" height="20" fill="#557799"/></svg>'}));
  await page.goto('');
- await expect.poll(()=>cursors.size,{timeout:20000}).toBeGreaterThanOrEqual(5);
+ await expect.poll(()=>cursors.size,{timeout:20000}).toBeGreaterThanOrEqual(2);
  await expect(page.locator('[data-lime-recommendation-post]').first()).toBeVisible();
  expect(await page.locator('[data-lime-recommendation-post]').count()).toBeGreaterThan(4);
  await expect(page.getByText('すべての投稿を読み込みました',{exact:true})).toHaveCount(0);
@@ -261,3 +261,196 @@ test('external likes persist without provider login, appear in the profile and r
   await page.goto('');await page.getByRole('tab',{name:'フォロー中',exact:true}).click();await expect(page.getByText('フォローした作者の新しい投稿',{exact:true})).toBeVisible();
   await page.goto('u/artist.bsky.social');await page.getByRole('button',{name:/^フォロー中$|^フォロー解除$/}).click();await expect.poll(()=>state.externalFollows.size).toBe(0);await expect(page.getByRole('button',{name:'新しい投稿を通知する',exact:true})).toHaveCount(0);
  });
+
+test('healthy slow topic reads load recommendations without a retry button or failure message',async({page})=>{
+ const state=await setup(page);state.followed=['digital-illustration'];
+ await page.addInitScript(()=>localStorage.setItem('lime_active_feed_tab','recommended'));
+ await page.route('**/rest/v1/profile_private_settings*',async route=>{
+  if(route.request().method()==='OPTIONS')return route.fulfill({status:204,headers:{'access-control-allow-origin':'*','access-control-allow-methods':'GET,OPTIONS','access-control-allow-headers':route.request().headers()['access-control-request-headers']??'*'}});
+  await new Promise(resolve=>setTimeout(resolve,2300));
+  return route.fulfill({headers:{'access-control-allow-origin':'*'},contentType:'application/json',body:JSON.stringify({followed_topics:state.followed,dismissed_topics:[],recommendation_feedback:[]})});
+ });
+ await page.route('**/*bsky.app/xrpc/**',route=>{
+  const endpoint=new URL(route.request().url()).pathname.split('/').at(-1);
+  const feed=Array.from({length:24},(_,i)=>({post:{uri:`at://did:plc:recovered${i}/app.bsky.feed.post/ok`,cid:`ok${i}`,author:{did:`did:plc:recovered${i}`,handle:`recovered${i}.bsky.social`},record:{text:'',langs:['ja'],createdAt:new Date().toISOString()},embed:{images:[{fullsize:`https://images.example/recovered-${i}.jpg`,alt:''}]}}}));
+  return route.fulfill({headers:{'access-control-allow-origin':'*'},contentType:'application/json',body:JSON.stringify(endpoint==='app.bsky.feed.getFeed'?{feed}:{feed:[],posts:[],actors:[]})});
+ });
+ await page.route('**/images.example/**',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="30" height="20"/>'}));
+ await page.goto('');await expect(page.locator('[data-lime-recommendation-post]').first()).toBeVisible({timeout:7000});
+ await expect(page.getByRole('button',{name:'再試行',exact:true})).toHaveCount(0);
+ await expect(page.getByText('読み込みに失敗しました。',{exact:true})).toHaveCount(0);
+});
+
+test('image-only likes supply creator context without flashing empty state between loading pages',async({page})=>{
+ await page.addInitScript(()=>{(window as any).emptyRecommendationFlashes=[];new MutationObserver(()=>{if(document.body?.textContent?.includes('おすすめの投稿がまだありません'))(window as any).emptyRecommendationFlashes.push(Date.now());}).observe(document,{subtree:true,childList:true});});
+ const state=await setup(page);state.followed=['digital-illustration'];
+ await page.addInitScript(()=>localStorage.setItem('lime_active_feed_tab','recommended'));
+ const actor='did:plc:favorite';
+ const rows=Array.from({length:3},(_,i)=>({post_snapshot:{id:`bsky:at://${actor}/app.bsky.feed.post/work-${i}`,userId:actor,content:'',imageUrls:[`https://images.example/work-${i}.jpg`],languages:['ja'],source:'bluesky',recommendationAuthorTopics:['digital-illustration'],author:{id:actor,username:'favorite.bsky.social'}},created_at:new Date().toISOString()}));
+ state.externalLikes.set('history',rows[0]);
+ await page.route('**/rest/v1/likes*',route=>route.fulfill({headers:{'access-control-allow-origin':'*'},contentType:'application/json',body:JSON.stringify(rows)}));
+ const rounds=new Set<number>();
+ await page.route('**/*bsky.app/xrpc/**',route=>{
+  const url=new URL(route.request().url()),endpoint=url.pathname.split('/').at(-1);
+  let data:unknown={feed:[],posts:[],actors:[]};
+  if(endpoint==='app.bsky.feed.getAuthorFeed'){
+   const round=Number(url.searchParams.get('cursor')??0);rounds.add(round);
+   data={feed:[{post:{uri:`at://${actor}/app.bsky.feed.post/work-${round}`,cid:`work-${round}`,author:{did:actor,handle:'favorite.bsky.social',displayName:'画像だけの作者'},record:{text:'',langs:['ja'],createdAt:new Date().toISOString()},embed:{images:[{fullsize:`https://images.example/work-${round}.jpg`,alt:''}]}}}],cursor:round<3?String(round+1):undefined};
+  }
+  return route.fulfill({headers:{'access-control-allow-origin':'*'},contentType:'application/json',body:JSON.stringify(data)});
+ });
+ await page.route('**/images.example/**',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="30" height="20"/>'}));
+ await page.goto('');
+ await expect(page.locator('[data-lime-recommendation-post]').first()).toBeVisible({timeout:10000});
+ expect([...rounds]).toContain(3);
+ expect(await page.evaluate(()=>(window as any).emptyRecommendationFlashes)).toEqual([]);
+ await expect(page.locator('[data-lime-recommendation-post]')).toHaveCount(1);
+ await expect(page.getByRole('button',{name:'再試行',exact:true})).toHaveCount(0);
+});
+
+test('six successive recommendation loads keep the same small request budget',async({page})=>{
+ const state=await setup(page);state.followed=['digital-illustration'];
+ await page.addInitScript(()=>localStorage.setItem('lime_active_feed_tab','recommended'));
+ const sizes:number[]=[];let sequence=0;
+ await page.route('**/*bsky.app/xrpc/**',async route=>{
+  const url=new URL(route.request().url()),endpoint=url.pathname.split('/').at(-1);
+  let data:unknown={feed:[],posts:[],actors:[]};
+  if(endpoint==='app.bsky.feed.getFeed'){
+   const batch=sequence++;const limit=Number(url.searchParams.get('limit'));sizes.push(limit);
+   await new Promise(resolve=>setTimeout(resolve,250));
+   data={feed:Array.from({length:limit},(_,i)=>({post:{uri:`at://did:plc:batch${batch}artist${i}/app.bsky.feed.post/new`,cid:`batch${batch}-${i}`,author:{did:`did:plc:batch${batch}artist${i}`,handle:`batch${batch}artist${i}.bsky.social`},record:{text:'',langs:['ja'],createdAt:new Date().toISOString()},embed:{images:[{fullsize:`https://images.example/batch-${batch}-${i}.jpg`,alt:''}]}}})),cursor:`next-${batch}`};
+  }
+  await route.fulfill({headers:{'access-control-allow-origin':'*'},contentType:'application/json',body:JSON.stringify(data)}).catch(()=>{});
+ });
+ await page.route('**/images.example/**',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="30" height="20"/>'}));
+ await page.goto('');
+ for(const batch of [0,1,2,3,4,5]){
+  const started=Date.now();
+  if(batch>0)await page.evaluate(()=>{window.dispatchEvent(new WheelEvent('wheel',{deltaY:100000}));window.scrollTo(0,document.body.scrollHeight);});
+  await expect(page.locator(`[data-lime-recommendation-post*="bsky:at://did:plc:batch${batch}artist"]`).first()).toBeAttached({timeout:3000});
+  console.log(`recommended ${batch+1} visible page: ${Date.now()-started} ms`);
+ }
+ expect(sizes.length).toBeGreaterThanOrEqual(6);expect(sizes.every(size=>size===8)).toBe(true);
+ const reads=sizes.length;await page.waitForTimeout(1800);expect(sizes.length).toBeLessThanOrEqual(reads+1);
+ await expect(page.getByText('おすすめの投稿はまだありません',{exact:true})).toHaveCount(0);
+});
+
+test('a healthy two-second post response is displayed instead of repeatedly cancelled into an empty timeline',async({page})=>{
+ const state=await setup(page);state.followed=['digital-illustration'];
+ await page.addInitScript(()=>localStorage.setItem('lime_active_feed_tab','recommended'));
+ await page.route('**/*bsky.app/xrpc/**',async route=>{
+  const url=new URL(route.request().url()),endpoint=url.pathname.split('/').at(-1);
+  let data:unknown={feed:[],posts:[],actors:[]};
+  if(endpoint==='app.bsky.feed.getFeed'){
+   await new Promise(resolve=>setTimeout(resolve,2000));
+   data={feed:Array.from({length:8},(_,i)=>({post:{uri:`at://did:plc:healthy${i}/app.bsky.feed.post/new`,author:{did:`did:plc:healthy${i}`,handle:`healthy${i}.bsky.social`},record:{text:'',langs:['ja'],createdAt:new Date().toISOString()},embed:{images:[{fullsize:`https://images.example/healthy-${i}.jpg`,alt:''}]}}})),cursor:'next'};
+  }
+  await route.fulfill({headers:{'access-control-allow-origin':'*'},contentType:'application/json',body:JSON.stringify(data)}).catch(()=>{});
+ });
+ await page.route('**/images.example/**',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="30" height="20"/>'}));
+ await page.goto('');await expect(page.locator('[data-lime-recommendation-post]').first()).toBeVisible({timeout:5000});
+ await expect(page.getByText('おすすめの投稿がまだありません',{exact:true})).toHaveCount(0);
+ await expect(page.getByText('読み込みに失敗しました。',{exact:true})).toHaveCount(0);
+});
+
+
+
+test('settings groups preserve controls, text beside icons, and responsive navigation',async({page},info)=>{
+ const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+ await setup(page);await page.goto('settings');
+ const desktop=info.project.name==='desktop'||info.project.name==='iPad';
+ const nav=page.getByRole('navigation',{name:'設定項目',exact:true}),subnav=page.getByRole('navigation',{name:'分類内の設定項目'});
+ await expect(nav).toBeVisible();await expect(nav.getByRole('button')).toHaveCount(3);
+ await expect(nav.getByText('その他のSNS連携、アカウント、LimePro、自動投稿の設定、絵文字の管理',{exact:true})).toBeVisible();
+ await expect(page.getByRole('complementary',{name:'トレンド'})).toHaveCount(0);
+ await expect(page.getByLabel('表示名',{exact:true})).toHaveCount(0);
+ if(desktop){
+  const shell=await page.locator('.lime-app-shell').boundingBox(),column=await page.locator('.lime-desktop-column').boundingBox();
+  expect(Math.abs(column!.x+column!.width-(shell!.x+shell!.width))).toBeLessThan(2);
+ }
+ await nav.getByRole('button',{name:/^アカウント/}).click();
+ await expect(subnav.getByRole('button')).toHaveCount(5);
+ await expect(subnav.getByRole('button',{name:/^自動投稿の設定/}).getByText('AIがあなたに代わって自動的に投稿を行います',{exact:true})).toBeVisible();
+ await subnav.getByRole('button',{name:'その他のSNS連携',exact:true}).click();
+ await expect(page.locator('.settings-detail section:not([hidden])').getByRole('heading',{name:'その他のSNS連携',exact:true})).toBeVisible();
+ await page.screenshot({path:`artifacts/settings-detail-${info.project.name}.png`,fullPage:true});
+ const backButton=page.getByRole('button',{name:desktop?'設定分類に戻る':'戻る',exact:true});
+ await backButton.hover();
+ await expect.poll(()=>backButton.evaluate(e=>getComputedStyle(e).backgroundColor)).toBe('rgba(128, 128, 128, 0.16)');
+ const back=()=>desktop?page.getByRole('button',{name:'設定分類に戻る',exact:true}).click():page.getByRole('button',{name:'戻る',exact:true}).click();
+ await back();if(!desktop)await back();
+ await nav.getByRole('button',{name:/^アクセシビリティ、表示/}).click();
+ await expect(subnav.getByRole('button')).toHaveCount(4);
+ await subnav.getByRole('button',{name:/^外観の設定/}).click();
+ await expect(page.getByRole('button',{name:'ライト',exact:true})).toBeVisible();
+ await back();await subnav.getByRole('button',{name:/^タイムライン背景/}).click();
+ await expect(page.getByRole('button',{name:'背景をアップロード',exact:true})).toBeVisible();
+ await back();if(!desktop)await back();
+ await nav.getByRole('button',{name:/^通知/}).click();
+ await expect(subnav.getByRole('button')).toHaveCount(1);
+ await subnav.getByRole('button',{name:'通知設定',exact:true}).click();
+ await expect(page.getByText('新着ポスト通知をONにしているユーザー',{exact:true})).toBeVisible();
+ await back();if(!desktop)await back();
+ await page.screenshot({path:`artifacts/settings-list-${info.project.name}.png`,fullPage:true});
+ await page.getByRole('searchbox',{name:'検索設定'}).fill('背景');
+ await expect(nav.getByRole('button')).toHaveCount(1);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+ expect(errors).toEqual([]);
+ await page.goto('topics');if(desktop)await expect(page.getByRole('complementary',{name:'トレンド'})).toBeVisible();
+});
+
+test('profile editor opens over the profile, validates and saves only profile fields',async({page},info)=>{
+ await setup(page);
+ const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+ let profile={id:user.id,username:user.username,display_name:'編集前',bio:'自己紹介',location:'東京',avatar_url:'',cover_url:'',created_at:user.createdAt,review:false};
+ let saved:any;
+ await page.route('**/rest/v1/profiles*',route=>{
+  const request=route.request();if(request.method()==='PATCH'){saved=request.postDataJSON();profile={...profile,...saved};}
+  const single=request.headers().accept?.includes('vnd.pgrst.object');
+  return route.fulfill({headers:{'access-control-allow-origin':'*','content-range':'0-0/1'},contentType:'application/json',body:JSON.stringify(single?profile:[profile])});
+ });
+ await page.goto('u/lime');
+ await page.getByRole('button',{name:'プロフィールを編集',exact:true}).click();
+ const dialog=page.getByRole('dialog',{name:'プロフィールを編集',exact:true});
+ await expect(dialog).toBeVisible();await expect(page).toHaveURL(/\/u\/lime$/);
+ await expect(dialog.getByLabel('表示名',{exact:true})).toHaveValue('編集前');
+ if(info.project.name!=='desktop'&&info.project.name!=='iPad'){
+  const box=await dialog.boundingBox(),viewport=page.viewportSize()!;expect(Math.abs(box!.x)).toBeLessThan(1);expect(Math.abs(box!.width-viewport.width)).toBeLessThan(1);expect(Math.abs(box!.height-viewport.height)).toBeLessThan(1);
+ }
+ await dialog.evaluate(element=>Promise.all(element.getAnimations().map(animation=>animation.finished.catch(()=>{}))));
+ expect(await dialog.evaluate(element=>{const box=element.getBoundingClientRect();return element.contains(document.elementFromPoint(box.x+box.width/2,box.y+box.height/2));})).toBe(true);
+ const mobile=info.project.name!=='desktop'&&info.project.name!=='iPad';
+ if(mobile){
+  await expect(dialog.getByText('キャンセル',{exact:true})).toBeVisible();
+  const label=await dialog.locator('label[for=displayName]').boundingBox(),input=await dialog.getByLabel('表示名',{exact:true}).boundingBox();
+  expect(input!.x).toBeGreaterThan(label!.x+label!.width);
+  expect(Math.abs(input!.y-label!.y)).toBeLessThan(12);
+  expect(await dialog.locator('.profile-editor-field').first().evaluate(e=>getComputedStyle(e).borderBottomWidth)).toBe('1px');
+ }else expect(await dialog.evaluate(e=>getComputedStyle(e).backgroundColor)).toBe('rgb(35, 38, 41)');
+ const close=dialog.getByRole('button',{name:'閉じる',exact:true});
+ await close.hover();
+ await expect.poll(()=>close.evaluate(e=>getComputedStyle(e).backgroundColor)).toBe('rgba(128, 128, 128, 0.16)');
+ await page.screenshot({path:`artifacts/profile-editor-layout-${info.project.name}.png`,fullPage:false,animations:'disabled'});
+ await page.setViewportSize({...page.viewportSize()!,height:480});
+ const scroller=dialog.locator('[data-profile-editor-scroll]');
+ await expect.poll(()=>scroller.evaluate(element=>element.scrollHeight>element.clientHeight)).toBe(true);
+ if(info.project.name==='WebKit-iPhone'||info.project.name==='iPad')await dialog.getByLabel('場所',{exact:true}).click();
+ else {await scroller.hover();await page.mouse.wheel(0,600);}
+ await expect.poll(()=>scroller.evaluate(element=>element.scrollTop)).toBeGreaterThan(0);
+ await expect(dialog.getByRole('button',{name:'保存する',exact:true})).toBeInViewport();
+ await expect(dialog.getByRole('button',{name:'閉じる',exact:true})).toBeInViewport();
+ await dialog.getByLabel('表示名',{exact:true}).fill('');await dialog.getByRole('button',{name:'保存する',exact:true}).click();
+ await expect(dialog.getByText('表示名を入力してください',{exact:true})).toBeVisible();expect(saved).toBeUndefined();
+ await dialog.getByLabel('表示名',{exact:true}).fill('編集後');await dialog.getByLabel('場所',{exact:true}).fill('大阪');
+ await dialog.locator('input[type=file]').nth(1).setInputFiles({name:'avatar.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1cAAAAASUVORK5CYII=','base64')});
+ await expect(dialog.getByRole('button',{name:'適用',exact:true})).toBeEnabled();
+ await dialog.getByRole('button',{name:'拡大',exact:true}).click();
+ await dialog.locator('[data-profile-image-cropper]').getByRole('button',{name:'閉じる',exact:true}).click();
+ await expect(dialog).toBeVisible();await expect(dialog.getByLabel('表示名',{exact:true})).toHaveValue('編集後');
+ await dialog.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+ await expect(dialog.getByLabel('表示名',{exact:true})).toHaveValue('編集後');
+ await dialog.getByRole('button',{name:'保存する',exact:true}).click();await expect(dialog).toHaveCount(0);
+ await expect(page.getByRole('heading',{name:'編集後',exact:true})).toBeVisible();
+ expect(saved).toEqual({display_name:'編集後',bio:'自己紹介',location:'大阪'});
+ expect(errors).toEqual([]);
+});
