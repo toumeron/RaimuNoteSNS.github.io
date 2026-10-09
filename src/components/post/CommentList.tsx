@@ -1,3 +1,4 @@
+import { PrivateAccountBadge } from '@/components/common/PrivateAccountBadge';
 import { mobilePostMenuOS } from '@/components/post/mobilePostMenu';
 import '@/components/post/post-actions.css';
 import { openMediaViewer } from '@/components/media/openMediaViewer';
@@ -42,6 +43,7 @@ interface CommentAuthor {
   displayName: string;
   avatarUrl: string;
   isOfficial?: boolean;
+  isPrivate?: boolean;
   bio?: string;
   createdAt: string;
 }
@@ -714,6 +716,7 @@ export function CommentCard({
             {comment.author.displayName}
           </span>
 
+          {comment.author.isPrivate && <PrivateAccountBadge/>}
           {comment.author.isOfficial && (
             <img
               src={`${import.meta.env.BASE_URL}verified.png`}
@@ -1265,7 +1268,8 @@ export function CommentCard({
                           {comment.author.displayName}
                         </span>
 
-                        {comment.author.isOfficial && (
+                        {comment.author.isPrivate && <PrivateAccountBadge/>}
+          {comment.author.isOfficial && (
                           <img
                             src={`${import.meta.env.BASE_URL}verified.png`}
                             alt="Official"

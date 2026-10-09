@@ -6,7 +6,7 @@ export type NotificationKind = typeof notificationKinds[number];
 export type NotificationPreference = NotificationKind | 'push';
 export type NotificationPreferences = Record<NotificationPreference, boolean>;
 export const notificationLabels: Record<NotificationPreference,string> = {new_post:'新着ポスト',mention:'メンション',reply:'返信',like:'いいね',repost:'リポスト',reaction:'リアクション',follow:'フォロー',push:'端末へのプッシュ通知'};
-export type NotificationRow = {id:string;user_id:string;actor_id:string|null;post_id:string|null;comment_id?:string|null;type:NotificationKind;actor_name:string|null;actor_username?:string|null;actor_avatar_url:string|null;actor_is_official?:boolean;content_preview:string|null;image_urls?:string[];emoji?:string|null;external_post_id?:string|null;is_read:boolean;created_at:string};
+export type NotificationRow = {id:string;user_id:string;actor_id:string|null;post_id:string|null;comment_id?:string|null;type:NotificationKind;actor_name:string|null;actor_username?:string|null;actor_avatar_url:string|null;actor_is_official?:boolean;actor_is_private?:boolean;content_preview:string|null;image_urls?:string[];emoji?:string|null;external_post_id?:string|null;is_read:boolean;created_at:string};
 export type NotificationSubscription = {id:string;subscriber_id:string;provider:'limenote'|'bluesky'|'misskey';target_user_id:string|null;external_actor:string|null;target_name:string|null;target_avatar_url:string|null;profiles?:{username:string;display_name:string;avatar_url:string}|null};
 export function normalizePreferences(value: Partial<NotificationPreferences> = {}): NotificationPreferences {
  return Object.fromEntries([...notificationKinds,'push'].map(kind=>[kind,value[kind]!==false])) as NotificationPreferences;
@@ -20,7 +20,14 @@ export async function setNotificationPreference(kind:NotificationPreference,enab
 }
 export async function getNotifications(userId:string,page=0) {
  const {data,error}=await supabase.from('notifications').select('*').eq('user_id',userId).order('created_at',{ascending:false}).order('id',{ascending:false}).range(page*50,page*50+49);
- if(error)throw error;return (data??[]) as NotificationRow[];
+ if(error)throw error;
+ const rows=(data??[]) as NotificationRow[];
+ const actorIds=[...new Set(rows.flatMap(row=>row.actor_id?[row.actor_id]:[]))];
+ if(!actorIds.length)return rows;
+ const {data:actors,error:actorsError}=await supabase.from('profiles').select('id,is_private').in('id',actorIds);
+ if(actorsError)throw actorsError;
+ const privateActors=new Map((actors??[]).map(actor=>[actor.id,actor.is_private===true]));
+ return rows.map(row=>({...row,actor_is_private:row.actor_id?privateActors.get(row.actor_id)===true:false}));
 }
 export async function markNotificationsRead(userId:string,ids:string[]) {
  if(!ids.length)return;const {error}=await supabase.from('notifications').update({is_read:true}).eq('user_id',userId).in('id',ids);if(error)throw error;

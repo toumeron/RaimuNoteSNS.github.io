@@ -353,6 +353,8 @@ test('mobile profile cover reaches the top, header stays when scrolling, and pul
  await expect(page.locator('[data-lime-profile-page]')).toHaveAttribute('data-lime-profile-pulling','true');
  await expect.poll(async()=>(await cover.boundingBox())!.height).toBeGreaterThan(initial+60);
  await expect(page.locator('[data-lime-profile-pull-indicator]')).toHaveCSS('opacity','1');
+ await expect(cover.locator('img').first()).toHaveCSS('filter', /blur\(/);
+ await expect(page.locator('[data-lime-profile-avatar]')).not.toHaveCSS('transform','none');
  await page.screenshot({path:info.outputPath('profile-pull.png')});
  await cover.evaluate(el=>el.dispatchEvent(new Event('touchend',{bubbles:true})));
  await expect(page.locator('[data-lime-profile-page]')).not.toHaveAttribute('data-lime-profile-pulling','true');
@@ -415,4 +417,22 @@ test('profile header requests metadata when mounted after the profile',async({pa
  await page.setViewportSize({width:390,height:844});
  const header=page.locator('header[data-lime-mobile-profile-header-hidden=true]');
  await expect(header.locator('.lime-profile-bar-title')).toContainText('Lime Note');
+});
+
+test('profile header fills the status area instead of adding top padding',async({page},info)=>{
+ test.skip(!['mobile','WebKit-iPhone'].includes(info.project.name),'Phone status area');
+ await setup(page,false);
+ await page.route('**/*.supabase.co/rest/v1/profiles*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({id:'11111111-1111-1111-1111-111111111111',username:'lime',display_name:'Lime Note',avatar_url:'',cover_url:'https://media.example/one.svg',created_at:'2026-10-01T00:00:00Z'})}));
+ await page.goto('u/lime');
+ await page.evaluate(()=>document.documentElement.style.setProperty('--lime-profile-system-top','44px'));
+ const row=page.locator('header[data-lime-mobile-profile-header-hidden=true] [data-lime-header-row]');
+ const cover=page.locator('.profile-header-cover-avatar-gap');
+ await expect(cover).toBeVisible();
+ await expect(row).toHaveCSS('height','100px');await expect(row).toHaveCSS('padding-top','0px');
+ expect((await cover.boundingBox())!.y).toBe(0);await expect(cover).toHaveCSS('height','194px');
+ expect((await row.getByRole('button',{name:'戻る',exact:true}).boundingBox())!.y).toBe(52);
+ await page.evaluate(()=>window.scrollTo(0,600));
+ const background=row.locator('.lime-profile-bar-background');await expect(background).toBeVisible();
+ expect((await background.boundingBox())!.y).toBe(0);expect((await background.boundingBox())!.height).toBe(100);
+ await page.screenshot({path:info.outputPath('expanded-profile-header.png')});
 });

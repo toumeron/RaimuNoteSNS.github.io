@@ -1,4 +1,4 @@
-.settings-page { min-width: 0; }
+.settings-page { width: 100%; min-width: 0; }
 .settings-navigation { min-width: 0; }
 .settings-search { position: relative; margin: 12px 16px 16px; }
 .settings-search input { padding-left: 42px; border-radius: 9999px; height: 44px; background: hsl(var(--muted) / .45); }

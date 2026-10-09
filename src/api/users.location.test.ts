@@ -29,3 +29,10 @@ it('allows ordinary profile saves while private Bot settings are unavailable',as
   expect(state.patch).toEqual({display_name:'Changed'});
   expect(state.privatePrompt).not.toHaveBeenCalled();
 });
+
+it('saves account protection independently of individual post audiences',async()=>{
+ const result=await updateProfile('author',{isPrivate:true});
+ expect(state.patch).toEqual({is_private:true});expect(result.isPrivate).toBe(true);
+ expect(state.selection.split(', ')).toContain('is_private');
+ await updateProfile('author',{isPrivate:false});expect(state.patch).toEqual({is_private:false});
+});

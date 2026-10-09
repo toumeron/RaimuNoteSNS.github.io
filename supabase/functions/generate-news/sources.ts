@@ -18,14 +18,14 @@ export function selectRecentNewsPosts(posts: NewsPost[], now = Date.now()): News
 // and the final publication check. Never broaden the window to fill an article.
 type NewsRow = {id: string; content: string; created_at: string};
 type NewsQuery = PromiseLike<{data: NewsRow[] | null; error: {message: string} | null}> & {
-  select(columns: string): NewsQuery; eq(column: string, value: string): NewsQuery;
+  select(columns: string): NewsQuery; eq(column: string, value: string | boolean): NewsQuery;
   gte(column: string, value: string): NewsQuery; lte(column: string, value: string): NewsQuery;
   ilike(column: string, value: string): NewsQuery; in(column: string, values: string[]): NewsQuery;
   order(column: string, options: {ascending: boolean}): NewsQuery; limit(count: number): NewsQuery;
 };
 export async function loadRecentLimeNewsPosts(db: {from(table: 'posts'): {select(columns: string): NewsQuery}}, options: {now?: number; query?: string; ids?: string[]; limit?: number} = {}): Promise<NewsPost[]> {
   const now = options.now ?? Date.now(), window = recentNewsWindow(now);
-  let query = db.from('posts').select('id,content,created_at').eq('visibility', 'public')
+  let query = db.from('posts').select('id,content,created_at,profiles!inner(is_private)').eq('profiles.is_private', false).eq('visibility', 'public')
     .gte('created_at', window.since).lte('created_at', window.until);
   if (options.query) query = query.ilike('content', `%${options.query.replace(/[\\%_]/g, '\\$&')}%`);
   if (options.ids) query = query.in('id', options.ids);

@@ -104,13 +104,16 @@ const followButtonClassName = (followed: boolean) =>
 function FollowButtonLabel({
   isPending,
   followed,
+  requested = false,
 }: {
   isPending: boolean;
   followed: boolean;
+  requested?: boolean;
 }) {
   if (isPending) {
     return <Loader2 className="relative z-10 h-4 w-4 animate-spin" />;
   }
+  if (requested) return <span className="relative z-10">リクエスト済み</span>;
   if (followed) {
     return (
       <>
@@ -210,10 +213,11 @@ function LimeFollowButton({ userId }: { userId: string }) {
       onClick={() => mutate()}
       disabled={isBusy}
       aria-busy={isBusy}
+      title={data?.requestedByMe ? 'フォローリクエストを取り消す' : undefined}
       // 読み込み中は黒い「フォロー」ボタンではなく、枠線のみの中立的な見た目にする
       className={followButtonClassName(followed || isStatusLoading)}
     >
-      <FollowButtonLabel isPending={isBusy} followed={followed} />
+      <FollowButtonLabel isPending={isBusy} followed={followed} requested={data?.requestedByMe} />
     </Button>
   );
 }

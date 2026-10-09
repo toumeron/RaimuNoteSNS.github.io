@@ -1,3 +1,4 @@
+import {AccountPrivacySettings} from '@/components/profile/AccountPrivacySettings';
 import { NotificationSettings } from '@/components/profile/NotificationSettings';
 import { setExternalAccountAdded } from '@/lib/externalAccounts';
 import { uploadProfileMedia } from '@/lib/uploadProfileMedia';
@@ -796,6 +797,7 @@ export default function Settings() {
             </button>
           ))}
         </nav>
+      {selectedSection?.id === 'privacy' && user && <section aria-label="プライバシー"><AccountPrivacySettings userId={user.id}/></section>}
       <section hidden={selectedSection?.id !== 'external'} aria-label={SETTINGS_SECTIONS.find(section => section.id === 'external')!.label}>
 
       <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">

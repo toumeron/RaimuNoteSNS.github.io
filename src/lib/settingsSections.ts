@@ -1,7 +1,8 @@
-import { UserRound, Globe, Bot, Smile, Monitor, Sparkles, Image, Bell, Crown } from 'lucide-react';
+import { Lock, UserRound, Globe, Bot, Smile, Monitor, Sparkles, Image, Bell, Crown } from 'lucide-react';
 
 // Navigation labels reuse the existing settings headings.
 export const SETTINGS_SECTIONS = [
+  { id: 'privacy', label: 'プライバシー', icon: Lock },
   { id: 'external', label: 'その他のSNS連携', icon: Globe },
   { id: 'automatic', label: '自動投稿の設定', icon: Bot },
   { id: 'emoji', label: '絵文字の管理', icon: Smile },
@@ -16,6 +17,7 @@ export const SETTINGS_SECTIONS = [
 
 export const SETTINGS_GROUPS = [
  {id:'account',label:'アカウント',icon:UserRound,sections:['external','account','pro','automatic','emoji']},
+ {id:'privacy',label:'プライバシー',icon:Lock,sections:['privacy']},
  {id:'display',label:'アクセシビリティ、表示',icon:Monitor,sections:['appearance','effects','background','companion']},
  {id:'notifications',label:'通知',icon:Bell,sections:['notifications']},
 ] as const;

@@ -73,3 +73,9 @@ body:has([data-lime-maps]) [data-lime-app-header] { display: none !important; }
 :root:not(.dark) .lime-map-preview-author time { color: #687781; }
 :root:not(.dark) .lime-map-preview button { color: #9c6c00; }
 :root:not(.dark) .lime-map-dot span { background: #d59500; box-shadow: 0 0 0 1px #fff,0 0 4px #80500050; }
+
+/* Overlap tile edges by one CSS pixel to avoid subpixel seams at browser zoom. */
+.lime-map img.leaflet-tile { width: 257px !important; height: 257px !important; mix-blend-mode: normal; }
+.lime-map-popup-pending { visibility: hidden; }
+
+.lime-map-preview-next { display: block; margin-top: 8px; }

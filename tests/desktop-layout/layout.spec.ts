@@ -7,9 +7,10 @@ const image = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www
 const posts = [0, 1].map(i => ({ id: `post-${i}`, userId: user.id, content: i ? 'フォロー中の投稿' : '画像付きの投稿', imageUrls: i ? [] : [image], createdAt: user.createdAt, likesCount: 0, commentsCount: 0, repostsCount: 0, likedByMe: false, repostedByMe: false, author: user }));
 
 test.beforeEach(async ({ page }) => {
-  await page.route('**/src/hooks/useAuth.tsx*', route => route.fulfill({ contentType: 'application/javascript', body: `export const useAuth=()=>({user:${JSON.stringify(user)},loading:false,session:null,logout:async()=>{}});export const AuthProvider=({children})=>children;` }));
+  await page.route('**/src/hooks/useAuth.tsx*', route => route.fulfill({ contentType: 'application/javascript', body: `export const useAuth=()=>({user:${JSON.stringify(user)},loading:false,session:null,accounts:[],logout:async()=>{}});export const AuthProvider=({children})=>children;` }));
   await page.route('**/src/lib/currentUser.ts*', route => route.fulfill({ contentType: 'application/javascript', body: `export const getCurrentUserId=async()=> '${user.id}';` }));
   await page.route('**/src/api/posts.ts*', route => route.fulfill({ contentType: 'application/javascript', body: `const posts=${JSON.stringify(posts)};
+    export const getHighlightedPosts=async()=>[]; export const getMapPosts=async()=>[]; export const setPostMapLocation=async()=>{};
     export const getFeed=async()=>posts; export const getFollowingFeed=async()=>[posts[1]];
     export const getPostsByUser=async()=>posts; export const getProfilePosts=async()=>posts.map(post=>post.repostedByMe?{...post,profileRepostedBy:post.userId,profileRepostedAt:"2026-10-03T00:00:00Z"}:post); export const getLikedPostsByUser=async()=>posts;
     export const searchPosts=async()=>posts; export const getPostById=async()=>posts[0];
@@ -24,6 +25,7 @@ test.beforeEach(async ({ page }) => {
       const rows = posts.map(post => ({ ...post, user_id: user.id, image_urls: post.imageUrls, created_at: post.createdAt, likes_count: 0, comments_count: 0, profiles: profile }));
       data = single ? rows[0] : rows;
     }
+    if (url.pathname.includes('/rpc/get_account_follow_state')) data={followed:false,requested:false,canView:true};
     if (url.pathname.includes('get-trends')) data = [{ title: 'テストのトレンド', traffic: '10' }];
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) });
   });
@@ -341,6 +343,46 @@ test('existing mobile feed tabs change the desktop feed content', async ({ page 
   await expect(page.locator('[data-lime-post-card]')).toHaveCount(2);
 });
 
+test('iPad sidebar and desktop icons remain visible in LimeAI after history toggles and navigation', async ({ page }, info) => {
+  await page.setViewportSize({ width: info.project.name === 'iPad-WebKit' ? 820 : 1440, height: 900 });
+  await page.goto('./');
+  const sidebar = page.locator('[data-lime-desktop-sidebar]');
+  const checkIcons = async () => {
+    for (const label of ['ホーム', 'プロフィール', '検索', '通知', 'LimeAI', '設定']) {
+      const button = sidebar.getByRole('button', { name: label, exact: true });
+      const icon = button.locator('svg').first();
+      await expect(icon).toBeVisible();
+      await expect(icon).toBeInViewport();
+      await expect.poll(() => button.evaluate(el => {
+        const icon = el.querySelector('svg')!;
+        const rect = icon.getBoundingClientRect();
+        return el.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+      })).toBe(true);
+    }
+  };
+  await sidebar.getByRole('button', { name: 'LimeAI', exact: true }).click();
+  await expect(page).toHaveURL(/\/chat$/);
+  await checkIcons();
+  const history = page.locator('#chat-sidebar');
+  const opener = page.getByRole('button', { name: 'チャットメニューを開く', exact: true });
+  if (await history.getAttribute('data-open') === 'true') {
+    await history.getByRole('button', { name: 'サイドバーを閉じる', exact: true }).filter({ visible: true }).click();
+  }
+  await opener.click();
+  await expect(history).toHaveAttribute('data-open', 'true');
+  await checkIcons();
+  await history.getByRole('button', { name: 'サイドバーを閉じる', exact: true }).filter({ visible: true }).click();
+  await expect(history).toHaveAttribute('data-open', 'false');
+  await checkIcons();
+  await page.reload();
+  await checkIcons();
+  await page.setViewportSize({ width: 768, height: 900 });
+  await checkIcons();
+  await sidebar.getByRole('button', { name: 'ホーム', exact: true }).click();
+  await expect(page.locator('[data-lime-feed-root]')).toBeVisible();
+  await checkIcons();
+});
+
 test('LimeAI history and input stay in the content column', async ({ page }) => {
   await page.setViewportSize({ width: 768, height: 900 });
   await page.goto('chat');
@@ -550,7 +592,7 @@ test('LimeAI uses a compact rail and profile reuses mobile cover controls and ac
   await page.goto('chat');
   await expect(page.locator('[data-lime-sidebar-logo]')).toBeHidden();
   await expect(page.locator('[data-lime-app-header]')).toBeHidden();
-  await expect(page.locator('[data-lime-desktop-sidebar] nav button span').first()).toBeHidden();
+  await expect(page.locator('[data-lime-desktop-sidebar] [data-lime-sidebar-item-label]').first()).toBeHidden();
   expect((await page.locator('.lime-desktop-menu').boundingBox())!.width).toBe(72);
   expect((await page.locator('.vpop-root').boundingBox())!.width).toBeGreaterThan(1300);
   const home = page.locator('[data-lime-desktop-sidebar]').getByRole('button', { name: 'ホーム', exact: true });
@@ -1325,4 +1367,150 @@ test('mobile drawer keeps the main page above the sidebar throughout opening and
  await expect(mover).toHaveCSS('transform','none');
  await expect(page.locator('[data-lime-mobile-sidebar]')).toBeHidden();
  await expect(page.locator('[data-lime-bottom-nav-root]')).toBeVisible();
+});
+
+test('iPad sidebar and desktop sidebar stay visible after closing the mobile drawer and resizing',async({page},info)=>{
+ await page.setViewportSize({width:390,height:844});await page.goto('./');
+ await page.getByRole('button',{name:'メニューを開く',exact:true}).click();
+ const drawer=page.locator('[data-lime-mobile-sidebar="true"]');await expect(drawer).toBeVisible();
+ // Resize during a drawer close: its delayed callback must never hide the
+ // persistent sidebar, nor leave the whole desktop root translated/clipped.
+ await page.locator('[data-lime-mobile-sidebar-overlay]').click({position:{x:10,y:100},force:true});
+ for(const width of [820,1180,740,820]){
+  await page.setViewportSize({width,height:900});
+
+  const sidebar=page.locator('[data-lime-desktop-sidebar]');await expect(sidebar).toBeVisible();
+  await expect(sidebar).toHaveCSS('pointer-events','auto');await expect(sidebar).not.toHaveAttribute('data-lime-mobile-sidebar','true');
+  await expect(sidebar.getByRole('button',{name:'ホーム',exact:true})).toBeInViewport();
+  await expect.poll(()=>page.evaluate(()=>{
+   const wrapper=document.querySelector('[data-lime-root-move-wrapper]');return wrapper?getComputedStyle(wrapper).transform:'none';
+  })).toBe('none');
+  await page.waitForTimeout(400);
+  await expect(sidebar).toBeVisible();
+  await sidebar.getByRole('button',{name:'設定',exact:true}).click();await expect(sidebar).toBeVisible();
+  await sidebar.getByRole('button',{name:'検索',exact:true}).click();await expect(sidebar).toBeVisible();
+  await sidebar.getByRole('button',{name:'ホーム',exact:true}).click();await expect(sidebar).toBeVisible();
+ }
+});
+
+for (const width of [390, 820, 1440]) test(`${width===820?'iPad keeps ':''}protected account requests and public review tab at ${width}px`,async({page})=>{
+ const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+ const protectedId='22222222-2222-4222-8222-222222222222';
+ const locked={...profile,id:protectedId,username:'protected',display_name:'非公開ユーザー',is_private:true,is_official:true,review:true};
+ let requested=false;
+ await page.route('**/*.supabase.co/rest/v1/profiles*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify(locked)}));
+ await page.route('**/rest/v1/rpc/get_account_follow_state',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({followed:false,requested,canView:false})}));
+ await page.route('**/rest/v1/rpc/toggle_account_follow',route=>{requested=!requested;return route.fulfill({contentType:'application/json',body:JSON.stringify({followed:false,requested,canView:false})});});
+ await page.route('**/rest/v1/rpc/get_account_reviews',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({enabled:true,total:0,average:0,distribution:{},reviews:[]})}));
+ await page.setViewportSize({width,height:900});await page.goto('u/protected');
+ await expect(page.getByText('このアカウントのポストは非公開です')).toBeVisible();
+ await expect(page.locator('[data-lime-profile-name]').locator('..').getByRole('img',{name:'非公開アカウント'})).toBeVisible();
+ await expect(page.locator('[data-lime-profile-name]').locator('..').getByAltText('Official')).toBeVisible();
+ await expect(page.locator('[data-lime-profile-posts]')).toHaveCount(0);
+ await expect(page.locator('[data-lime-profile-activity-count]')).toHaveCount(0);
+ const follow=page.locator('[data-lime-profile-actions]').getByRole('button',{name:'フォロー',exact:true});
+ await follow.click();await expect.poll(()=>requested).toBe(true);
+ await page.locator('[data-lime-profile-actions]').getByRole('button',{name:'リクエスト済み',exact:true}).click();await expect.poll(()=>requested).toBe(false);
+ await page.getByRole('tab',{name:'レビュー',exact:true}).filter({visible:true}).click();
+ await expect(page.getByText('まだレビューがありません。')).toBeVisible();expect(errors).toEqual([]);
+});
+
+test('privacy settings save protection and approve or reject pending followers',async({page})=>{
+ let privateAccount=false;let pending=[{id:'requester',username:'requester',displayName:'リクエストユーザー',avatarUrl:'',isPrivate:true,isOfficial:true}];
+ await page.route('**/*.supabase.co/rest/v1/profiles*',route=>{
+  if(route.request().method()==='PATCH')privateAccount=route.request().postDataJSON().is_private;
+  return route.fulfill({contentType:'application/json',body:JSON.stringify({...profile,is_private:privateAccount})});
+ });
+ await page.route('**/rest/v1/rpc/get_account_follow_requests',route=>route.fulfill({contentType:'application/json',body:JSON.stringify(pending)}));
+ const responses:boolean[]=[];
+ await page.route('**/rest/v1/rpc/respond_account_follow_request',route=>{responses.push(route.request().postDataJSON().accept_request);pending=[];return route.fulfill({contentType:'application/json',body:'null'});});
+ await page.setViewportSize({width:1440,height:900});await page.goto('settings?section=privacy');
+ const check=page.getByRole('checkbox',{name:'ポストを非公開'});
+ await check.click();await expect(check).toBeChecked();expect(privateAccount).toBe(true);
+ await page.getByRole('button',{name:'承認',exact:true}).click();await expect(page.getByText('フォローリクエストはありません')).toBeVisible();expect(responses).toEqual([true]);
+ pending=[{id:'another',username:'another',displayName:'別のリクエスト',avatarUrl:'',isPrivate:false,isOfficial:false}];
+ await page.reload();await page.getByRole('button',{name:'拒否',exact:true}).click();await expect(page.getByText('フォローリクエストはありません')).toBeVisible();expect(responses).toEqual([true,false]);
+ await check.click();await expect(check).not.toBeChecked();expect(privateAccount).toBe(false);
+});
+
+for(const width of [390,640,820,1440]) test(`${width===820?'iPad keeps ':''}privacy panel fits requests without horizontal overflow at ${width}px`,async({page})=>{
+ await page.route('**/rest/v1/rpc/get_account_follow_requests',route=>route.fulfill({contentType:'application/json',body:JSON.stringify([{id:'requester',username:'long_requester_username_that_needs_truncating',displayName:'長い表示名の非公開アカウント',avatarUrl:image,isPrivate:true,isOfficial:true}])}));
+ await page.setViewportSize({width,height:900});await page.goto('settings?section=privacy');
+ const panel=page.locator('[data-account-privacy-settings]');
+ await expect(panel.getByRole('button',{name:'承認',exact:true})).toBeVisible();
+ await expect(panel.getByRole('button',{name:'拒否',exact:true})).toBeVisible();
+ await expect(panel.getByRole('img',{name:'非公開アカウント'})).toBeVisible();
+ await expect(panel.getByAltText('Official')).toBeVisible();
+ const geometry=await panel.evaluate(el=>({width:el.getBoundingClientRect().width,scroll:el.scrollWidth,client:el.clientWidth,right:el.getBoundingClientRect().right,viewport:innerWidth}));
+ expect(geometry.width).toBeGreaterThan(180);expect(geometry.scroll).toBeLessThanOrEqual(geometry.client);expect(geometry.right).toBeLessThanOrEqual(geometry.viewport);
+ if(width===390||width===1440)await panel.screenshot({path:`/private/tmp/lime-privacy-${width}.png`});
+});
+
+test('protected account badges accompany verification in desktop footer and existing notifications',async({page})=>{
+ await page.route('**/*.supabase.co/rest/v1/profiles*',route=>{
+  const single=(route.request().headers().accept??'').includes('vnd.pgrst.object');
+  const locked={...profile,is_private:true,is_official:true};
+  return route.fulfill({contentType:'application/json',body:JSON.stringify(single?locked:[locked])});
+ });
+ await page.route('**/*.supabase.co/rest/v1/notifications*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify([{id:'notification',user_id:user.id,actor_id:user.id,post_id:'post-0',type:'like',actor_name:user.displayName,actor_is_official:true,actor_avatar_url:null,content_preview:'',is_read:true,created_at:user.createdAt}])}));
+ await page.setViewportSize({width:1440,height:900});await page.goto('notifications');
+ const footer=page.locator('[data-lime-account-info]');
+ await expect(footer.getByRole('img',{name:'非公開アカウント'})).toBeVisible();await expect(footer.getByAltText('Official')).toBeVisible();
+ const notification=page.locator('[data-notification-type="like"]');
+ await expect(notification.getByRole('img',{name:'非公開アカウント'})).toBeVisible();await expect(notification.getByAltText('認証済み')).toBeVisible();
+});
+
+test('mobile profile header keeps a blurred cover and matching follow colors in both themes',async({page})=>{
+ const other={...profile,id:'22222222-2222-4222-8222-222222222222',username:'other',display_name:'別のユーザー',cover_url:image};
+ await page.route('**/*.supabase.co/rest/v1/profiles*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify((route.request().headers().accept??'').includes('vnd.pgrst.object')?other:[other])}));
+ await page.setViewportSize({width:390,height:900});
+ const styles:unknown[]=[];
+ for(const theme of ['light','dark']){
+  await page.emulateMedia({colorScheme:theme as 'light'|'dark'});await page.goto('u/other');
+  await expect(page.locator('[data-lime-profile-name]')).toBeVisible();
+  await page.evaluate(()=>{document.body.style.minHeight='2400px';window.scrollTo(0,1000);});
+  const follow=page.locator('.lime-profile-bar-follow.is-visible button');await expect(follow).toBeVisible();
+  await expect.poll(()=>page.locator('.lime-profile-bar-background').evaluate(el=>getComputedStyle(el,'::before').filter)).toBe('blur(12px)');
+  await expect.poll(()=>page.locator('.lime-profile-bar-background').evaluate(el=>getComputedStyle(el).opacity)).toBe('1');
+  styles.push(await follow.evaluate(el=>{const s=getComputedStyle(el);return {color:s.color,background:s.backgroundColor,border:s.borderWidth};}));
+ }
+ expect(styles[0]).toEqual(styles[1]);
+});
+
+for(const provider of ['Bluesky','Misskey'])test(`${provider} detail does not flash an error while the external request is pending`,async({page})=>{
+ let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});let started=false;
+ const content=`${provider}からの詳細ポスト`;
+ if(provider==='Bluesky')await page.route('**/public.api.bsky.app/**',async route=>{
+  if(!new URL(route.request().url()).pathname.endsWith('getPostThread'))return route.fulfill({contentType:'application/json',body:'{"feed":[],"posts":[],"actors":[]}'});
+  started=true;await gate;await route.fulfill({contentType:'application/json',body:JSON.stringify({thread:{post:{uri:'at://did:plc:external/app.bsky.feed.post/fixture',cid:'cid',author:{did:'did:plc:external',handle:'external.bsky.social',displayName:'External'},record:{$type:'app.bsky.feed.post',text:content,createdAt:user.createdAt},likeCount:0,replyCount:0},replies:[]}})});
+ });
+ else await page.route('https://misskey.io/api/**',async route=>{
+  if(new URL(route.request().url()).pathname.endsWith('/notes/show')){started=true;await gate;return route.fulfill({contentType:'application/json',body:JSON.stringify({id:'fixture',text:content,createdAt:user.createdAt,visibility:'public',user:{id:'external',username:'external',name:'External'},files:[],reactions:{}})});}
+  return route.fulfill({contentType:'application/json',body:'[]'});
+ });
+ await page.setViewportSize({width:390,height:900});
+ const id=provider==='Bluesky'?'bsky:at://did:plc:external/app.bsky.feed.post/fixture':'misskey:https://misskey.io/notes/fixture';
+ await page.goto(`post/${encodeURIComponent(id)}`);await expect.poll(()=>started).toBe(true);
+ await expect(page.getByText('投稿の読み込みに失敗しました。',{exact:true})).toHaveCount(0);
+ release();await expect(page.locator('[data-lime-post-detail-card]')).toContainText(content);
+ await expect(page.getByText('投稿の読み込みに失敗しました。',{exact:true})).toHaveCount(0);
+});
+
+for(const width of [390,1440])test(`profile displays known followers below counts except on your own profile at ${width}px`,async({page})=>{
+ const other={...profile,id:'22222222-2222-4222-8222-222222222222',username:'other',display_name:'別のユーザー'};
+ await page.route('**/*.supabase.co/rest/v1/profiles*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify((route.request().headers().accept??'').includes('vnd.pgrst.object')?other:[other])}));
+ let matches=42;
+ await page.route('**/*.supabase.co/rest/v1/follows*',route=>{
+  const select=new URL(route.request().url()).searchParams.get('select')??'';
+  const users=[{id:'a',username:'as',display_name:'AS',avatar_url:image},{id:'b',username:'limenote',display_name:'LimeNote',avatar_url:image},{id:'c',username:'c',display_name:'C',avatar_url:image}];
+  const data=select==='followee_id'?[...users.map(row=>({followee_id:row.id})),...Array.from({length:39},(_,i)=>({followee_id:`extra-${i}`}))]:select.startsWith('profile:')?(matches?users.map(profile=>({profile})):[]):[];
+  return route.fulfill({contentType:'application/json',headers:{'access-control-expose-headers':'content-range','content-range':`0-2/${select.startsWith('profile:')?matches:42}`} ,body:JSON.stringify(data)});
+ });
+ await page.setViewportSize({width,height:900});await page.goto('u/other');
+ const known=page.locator('[data-lime-known-followers]');
+ await expect(known).toHaveText('フォローしているASさん、LimeNoteさん、他40人にフォローされています');
+ await expect(known).toHaveAttribute('href',/u\/other\/followers_following\?tab=followers$/);
+ const bounds=await known.boundingBox();expect(bounds!.width).toBeLessThan(width);expect(bounds!.x).toBeGreaterThanOrEqual(0);
+ matches=0;await page.reload();await expect(page.locator('[data-lime-profile-name]')).toBeVisible();await expect(known).toHaveCount(0);
+ await page.unroute('**/*.supabase.co/rest/v1/profiles*');matches=42;await page.goto('u/lime');await expect(page.locator('[data-lime-profile-name]')).toBeVisible();await expect(known).toHaveCount(0);
 });

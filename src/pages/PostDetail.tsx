@@ -1,3 +1,4 @@
+import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
 import { mobilePostMenuOS } from '@/components/post/mobilePostMenu';
 import {ExternalLikeButton} from '@/components/post/ExternalLikeButton';
 import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
@@ -235,7 +236,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
   const { id = '' } = useParams();
   const isBlueskyPost = isBlueskyPostLike({ id });
   const { data: limeData, isLoading: isLimeLoading, isError: isLimeError } = usePost(isBlueskyPost ? '' : id);
-  const { data: blueskyThread, isLoading: isBlueskyLoading, isError: isBlueskyError } = useQuery({
+  const { data: blueskyThread, isLoading: isBlueskyLoading, isError: isBlueskyError, isSuccess: isBlueskySuccess } = useQuery({
     queryKey: ['bluesky-post', id],
     queryFn: ({ signal }) => fetchBlueskyPostThread(id, signal),
     enabled: isBlueskyPost,
@@ -244,7 +245,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
   const blueskyData = blueskyThread?.post;
   const data = isBlueskyPost ? blueskyData : limeData;
   const isLoading = isBlueskyPost ? isBlueskyLoading : isLimeLoading;
-  const isError = isBlueskyPost ? isBlueskyError || !blueskyData : isLimeError;
+  const isError = isBlueskyPost ? isBlueskyError || (isBlueskySuccess && !blueskyData) : isLimeError;
   const blueskyPostUrl = data ? getBlueskyPostUrl(data as unknown as { id?: string; blueskyUrl?: string; author?: { username?: string } }) : null;
   const blueskySession = useBlueskySession(id);
   const blueskyPostUri = isBlueskyPost ? getBlueskyUriFromPostId(id) : null;
@@ -1597,7 +1598,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                   <span className={`truncate ${useMobileThreadLayout ? 'post-detail-mobile-name' : ''}`}>
                     {data.author.displayName}
                   </span>
-                  {data.author.isOfficial && (
+                  {data.author.isPrivate && <PrivateAccountBadge/>}{data.author.isOfficial && (
                     <img 
                       src={`${import.meta.env.BASE_URL}verified.png`}
                       alt="Official" 

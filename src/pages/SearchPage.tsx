@@ -1,3 +1,4 @@
+import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
 import {searchMisskey,misskeyEnabled} from '@/lib/misskey';
 import { openMediaViewer } from '@/components/media/openMediaViewer';
 import { useAuth } from '@/hooks/useAuth';
@@ -1070,6 +1071,7 @@ function SearchResults({
             createdAt: user?.createdAt || row.created_at,
             bio: user?.bio || '',
             isOfficial: user?.isOfficial || false,
+            isPrivate: user?.isPrivate || false,
           },
         } as PostWithAuthor;
       });
@@ -1602,7 +1604,7 @@ export default function SearchPage() {
         // 使用する列だけを取得し、通信量とメモリ使用量を削減
         const { data, error } = await supabase
           .from('profiles')
-          .select('id, username, display_name, avatar_url, cover_url, created_at, bio, is_official');
+          .select('id, username, display_name, avatar_url, cover_url, created_at, bio, is_official, is_private');
         if (error) throw error;
         if (cancelled) return;
         setAllUsers((data || []).map((u: any) => ({
@@ -1614,6 +1616,7 @@ export default function SearchPage() {
           createdAt: u.created_at || '',
           bio: u.bio || '',
           isOfficial: !!(u.is_official || u.isOfficial),
+          isPrivate: !!(u.is_private || u.isPrivate),
         })));
       } catch (err) { console.error(err); }
       finally { if (!cancelled) setIsUsersLoading(false); }
@@ -1979,6 +1982,7 @@ export default function SearchPage() {
                         <div className="min-w-0 flex flex-col text-left">
                           <span className="flex min-w-0 items-center gap-1">
                             <span className="truncate font-bold text-[15px]">{row.user.displayName}</span>
+                            {row.user.isPrivate && <PrivateAccountBadge/>}
                             {row.user.isOfficial && (
                               <img
                                 src={`${import.meta.env.BASE_URL}verified.png`}

@@ -1,3 +1,5 @@
+import { useQuery } from '@tanstack/react-query';
+import { PrivateAccountBadge } from '@/components/common/PrivateAccountBadge';
 import { createSandboxWorker, sandboxDocument, type SandboxWorker } from '@/lib/sandboxExecution';
 import {LipSync, type Emotion} from '@/lib/avatarLipSync';
 import {VrmStage, createBus, triggerGesture, type GestureName, type AvatarBus, type CameraPreset, type StageStatus, type ModelInfo} from '@/components/ai/AvatarStage';
@@ -4181,6 +4183,7 @@ type ReferencedPost = {
   authorDisplayName: string
   authorAvatarUrl: string | null
   authorIsOfficial: boolean
+  authorIsPrivate?: boolean
   createdAt: string
   contentSnippet: string
   likesCount: number
@@ -4226,6 +4229,7 @@ type PostLinkPreview = {
   authorDisplayName: string
   authorAvatarUrl: string | null
   authorIsOfficial: boolean
+  authorIsPrivate?: boolean
   createdAt: string
   content: string
   imageUrls: string[]
@@ -4321,6 +4325,7 @@ const normalizeReferencedPost = (value: unknown): ReferencedPost | null => {
     authorDisplayName: authorDisplayName || '無名',
     authorAvatarUrl: getRecordNullableString(item, 'authorAvatarUrl', 'author_avatar_url'),
     authorIsOfficial: getRecordBoolean(item, 'authorIsOfficial', 'author_is_official'),
+    authorIsPrivate: getRecordBoolean(item, 'authorIsPrivate', 'author_is_private'),
     createdAt,
     contentSnippet,
     likesCount: getRecordNumber(item, 'likesCount', 'likes_count'),
@@ -4441,6 +4446,7 @@ const normalizePostLinkPreview = (value: unknown): PostLinkPreview | null => {
     authorDisplayName: authorDisplayName || '無名',
     authorAvatarUrl: getRecordNullableString(item, 'authorAvatarUrl', 'author_avatar_url'),
     authorIsOfficial: getRecordBoolean(item, 'authorIsOfficial', 'author_is_official'),
+    authorIsPrivate: getRecordBoolean(item, 'authorIsPrivate', 'author_is_private'),
     createdAt,
     content,
     imageUrls: normalizeStringArray(imageUrlsValue),
@@ -4467,7 +4473,8 @@ const fetchPostLinkPreview = async (postId: string, sourceUrl: string): Promise<
         username,
         display_name,
         avatar_url,
-        is_official
+        is_official,
+        is_private
       )
     `)
     .eq('id', postId)
@@ -4500,6 +4507,7 @@ const fetchPostLinkPreview = async (postId: string, sourceUrl: string): Promise<
     authorDisplayName: typeof profileRecord.display_name === 'string' && profileRecord.display_name.trim() ? profileRecord.display_name : '無名',
     authorAvatarUrl: typeof profileRecord.avatar_url === 'string' ? profileRecord.avatar_url : null,
     authorIsOfficial: profileRecord.is_official === true,
+    authorIsPrivate: profileRecord.is_private === true,
     createdAt,
     content,
     imageUrls: normalizeStringArray(post.image_urls),
@@ -4564,6 +4572,16 @@ const MiniPostPreviewCard = ({
   onDismiss?: () => void
   compact?: boolean
 }) => {
+  const {data: authorBadges} = useQuery({
+    queryKey: ['author-badges', post.authorUsername],
+    queryFn: async () => {
+      const {data,error} = await supabase.from('profiles').select('is_private').eq('username',post.authorUsername).maybeSingle();
+      if(error)throw error;
+      return data;
+    },
+    staleTime: 60_000,
+  });
+  const isPrivate = authorBadges?.is_private ?? post.authorIsPrivate;
   const previewImage = post.imageUrls[0] || ''
   const contentLimit = compact ? 150 : 220
 
@@ -4592,6 +4610,7 @@ const MiniPostPreviewCard = ({
               <span className="max-w-[140px] truncate font-bold text-[#333a42] dark:text-[#e4e7ea] sm:max-w-[180px]">
                 {post.authorDisplayName}
               </span>
+              {isPrivate && <PrivateAccountBadge/>}
               {post.authorIsOfficial && (
                 <img
                   src={`${import.meta.env.BASE_URL}verified.png`}

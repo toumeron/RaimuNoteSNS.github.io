@@ -1,4 +1,4 @@
-import { validMapLocation, type MapLocation, type MapBounds } from '@/lib/mapLocation';
+import { validMapLocation, type MapLocation, type MapBounds, type MapPostPin } from '@/lib/mapLocation';
 import { uploadPostMedia } from '@/lib/uploadPostMedia';
 import { getClientName } from '@/lib/clientName';
 import type { PostWithAuthor } from '@/types';
@@ -12,11 +12,11 @@ export type FeedCursor = { createdAt: string; id: string };
 
 const POST_SELECT_QUERY = `
   *,
-  profiles:user_id (id, username, display_name, bio, avatar_url, cover_url, created_at, is_official),
+  profiles:user_id (id, username, display_name, bio, avatar_url, cover_url, created_at, is_official, is_private),
   parent_reply:quoted_reply_id (${REPLY_REPOST_SELECT}),
   parent_post:parent_id (
     *,
-    profiles:user_id (id, username, display_name, bio, avatar_url, cover_url, created_at, is_official)
+    profiles:user_id (id, username, display_name, bio, avatar_url, cover_url, created_at, is_official, is_private)
   )
 `;
 
@@ -31,6 +31,7 @@ function rowToUser(profile: any): User {
     coverUrl:    profile.cover_url   ?? '',
     createdAt:   profile.created_at  ?? '',
     isOfficial:  profile.is_official  ?? false,
+    isPrivate: profile.is_private === true,
   };
 }
 
@@ -417,7 +418,9 @@ export async function createPost(input: {
   if (input.parentId && isReplyPostId(input.parentId) && !replyParent) throw new Error('引用元の返信を閲覧できません');
 
   if (!userId) throw new Error('ログインしてください');
-  const finalImageUrls = await uploadPostMedia(input.imageUrls, userId, newId, input.visibility === 'following');
+  const { data: privacy, error: privacyError } = await supabase.from('profiles').select('is_private').eq('id', userId).single();
+  if (privacyError) throw privacyError;
+  const finalImageUrls = await uploadPostMedia(input.imageUrls, userId, newId, privacy?.is_private === true || input.visibility === 'following');
 
   const MENTION_PATTERN = /@(\w+)/g;
   const mentionedUsernames = Array.from(new Set([...input.content.matchAll(MENTION_PATTERN)].map(match => match[1])));
@@ -557,8 +560,8 @@ export async function getProfilePosts(userId: string, page = 0, limit = 10): Pro
 }
 
 
-export async function getMapPosts(bounds: MapBounds, before?: FeedCursor, signal?: AbortSignal, search = ''): Promise<PostWithAuthor[]> {
-  let query = supabase.from('posts').select(POST_SELECT_QUERY).eq('visibility', 'public')
+export async function getMapPosts(bounds: MapBounds, before?: FeedCursor, signal?: AbortSignal, search = ''): Promise<MapPostPin[]> {
+  let query = supabase.from('posts').select('id,created_at,map_latitude,map_longitude').eq('visibility', 'public')
     .not('map_latitude', 'is', null).gte('map_latitude', bounds.south).lte('map_latitude', bounds.north);
   if (bounds.west <= bounds.east) query = query.gte('map_longitude', bounds.west).lte('map_longitude', bounds.east);
   if (search.trim()) query = query.ilike('content', `%${search.trim().replace(/[\\%_]/g, '\\$&')}%`);
@@ -567,11 +570,9 @@ export async function getMapPosts(bounds: MapBounds, before?: FeedCursor, signal
   const filters = [longitudeFilter, cursorFilter].filter(Boolean);
   if (filters.length) query = query.or(`and(${filters.join(',')})`);
   if (signal) query = query.abortSignal(signal);
-  const {data, error} = await query.order('created_at', {ascending:false}).order('id', {ascending:false}).limit(40);
+  const {data, error} = await query.order('created_at', {ascending:false}).order('id', {ascending:false}).limit(200);
   if (error) throw error;
-  const viewer = await getCurrentUserId();
-  const {likedIds, repostedIds} = await getViewerReactions(viewer, data ?? [], signal);
-  return (data ?? []).map(row => rowToPost(row, likedIds, repostedIds));
+  return (data ?? []).map(row => ({ id: row.id, createdAt: row.created_at, source: 'lime' as const, mapLocation: { latitude: row.map_latitude, longitude: row.map_longitude } }));
 }
 export async function setPostMapLocation(postId: string, location: MapLocation | null): Promise<void> {
   if (location && !validMapLocation(location)) throw new Error('場所が無効です');

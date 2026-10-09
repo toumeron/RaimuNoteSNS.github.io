@@ -1,3 +1,4 @@
+import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
 import {externalProfileMetadata} from '@/lib/externalProfileMetadata';
 import { useEffect, useState } from 'react';
 import { useParams, useSearchParams, useNavigate, Link } from 'react-router-dom';
@@ -19,6 +20,7 @@ type ListUser = {
   avatar_url: string;
   bio: string;
   is_official: boolean;
+  is_private?: boolean;
 };
 
 export default function FollowersFollowingPage() {
@@ -60,6 +62,7 @@ export default function FollowersFollowingPage() {
           coverUrl: data.cover_url,
           createdAt: data.created_at,
           isOfficial: data.is_official,
+          isPrivate: data.is_private,
         });
         return;
       }
@@ -158,7 +161,8 @@ export default function FollowersFollowingPage() {
             display_name,
             avatar_url,
             bio,
-            is_official
+            is_official,
+            is_private
           )
         `)
         .eq(isFollowingTab ? 'follower_id' : 'followee_id', targetUser!.id);
@@ -323,6 +327,7 @@ export default function FollowersFollowingPage() {
                             <span className="font-bold text-foreground truncate text-base group-hover:underline decoration-foreground decoration-2">
                               {user.display_name}
                             </span>
+                            {user.is_private && <PrivateAccountBadge/>}
                             {user.is_official && (
                               <img
                                 src={`${import.meta.env.BASE_URL}verified.png`}

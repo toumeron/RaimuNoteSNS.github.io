@@ -482,17 +482,28 @@ Deno.serve(async (req: Request) => {
 
     if(record.is_read||record.expires_at&&Date.parse(record.expires_at)<=Date.now())return jsonResponse({ok:true,sent:0,skipped:true});
 
+    // Webhook reads use service credentials, so enforce account privacy explicitly.
+    const accountVisible = async (actor: string) => {
+      if (actor === record.user_id) return true;
+      const profiles = await selectRows<{is_private: boolean}>(config, `profiles?select=is_private&id=eq.${encodeURIComponent(actor)}&limit=1`);
+      if (!profiles[0]) return false;
+      if (!profiles[0].is_private) return true;
+      return (await selectRows(config, `follows?select=follower_id&follower_id=eq.${encodeURIComponent(record.user_id)}&followee_id=eq.${encodeURIComponent(actor)}&approved=eq.true&limit=1`)).length > 0;
+    };
+    if (record.actor_id && !await accountVisible(record.actor_id)) return jsonResponse({ok:true,sent:0,skipped:true});
+
     if (record.post_id) {
       const posts = await selectRows<{user_id: string; visibility: string}>(config,
         `posts?select=user_id,visibility&id=eq.${encodeURIComponent(record.post_id)}&limit=1`);
       const post = posts[0];
       let allowed = !!post && (post.visibility === 'public' || post.user_id === record.user_id);
       if (post && !allowed && post.visibility === 'following') {
-        allowed = (await selectRows(config, `follows?select=follower_id&follower_id=eq.${encodeURIComponent(post.user_id)}&followee_id=eq.${encodeURIComponent(record.user_id)}&limit=1`)).length > 0;
+        allowed = (await selectRows(config, `follows?select=follower_id&follower_id=eq.${encodeURIComponent(post.user_id)}&followee_id=eq.${encodeURIComponent(record.user_id)}&approved=eq.true&limit=1`)).length > 0;
       }
       if (post && !allowed && post.visibility === 'members') {
         allowed = (await selectRows(config, `memberships?select=member_id&creator_id=eq.${encodeURIComponent(post.user_id)}&member_id=eq.${encodeURIComponent(record.user_id)}&limit=1`)).length > 0;
       }
+      if (post && !await accountVisible(post.user_id)) allowed = false;
       if (!allowed) return jsonResponse({ok: true, sent: 0, skipped: true});
     }
 

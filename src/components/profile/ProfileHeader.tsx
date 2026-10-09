@@ -1,3 +1,5 @@
+import { getKnownFollowers } from '@/api/follows';
+import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
 import {cloudExternalHandles,initialiseExternalAccounts,setExternalAccountOwner} from '@/lib/externalAccounts';
 import { ReviewStars } from '@/components/reviews/ReviewStars';
 import { accountReviewsKey, getAccountReviews } from '@/api/account-reviews';
@@ -106,6 +108,12 @@ export function ProfileHeader({
   });
 
   const isMe = me?.id === user.id;
+  const {data: knownFollowers} = useQuery({
+    queryKey: ['follow-stats', 'known-followers', me?.id, user.id],
+    queryFn: () => getKnownFollowers(me!.id, user.id),
+    enabled: !!me?.id && !isMe && !isBlueskyProfile && (!user.isPrivate || stats?.canView === true),
+    staleTime: 60_000,
+  });
   // 自分がこのユーザーをフォローしているか（通知ベルボタンの表示条件に使用）
   // FollowButton と同じく useFollowStats の followedByMe を参照する。
   const [externalFollowing,setExternalFollowing]=useState(false);
@@ -508,6 +516,7 @@ export function ProfileHeader({
               <h1 data-lime-profile-name className="min-w-0 truncate font-display text-[22px] font-black leading-tight text-foreground sm:text-2xl">
                 {user.displayName}
               </h1>
+              {user.isPrivate && <PrivateAccountBadge className="h-5 w-5" />}
               {user.isOfficial && (
                 <img
                   src={`${import.meta.env.BASE_URL}verified.png`}
@@ -540,7 +549,7 @@ export function ProfileHeader({
             <span className="break-words [overflow-wrap:anywhere]">{user.location}</span>
           </span>}
         </div>
-        <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
+        {(!user.isPrivate || isMe || stats?.canView) && <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
           {/* items-baseline に変更して数字とテキストの文字底を統一 */}
           <Link
             to={`/u/${user.username}/followers_following?tab=following`}
@@ -566,7 +575,22 @@ export function ProfileHeader({
             </span>
             <span className="text-muted-foreground">投稿</span>
           </div>
-        </div>
+        </div>}
+        {!isMe && (!user.isPrivate || stats?.canView) && !!knownFollowers?.users.length && <Link
+          to={`/u/${encodeURIComponent(user.username)}/followers_following?tab=followers`}
+          className="mt-3 flex min-w-0 items-center gap-3 text-xs leading-5 text-muted-foreground hover:no-underline"
+          data-lime-known-followers
+        >
+          <span className="flex shrink-0 -space-x-2" aria-hidden="true">
+            {knownFollowers.users.map(follower=><Avatar key={follower.id} className="h-6 w-6 border-2 border-background">
+              <AvatarImage src={follower.avatarUrl} alt=""/>
+              <AvatarFallback>{follower.displayName.slice(0,1)}</AvatarFallback>
+            </Avatar>)}
+          </span>
+          <span className="min-w-0 break-words">
+            フォローしている{knownFollowers.users.slice(0,2).map(follower=>`${follower.displayName}さん`).join('、')}{knownFollowers.total>2?`、他${knownFollowers.total-2}人`:''}にフォローされています
+          </span>
+        </Link>}
       </div>
       </section>
       {isCoverOpen && typeof document !== 'undefined' && createPortal(

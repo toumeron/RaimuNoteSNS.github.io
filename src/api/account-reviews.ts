@@ -2,7 +2,7 @@ import { supabase } from '@/lib/supabase';
 export type AccountReview = {
   id: string; author_id: string; rating: number; title: string; content: string; created_at: string;
   likes_count: number; liked_by_me: boolean;
-  author: { username: string; display_name: string; avatar_url: string; is_official: boolean };
+  author: { username: string; display_name: string; avatar_url: string; is_official: boolean; is_private?: boolean };
 };
 export type AccountReviews = {
   enabled: boolean; total: number; average: number; distribution: Record<string, number>; reviews: AccountReview[];

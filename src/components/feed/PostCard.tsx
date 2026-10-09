@@ -1,3 +1,4 @@
+import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
 import { mobilePostMenuOS } from '@/components/post/mobilePostMenu';
 import { toast } from 'sonner';
 import {ExternalLikeButton} from '@/components/post/ExternalLikeButton';
@@ -2168,6 +2169,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
           <span className="text-base font-black text-foreground truncate leading-tight shrink">
             {post.author.displayName}
           </span>
+          {post.author.isPrivate && <PrivateAccountBadge />}
           {post.author.isOfficial && (
             <img
               src={`${import.meta.env.BASE_URL}verified.png`}
@@ -2745,7 +2747,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
           <div className="pointer-events-none absolute bottom-0 left-1/2 w-screen -translate-x-1/2 border-b border-border/60" />
         )}
 
-        {pinned && !embedded && <div data-lime-pinned-label className="mb-1 flex items-center gap-3 text-sm font-semibold text-muted-foreground"><span className="inline-flex w-11 shrink-0 justify-end"><Pin className="h-4 w-4" fill="currentColor"/></span><span>固定されたポスト</span></div>}
+        {pinned && !embedded && <div data-lime-pinned-label className="mb-1 flex items-center gap-3 text-sm font-semibold text-muted-foreground"><span className="inline-flex w-11 shrink-0 justify-end"><Pin className="h-4 w-4" fill="currentColor"/></span><span>固定</span></div>}
         {repostedByLabel && !embedded && (
           <div data-lime-repost-label className="mb-1 flex items-center gap-3 text-sm font-semibold text-muted-foreground">
             <span className="inline-flex w-11 shrink-0 justify-end"><RepostIcon className="h-4 w-4" /></span>
@@ -2793,7 +2795,8 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                         <span className={useMobilePresentation ? "truncate text-[16px]" : "truncate text-base"}>
                           {post.author.displayName}
                         </span>
-                        {post.author.isOfficial && (
+                        {post.author.isPrivate && <PrivateAccountBadge />}
+          {post.author.isOfficial && (
                           <img
                             src={`${import.meta.env.BASE_URL}verified.png`}
                             alt="Official"

@@ -1,3 +1,4 @@
+import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
 import {splitMentionText} from '@/lib/utils';
 import { openMediaViewer } from '@/components/media/openMediaViewer';
 import { renderStickerText } from '@/components/stickers/renderStickerText';
@@ -30,6 +31,7 @@ type RawProfile = {
   display_name: string | null;
   avatar_url: string | null;
   is_official: boolean | null;
+  is_private?: boolean;
 };
 
 type RawPost = {
@@ -59,6 +61,7 @@ type NormalizedAuthor = {
   displayName: string;
   avatarUrl: string | null;
   isOfficial: boolean;
+  isPrivate?: boolean;
 };
 
 type NormalizedPost = {
@@ -171,6 +174,7 @@ const normalizeAuthor = (
     displayName: safeDisplayName,
     avatarUrl: safeProfile?.avatar_url ?? null,
     isOfficial: Boolean(safeProfile?.is_official),
+    isPrivate: Boolean(safeProfile?.is_private),
   };
 };
 
@@ -318,7 +322,8 @@ export default function MediaViewer() {
               username,
               display_name,
               avatar_url,
-              is_official
+              is_official,
+              is_private
             )
           `)
           .order("created_at", { ascending: false })
@@ -1630,6 +1635,7 @@ export default function MediaViewer() {
                         "ユーザー"}
                     </span>
 
+                    {activeItem.author.isPrivate && <PrivateAccountBadge/>}
                     {activeItem.author.isOfficial && (
                       <img
                         src={`${import.meta.env.BASE_URL}verified.png`}
@@ -1749,7 +1755,8 @@ export default function MediaViewer() {
                       "ユーザー"}
                   </span>
 
-                  {activeItem.author.isOfficial && (
+                  {activeItem.author.isPrivate && <PrivateAccountBadge/>}
+                    {activeItem.author.isOfficial && (
                     <img
                       src={`${import.meta.env.BASE_URL}verified.png`}
                       alt="Official"

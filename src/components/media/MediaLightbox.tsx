@@ -1,3 +1,4 @@
+import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
 import {getBlueskyPostUrl} from '@/lib/bluesky';
 import { OfflineBookmarkContext } from '@/components/stickers/OfflineBookmarkContext';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
@@ -197,7 +198,7 @@ export function MediaLightbox({ selection, onClose }: { selection: MediaViewerSe
   const actions = () => <div className="lime-media-actions" {...(offline ? { inert: '' } : {})}>{postControls('actions')}</div>;
   const author = post ? <div className="lime-media-author">
     <Link className="lime-media-avatar" to={`/u/${post.author.username}`}><Avatar><AvatarImage src={post.author.avatarUrl} /><AvatarFallback>{post.author.displayName.slice(0, 1)}</AvatarFallback></Avatar></Link>
-    <Link to={`/u/${post.author.username}`} className="lime-media-name"><strong><span className="lime-media-display-name">{post.author.displayName}</span>{post.author.isOfficial && <img src={`${import.meta.env.BASE_URL}verified.png`} alt="認証済み" />}</strong><span className="lime-media-username">@{post.author.username}</span></Link>
+    <Link to={`/u/${post.author.username}`} className="lime-media-name"><strong><span className="lime-media-display-name">{post.author.displayName}</span>{post.author.isPrivate && <PrivateAccountBadge/>}{post.author.isOfficial && <img src={`${import.meta.env.BASE_URL}verified.png`} alt="認証済み" />}</strong><span className="lime-media-username">@{post.author.username}</span></Link>
     {user && user.id !== post.userId && <div className="lime-media-follow"><FollowButton userId={post.author.id} /></div>}
   </div> : null;
   const replies = post && !external && !offline && replyPostId ? <><div ref={replyRef}><CommentForm postId={replyPostId} parentCommentId={post.replyId ?? null} variant="mediaViewer" replyTo={post} /></div><CommentList postId={replyPostId} parentCommentId={post.replyId ?? null} mobileFlat /></> : null;

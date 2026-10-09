@@ -15,6 +15,7 @@ type CustomUser = SupabaseUser & {
   displayName?: string;
   avatarUrl?: string;
   isOfficial?: boolean;
+  isPrivate?: boolean;
   bio?: string;
   location?: string;
   coverUrl?: string;
@@ -125,7 +126,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const { data: profile, error } = await supabase
           .from('profiles')
           // 公開プロフィールの取得を非公開Bot設定の取得から独立させる。
-          .select('username, display_name, avatar_url, is_official, bio, location, cover_url, emoji_effect, bot_enabled')
+          .select('username, display_name, avatar_url, is_official, is_private, bio, location, cover_url, emoji_effect, bot_enabled')
           .eq('id', supabaseUser.id)
           .single();
 
@@ -142,6 +143,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               displayName: profile.display_name ?? current.displayName,
               avatarUrl: profile.avatar_url ?? current.avatarUrl,
               isOfficial: !!profile.is_official,
+              isPrivate: !!profile.is_private,
               bio: profile.bio ?? current.bio,
               location: profile.location ?? '',
               coverUrl: profile.cover_url ?? current.coverUrl,

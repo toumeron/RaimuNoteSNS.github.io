@@ -1,6 +1,6 @@
 import type { Session } from '@supabase/supabase-js';
 
-export type SavedAccount = { id: string; username: string; displayName: string; avatarUrl: string; isOfficial?: boolean; needsLogin: boolean };
+export type SavedAccount = { id: string; username: string; displayName: string; avatarUrl: string; isOfficial?: boolean; isPrivate?: boolean; needsLogin: boolean };
 type StoredAccount = Omit<SavedAccount, 'needsLogin'> & { accessToken?: string; refreshToken?: string };
 const project = new URL(import.meta.env.VITE_SUPABASE_URL).hostname;
 export const SAVED_ACCOUNTS_KEY = `lime_saved_accounts:${project}:v1`;

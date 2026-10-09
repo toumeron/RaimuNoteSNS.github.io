@@ -1,3 +1,4 @@
+import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
 import { ReviewStars } from './ReviewStars';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -63,7 +64,7 @@ export function AccountReviewsTab({ profileId }: { profileId: string }) {
         <Avatar className="h-9 w-9 shrink-0"><AvatarImage src={review.author.avatar_url || undefined}/><AvatarFallback>{(review.author.display_name||review.author.username).slice(0,1)}</AvatarFallback></Avatar>
         <span className="flex min-w-0 items-center gap-1">
           <span data-lime-review-author-name className="min-w-0 truncate font-semibold leading-tight">{review.author.display_name || review.author.username}</span>
-          {review.author.is_official && <img src={`${import.meta.env.BASE_URL}verified.png`} alt="認証済み" className="h-[1.1em] w-[1.1em] shrink-0 translate-y-[1px]"/>}
+          {review.author.is_private && <PrivateAccountBadge/>}{review.author.is_official && <img src={`${import.meta.env.BASE_URL}verified.png`} alt="認証済み" className="h-[1.1em] w-[1.1em] shrink-0 translate-y-[1px]"/>}
         </span>
       </Link>
       <div className="mt-3 flex flex-wrap items-center gap-2"><ReviewStars value={review.rating}/>{review.title && <h3 className="min-w-0 break-words font-bold">{review.title}</h3>}</div>

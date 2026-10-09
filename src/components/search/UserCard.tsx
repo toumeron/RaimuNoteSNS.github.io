@@ -1,3 +1,4 @@
+import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
 import { Link } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { FollowButton } from "../profile/FollowButton";
@@ -51,7 +52,7 @@ export default function UserCard({ user, explore = false }: UserCardProps) {
               {user.displayName}
             </span>
 
-            {user.isOfficial && (
+            {user.isPrivate && <PrivateAccountBadge/>}{user.isOfficial && (
               <img
                 src="/RaimuNoteSNS.github.io/verified.png"
                 alt="認証済み"

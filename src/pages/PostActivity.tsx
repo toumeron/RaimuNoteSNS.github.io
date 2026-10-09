@@ -1,3 +1,4 @@
+import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
 import { supabase } from '@/lib/supabase';
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
@@ -96,7 +97,7 @@ export default function PostActivity() {
                         <span className="font-bold text-foreground truncate text-base hover:underline decoration-primary/40 decoration-2">
                           {user.displayName}
                         </span>
-                        {user.isOfficial && (
+                        {user.isPrivate && <PrivateAccountBadge/>}{user.isOfficial && (
                           <img 
                             src={`${import.meta.env.BASE_URL}verified.png`} 
                             alt="Official" 

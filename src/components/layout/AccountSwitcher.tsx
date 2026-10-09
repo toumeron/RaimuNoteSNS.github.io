@@ -1,3 +1,4 @@
+import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
 import { UnreadBadge } from '@/components/notifications/UnreadBadge';
 import { useState, type ReactElement } from 'react';
 import { Check, CircleEllipsis, Loader2, Plus, X } from 'lucide-react';
@@ -24,16 +25,16 @@ export function SavedAccountList({ onDone, managing = false, mobile = false }: {
   const { data: profiles = [] } = useQuery({
     queryKey: ['saved-account-profiles', ids], enabled: ids.length > 0,
     queryFn: async () => {
-      const { data, error } = await supabase.from('profiles').select('id, username, display_name, avatar_url, is_official').in('id', ids);
+      const { data, error } = await supabase.from('profiles').select('id, username, display_name, avatar_url, is_official, is_private').in('id', ids);
       if (error) throw error;
       return data ?? [];
     }, staleTime: 60_000,
   });
   const list = [...accounts];
-  if (user && !list.some(account => account.id === user.id)) list.unshift({ id: user.id, username: user.username ?? '', displayName: user.displayName ?? '', avatarUrl: user.avatarUrl ?? '', isOfficial: user.isOfficial, needsLogin: false });
+  if (user && !list.some(account => account.id === user.id)) list.unshift({ id: user.id, username: user.username ?? '', displayName: user.displayName ?? '', avatarUrl: user.avatarUrl ?? '', isOfficial: user.isOfficial, isPrivate: user.isPrivate, needsLogin: false });
   const resolved = list.map(account => {
     const profile = profiles.find(row => row.id === account.id);
-    return profile ? { ...account, username: profile.username ?? account.username, displayName: profile.display_name ?? account.displayName, avatarUrl: profile.avatar_url ?? account.avatarUrl, isOfficial: !!profile.is_official } : account;
+    return profile ? { ...account, username: profile.username ?? account.username, displayName: profile.display_name ?? account.displayName, avatarUrl: profile.avatar_url ?? account.avatarUrl, isOfficial: !!profile.is_official, isPrivate: !!profile.is_private } : account;
   });
   return <div className={mobile ? 'min-h-0 flex-1 overflow-y-auto overscroll-contain touch-pan-y' : 'max-h-[min(55dvh,400px)] overflow-y-auto overscroll-contain'} data-lime-account-list>
     {resolved.map(account => <div key={account.id} className="flex items-center">
@@ -45,7 +46,7 @@ export function SavedAccountList({ onDone, managing = false, mobile = false }: {
           catch (error) { toast.error(error instanceof Error ? error.message : 'アカウントの切り替えに失敗しました'); }
         }}>
         <AccountAvatar account={account} />
-        <span className="min-w-0 flex-1"><span className={`flex min-w-0 items-center gap-1 font-bold ${mobile ? "text-base" : "text-[15px]"}`}><span className="truncate">{account.displayName}</span>{account.isOfficial && <img src={`${import.meta.env.BASE_URL}verified.png`} alt="認証済み" className="h-4 w-4 shrink-0" />}</span><span className="block truncate text-sm text-muted-foreground">@{account.username}</span>{account.needsLogin && <span className="text-xs text-muted-foreground">再ログイン</span>}</span>
+        <span className="min-w-0 flex-1"><span className={`flex min-w-0 items-center gap-1 font-bold ${mobile ? "text-base" : "text-[15px]"}`}><span className="truncate">{account.displayName}</span>{account.isPrivate && <PrivateAccountBadge/>}{account.isOfficial && <img src={`${import.meta.env.BASE_URL}verified.png`} alt="認証済み" className="h-4 w-4 shrink-0" />}</span><span className="block truncate text-sm text-muted-foreground">@{account.username}</span>{account.needsLogin && <span className="text-xs text-muted-foreground">再ログイン</span>}</span>
         <UnreadBadge userId={account.id} floating={false} />
         {account.id === user?.id && <Check className={`h-5 w-5 shrink-0 ${mobile ? "rounded-full bg-primary p-1 text-primary-foreground" : "text-green-500"}`} aria-label="ログイン中" />}
       </button>

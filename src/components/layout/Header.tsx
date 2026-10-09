@@ -1,3 +1,4 @@
+import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
 import { useMobilePostMenu } from '@/components/post/mobilePostMenu';
 import { FollowButton } from '@/components/profile/FollowButton';
 import { useFollowStats } from '@/hooks/useProfile';
@@ -869,7 +870,7 @@ function useMobileHeaderVisibility(enabled: boolean, disabled: boolean = false) 
 // aside は createPortal で document.body 直下に置かれているため、
 // React の state 更新(1フレーム遅れる)を待たずに、ドラッグ中でも
 // 直接 DOM を触って追従表示させるためにこれで探す。
-const MOBILE_SIDEBAR_SELECTOR = '[data-lime-mobile-sidebar="true"]';
+const MOBILE_SIDEBAR_SELECTOR = '[data-lime-mobile-sidebar="true"]:not([data-lime-desktop-sidebar])';
 
 // rootを直接transformして動かすと、環境によっては(overflow/clip-pathをrootと
 // 同じ要素に同時指定した場合の描画上の都合などで)角丸クリップが実際の描画に
@@ -927,7 +928,17 @@ function useMobileDrawerMotion(
   // 画面端以外(本文のどこか)からの右スワイプでも開いてよいか。
   // ホームの「最新」タブ以外では、左右スワイプはタブ切り替えに使うので false にする。
   openFromBody: boolean,
+  enabled = true,
 ) {
+  const drawerLocation = useLocation();
+  const [mobileViewport, setMobileViewport] = useState(() => window.matchMedia('(max-width: 639px)').matches);
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 639px)');
+    const update = () => setMobileViewport(media.matches);
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
+  const mobileMotion = enabled && mobileViewport;
   const rootRef = useRef<HTMLElement | null>(null);
   // 「動かす」ラッパーと「角丸にクリップする」ラッパーへの参照。
   const moveWrapperRef = useRef<HTMLElement | null>(null);
@@ -980,6 +991,7 @@ function useMobileDrawerMotion(
   };
 
   const setRootVisual = (shift: number, animate: boolean) => {
+    if (!mobileMotion) return;
     const root = rootRef.current;
     if (!(root instanceof HTMLElement)) return;
 
@@ -1102,7 +1114,7 @@ function useMobileDrawerMotion(
     if (!(root instanceof HTMLElement)) return;
     rootRef.current = root;
 
-    const isMobile = window.matchMedia('(max-width: 639px)').matches;
+    const isMobile = mobileMotion;
     const html = document.documentElement;
     const previousOverflowX = html.style.overflowX;
 
@@ -1127,6 +1139,7 @@ function useMobileDrawerMotion(
       const moveWrapper = moveWrapperRef.current;
       if (moveWrapper) {
         moveWrapper.style.removeProperty('transform');
+        moveWrapper.style.removeProperty('z-index');
         moveWrapper.style.removeProperty('transition');
         moveWrapper.style.removeProperty('will-change');
         moveWrapper.style.removeProperty('touch-action');
@@ -1141,20 +1154,26 @@ function useMobileDrawerMotion(
         clipWrapper.style.removeProperty('overflow');
         clipWrapper.style.removeProperty('box-shadow');
         clipWrapper.style.removeProperty('transition');
+        clipWrapper.style.removeProperty('background');
       }
 
       document.documentElement.style.removeProperty('--lime-mobile-drawer-radius');
       document.documentElement.style.removeProperty('--lime-mobile-drawer-shift');
       document.documentElement.style.removeProperty('--lime-mobile-drawer-transition');
+      document.documentElement.style.removeProperty('--lime-mobile-drawer-reveal');
+      document.documentElement.style.removeProperty('--lime-mobile-drawer-duration');
       html.style.overflowX = previousOverflowX;
     }
 
     return () => {
+      cancelScheduledVisualUpdate();
       if (drawerSettleRef.current !== null) clearTimeout(drawerSettleRef.current);
       html.style.overflowX = previousOverflowX;
       document.documentElement.style.removeProperty('--lime-mobile-drawer-radius');
       document.documentElement.style.removeProperty('--lime-mobile-drawer-shift');
       document.documentElement.style.removeProperty('--lime-mobile-drawer-transition');
+      document.documentElement.style.removeProperty('--lime-mobile-drawer-reveal');
+      document.documentElement.style.removeProperty('--lime-mobile-drawer-duration');
       root.style.removeProperty('transform');
       root.style.removeProperty('transition');
       root.style.removeProperty('will-change');
@@ -1169,6 +1188,7 @@ function useMobileDrawerMotion(
       const moveWrapper = moveWrapperRef.current;
       if (moveWrapper) {
         moveWrapper.style.removeProperty('transform');
+        moveWrapper.style.removeProperty('z-index');
         moveWrapper.style.removeProperty('transition');
         moveWrapper.style.removeProperty('will-change');
         moveWrapper.style.removeProperty('touch-action');
@@ -1183,17 +1203,25 @@ function useMobileDrawerMotion(
         clipWrapper.style.removeProperty('overflow');
         clipWrapper.style.removeProperty('box-shadow');
         clipWrapper.style.removeProperty('transition');
+        clipWrapper.style.removeProperty('background');
       }
     };
-  }, []);
+  }, [mobileMotion]);
 
   useEffect(() => {
-    if (!window.matchMedia("(max-width: 639px)").matches || !rootRef.current) return;
+    if (!mobileMotion || !window.matchMedia("(max-width: 639px)").matches || !rootRef.current) return;
     const wrappers = ensureRootShiftWrappers(rootRef.current);
     moveWrapperRef.current = wrappers?.moveWrapper ?? null;
     clipWrapperRef.current = wrappers?.clipWrapper ?? null;
     setRootVisual(isOpen ? getDrawerWidth() : 0, true);
-  }, [isOpen]);
+  }, [isOpen, mobileMotion]);
+
+  useEffect(() => {
+    const restore = () => { if (mobileMotion && !isOpen && window.matchMedia("(max-width: 639px)").matches) setRootVisual(0, false); };
+    restore();
+    window.addEventListener("pageshow", restore);
+    return () => window.removeEventListener("pageshow", restore);
+  }, [drawerLocation.pathname, mobileMotion]);
 
   // サイドバーが開いている間、背後のタイムラインを指で縦スクロールできないようにする。
   // body を position:fixed にすると、現在の scrollY が body の top に吸収されて
@@ -1203,7 +1231,7 @@ function useMobileDrawerMotion(
   // preventDefault してロックする。サイドバー内部の nav は通常通りスクロール可能にする。
   useEffect(() => {
     if (typeof document === 'undefined') return;
-    if (!window.matchMedia('(max-width: 639px)').matches) return;
+    if (!mobileMotion) return;
     if (!isOpen) return;
 
     const handleTouchMove = (event: TouchEvent) => {
@@ -1221,7 +1249,7 @@ function useMobileDrawerMotion(
     return () => {
       document.removeEventListener('touchmove', handleTouchMove, true);
     };
-  }, [isOpen]);
+  }, [isOpen, mobileMotion]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof document === 'undefined') return;
@@ -1229,7 +1257,7 @@ function useMobileDrawerMotion(
     const root = rootRef.current;
     if (!(root instanceof HTMLElement)) return;
 
-    const isMobile = () => window.matchMedia('(max-width: 639px)').matches;
+    const isMobile = () => mobileMotion && window.matchMedia('(max-width: 639px)').matches;
     const resetGesture = () => {
       gestureRef.current = {
         active: false,
@@ -1447,7 +1475,7 @@ function useMobileDrawerMotion(
       document.removeEventListener('touchend', handleTouchEnd, true);
       document.removeEventListener('touchcancel', handleTouchCancel, true);
     };
-  }, [isOpen, onOpenChange, openFromBody]);
+  }, [isOpen, onOpenChange, openFromBody, mobileMotion]);
 }
 
 export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }: {
@@ -1469,10 +1497,11 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const {data: sidebarFollowStats} = useFollowStats(isMobileSidebarOpen && !desktopLayout ? user?.id : undefined);
   useEffect(() => {
+    if (desktopLayout) { setIsMobileSidebarOpen(false); return; }
     const open = () => setIsMobileSidebarOpen(true);
     window.addEventListener('lime-mobile-menu-open', open);
     return () => window.removeEventListener('lime-mobile-menu-open', open);
-  }, []);
+  }, [desktopLayout]);
   const [isSidebarMoreOpen, setIsSidebarMoreOpen] = useState(false);
   const createSpaceAfterMenuClose = useRef(false);
   const [isFeedTabChanging, setIsFeedTabChanging] = useState(false);
@@ -1859,6 +1888,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
     // 本文からの右スワイプでも開ける。「フォロー中/トレンド」では右スワイプは
     // 前のタブへ戻る操作に使うので、画面端からのみ開く。
     !isHomeTimeline || activeFeedTab === 'all',
+    !desktopLayout,
   );
   useMobileFeedTabSwipe(
     isHomeTimeline,
@@ -1983,7 +2013,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
       try {
         const { data, error } = await supabase
           .from('profiles')
-          .select('id, username, display_name, avatar_url, cover_url, created_at, bio, is_official');
+          .select('id, username, display_name, avatar_url, cover_url, created_at, bio, is_official, is_private');
         if (error) throw error;
         if (cancelled) return;
         setHeaderAllUsers((data || []).map((u: any) => ({
@@ -1995,6 +2025,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
           createdAt: u.created_at || '',
           bio: u.bio || '',
           isOfficial: !!(u.is_official || u.isOfficial),
+          isPrivate: !!(u.is_private || u.isPrivate),
         })));
       } catch (err) {
         console.error('Failed to fetch users for header search suggestions:', err);
@@ -2363,6 +2394,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
 
     if (hideHeaderOnMobileProfile) {
       root.setAttribute('data-lime-mobile-profile-page', 'true');
+      document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]')?.setAttribute("content", "black-translucent");
       if (/iPhone|iPod/.test(navigator.userAgent)) root.setAttribute('data-lime-iphone-profile', 'true');
     } else {
       root.removeAttribute('data-lime-mobile-profile-page');
@@ -2646,6 +2678,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
                     <div className="flex min-w-0 flex-col text-left">
                       <span className="flex min-w-0 items-center gap-1">
                         <span className="truncate text-[15px] font-bold">{row.user.displayName}</span>
+                        {row.user.isPrivate && <PrivateAccountBadge />}
                         {row.user.isOfficial && (
                           <img
                             src={`${import.meta.env.BASE_URL}verified.png`}
@@ -2845,15 +2878,15 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
           ref={desktopAsideRef}
           {...(!desktopLayout && !isMobileSidebarOpen ? { inert: '' } : {})}
           data-lime-desktop-sidebar={desktopLayout || undefined}
-          data-lime-mobile-sidebar="true"
+          data-lime-mobile-sidebar={desktopLayout ? undefined : "true"}
           className={cn(
             // サイドバー自体の幅を従来より広く確保する(全画面にはしない)。
             // 角丸は本画面側(root要素をtransformを持たないラッパーで包み、
             // ラッパーにborder-radius+overflow:hiddenを付与)に付けるものなので、
             // ここ(サイドバー本体)には付けない。
-            'fixed inset-y-0 left-0 z-[100] flex w-[clamp(300px,85vw,420px)] flex-col border-r sm:hidden',
+            desktopLayout ? 'flex flex-col' : 'fixed inset-y-0 left-0 z-[100] flex w-[clamp(300px,85vw,420px)] flex-col border-r sm:hidden',
             sidebarDarkClasses,
-            isMobileSidebarOpen
+            desktopLayout || isMobileSidebarOpen
               ? 'visible pointer-events-auto'
               : 'invisible pointer-events-none'
           )}
@@ -2869,7 +2902,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
                 </Avatar>
                 <div data-lime-sidebar-profile-name className="min-w-0 flex-1 pt-0.5">
                   <div className={cn("truncate text-[18px] font-extrabold leading-tight", sidebarIconText)}>
-                    {user.displayName}
+                    {user.displayName}{user.isPrivate && <PrivateAccountBadge/>}
                   </div>
                   <div className={cn("truncate text-[15px] font-medium leading-tight", sidebarMutedText)}>
                     @{user.username}
@@ -3442,20 +3475,23 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
               border: 0 !important; box-shadow: none !important; outline: none !important; background: transparent !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
               height: 0 !important;
             }
-            header[data-lime-mobile-profile-header-hidden="true"] [data-lime-header-row] { position: fixed; inset: 0 0 auto; width: 100%; max-width: none; z-index: 500; background: transparent !important; transform: translateX(var(--lime-mobile-drawer-shift, 0px)); border: 0 !important; box-shadow: none !important; padding-top: env(safe-area-inset-top); height: calc(56px + env(safe-area-inset-top)); }
+            header[data-lime-mobile-profile-header-hidden="true"] [data-lime-header-row] { position: fixed; inset: 0 0 auto; width: 100%; max-width: none; z-index: 500; background: transparent !important; transform: translateX(var(--lime-mobile-drawer-shift, 0px)); border: 0 !important; box-shadow: none !important; padding-top: 0; padding-bottom: 8px; align-items: flex-end; height: calc(56px + var(--lime-profile-system-top, env(safe-area-inset-top))); }
             .lime-profile-bar-background { pointer-events: none; position: absolute; inset: 0; overflow: hidden; opacity: var(--lime-profile-cover-progress, 0); }
-            .lime-profile-bar-background img { width: 100%; height: 100%; object-fit: cover; filter: blur(18px) brightness(.85); transform: scale(1.2); }
-            .lime-profile-bar-background { background: #272421; }
+            .lime-profile-bar-background { background-size: cover; background-position: center; }
+            .lime-profile-bar-background { background-color: #272421; }
+            .lime-profile-bar-background::before { content: ""; position: absolute; inset: -24px; background: inherit; filter: blur(12px); }
             [data-lime-profile-no-cover] .lime-profile-bar-background { background: #b4b2b2; }
             .dark [data-lime-profile-no-cover] .lime-profile-bar-background { background: #646262; }
-            .lime-profile-bar-title { pointer-events: none; opacity: var(--lime-profile-title-progress, 0); transform: translateY(calc((1 - var(--lime-profile-title-progress, 0)) * 20px)); min-width: 0; flex: 1; color: white; }
+            .lime-profile-bar-title { height: 40px; display: flex; flex-direction: column; justify-content: center; pointer-events: none; opacity: var(--lime-profile-title-progress, 0); transform: translateY(calc((1 - var(--lime-profile-title-progress, 0)) * 20px)); min-width: 0; flex: 1; color: white; }
             .lime-profile-bar-control { transition: width 180ms ease, opacity 180ms ease, margin 180ms ease; }
             .lime-profile-bar-control.is-collapsed { width: 0; opacity: 0; margin-right: -8px; pointer-events: none; overflow: hidden; }
             .lime-profile-bar-follow { width: 0; opacity: 0; overflow: hidden; flex-shrink: 0; margin-left: -8px; transition: width 180ms ease, opacity 180ms ease, margin 180ms ease; }
             .lime-profile-bar-follow.is-visible { width: 124px; opacity: 1; margin-left: 0; }
-            .lime-profile-bar-follow button { width: 124px; height: 40px; color: white; background: rgb(0 0 0 / .45); border: 0; }
+            .lime-profile-bar-follow button, .dark .lime-profile-bar-follow button { width: 124px; height: 40px; color: white; background: rgb(0 0 0 / .45); border: 0; }
+            .lime-profile-bar-follow button:hover, .dark .lime-profile-bar-follow button:hover { color: white; background: rgb(0 0 0 / .45); border: 0; }
+            .lime-profile-bar-follow button::after, .dark .lime-profile-bar-follow button::after { background: rgb(255 77 90 / .15); }
             .lime-profile-bar-control { position: relative; display: flex; width: 40px; height: 40px; z-index: 1; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 50%; background: rgb(0 0 0 / .45); color: white; }
-            html[data-lime-iphone-profile="true"] body { padding-top: 0 !important; }
+            html[data-lime-mobile-profile-page="true"] body { padding-top: 0 !important; }
 
           }
 
@@ -3485,9 +3521,9 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
             - PC(sm以上): ロゴを左端、アバターを右端、その間(中央)にタブを配置。 */}
         <div data-lime-header-row className="relative mx-auto flex h-14 max-w-5xl items-center gap-2 px-3 sm:h-16 sm:px-4">
           {hideHeaderOnMobileProfile && !desktopLayout ? <>
-            <div aria-hidden="true" className="lime-profile-bar-background">{mobileProfileInfo?.user.coverUrl && <img src={mobileProfileInfo.user.coverUrl} alt="" />}</div>
+            <div aria-hidden="true" className="lime-profile-bar-background" style={mobileProfileInfo?.user.coverUrl ? {backgroundImage: `linear-gradient(rgb(0 0 0 / .2), rgb(0 0 0 / .2)), url(${JSON.stringify(mobileProfileInfo.user.coverUrl)})`} : undefined} />
             <button className="lime-profile-bar-control" aria-label="戻る" onClick={() => window.history.state?.idx > 0 ? navigate(-1) : navigate('/')}><ArrowLeft className="h-5 w-5" /></button>
-            <div className="lime-profile-bar-title relative"><div className="truncate text-base font-bold">{mobileProfileInfo?.user.displayName}</div><div className="text-xs">{mobileProfileInfo?.posts.toLocaleString()}件のポスト</div></div>
+            <div className="lime-profile-bar-title relative"><div className="truncate text-base font-bold">{mobileProfileInfo?.user.displayName}{mobileProfileInfo?.user.isPrivate && <PrivateAccountBadge/>}{mobileProfileInfo?.user.isOfficial && <img src={`${import.meta.env.BASE_URL}verified.png`} alt="Official" className="inline-block h-4 w-4"/>}</div><div className="text-xs">{mobileProfileInfo?.posts.toLocaleString()}件のポスト</div></div>
             <Link className={`lime-profile-bar-control ${profileSummaryOffscreen && mobileProfileInfo?.user.id !== user?.id ? 'is-collapsed' : ''}`} aria-hidden={profileSummaryOffscreen && mobileProfileInfo?.user.id !== user?.id || undefined} tabIndex={profileSummaryOffscreen && mobileProfileInfo?.user.id !== user?.id ? -1 : undefined} aria-label="プロフィールを検索" to={`/search?q=${encodeURIComponent(`@${mobileProfileInfo?.user.username ?? ''}`)}`}><Search className="h-5 w-5" /></Link>
             <DropdownMenu modal={false}><DropdownMenuTrigger asChild><button className="lime-profile-bar-control" aria-label="プロフィールのその他のメニュー"><MoreHorizontal className="h-5 w-5" /></button></DropdownMenuTrigger><DropdownMenuContent align="end" className="z-[600]" onCloseAutoFocus={event => event.preventDefault()}><DropdownMenuItem onClick={() => {void navigator.clipboard.writeText(window.location.href);toast.success('リンクをコピーしました');}}>リンクをコピー</DropdownMenuItem><DropdownMenuItem onClick={() => { if (navigator.share) void navigator.share({title: mobileProfileInfo?.user.displayName, url: window.location.href}).catch(() => {}); else {void navigator.clipboard.writeText(window.location.href);toast.success('リンクをコピーしました');} }}>プロフィールを共有</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
             {mobileProfileInfo && mobileProfileInfo.user.id !== user?.id && <div className={`relative lime-profile-bar-follow ${profileSummaryOffscreen ? 'is-visible' : ''}`} ref={element => element?.toggleAttribute('inert', !(profileSummaryOffscreen))} aria-hidden={!(profileSummaryOffscreen)}><FollowButton userId={mobileProfileInfo.user.id} externalProfile={mobileProfileInfo.user.id.startsWith('did:') || mobileProfileInfo.user.id.startsWith('misskey-user:') ? mobileProfileInfo.user : undefined} /></div>}

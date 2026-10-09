@@ -1,3 +1,4 @@
+import { PrivateAccountBadge } from '@/components/common/PrivateAccountBadge';
 import { useEffect, useMemo } from 'react';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
@@ -24,7 +25,7 @@ export default function Notifications(){
     return <Link to={href} key={group.key} data-notification-type={n.type} className="flex gap-3 border-b border-border px-4 py-4 transition-colors hover:bg-muted/30 sm:gap-4 sm:px-5">
      <Icon aria-hidden="true" className={`mt-1 h-7 w-7 shrink-0 ${colors[n.type]??'text-primary'} ${n.type==='like'?'fill-current':''}`}/>
      <div className="min-w-0 flex-1"><div className="mb-2 flex gap-2">{actors.slice(0,5).map(a=><Avatar key={a.actor_id??a.actor_username??a.id} className="h-9 w-9"><AvatarImage src={a.actor_avatar_url??undefined}/><AvatarFallback>{(a.actor_name??'ユーザー')[0]}</AvatarFallback></Avatar>)}</div>
-      <p className="text-sm leading-6 sm:text-[15px]"><span className="font-bold">{n.actor_name??'ユーザー'}</span>{n.actor_is_official&&<img src={`${import.meta.env.BASE_URL}verified.png`} alt="認証済み" className="mx-1 inline h-4 w-4"/>}{actors.length>1?`さんと他${actors.length-1}人が${notificationDescription(n.type,n.emoji).replace(/^さんが/,'')}`:notificationDescription(n.type,n.emoji)}</p>
+      <p className="text-sm leading-6 sm:text-[15px]"><span className="font-bold">{n.actor_name??'ユーザー'}</span>{n.actor_is_private&&<PrivateAccountBadge className="mx-1 h-4 w-4 align-text-bottom"/>}{n.actor_is_official&&<img src={`${import.meta.env.BASE_URL}verified.png`} alt="認証済み" className="mx-1 inline h-4 w-4"/>}{actors.length>1?`さんと他${actors.length-1}人が${notificationDescription(n.type,n.emoji).replace(/^さんが/,'')}`:notificationDescription(n.type,n.emoji)}</p>
       {n.content_preview&&<p className="mt-1 line-clamp-2 break-words text-sm text-muted-foreground">{n.content_preview}</p>}
       <time dateTime={n.created_at} className="mt-1 block text-xs text-muted-foreground">{new Date(n.created_at).toLocaleDateString('ja-JP',{month:'long',day:'numeric'})}</time>
      </div>{n.image_urls?.[0]&&<img src={n.image_urls[0]} alt="通知対象のポストの画像" loading="lazy" className="h-16 w-16 shrink-0 rounded-xl object-cover sm:h-20 sm:w-20"/>}

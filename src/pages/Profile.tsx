@@ -1,3 +1,5 @@
+import {useFollowStats} from '@/hooks/useProfile';
+import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
 import { accountReviewsKey } from '@/api/account-reviews';
 import { AccountReviewsTab } from '@/components/reviews/AccountReviewsTab';
 import { useProfileHighlights } from '@/hooks/useProfileHighlights';
@@ -371,12 +373,26 @@ const usePullToRefresh = (onRefresh: () => Promise<void> | void, enabled: boolea
     onRefreshRef.current = onRefresh;
   }, [onRefresh]);
 
-  const applyPullDistance = useCallback((value: number) => {
+  // Dragging updates only the cover and indicator, not the entire post list.
+  const applyPullDistance = useCallback((value: number, commit = false) => {
     pullDistanceRef.current = value;
+    if (window.matchMedia("(min-width: 640px)").matches) {
+      setPullDistance(value);
+      return;
+    }
+    if (commit) setPullDistance(value);
     if (pullFrameRef.current === null) {
       pullFrameRef.current = window.requestAnimationFrame(() => {
         pullFrameRef.current = null;
-        setPullDistance(pullDistanceRef.current);
+        const profile = document.querySelector<HTMLElement>('[data-lime-profile-page]');
+        if (!profile) return;
+        const distance = pullDistanceRef.current;
+        profile.style.setProperty('--lime-profile-pull', `${distance}px`);
+        profile.style.setProperty('--lime-profile-cover-filter', distance > 0 ? `blur(${Math.min(24, distance / 5)}px)` : 'none');
+        profile.style.setProperty('--lime-profile-cover-transform', distance > 0 ? `scale(${1 + distance / 700})` : 'none');
+        profile.style.setProperty('--lime-profile-avatar-transform', distance > 0 ? `scale(${Math.max(.55, 1 - distance / 280)})` : 'none');
+        const indicator = profile.querySelector<HTMLElement>('[data-lime-profile-pull-indicator]');
+        if (indicator) indicator.style.opacity = isRefreshingRef.current || distance > 4 ? '1' : '0';
       });
     }
   }, []);
@@ -405,14 +421,14 @@ const usePullToRefresh = (onRefresh: () => Promise<void> | void, enabled: boolea
         draggingRef.current = false;
         startYRef.current = null;
         setIsPulling(false);
-        applyPullDistance(0);
+        applyPullDistance(0, true);
         return;
       }
 
       const delta = clientY - startYRef.current;
 
       if (delta <= 0) {
-        applyPullDistance(0);
+        applyPullDistance(0, true);
         return;
       }
 
@@ -437,7 +453,7 @@ const usePullToRefresh = (onRefresh: () => Promise<void> | void, enabled: boolea
       if (shouldRefresh && !isRefreshingRef.current) {
         isRefreshingRef.current = true;
         setIsRefreshing(true);
-        applyPullDistance(PULL_REFRESH_THRESHOLD);
+        applyPullDistance(PULL_REFRESH_THRESHOLD, true);
 
         try {
           await onRefreshRef.current();
@@ -446,10 +462,10 @@ const usePullToRefresh = (onRefresh: () => Promise<void> | void, enabled: boolea
         } finally {
           isRefreshingRef.current = false;
           setIsRefreshing(false);
-          applyPullDistance(0);
+          applyPullDistance(0, true);
         }
       } else {
-        applyPullDistance(0);
+        applyPullDistance(0, true);
       }
     };
 
@@ -498,7 +514,7 @@ const usePullToRefresh = (onRefresh: () => Promise<void> | void, enabled: boolea
     window.addEventListener('touchstart', handleTouchStart, { passive: true });
     window.addEventListener('touchmove', handleTouchMove, { passive: false });
     window.addEventListener('touchend', handleTouchEnd, { passive: true });
-    const cancelDrag = () => {draggingRef.current=false;startYRef.current=null;setIsPulling(false);if(!isRefreshingRef.current)applyPullDistance(0);};
+    const cancelDrag = () => {draggingRef.current=false;startYRef.current=null;setIsPulling(false);if(!isRefreshingRef.current)applyPullDistance(0, true);};
     window.addEventListener('touchcancel', cancelDrag, { passive: true });
 
     window.addEventListener('mousedown', handleMouseDown);
@@ -676,6 +692,7 @@ const normalizeAuthor = (author: any, fallbackUserId = ''): any => {
     createdAt: author?.createdAt ?? author?.created_at ?? new Date().toISOString(),
     is_official: !!(author?.is_official ?? author?.isOfficial),
     isOfficial: !!(author?.isOfficial ?? author?.is_official),
+    isPrivate: !!(author?.isPrivate ?? author?.is_private),
     emoji_effect: author?.emoji_effect ?? author?.emojiEffect ?? '',
     emojiEffect: author?.emojiEffect ?? author?.emoji_effect ?? '',
     bot_enabled: !!(author?.bot_enabled ?? author?.botEnabled),
@@ -1028,6 +1045,7 @@ const ProfileThreadAuthorLine = memo(function ProfileThreadAuthorLine({
           <span className="truncate text-[16px] sm:text-base">
             {displayName}
           </span>
+          {!!(author?.isPrivate ?? author?.is_private) && <PrivateAccountBadge />}
           {isOfficial && (
             <img
               src={`${import.meta.env.BASE_URL}verified.png`}
@@ -2538,17 +2556,18 @@ const ProfileVirtualizedMediaImage = memo(function ProfileVirtualizedMediaImage(
 
 const PROFILE_PAGE_STYLES = `
           @media (max-width: 639px) {
-            [data-lime-profile-tabs-header] { margin-top: 0 !important; background: hsl(var(--background)); height: 44px !important; top: calc(56px + env(safe-area-inset-top)) !important; }
-            [data-lime-profile-page] .profile-header-cover-avatar-gap { height: calc(150px + env(safe-area-inset-top) + var(--lime-profile-pull, 0px)); transition: height 280ms cubic-bezier(.22,.61,.36,1); }
-            [data-lime-profile-tabs-backdrop] { background: hsl(var(--background)); backdrop-filter: none; }
+            [data-lime-profile-tabs-header] { margin-top: 0 !important; background: hsl(var(--background)); height: 44px !important; top: calc(56px + var(--lime-profile-system-top, env(safe-area-inset-top))) !important; }
+            [data-lime-profile-page] .profile-header-cover-avatar-gap { height: calc(150px + var(--lime-profile-system-top, env(safe-area-inset-top)) + var(--lime-profile-pull, 0px)); transition: height 280ms cubic-bezier(.22,.61,.36,1); }
+            [data-lime-profile-tabs-backdrop] { display: none; }
+            [data-lime-profile-header] { left: auto; width: calc(100% + 32px); margin-left: -16px; transform: none; }
             [data-lime-profile-mobile-tabs] .profile-tabs-trigger { min-height: 0; font-size: 13px; }
             [data-lime-profile-mobile-tabs] .profile-tabs-underline { bottom: 0; height: 3px; }
             [data-lime-profile-tabs-divider] { bottom: 0; }
             [data-lime-profile-page] .profile-header-cover-avatar-gap img { filter: var(--lime-profile-cover-filter, none); transform: var(--lime-profile-cover-transform, none); transition: filter 280ms ease-out, transform 280ms ease-out; }
-            [data-lime-profile-page] [data-lime-profile-avatar] { border-color: hsl(var(--background)); transform: scale(var(--lime-profile-avatar-scale, 1)); transform-origin: center center; transition: transform 280ms ease-out; }
+            [data-lime-profile-page] [data-lime-profile-avatar] { border-color: hsl(var(--background)); transform: var(--lime-profile-avatar-transform, none); transform-origin: center center; transition: transform 280ms ease-out; }
             [data-lime-profile-dragging] [data-lime-profile-avatar], [data-lime-profile-dragging] .profile-header-cover-avatar-gap img { transition: none; }
             [data-lime-profile-dragging] .profile-header-cover-avatar-gap { transition: none; }
-            [data-lime-profile-pull-indicator] { position: absolute; top: calc(68px + env(safe-area-inset-top)); transform: translate(-50%, calc(var(--lime-profile-pull, 0px) / 2)) !important; }
+            [data-lime-profile-pull-indicator] { position: absolute; top: calc(68px + var(--lime-profile-system-top, env(safe-area-inset-top))); transform: translate(-50%, calc(var(--lime-profile-pull, 0px) / 2)) !important; }
             [data-lime-profile-pull-indicator] > div { border: 0; box-shadow: none; background: transparent; backdrop-filter: none; }
             [data-lime-profile-pull-indicator] svg { color: white; }
             .lime-profile-refresh-spinner { position: relative; width: 18px; height: 18px; animation: lime-profile-spinner 850ms linear infinite; will-change: transform; }
@@ -2715,6 +2734,8 @@ export default function Profile() {
 
   const highlightsQuery = useProfileHighlights(!isBlueskyProfile ? user?.id : undefined, viewer?.id);
   const hasHighlights = !!highlightsQuery.data?.pages.some(page => page.length > 0);
+  const privacyStats = useFollowStats(!isBlueskyProfile ? user?.id : undefined);
+  const protectedProfile = !!user?.isPrivate && viewer?.id !== user?.id && privacyStats.data?.canView !== true;
   const hasReviews = !isBlueskyProfile && !!user && 'review' in user && user.review === true;
   const hasExtraTabs = hasHighlights || hasReviews;
   const visibleProfileTabs = profileTabs.filter(tab => (tab.value !== 'highlights' || hasHighlights) && (tab.value !== 'reviews' || hasReviews));
@@ -2995,6 +3016,7 @@ export default function Profile() {
                 bio,
                 created_at,
                 is_official,
+                is_private,
                 emoji_effect,
                 bot_enabled,
                 bot_prompt,
@@ -3277,7 +3299,7 @@ export default function Profile() {
       data-lime-profile-pulling={isPulling || isPullRefreshing || undefined}
       data-lime-profile-dragging={isPulling || undefined}
       className="relative -mt-[0px] space-y-0 sm:mt-0 sm:space-y-5"
-      style={{ visibility: isViewportReady ? 'visible' : 'hidden', '--lime-profile-pull': `${pullDistance}px`, '--lime-profile-cover-filter': pullDistance > 0 ? `blur(${Math.min(24, pullDistance / 5)}px)` : 'none', '--lime-profile-cover-transform': pullDistance > 0 ? `scale(${1 + pullDistance / 700})` : 'none', '--lime-profile-avatar-scale': Math.max(.55, 1 - pullDistance / 280), '--lime-profile-avatar-radius': `${48 * Math.max(.55, 1 - pullDistance / 280)}px` } as React.CSSProperties}
+      style={{ visibility: isViewportReady ? 'visible' : 'hidden', '--lime-profile-pull': `${pullDistance}px` } as React.CSSProperties}
     >
       <style>{PROFILE_PAGE_STYLES}</style>
 
@@ -3395,7 +3417,7 @@ export default function Profile() {
           </TabsList>
         </div>
 
-        {activeTab === 'reviews' ? (hasReviews && user ? <AccountReviewsTab profileId={user.id} /> : null) : <div data-lime-profile-posts className="space-y-0 sm:space-y-4">
+        {activeTab === 'reviews' ? (hasReviews && user ? <AccountReviewsTab profileId={user.id} /> : null) : protectedProfile ? <div className="px-5 py-10"><h2 className="font-bold text-xl">このアカウントのポストは非公開です</h2><p className="mt-2 text-sm text-muted-foreground">フォローリクエストが承認されると閲覧できます。</p></div> : <div data-lime-profile-posts className="space-y-0 sm:space-y-4">
           {profilePostsLoading && (
             <>
               <PostCardSkeleton />

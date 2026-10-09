@@ -1,3 +1,4 @@
+import { extractPostMapLocation } from './mapLocation';
 import { cloudExternalHandles, saveExternalProviderHandles } from './externalAccounts';
 import {externalFetch, accountSearchScore} from './utils';
 import { searchMisskey, configuredMisskeyHandles, isMisskeyActor, isMisskeyId, misskeyFeed, misskeyProfile, misskeyThread, misskeyFollowList, misskeyRequest, mapMisskeyNote, type MisskeyNote, misskeyEnabled, misskeyViewer, likeMisskey, unlikeMisskey, misskeyFollowState, followMisskey, unfollowMisskey } from './misskey';
@@ -528,6 +529,7 @@ export async function unfollowBlueskyUser(followUri: string): Promise<void> {
 }
 
 export type BlueskyMappedPost = {
+  mapLocation?: import('./mapLocation').MapLocation | null;
   languages?: string[];
   recommendationLanguages?: string[];
   imageAltTexts?: string[];
@@ -555,6 +557,7 @@ export type BlueskyMappedPost = {
     displayName: string;
     avatarUrl: string;
     isOfficial: boolean;
+    isPrivate?: boolean;
     bio: string;
     createdAt: string;
   };
@@ -882,6 +885,7 @@ export function mapBlueskyFeedItemToPost(item: BlueskyFeedItem): BlueskyMappedPo
 
   return {
     id: `bsky:${post.uri}`,
+    mapLocation: extractPostMapLocation([contentFromFacets, externalUri].filter(Boolean).join('\n')),
     userId: post.author.did,
     content,
     imageUrls,
@@ -1450,8 +1454,10 @@ export async function discoverBlueskyTopicFeeds(topic:TopicId,signal?:AbortSigna
  topicFeedCache.set(topic,{feeds,expires:Date.now()+15*60000});
  return feeds;
 }
-export async function fetchBlueskyTopicPosts(options: {query:string;cursor?:string|null;limit?:number;signal?:AbortSignal}):Promise<BlueskyAuthorFeedPage> {
-  const params=new URLSearchParams({q:options.query,lang:'ja',sort:'latest',limit:String(options.limit ?? 20),since:new Date(Date.now()-30*86400000).toISOString()});
+export async function fetchBlueskyTopicPosts(options: {query:string;cursor?:string|null;limit?:number;language?:string|null;since?:string|null;signal?:AbortSignal}):Promise<BlueskyAuthorFeedPage> {
+  const params=new URLSearchParams({q:options.query,sort:'latest',limit:String(Math.min(100,options.limit ?? 20))});
+  if(options.since !== null) params.set('since',options.since ?? new Date(Date.now()-30*86400000).toISOString());
+  if(options.language !== null) params.set('lang',options.language ?? 'ja');
   if(options.cursor) params.set('cursor',options.cursor);
   const response=await fetchBlueskySearchEndpoint('app.bsky.feed.searchPosts',params,options.signal);
   if(!response.ok) throw new Error(`Bluesky topic search failed: ${response.status}`);

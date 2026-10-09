@@ -97,6 +97,8 @@ it.each([{},{query:'新作_100%'}, {ids:['recent','old']}])('bounds LimeNote dis
  const posts=await loadRecentLimeNewsPosts({from:()=>query},{...options,now});
  expect(posts.map(post=>post.id)).toEqual(['recent']);
  expect(calls).toContainEqual(['eq','visibility','public']);
+ expect(calls).toContainEqual(['eq','profiles.is_private',false]);
+ expect(calls).toContainEqual(['select','id,content,created_at,profiles!inner(is_private)']);
  expect(calls).toContainEqual(['gte','created_at',recentNewsWindow(now).since]);
  expect(calls).toContainEqual(['lte','created_at',recentNewsWindow(now).until]);
  if('query' in options)expect(calls).toContainEqual(['ilike','content','%新作\\_100\\%%']);

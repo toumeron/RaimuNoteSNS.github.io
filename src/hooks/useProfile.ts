@@ -25,7 +25,7 @@ const LIMIT = 10;
 const LIKES_FETCH_LIMIT = 30;
 const REACTIONS_FETCH_LIMIT = 30;
 // All author fields consumed by toSafeAuthor; omit unrelated profile settings.
-const POST_AUTHOR_COLUMNS = 'id, username, display_name, bio, avatar_url, cover_url, created_at, is_official, emoji_effect, bot_enabled, bot_prompt, bot_interval_hours, prefecture, city';
+const POST_AUTHOR_COLUMNS = 'id, username, display_name, bio, avatar_url, cover_url, created_at, is_official, is_private, emoji_effect, bot_enabled, bot_prompt, bot_interval_hours, prefecture, city';
 
 type ViewerPostAccess = {
   currentUserId: string | null;
@@ -50,6 +50,7 @@ const toSafeAuthor = (author: any, fallbackUserId: string = '') => {
     createdAt: author?.createdAt ?? author?.created_at ?? new Date().toISOString(),
     is_official: !!(author?.is_official ?? author?.isOfficial),
     isOfficial: !!(author?.isOfficial ?? author?.is_official),
+    isPrivate: !!(author?.isPrivate ?? author?.is_private),
     emoji_effect: author?.emoji_effect ?? author?.emojiEffect ?? '',
     emojiEffect: author?.emojiEffect ?? author?.emoji_effect ?? '',
     bot_enabled: !!(author?.bot_enabled ?? author?.botEnabled),
@@ -278,6 +279,7 @@ export const useUserLikesInfinite = (userId: string | undefined) => {
               cover_url,
               created_at,
               is_official,
+              is_private,
               emoji_effect,
               bot_enabled,
               bot_prompt,
@@ -445,6 +447,7 @@ export const useUserReactionsInfinite = (userId: string | undefined) =>
               cover_url,
               created_at,
               is_official,
+              is_private,
               emoji_effect,
               bot_enabled,
               bot_prompt,
@@ -506,29 +509,13 @@ export const useToggleFollow = (targetUserId: string) => {
 
   return useMutation({
     mutationFn: () => toggleFollow(targetUserId),
-    onMutate: async () => {
-      await qc.cancelQueries({ queryKey: followStatsKey(targetUserId) });
-
-      const prev = qc.getQueryData<{ followers: number; following: number; followedByMe: boolean }>(
-        followStatsKey(targetUserId),
-      );
-
-      if (prev) {
-        qc.setQueryData(followStatsKey(targetUserId), {
-          ...prev,
-          followedByMe: !prev.followedByMe,
-          followers: prev.followers + (prev.followedByMe ? -1 : 1),
-        });
-      }
-
-      return { prev };
-    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['posts'] });
+      qc.invalidateQueries({ queryKey: ['profile'] });
       qc.invalidateQueries({ queryKey: followStatsKey(targetUserId) });
+      qc.invalidateQueries({ queryKey: ['follow-stats', 'known-followers'] });
     },
-    onError: (_e, _v, ctx) => {
-      if (ctx?.prev) qc.setQueryData(followStatsKey(targetUserId), ctx.prev);
+    onError: () => {
       toast.error('フォロー操作に失敗しました');
     },
   });

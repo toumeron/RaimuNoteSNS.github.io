@@ -860,6 +860,7 @@ const getQuotedPostCached = async (postId: string, viewerId?: string) => {
 };
 
 interface PostComposerProps {
+  mapLocation?: import('@/lib/mapLocation').MapLocation;
   initialQuotedPost?: PostWithAuthor | null;
   initialContent?: string;
   onSuccess?: () => void;
@@ -947,7 +948,7 @@ function getCaretCoordinates(element: HTMLTextAreaElement, position: number) {
   return coordinates;
 }
 
-export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess, onCancel, timelineGlass = false, fullScreen = false }: PostComposerProps) {
+export function PostComposer({ mapLocation, initialQuotedPost, initialContent = '', onSuccess, onCancel, timelineGlass = false, fullScreen = false }: PostComposerProps) {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const quoteId = searchParams.get('quote');
@@ -1999,7 +2000,8 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
         parentId: quotedPost?.id,
         isQuote: !!quotedPost,
         user_id: user.id,
-        visibility: visibility // 追加
+        visibility: visibility,
+        ...(mapLocation ? { mapLocation } : {})
       } as any);
 
       // ハッシュタグの抽出と統計更新 (投稿後に非同期で実行)
@@ -2472,6 +2474,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
             variant="ghost"
             size="icon"
             className="h-8 w-8 rounded-full hover:bg-muted"
+            aria-label="閉じる"
             onClick={onCancel}
           >
             <X className="h-5 w-5 text-muted-foreground" />
@@ -2540,7 +2543,7 @@ export function PostComposer({ initialQuotedPost, initialContent = '', onSuccess
 // 新規投稿モーダル/全画面コンポーズ。
 // document.body へポータル描画することで、祖先(Provider群)のCSSに影響されず
 // 常に画面全体を基準に固定表示できるようにしている(iPhone PWAやモバイル幅Chromeでの表示崩れ対策)。
-export const PostOverlay = ({ isOpen, onClose, initialQuotedPost }: { isOpen: boolean; onClose: () => void; initialQuotedPost?: PostWithAuthor }) => {
+export const PostOverlay = ({ isOpen, onClose, initialQuotedPost, mapLocation }: { isOpen: boolean; onClose: () => void; initialQuotedPost?: PostWithAuthor; mapLocation?: import('@/lib/mapLocation').MapLocation }) => {
   const isMobile = useIsMobileViewport();
 
   useEffect(() => {
@@ -2613,7 +2616,7 @@ export const PostOverlay = ({ isOpen, onClose, initialQuotedPost }: { isOpen: bo
     // モバイルはオーバーレイではなく全画面で表示する
     return createPortal(
       <div role="dialog" aria-modal="true" aria-label={initialQuotedPost ? "引用リポスト" : "新規ポスト"} onClick={event => event.stopPropagation()} className="fixed inset-0 z-[2147483000] flex h-[100dvh] max-h-[100dvh] flex-col overflow-hidden overscroll-none bg-background">
-        <PostComposer fullScreen initialQuotedPost={initialQuotedPost} onSuccess={onClose} onCancel={onClose} />
+        <PostComposer fullScreen mapLocation={mapLocation} initialQuotedPost={initialQuotedPost} onSuccess={onClose} onCancel={onClose} />
       </div>,
       document.body
     );
@@ -2626,7 +2629,7 @@ export const PostOverlay = ({ isOpen, onClose, initialQuotedPost }: { isOpen: bo
         onClick={onClose} 
       />
       <div className="relative w-full max-w-xl animate-in fade-in zoom-in-95 duration-200">
-        <PostComposer initialQuotedPost={initialQuotedPost} onSuccess={onClose} onCancel={onClose} />
+        <PostComposer mapLocation={mapLocation} initialQuotedPost={initialQuotedPost} onSuccess={onClose} onCancel={onClose} />
       </div>
     </div>,
     document.body

@@ -22,9 +22,9 @@ export function AppLayout() {
   }, []);
   useEffect(() => setMapSidebarClosed(false), [location.pathname]);
   const [desktopSidebarContainer, setDesktopSidebarContainer] = useState<HTMLDivElement | null>(null);
-  const [isDesktop, setIsDesktop] = useState(() => window.matchMedia(isIpad() ? '(min-width: 640px)' : '(min-width: 768px)').matches);
+  const [isDesktop, setIsDesktop] = useState(() => window.matchMedia('(min-width: 640px)').matches);
   useEffect(() => {
-    const media = window.matchMedia(isIpad() ? '(min-width: 640px)' : '(min-width: 768px)');
+    const media = window.matchMedia('(min-width: 640px)');
     const update = () => setIsDesktop(media.matches);
     media.addEventListener('change', update);
     return () => media.removeEventListener('change', update);

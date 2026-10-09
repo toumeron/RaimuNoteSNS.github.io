@@ -28,10 +28,13 @@ describe('LimeMaps API', () => {
         expect(filters['lte:map_latitude']).toEqual([40]);
         expect(filters['gte:map_longitude']).toEqual([130]);
         expect(filters['lte:map_longitude']).toEqual([145]);
-        expect(filters['limit:40']).toBe(40);
+        expect(filters['limit:200']).toBe(200);
         expect(Object.values(filters)).toContain(signal);
         expect(posts[0].mapLocation).toEqual({ latitude: 35, longitude: 139 });
-        expect(posts[0].author.displayName).toBe('作者');
+        expect(filters['select:id,created_at,map_latitude,map_longitude']).toBe('id,created_at,map_latitude,map_longitude');
+        expect(posts[0]).not.toHaveProperty('content');
+        expect(posts[0]).not.toHaveProperty('author');
+        expect(posts[0]).not.toHaveProperty('imageUrls');
     });
     it('combines dateline bounds and timestamp/id pagination without dropping tied timestamps', async () => {
         await getMapPosts({ south: -40, north: 40, west: 170, east: -170 }, { createdAt: '2026-10-09T00:00:00Z', id: 'last-post' });

@@ -30,6 +30,7 @@ function rowToUser(profile: any): User {
     coverUrl:    profile.cover_url   ?? '',
     createdAt:   profile.created_at  ?? '',
     isOfficial: profile.is_official ?? false,
+    isPrivate: profile.is_private === true,
   };
 }
 

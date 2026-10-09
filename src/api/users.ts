@@ -3,13 +3,14 @@ import type { User } from '@/types';
 import { supabase } from '@/lib/supabase';
 
 // Keep the fields returned by toUser; exclude unrelated profile settings.
-const USER_SELECT_COLUMNS = 'id, username, display_name, bio, location, avatar_url, cover_url, created_at, is_official, emoji_effect, bot_enabled, review';
+const USER_SELECT_COLUMNS = 'id, username, display_name, bio, location, avatar_url, cover_url, created_at, is_official, is_private, emoji_effect, bot_enabled, review';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function toUser(row: any): User {
   return {
     id: row.id as string,
     review: row.review === true,
+    isPrivate: row.is_private === true,
     username: row.username as string,
     displayName: (row.display_name ?? '') as string,
     bio: (row.bio ?? '') as string,
@@ -52,9 +53,10 @@ export async function getUserById(id: string): Promise<User | null> {
  */
 export async function updateProfile(
   id: string,
-  patch: Partial<Pick<User, 'displayName' | 'bio' | 'location' | 'avatarUrl' | 'coverUrl' | 'emojiEffect' | 'bot_enabled' | 'bot_prompt'>>,
+  patch: Partial<Pick<User, 'displayName' | 'bio' | 'location' | 'avatarUrl' | 'coverUrl' | 'emojiEffect' | 'bot_enabled' | 'bot_prompt' | 'isPrivate'>>,
 ): Promise<User> {
   const dbPatch: Record<string, unknown> = {};
+  if (patch.isPrivate !== undefined) dbPatch.is_private = patch.isPrivate;
   if (patch.displayName !== undefined) dbPatch.display_name = patch.displayName;
   if (patch.bio !== undefined) dbPatch.bio = patch.bio;
   if (patch.location !== undefined) dbPatch.location = patch.location.trim();

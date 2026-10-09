@@ -1,3 +1,4 @@
+import { PrivateAccountBadge } from '@/components/common/PrivateAccountBadge';
 import { useSavedAccountUnreadTotal } from '@/hooks/useUnreadNotifications';
 import { AccountSwitcherMenu } from './AccountSwitcher';
 import { useQuery } from '@tanstack/react-query';
@@ -13,7 +14,7 @@ export function DesktopAccountFooter() {
     enabled: !!user,
     queryFn: async () => {
       const { data, error } = await supabase.from('profiles')
-        .select('username, display_name, avatar_url, is_official').eq('id', user!.id).single();
+        .select('username, display_name, avatar_url, is_official, is_private').eq('id', user!.id).single();
       if (error) throw error;
       return data;
     },
@@ -30,11 +31,15 @@ export function DesktopAccountFooter() {
           <AvatarImage src={profile?.avatar_url || user.avatarUrl} alt={name} />
           <AvatarFallback>{name.slice(0, 1)}</AvatarFallback>
         </Avatar>
-        {profile?.is_official && <img data-lime-account-avatar-badge src={badge} alt="Official" />}
+        {(profile?.is_private || profile?.is_official) && <span data-lime-account-avatar-badge className="items-center gap-0.5">
+          {profile?.is_private && <PrivateAccountBadge className="h-4 w-4"/>}
+          {profile?.is_official && <img src={badge} alt="Official" className="h-4 w-4"/>}
+        </span>}
       </div>
       <div data-lime-account-info className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1">
           <span className="truncate text-[18px] font-extrabold">{name}</span>
+          {profile?.is_private && <PrivateAccountBadge className="h-5 w-5"/>}
           {profile?.is_official && <img src={badge} alt="Official" className="h-5 w-5 shrink-0" />}
         </div>
         <div className="truncate text-[15px] text-muted-foreground">@{username}</div>
