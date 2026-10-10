@@ -56,6 +56,7 @@ export function AppLayout() {
   let mainClassName = 'mx-auto max-w-2xl px-4 py-6';
   if (location.pathname === '/maps' || location.pathname === '/notifications' || location.pathname === '/topics' || location.pathname === '/settings' || location.pathname.startsWith('/news')) mainClassName = 'w-full max-w-none px-0 py-0';
   if (/^\/u\/[^/]+$/.test(location.pathname)) mainClassName = 'mx-auto max-w-2xl px-4 py-6 max-sm:pt-0';
+  if (/^\/u\/[^/]+\/followers_following\/?$/.test(location.pathname)) mainClassName = 'mx-auto max-w-2xl px-0 py-0';
   if (isPostActivityPage) mainClassName = 'mx-auto max-w-2xl px-0 py-0';
   if (isAccountAboutPage) mainClassName = 'mx-auto max-w-2xl px-0 py-0';
   

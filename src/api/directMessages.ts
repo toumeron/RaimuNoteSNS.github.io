@@ -1,11 +1,11 @@
 import {refreshNotificationBadge} from '@/lib/notificationBadge';
 import {dismissNotificationToasts} from '@/lib/notificationToast';
 import {supabase} from '@/lib/supabase';
-export type DirectPeer={id:string;username:string;displayName:string;avatarUrl:string;isPrivate?:boolean;isOfficial?:boolean;createdAt:string};
-export type DirectConversation={id:string;status:'pending'|'accepted'|'declined';initiatedBy:string;updatedAt:string;peer:DirectPeer;preview:string;hasMedia:boolean;unreadCount:number;pinned?:boolean};
-export type DirectMessage={id:string;conversation_id:string;sender_id:string;content:string;attachments:string[];created_at:string;mediaUrls:string[]};
+export type DirectPeer={id:string;username:string;displayName:string;avatarUrl:string;isPrivate?:boolean;isOfficial?:boolean;createdAt:string;groupAvatars?:string[]};
+export type DirectConversation={id:string;status:'pending'|'accepted'|'declined';initiatedBy:string;updatedAt:string;peer:DirectPeer;preview:string;hasMedia:boolean;unreadCount:number;pinned?:boolean;isGroup?:boolean};
+export type DirectMessage={id:string;conversation_id:string;sender_id:string;content:string;attachments:string[];created_at:string;mediaUrls:string[];friend_id?:string|null;friend_name?:string|null;friend_avatar?:string|null;reply_to?:string|null;system_event?:string|null;reactions?:Record<string,Record<string,boolean>>};
 export const directKeys={inbox:['direct-inbox'] as const,messages:(id:string)=>['direct-messages',id] as const,preferences:['direct-preferences'] as const};
-export async function getDirectInbox():Promise<DirectConversation[]>{const {data,error}=await supabase.rpc('get_direct_inbox');if(error)throw error;return data??[];}
+export async function getDirectInbox():Promise<DirectConversation[]>{const {data,error}=await supabase.rpc('get_direct_inbox');if(error)throw error;return (data??[]).map(decorateDirectConversation);}
 export async function getDirectPreferences():Promise<'everyone'|'none'>{const {data,error}=await supabase.rpc('get_dm_preferences');if(error)throw error;return data;}
 export async function setDirectPreferences(value:'everyone'|'none'){const {error}=await supabase.rpc('set_dm_preferences',{value});if(error)throw error;}
 export async function openDirectConversation(userId:string):Promise<string>{const {data,error}=await supabase.rpc('open_direct_conversation',{target_user:userId});if(error)throw error;return data;}
@@ -43,3 +43,32 @@ export async function setChatInboxPreference(chat:string,kind:'pins'|'hidden',va
 export async function deleteDirectChat(id:string){const {error}=await supabase.rpc('delete_direct_chat',{target:id});if(error)throw error;}
 
 export async function canDirectMessage(userId:string):Promise<boolean>{const {data,error}=await supabase.rpc('can_direct_message',{target_user:userId});if(error)throw error;return data===true;}
+
+export type DirectGroupMember=DirectPeer&{status:'accepted'|'pending';admin:boolean};
+export type DirectGroup=DirectConversation&{isGroup:true;createdAt:string;description:string;adminOnly:boolean;inviteToken:string|null;muted:boolean;friends?:GroupFriend[];members:DirectGroupMember[];requests:DirectPeer[]};
+export function decorateDirectConversation(c:DirectConversation):DirectConversation{
+ if((c as DirectGroup).isGroup){const g=c as DirectGroup;c.peer={...c.peer,groupAvatars:[...g.members.filter(m=>m.id!==g.initiatedBy),...(g.friends??[])].slice(0,2).map(m=>m.avatarUrl)};}
+ return c;
+}
+export async function getDirectGroup(id:string):Promise<DirectGroup>{const {data,error}=await supabase.rpc('get_group_direct_conversation',{target:id});if(error)throw error;return decorateDirectConversation(data) as DirectGroup;}
+export async function createDirectGroup(people:string[],name=''):Promise<string>{const {data,error}=await supabase.rpc('create_group_direct_conversation',{people,name});if(error)throw error;return data;}
+export async function updateDirectGroup(id:string,input:{name:string;description:string;avatar:string;onlyAdmin:boolean}){const {error}=await supabase.rpc('update_group_direct_conversation',{target:id,name:input.name,description:input.description,avatar:input.avatar,only_admin:input.onlyAdmin,disappearing:0});if(error)throw error;}
+export async function addDirectGroupMembers(id:string,people:string[]){const {error}=await supabase.rpc('add_group_direct_members',{target:id,people});if(error)throw error;}
+export async function manageDirectGroupMember(id:string,person:string,action:'approve'|'reject'|'admin'|'remove'){const {error}=await supabase.rpc('manage_group_direct_member',{target:id,person,action});if(error)throw error;}
+export async function muteDirectGroup(id:string,value:boolean){const {error}=await supabase.rpc('set_group_direct_muted',{target:id,value});if(error)throw error;}
+export async function setDirectGroupInvite(id:string,enabled:boolean):Promise<string|null>{const {data,error}=await supabase.rpc('set_group_direct_invite',{target:id,enabled});if(error)throw error;return data;}
+export async function sendDirectGroupMessage(id:string,body:string,media:string[]=[],messageId=crypto.randomUUID()){const {error}=await supabase.rpc('send_group_direct_message',{target:id,body,media,message_id:messageId});if(error)throw error;}
+export async function getDirectGroupInvitation(token:string):Promise<{name:string;avatarUrl:string;memberCount:number}|null>{const {data,error}=await supabase.rpc('get_group_direct_invitation',{token});if(error)throw error;return data;}
+export async function requestDirectGroupJoin(token:string):Promise<string>{const {data,error}=await supabase.rpc('request_group_direct_join',{token});if(error)throw error;return data;}
+
+export type GroupFriend=DirectPeer&{ownerId?:string};
+export type GroupFriendDraft={id:string;name:string;avatar:string;prompt:string};
+export async function createGroupWithFriends(people:string[],friends:GroupFriendDraft[]){const {data,error}=await supabase.rpc('create_group_with_friends',{people,friends,name:''});if(error)throw error;return data as string;}
+export async function addGroupFriends(id:string,friends:GroupFriendDraft[]){const {error}=await supabase.rpc('add_group_ai_friends',{target:id,friends});if(error)throw error;}
+export async function removeGroupFriend(id:string,friend:string){const {error}=await supabase.rpc('remove_group_ai_friend',{target:id,friend});if(error)throw error;}
+export async function askGroupFriends(conversationId:string,messageId:string){const {data,error}=await supabase.functions.invoke('group-friends',{body:{conversationId,messageId}});if(error)throw error;return (data?.failures??[]) as string[];}
+
+export async function toggleDirectReaction(id:string,emoji:string){const {error}=await supabase.rpc("toggle_direct_reaction",{target:id,emoji});if(error)throw error;}
+export async function deleteDirectMessage(id:string,forEveryone:boolean){const {error}=await supabase.rpc("delete_direct_message",{target:id,for_everyone:forEveryone});if(error)throw error;}
+
+export async function sendDirectReply(replyMessage:string,body:string,media:string[],messageId:string){const {data,error}=await supabase.rpc("send_direct_reply",{reply_message:replyMessage,body,media,message_id:messageId});if(error)throw error;return data as string;}

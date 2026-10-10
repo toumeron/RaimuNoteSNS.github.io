@@ -514,6 +514,7 @@ export const useToggleFollow = (targetUserId: string) => {
       qc.invalidateQueries({ queryKey: ['profile'] });
       qc.invalidateQueries({ queryKey: followStatsKey(targetUserId) });
       qc.invalidateQueries({ queryKey: ['follow-stats', 'known-followers'] });
+      qc.invalidateQueries({ queryKey: ['follow-list'] });
     },
     onError: () => {
       toast.error('フォロー操作に失敗しました');

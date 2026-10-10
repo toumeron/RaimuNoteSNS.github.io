@@ -21,3 +21,8 @@ it('cleans up staged objects when the next upload fails',async()=>{
  await expect(uploadPostMedia(['blob:one','blob:two'],'owner','post',true)).rejects.toThrow('アップロード');
  expect(storage.remove).toHaveBeenCalledWith([storage.upload.mock.calls[0][0]]);
 });
+
+it('preserves the storage error reason instead of hiding a missing bucket',async()=>{
+ storage.upload.mockResolvedValueOnce({error:{message:'Bucket not found',statusCode:'404'}});
+ await expect(uploadPostMedia(['blob:device'],'owner','post',false)).rejects.toThrow('Bucket not found');
+});

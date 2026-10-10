@@ -20,7 +20,7 @@ export default defineConfig(({ mode }) => ({
     VitePWA({
       registerType: "autoUpdate",
       injectRegister: false,
-      includeAssets: ["favicon.ico", "apple-touch-icon.png", "mask-icon.svg", "push-sw.js"],
+      includeAssets: ["favicon.ico", "apple-touch-icon.png", "mask-icon.svg", "push-sw.js", "pwa-update-sw.js"],
       manifest: {
         name: "LimeNote SNS",
         short_name: "LimeNote",
@@ -108,7 +108,7 @@ export default defineConfig(({ mode }) => ({
           },
         }],
         navigateFallback: "/RaimuNoteSNS.github.io/index.html",
-        importScripts: ["push-sw.js"],
+        importScripts: ["push-sw.js", "pwa-update-sw.js"],
         // ビルドエラー回避のためキャッシュ許容サイズを5MBに拡大
         maximumFileSizeToCacheInBytes: 5242880,
       },

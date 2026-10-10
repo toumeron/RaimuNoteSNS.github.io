@@ -18,8 +18,8 @@ export async function handleDirectMedia(request:Request):Promise<Response>{
    const limited=await quota(actor.userId,'upload',headers);if(limited)return limited;
    const form=await bounded.formData(),file=form.get('file'),conversationId=String(form.get('conversationId')??'');
    if(!uuid.test(conversationId)||!(file instanceof File)||!file.size||file.size>10*1024*1024||!['image/jpeg','image/png','image/webp'].includes(file.type))return Response.json({error:'画像の形式またはサイズが正しくありません'},{status:400,headers});
-   const {data:c,error:ce}=await service.from('direct_conversations').select('user_low,user_high,status,initiated_by').eq('id',conversationId).single();
-   if(ce||!c||![c.user_low,c.user_high].includes(actor.userId)||c.status==='declined')return Response.json({error:'この会話には添付できません'},{status:403,headers});
+   const {data:c,error:ce}=await service.from('direct_conversations').select('user_low,user_high,status,initiated_by,is_group,group_members').eq('id',conversationId).single();
+   if(ce||!c||!(c.is_group?c.group_members?.[actor.userId]?.status==='accepted':[c.user_low,c.user_high].includes(actor.userId))||c.status==='declined')return Response.json({error:'この会話には添付できません'},{status:403,headers});
    if(c.status==='pending'){const {count,error}=await service.from('direct_messages').select('id',{count:'exact',head:true}).eq('conversation_id',conversationId);if(error||c.initiated_by!==actor.userId||count!==0)return Response.json({error:'リクエストの承認をお待ちください'},{status:403,headers});}
    const publicId=`direct_messages/${conversationId}/${actor.userId}/${crypto.randomUUID()}`,ref=`cloudinary:${publicId}`;
    const params={overwrite:'false',public_id:publicId,timestamp:String(Math.floor(Date.now()/1000)),type:'authenticated'};const upstream=new FormData();upstream.set('file',file);for(const [k,v]of Object.entries(params))upstream.set(k,v);upstream.set('api_key',key);upstream.set('signature',await cloudinarySignature(params,secret));

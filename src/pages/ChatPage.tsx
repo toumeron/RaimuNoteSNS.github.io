@@ -1,3 +1,7 @@
+import {waitForFriendReply} from '../../supabase/functions/_shared/friendPacing';
+import {FRIEND_REACTION_INSTRUCTION,parseFriendResponse} from '../../supabase/functions/_shared/friendReaction';
+import {boundedChatContext} from '../../supabase/functions/_shared/chatContext';
+import {ChatPostPreview} from '@/components/ai/ChatPostPreview';
 import {ChatMenuContent} from '@/components/ai/ChatMenuContent';
 import { ProfileImageCropper } from '@/components/profile/ProfileImageCropper';
 import { AI_CHAT_DELETED, AI_CHAT_HISTORY_CHANGED, AI_FRIENDS_CHANGED, avatarOf, loadAvatars, saveAvatars, defaultAvatarUrl, listAssistants, findAssistant, saveCustomAssistant, deleteCustomAssistant, type AssistantItem, type AssistantDraft, type AvatarMap } from '@/lib/aiFriends';
@@ -853,19 +857,19 @@ export const CHAT_EXT_STYLES = `
 }
 
 /* ---------- ボイスモード ---------- */
-.vpop-root .voice-bg {
+.voice-bg {
   --voice-backdrop-lightness: 33.5%;
   background:
     radial-gradient(ellipse at 50% 40%, hsl(230 14% var(--voice-backdrop-lightness)), transparent 75%),
     linear-gradient(160deg, hsl(270 12% var(--voice-backdrop-lightness)), hsl(220 14% var(--voice-backdrop-lightness)));
 }
-.vpop-root .voice-bg.night { --voice-backdrop-lightness: 11%; }
-.vpop-root .glass {
+.voice-bg.night { --voice-backdrop-lightness: 11%; }
+.vpop-root .glass, .voice-bg .glass {
   background: rgba(255,255,255,.6);
   backdrop-filter: blur(18px) saturate(1.4); -webkit-backdrop-filter: blur(18px) saturate(1.4);
   border: 1px solid rgba(255,255,255,.7);
 }
-.vpop-root .night .glass { background: rgba(30,28,50,.55); border-color: rgba(255,255,255,.1); }
+.vpop-root .night .glass, .voice-bg.night .glass { background: rgba(30,28,50,.55); border-color: rgba(255,255,255,.1); }
 `
 
 /* ==================================================================
@@ -4121,6 +4125,7 @@ type Message = {
   id: string
   role: 'user' | 'assistant'
   content: string
+  reactions?: Record<string,Record<string,boolean>>
   references?: ReferencedPost[]
   codingArtifact?: CodingArtifact
   postPreview?: PostLinkPreview
@@ -4721,6 +4726,9 @@ function useMobileKeyboardViewport() {
         return
       }
 
+      // Pinch zoom shrinks the visual viewport without opening the keyboard.
+      if (Math.abs(viewport.scale - 1) > 0.01) return
+
       const heightDiff = window.innerHeight - viewport.height
       const keyboardOpen = heightDiff > 120
       const nextViewportHeight = keyboardOpen ? viewport.height : null
@@ -4919,7 +4927,7 @@ ${opts.extra ? `\n■ 追加情報・指示\n${opts.extra}\n` : ''}】`
 
   contentsPayload.forEach((item) => {
     const lastItem = sanitizedContents[sanitizedContents.length - 1]
-    if (lastItem.role === item.role) {
+    if (sanitizedContents.length > 1 && lastItem.role === item.role) {
       // 同じroleが連続する場合は1つにまとめる(画像partsは先頭側に寄せ、textだけ結合)
       const lastText = lastItem.parts.find((p): p is { text: string } => 'text' in p)
       const nextText = item.parts.find((p): p is { text: string } => 'text' in p)
@@ -4963,7 +4971,7 @@ const streamFromEdge = async (
           'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY
         },
         body: JSON.stringify({
-          contents,
+          contents: boundedChatContext(contents),
           model: args.model,
           thinking: args.model === 'advanced',
           mode: args.mode,
@@ -5650,6 +5658,8 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
 
   const runAssistant = async (updatedMessages: Message[], sessionId: string, sessionTitle: string) => {
     const model = selectedModel
+    const friendStartedAt = Date.now()
+    const pacedFriend = embedded && !!assistant
     const ac = new AbortController()
     abortRef.current = ac
     lastArtifactCountRef.current = 0
@@ -5690,7 +5700,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
     const contentOptions = {
       userLabel: user ? `${user.displayName} (@${user.username})` : '未ログインユーザー',
       modelLabel: model === 'advanced' ? 'LimeAI 5.5 Thinking' : 'LimeAI 5.0 Fast',
-      character: assistant ? { name: assistant.name, prompt: assistant.systemPrompt } : null,
+      character: assistant ? { name: assistant.name, prompt: (embedded ? FRIEND_REACTION_INSTRUCTION+'\n' : '') + assistant.systemPrompt } : null,
       extra: buildExtraInstructions({
         mode,
         character: !!assistant,
@@ -5720,7 +5730,8 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
     let flushTimer: number | null = null
     const flushContent = () => {
       flushTimer = null
-      patchAssistant({ content: accumulatedText })
+      if (pacedFriend) return
+      patchAssistant({ content: embedded && assistant ? parseFriendResponse(accumulatedText).reply : accumulatedText })
     }
     const scheduleFlush = () => {
       if (flushTimer === null) flushTimer = window.setTimeout(flushContent, 40)
@@ -5891,7 +5902,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
     const buildFinalAssistantMessage = (): Message => ({
       id: assistantMessageId,
       role: 'assistant',
-      content: accumulatedText,
+      content: embedded && assistant ? parseFriendResponse(accumulatedText).reply : accumulatedText,
       references: referencedPosts.length > 0 ? referencedPosts : undefined,
       codingArtifact,
       thinking: thinkingSummary ? { summary: thinkingSummary, steps: thinkingSteps } : undefined,
@@ -5909,10 +5920,15 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
       )
 
       if (flushTimer !== null) window.clearTimeout(flushTimer)
+      if (pacedFriend) await waitForFriendReply(parseFriendResponse(accumulatedText).reply,friendStartedAt,ac.signal)
       flushContent()
 
       // ストリーミングが正常に完了したタイミングでSupabaseへ最終結果を保存
-      await persistSession(sessionId, sessionTitle, [...updatedMessages, buildFinalAssistantMessage()], Date.now())
+      const reaction=embedded&&assistant?parseFriendResponse(accumulatedText).reaction:null
+      const recipient=[...updatedMessages].reverse().find(message=>message.role==='user')
+      const finalHistory=[...updatedMessages.map(message=>reaction&&recipient?.id===message.id?{...message,reactions:{...message.reactions,[reaction]:{...message.reactions?.[reaction],[`friend:${assistant!.id}`]:true}}}:message),buildFinalAssistantMessage()]
+      setSessions(prev=>prev.map(session=>session.id===sessionId?{...session,messages:finalHistory}:session))
+      await persistSession(sessionId, sessionTitle, finalHistory, Date.now())
 
     } catch (error: any) {
       if (flushTimer !== null) window.clearTimeout(flushTimer)
@@ -5922,7 +5938,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
         const hasPartial = accumulatedText.trim() !== '' || !!codingArtifact || toolArtifacts.length > 0
         if (hasPartial) {
           const partial = buildFinalAssistantMessage()
-          patchAssistant({ content: accumulatedText, thinking: partial.thinking })
+          patchAssistant({ content: partial.content, thinking: partial.thinking })
           await persistSession(sessionId, sessionTitle, [...updatedMessages, partial], Date.now())
         } else {
           setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, messages: updatedMessages } : s))
@@ -6580,9 +6596,9 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
           ) : embedded ? (
             <>
               {messages.length === 0 && <div className="dm-peer-intro"><Avatar className="dm-avatar"><AvatarImage src={friendId && assistant ? avatarOf(assistant,avatars) : `${import.meta.env.BASE_URL}pwa-192x192.png`}/><AvatarFallback>AI</AvatarFallback></Avatar><span className="dm-peer-name">{assistant?.name ?? 'LimeAI'}</span></div>}
-              {messages.map(msg=><div key={msg.id} className={`dm-message ${msg.role === 'user' ? 'is-own' : ''}`}><div className="dm-bubble">
+              {messages.filter(msg=>!(assistant&&isLoading&&msg.id===streamingMessageId)).map(msg=><div key={msg.id} className={`dm-message ${msg.role === 'user' ? 'is-own' : ''}`}><ChatPostPreview content={msg.content} fallback={<div className="dm-bubble">
                 {!msg.content && isLoading ? <Skeleton className="h-5 w-16 rounded-full"/> : msg.role === 'user' ? <p>{msg.content}</p> : <MessageMarkdown messageId={msg.id} content={msg.content} sources={msg.sources} activeArtifactId={activeArtifactId} streaming={streamingMessageId===msg.id} onOpenArtifact={openArtifact}/>}
-              </div></div>)}
+              </div>}/>{msg.reactions&&<div className="dm-reactions">{Object.entries(msg.reactions).map(([emoji,users])=><span className="dm-friend-reaction" key={emoji} title={`${assistant?.name??'フレンド'}のリアクション`}>{emoji}<strong>{Object.keys(users).length}</strong></span>)}</div>}</div>)}
               <div ref={messagesEndRef}/>
             </>
           ) : messages.length === 0 ? (
@@ -6915,6 +6931,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
         </div>
 
         {/* 入力フォームエリア */}
+        {embedded && assistant && isLoading && <div className="dm-typing" role="status"><span className="dm-typing-dots" aria-hidden="true"><i/><i/><i/></span><span><strong>{assistant.name}</strong>が入力中…</span></div>}
         {view === 'chat' && (embedded ? <form className="dm-compose" onSubmit={event=>{aiNearBottom.current=true;void handleSend(event)}}><div className="dm-compose-row"><div className="dm-input"><textarea ref={composerRef} aria-label="メッセージ" placeholder="メッセージ" rows={1} value={input} onChange={event=>setInput(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing&&window.matchMedia('(hover: hover) and (pointer: fine)').matches){event.preventDefault();event.currentTarget.form?.requestSubmit()}}}/>{isLoading ? <button type="button" className="dm-icon-button" aria-label="停止" onClick={handleStop}><Square size={20}/></button> : <button type="submit" className="dm-icon-button" aria-label="送信" disabled={!input.trim()}><Send size={21}/></button>}</div></div></form> :
         <div className="dm-ai-composer p-4 w-full max-w-3xl mx-auto shrink-0">
           {(postLinkPreviewLoading || postLinkPreview) && (

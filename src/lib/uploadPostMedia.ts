@@ -17,7 +17,10 @@ export async function uploadPostMedia(urls: string[], ownerId: string, resourceI
       if (!ext || file.size > 10 * 1024 * 1024) throw new Error('画像はPNG・JPEG・WebP・GIF・AVIF形式、10MB以内にしてください');
       const path = `${ownerId}/${resourceId}/${crypto.randomUUID()}.${ext}`;
       const {error} = await supabase.storage.from(POST_MEDIA_BUCKET).upload(path, file, {upsert: false, contentType: file.type, cacheControl: '0'});
-      if (error) throw new Error('画像のアップロードに失敗しました');
+      if (error) {
+        const detail=error.message?.trim();
+        throw new Error(detail ? `画像のアップロードに失敗しました（${detail}）` : '画像のアップロードに失敗しました', {cause:error});
+      }
       uploaded.push(path);
       results.push(`${MEDIA_PREFIX}${path}`);
     }

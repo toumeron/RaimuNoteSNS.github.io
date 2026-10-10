@@ -66,3 +66,32 @@ test('production startup, repeated launches and cached shell survive a server ou
   expect(errors).toEqual([]);
   } finally { await stopServer(); }
 });
+
+for(const legacy of [false,true])test(`worker update automatically reloads ${legacy?'legacy':'current'} clients exactly once`,async({page,context})=>{
+ let version=0;
+ const server=createServer((request,response)=>{
+  const relative=new URL(request.url!,'http://localhost').pathname.replace(/^\/RaimuNoteSNS\.github\.io\//,'');
+  const filename=relative&&/\.[a-z0-9]+$/i.test(relative)?relative:'index.html';
+  const file=resolve('dist',filename);if(!file.startsWith(resolve('dist')+'/')){response.writeHead(403).end();return;}
+  response.setHeader('Cache-Control','no-store');
+  response.setHeader('Content-Type',filename.endsWith('.js')?'application/javascript':filename.endsWith('.css')?'text/css':filename.endsWith('.html')?'text/html':'application/octet-stream');
+  if(legacy&&version===0&&filename==='sw.js'){response.end("self.addEventListener('install',()=>self.skipWaiting());self.addEventListener('activate',event=>event.waitUntil(self.clients.claim()));");return;}
+  if(legacy&&version===0&&filename==='index.html'){response.end('<meta charset="utf-8"><h1>旧バージョン</h1><script>navigator.serviceWorker.register("./sw.js",{scope:"./",updateViaCache:"none"});</script>');return;}
+  try{const content=readFileSync(file);response.end(filename==='sw.js'?`${content}\n/* revision ${version} */`:content);}catch{response.writeHead(404).end();}
+ });
+ await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
+ try{
+  await context.route('https://*.supabase.co/**',route=>route.fulfill({contentType:'application/json',body:'[]'}));
+  const port=(server.address() as {port:number}).port;
+  await page.goto(`http://127.0.0.1:${port}/RaimuNoteSNS.github.io/`);
+  await page.evaluate(async()=>{await navigator.serviceWorker.ready;});
+  await expect.poll(()=>page.evaluate(()=>!!navigator.serviceWorker.controller)).toBe(true);
+  if(legacy)await expect(page.getByRole('heading',{name:'旧バージョン'})).toBeVisible();else await expect(page.getByRole('button',{name:'ログインする',exact:true})).toBeVisible();
+  let reloads=0;page.on('request',request=>{if(request.isNavigationRequest()&&request.frame()===page.mainFrame())reloads++;});
+  version=1;
+  await page.evaluate(async()=>{await (await navigator.serviceWorker.getRegistration())!.update();});
+  await expect.poll(()=>reloads,{timeout:30000}).toBe(1);
+  await expect(page.getByRole('button',{name:'ログインする',exact:true})).toBeVisible();
+  await page.waitForTimeout(2500);expect(reloads).toBe(1);
+ }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
+});

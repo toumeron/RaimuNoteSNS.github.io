@@ -2817,10 +2817,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
       ]
     : [];
 
-  const sidebarItems = desktopLayout && /^\/messages(?:\/|$)/.test(normalizeAppPath(location.pathname))
-    ? [mobileSidebarItems.find(item=>item.path==='/'), mobileSidebarItems.find(item=>item.path==='/search'), mobileSidebarItems.find(item=>item.path==='/notifications'),
-      {label:'LimeAI',path:'/messages',icon:MessageSquare,onClick:()=>navigate('/messages')},mobileSidebarItems.find(item=>item.path.startsWith('/u/')),mobileSidebarItems.find(item=>item.path==='/settings')].filter((item):item is NonNullable<typeof item>=>!!item)
-    : mobileSidebarItems;
+  const sidebarItems = mobileSidebarItems;
 
   const renderMobileSidebar = () => {
     if (!user || typeof document === 'undefined' || (desktopLayout && !desktopSidebarContainer)) return null;
@@ -3011,6 +3008,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   const headerContent = (
       <header
       data-lime-app-header="true"
+      data-lime-follow-list-header={/^\/u\/[^/]+\/followers_following\/?$/.test(normalizeAppPath(location.pathname)) || undefined}
       data-lime-news-header={isNewsPage || undefined}
       data-lime-profile-scrolled={hideHeaderOnMobileProfile && profileCoverHidden || undefined}
       data-lime-profile-no-cover={hideHeaderOnMobileProfile && mobileProfileInfo && !mobileProfileInfo.user.coverUrl || undefined}
@@ -3691,4 +3689,9 @@ export function DirectMessagePanelHeader({children,actions,back,className=''}:{c
   {back&&<button type="button" className="dm-icon-button dm-back" aria-label="戻る" onClick={back}><ArrowLeft aria-hidden="true" size={22}/></button>}
   <div className="dm-panel-title">{children}</div><div className="dm-header-actions">{actions}</div>
  </header>;
+}
+
+/** Profile relationship list uses the existing Header module's panel chrome. */
+export function ProfileListHeader({name,username,back}:{name:string;username:string;back:()=>void}){
+ return <header className="follow-list-heading"><button type="button" aria-label="戻る" onClick={back}><ArrowLeft size={22}/></button><div><h1>{name}</h1><p>@{username}</p></div></header>;
 }

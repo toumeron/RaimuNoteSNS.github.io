@@ -498,11 +498,13 @@ export const handlePush = async (req: Request) => {
     const isDirect=record.type==='dm'||record.type==='dm_request';
     if(isDirect){
       if(!record.conversation_id||!record.direct_message_id||!record.actor_id)return jsonResponse({ok:true,sent:0,skipped:true});
-      const conversations=await selectRows<{user_low:string;user_high:string;status:string;read_low:string;read_high:string;deleted_low:string|null;deleted_high:string|null}>(config,`direct_conversations?select=user_low,user_high,status,read_low,read_high,deleted_low,deleted_high&id=eq.${encodeURIComponent(record.conversation_id)}&limit=1`);
-      const messages=await selectRows<{sender_id:string;conversation_id:string;created_at:string}>(config,`direct_messages?select=sender_id,conversation_id,created_at&id=eq.${encodeURIComponent(record.direct_message_id)}&limit=1`);
+      const conversations=await selectRows<{user_low:string;user_high:string;status:string;read_low:string;read_high:string;deleted_low:string|null;deleted_high:string|null;is_group?:boolean;group_members?:Record<string,{status:string;readAt?:string;deletedAt?:string;muted?:boolean}>}>(config,`direct_conversations?select=user_low,user_high,status,read_low,read_high,deleted_low,deleted_high,is_group,group_members&id=eq.${encodeURIComponent(record.conversation_id)}&limit=1`);
+      const messages=await selectRows<{sender_id:string;conversation_id:string;created_at:string;system_event?:string;deleted_at?:string|null;hidden_by?:string[]}>(config,`direct_messages?select=sender_id,conversation_id,created_at,system_event,deleted_at,hidden_by&id=eq.${encodeURIComponent(record.direct_message_id)}&limit=1`);
       const c=conversations[0],m=messages[0];
-      if(!c||!m||c.status==='declined'||![c.user_low,c.user_high].includes(record.user_id)||m.sender_id!==record.actor_id||m.sender_id===record.user_id||![c.user_low,c.user_high].includes(m.sender_id)||m.conversation_id!==record.conversation_id)return jsonResponse({ok:true,sent:0,skipped:true});
-      const cutoff=record.user_id===c.user_low?[c.read_low,c.deleted_low]:[c.read_high,c.deleted_high];
+      if(!c||!m||m.deleted_at||m.hidden_by?.includes(record.user_id)||c.status==='declined'||m.sender_id!==record.actor_id||m.sender_id===record.user_id||m.conversation_id!==record.conversation_id)return jsonResponse({ok:true,sent:0,skipped:true});
+      const member=c.group_members?.[record.user_id],sender=c.group_members?.[m.sender_id];
+      if(c.is_group ? (!member||member.muted||sender?.status!=='accepted'||(record.type==='dm_request'?member.status!=='pending'||!m.system_event:member.status!=='accepted')) : ![c.user_low,c.user_high].includes(record.user_id)||![c.user_low,c.user_high].includes(m.sender_id))return jsonResponse({ok:true,sent:0,skipped:true});
+      const cutoff=c.is_group?[member?.readAt,member?.deletedAt]:record.user_id===c.user_low?[c.read_low,c.deleted_low]:[c.read_high,c.deleted_high];
       if(cutoff.some(time=>time&&Date.parse(time)>=Date.parse(m.created_at)))return jsonResponse({ok:true,sent:0,skipped:true});
     }
     if (!isDirect && record.actor_id && !await accountVisible(record.actor_id)) return jsonResponse({ok:true,sent:0,skipped:true});

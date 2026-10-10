@@ -206,7 +206,7 @@ export function MediaLightbox({ selection, onClose }: { selection: MediaViewerSe
     <section className="lime-media-main dark" onClick={event => { if (event.target === event.currentTarget) close(); }}>
       <header className="lime-media-top">
         <button ref={closeButton} aria-label="画像を閉じる" onClick={close}><X className="lime-media-desktop-close" /><ArrowLeft className="lime-media-mobile-back" /></button>
-        <div className="lime-media-top-right"><button className="lime-media-pane-toggle" aria-label={details ? '詳細を隠す' : '詳細を表示'} onClick={() => setDetails(value => !value)}>{details ? <ChevronsRight /> : <ChevronsLeft />}</button><div className="lime-media-mobile-menu">{postControls('menu')}</div></div>
+        <div className="lime-media-top-right">{!!id && <button className="lime-media-pane-toggle" aria-label={details ? '詳細を隠す' : '詳細を表示'} onClick={() => setDetails(value => !value)}>{details ? <ChevronsRight /> : <ChevronsLeft />}</button>}<div className="lime-media-mobile-menu">{postControls('menu')}</div></div>
 
       </header>
       <div ref={stage} className="lime-media-stage" onDoubleClick={event => {
@@ -281,12 +281,12 @@ export function MediaLightbox({ selection, onClose }: { selection: MediaViewerSe
         {post && actions()}
 
         <div className="lime-media-mobile-reply">{post && !external && !offline && <div ><CommentForm postId={replyPostId!} parentCommentId={post.replyId ?? null} variant="mediaViewerMobile" replyTo={post} /></div>}</div>
-        {!post && postQuery.isPending && <Loader2 className="animate-spin" />}
+        {!!id && !post && postQuery.isPending && <Loader2 className="animate-spin" />}
         {!post && postQuery.isError && <button onClick={() => void postQuery.refetch()}>ポストを再読み込み</button>}
       </footer>
     </section>
-    <aside className="lime-media-detail" aria-hidden={!details || undefined} {...(!details ? { inert: '' } : {})}>
+    {!!id && <aside className="lime-media-detail" aria-hidden={!details || undefined} {...(!details ? { inert: '' } : {})}>
       {post ? <><div className="lime-media-author-header">{author}{postControls('menu')}</div><p className="lime-media-content">{renderStickerText(post.content, text => text.split(/(https?:\/\/[^\s]+)/g).map((part, i) => /^https?:\/\//.test(part) ? <a key={i} href={part} target="_blank" rel="noopener noreferrer" className="text-primary">{part}</a> : part))}</p><p className="lime-media-date">{new Date(post.createdAt).toLocaleTimeString('ja-JP', { hour: 'numeric', minute: '2-digit', hour12: true })} · {new Date(post.createdAt).toLocaleDateString('ja-JP', {year:'numeric',month:'long',day:'numeric'})}{post.clientName && ` · ${post.clientName}`}</p>{actions()}{replies}</> : <p>{postQuery.isError ? 'ポストの取得に失敗しました' : '読み込み中…'}</p>}
-    </aside>
+    </aside>}
   </div></PostOverlayContext.Provider>, document.body);
 }

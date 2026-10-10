@@ -1,3 +1,4 @@
+import {boundedChatContext} from '../_shared/chatContext.ts';
 import { authenticate, quota, boundedBody } from '../_shared/security.ts';
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2"
 
@@ -9,12 +10,12 @@ const corsHeaders = {
 
 const encoder = new TextEncoder()
 
-const RECENT_CHAT_MESSAGE_LIMIT = 2
+const RECENT_CHAT_MESSAGE_LIMIT = 8
 const SUMMARY_TRIGGER_CHARS = 1200
 const SUMMARY_INPUT_MAX_CHARS = 1500
 const SUMMARY_MAX_CHARS = 150
-const ANSWER_MAX_TOKENS = 520
-const THINKING_ANSWER_MAX_TOKENS = 1600
+const ANSWER_MAX_TOKENS = 1024
+const THINKING_ANSWER_MAX_TOKENS = 2200
 const THINKING_SUMMARY_MAX_CHARS = 900
 
 const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -309,7 +310,7 @@ function parseBody(value: unknown) {
   // Thinking is opt-in and is only available with the existing Advanced model.
   // This keeps the model selection stable while making the mode behavior real.
   const thinking = model === "advanced" && (value.thinking === true || value.thinking === "true")
-  return { contents, model, thinking }
+  return { contents: boundedChatContext(contents), model, thinking }
 }
 
 function getLatestUserText(contents: ClientContent[]) {
@@ -806,7 +807,7 @@ async function callGroqJson(groqApiKey: string, body: unknown): Promise<GroqChat
       "Authorization": `Bearer ${groqApiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(isRecord(body) ? {...body, reasoning_effort: body.model === ADVANCED_MODEL ? 'medium' : 'low'} : body),
   })
 
   if (!response.ok) {
@@ -857,7 +858,7 @@ async function buildBaseMessages(
   messages.push({
     role: "system",
     content: [
-      "あなたはLimeAIです。日本語で直接答えます。",
+      "指定された名前・キャラクター設定に従い、日本語で直接答えます。",
       `現在日時は${toJstDateLabel()}です。`,
       "回答は短く自然にします。",
       "最新のユーザー発話を最優先します。最新発話が単独で完結している場合、過去の検索話題を勝手に続けません。",
@@ -873,7 +874,7 @@ async function buildBaseMessages(
   })
 
   for (const text of systemTexts) {
-    messages.push({ role: "system", content: limitText(text, 1200) })
+    messages.push({ role: "system", content: limitText(text, 6000) })
   }
 
   if (olderItems.length > 0 && countChars(olderItems) >= SUMMARY_TRIGGER_CHARS) {
@@ -3207,7 +3208,7 @@ async function streamGroq(
       "Authorization": `Bearer ${groqApiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(isRecord(body) ? {...body, reasoning_effort: body.model === ADVANCED_MODEL ? 'medium' : 'low'} : body),
   })
 
   if (!response.ok) {

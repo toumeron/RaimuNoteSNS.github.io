@@ -1,360 +1,51 @@
-import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
+import {useEffect} from 'react';
 import {externalProfileMetadata} from '@/lib/externalProfileMetadata';
-import { useEffect, useState } from 'react';
-import { useParams, useSearchParams, useNavigate, Link } from 'react-router-dom';
-import { supabase } from '@/lib/supabase';
-import {
-  fetchBlueskyProfile,
-  fetchBlueskyFollowers,
-  fetchBlueskyFollows,
-  isBlueskyProfileId,
-} from '@/lib/bluesky';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { ChevronLeft, Users, UserPlus, ExternalLink, AlertTriangle } from 'lucide-react';
-import type { User } from '@/types';
-
-type ListUser = {
-  id: string;
-  username: string;
-  display_name: string;
-  avatar_url: string;
-  bio: string;
-  is_official: boolean;
-  is_private?: boolean;
-};
-
-export default function FollowersFollowingPage() {
-  const { username } = useParams();
-  const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = searchParams.get('tab') === 'followers' ? 'followers' : 'following';
-
-  const [targetUser, setTargetUser] = useState<User | null>(null);
-  const [notFound, setNotFound] = useState(false);
-  const [users, setUsers] = useState<ListUser[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [listError, setListError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!username) return;
-
-    let cancelled = false;
-    setNotFound(false);
-
-    async function fetchTargetUser() {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('username', username)
-        .maybeSingle();
-
-      if (cancelled) return;
-
-      if (error) {
-        console.error('profiles fetch error:', error);
-      }
-
-      if (data) {
-        setTargetUser({
-          ...data,
-          displayName: data.display_name,
-          avatarUrl: data.avatar_url,
-          coverUrl: data.cover_url,
-          createdAt: data.created_at,
-          isOfficial: data.is_official,
-          isPrivate: data.is_private,
-        });
-        return;
-      }
-
-      try {
-        console.debug('[FollowersFollowingPage] Lime profile not found, trying Bluesky:', username);
-        const blueskyProfile = await fetchBlueskyProfile(username as string);
-        if (cancelled) return;
-
-        if (!blueskyProfile) {
-          console.warn('[FollowersFollowingPage] Bluesky profile not found either:', username);
-          setNotFound(true);
-          return;
-        }
-
-        console.debug('[FollowersFollowingPage] Bluesky profile resolved:', blueskyProfile);
-        setTargetUser({
-          id: blueskyProfile.id,
-          username: blueskyProfile.username,
-          displayName: blueskyProfile.displayName,
-          avatarUrl: blueskyProfile.avatarUrl,
-          coverUrl: blueskyProfile.coverUrl,
-          bio: blueskyProfile.bio,
-          createdAt: blueskyProfile.createdAt,
-          isOfficial: false,
-        } as User);
-      } catch (error) {
-        console.error('Bluesky profile fetch failed:', error);
-        if (!cancelled) setNotFound(true);
-      }
-    }
-
-    fetchTargetUser();
-    return () => {
-      cancelled = true;
-    };
-  }, [username]);
-
-  const isBluesky = isBlueskyProfileId(targetUser?.id);
-
-  useEffect(() => {
-    if (!targetUser) return;
-
-    let cancelled = false;
-
-    async function fetchList() {
-      setLoading(true);
-      setListError(null);
-      const isFollowingTab = activeTab === 'following';
-
-      if (isBluesky) {
-        try {
-          console.debug('[FollowersFollowingPage] fetching bluesky list', {
-            actor: targetUser!.username,
-            tab: activeTab,
-          });
-          const page = isFollowingTab
-            ? await fetchBlueskyFollows({ actor: targetUser!.username, limit: 100 })
-            : await fetchBlueskyFollowers({ actor: targetUser!.username, limit: 100 });
-
-          if (cancelled) return;
-
-          console.debug('[FollowersFollowingPage] bluesky list result', page);
-
-          setUsers(
-            page.users.map((user) => ({
-              id: user.id,
-              username: user.username,
-              display_name: user.displayName,
-              avatar_url: user.avatarUrl,
-              bio: user.bio,
-              is_official: false,
-            })),
-          );
-        } catch (error) {
-          console.error('Bluesky follow list fetch failed:', error);
-          if (!cancelled) {
-            setUsers([]);
-            setListError(
-              error instanceof Error ? error.message : 'Blueskyのリスト取得に失敗しました',
-            );
-          }
-        } finally {
-          if (!cancelled) setLoading(false);
-        }
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from('follows')
-        .select(`
-          ${isFollowingTab ? 'followee_id,external_provider,external_handle,external_profile' : 'follower_id'},
-          profile:profiles!${isFollowingTab ? 'follows_followee_id_fkey' : 'follows_follower_id_fkey'} (
-            id,
-            username,
-            display_name,
-            avatar_url,
-            bio,
-            is_official,
-            is_private
-          )
-        `)
-        .eq(isFollowingTab ? 'follower_id' : 'followee_id', targetUser!.id);
-
-      if (cancelled) return;
-
-      if (error) {
-        console.error('follows fetch error:', error);
-        setListError(error.message);
-        setUsers([]);
-      } else if (data) {
-        const list = data.map((d:any)=>{
-          if(d.profile)return d.profile;
-          if(!isFollowingTab||!d.external_provider)return null;
-          const profile=d.external_profile??{};
-          return {id:profile.id??(d.external_provider==='misskey'?'misskey-user:':'did:handle:')+d.external_handle,username:d.external_handle,display_name:profile.displayName??d.external_handle,avatar_url:profile.avatarUrl??'',bio:profile.bio??'',is_official:false};
-        }).filter(Boolean);
-        setUsers(list);
-        setLoading(false);
-        // Old imported follows have only a handle. Resolve missing public
-        // metadata without delaying the already available list.
-        const missing = data.filter((row:any)=>row.external_provider && (!row.external_profile?.avatarUrl || !row.external_profile?.displayName));
-        let index=0;
-        await Promise.all(Array.from({length:Math.min(3,missing.length)},async()=>{
-          while(index<missing.length&&!cancelled){
-            const row:any=missing[index++];
-            try {
-              const profile=await externalProfileMetadata(row.external_handle);
-              if(profile&&!cancelled)setUsers(current=>current.map(entry=>entry.username===row.external_handle?{...entry,id:profile.id,display_name:profile.displayName,avatar_url:profile.avatarUrl,bio:profile.bio}:entry));
-            }catch{/* Keep the handle visible when the provider is unavailable. */}
-          }
-        }));
-      }
-      setLoading(false);
-    }
-
-    fetchList();
-    return () => {
-      cancelled = true;
-    };
-  }, [targetUser, activeTab, isBluesky]);
-
-  if (notFound) {
-    return (
-      <div className="max-w-2xl mx-auto min-h-screen bg-transparent sm:p-4">
-        <div className="flex flex-col items-center justify-center py-20 text-center gap-3">
-          <AlertTriangle className="h-8 w-8 text-muted-foreground/60" />
-          <p className="text-lg font-bold text-foreground">ユーザーが見つかりませんでした</p>
-          <p className="text-sm text-muted-foreground max-w-xs">
-            @{username} はLimeNote・Bluesky・Misskeyに見つかりませんでした。
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!targetUser) return null;
-
-  return (
-    <div className="max-w-2xl mx-auto min-h-screen bg-transparent sm:p-4">
-      <div className="overflow-hidden rounded-3xl border border-border/60 bg-transparent shadow-none">
-        <div className="relative flex items-center gap-4 p-4 sm:p-6 border-b border-border/60 bg-transparent backdrop-blur-sm">
-          <button
-            onClick={() => navigate(-1)}
-            className="group flex h-10 w-10 items-center justify-center rounded-full bg-background/40 border border-border/40 text-foreground transition hover:bg-primary-soft hover:text-primary"
-          >
-            <ChevronLeft className="h-6 w-6 transition-transform group-hover:-translate-x-0.5" />
-          </button>
-          <div className="flex flex-col">
-            <h1 className="font-display text-xl font-black text-foreground flex items-center gap-2">
-              {activeTab === 'following' ? (
-                <Users className="h-5 w-5 text-primary" />
-              ) : (
-                <UserPlus className="h-5 w-5 text-primary" />
-              )}
-              {targetUser.displayName}
-            </h1>
-            <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-              @{targetUser.username}
-              {isBluesky && (
-    <a></a>
-              )}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex bg-transparent">
-          <button
-            onClick={() => setSearchParams({ tab: 'following' })}
-            className={`flex-1 py-4 text-sm font-black transition-all relative ${
-              activeTab === 'following'
-                ? 'text-primary'
-                : 'text-muted-foreground hover:text-foreground hover:bg-primary-soft/5'
-            }`}
-          >
-            フォロー中
-            {activeTab === 'following' && (
-              <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-12 h-1 bg-primary rounded-t-full" />
-            )}
-          </button>
-          <button
-            onClick={() => setSearchParams({ tab: 'followers' })}
-            className={`flex-1 py-4 text-sm font-black transition-all relative ${
-              activeTab === 'followers'
-                ? 'text-primary'
-                : 'text-muted-foreground hover:text-foreground hover:bg-primary-soft/5'
-            }`}
-          >
-            フォロワー
-            {activeTab === 'followers' && (
-              <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-12 h-1 bg-primary rounded-t-full" />
-            )}
-          </button>
-        </div>
-
-        <div className="divide-y divide-border/40 bg-transparent">
-          {loading ? (
-            <div className="flex flex-col items-center justify-center py-20 gap-3 bg-transparent">
-              <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary/20 border-t-primary" />
-              <p className="text-sm font-bold text-muted-foreground">読み込み中...</p>
-            </div>
-          ) : listError ? (
-            <div className="flex flex-col items-center justify-center py-20 text-center bg-transparent px-6 border-t border-border/40 gap-3">
-              <AlertTriangle className="h-8 w-8 text-destructive/70" />
-              <p className="text-lg font-bold text-foreground">読み込みに失敗しました</p>
-              <p className="text-sm text-muted-foreground max-w-xs break-all">{listError}</p>
-            </div>
-          ) : users.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 text-center bg-transparent px-6 border-t border-border/40">
-              <div className="mb-4 rounded-full bg-muted/20 p-4">
-                <Users className="h-8 w-8 text-muted-foreground/60" />
-              </div>
-              <p className="text-lg font-bold text-foreground">
-                {activeTab === 'following' ? 'まだ誰もフォローしていません' : 'まだフォロワーはいません'}
-              </p>
-              <p className="text-sm text-muted-foreground max-w-xs">
-                ユーザーを見つけてつながりを持つと、ここにリストが表示されます。
-              </p>
-            </div>
-          ) : (
-            <div className="flex flex-col border-t border-border/40">
-              {users.map((user) => {
-                const blueskyProfileUrl = user.id.startsWith('misskey-user:') ? 'https://misskey.io/@' + user.username.replace(/@misskey\.io$/, '') : 'https://bsky.app/profile/' + user.username;
-                return (
-                  <div
-                    key={user.id}
-                    className="group flex p-4 transition-colors hover:bg-primary-soft/5 sm:px-6 bg-transparent"
-                  >
-                    <Link to={`/u/${user.username}`} className="shrink-0 mr-3">
-                      <Avatar className="h-12 w-12 border-2 border-primary/10 bg-background/40">
-                        <AvatarImage src={user.avatar_url} alt={user.display_name} />
-                        <AvatarFallback className="font-bold text-primary bg-primary-soft">
-                          {user.display_name.slice(0, 1)}
-                        </AvatarFallback>
-                      </Avatar>
-                    </Link>
-
-                    <div className="flex-1 min-w-0 flex flex-col">
-                      <div className="flex items-center justify-between gap-2 mb-0.5">
-                        <Link to={`/u/${user.username}`} className="min-w-0 flex flex-col">
-                          <div className="flex items-center gap-1 min-w-0">
-                            <span className="font-bold text-foreground truncate text-base group-hover:underline decoration-foreground decoration-2">
-                              {user.display_name}
-                            </span>
-                            {user.is_private && <PrivateAccountBadge/>}
-                            {user.is_official && (
-                              <img
-                                src={`${import.meta.env.BASE_URL}verified.png`}
-                                alt="Official"
-                                className="h-[1.1em] w-[1.1em] shrink-0"
-                              />
-                            )}
-                          </div>
-                          <p className="text-sm text-muted-foreground truncate leading-none">
-                            @{user.username}
-                          </p>
-                        </Link>
-                      </div>
-
-                      {user.bio && (
-                        <p className="text-sm text-foreground/80 line-clamp-2 leading-relaxed mt-1">
-                          {user.bio}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
+import {useParams,useSearchParams,useNavigate,Link} from 'react-router-dom';
+import {useQuery,useInfiniteQuery,useQueryClient} from '@tanstack/react-query';
+import {supabase} from '@/lib/supabase';
+import {fetchBlueskyProfile} from '@/lib/bluesky';
+import {useAuth} from '@/hooks/useAuth';
+import {fetchFollowListPage,type FollowListTab} from '@/api/followLists';
+import {FollowButton} from '@/components/profile/FollowButton';
+import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
+import {Avatar,AvatarFallback,AvatarImage} from '@/components/ui/avatar';
+import {ProfileListHeader} from '@/components/layout/Header';
+import {Loader2,AlertTriangle} from 'lucide-react';
+import type {User} from '@/types';
+import './follow-lists.css';
+function Bio({text}:{text:string}){
+ return <p className="follow-list-bio">{text.split(/(https?:\/\/[^\s]+)/g).map((part,i)=>/^https?:\/\//.test(part)?<a key={i} href={part} target="_blank" rel="noopener noreferrer">{part}</a>:part)}</p>;
+}
+export default function FollowersFollowingPage(){
+ const client=useQueryClient();const {username}=useParams();const {user:viewer}=useAuth();const navigate=useNavigate();const [params,setParams]=useSearchParams();
+ const tab:FollowListTab=params.get('tab')==='known'?'known':params.get('tab')==='followers'?'followers':'following';
+ const target=useQuery({queryKey:['follow-list-profile',username],queryFn:async({signal})=>{
+  const {data,error}=await supabase.from('profiles').select('*').eq('username',username!).abortSignal(signal).maybeSingle();
+  if(error)throw error;
+  if(data)return {id:data.id,username:data.username,displayName:data.display_name||data.username,avatarUrl:data.avatar_url||'',coverUrl:data.cover_url||'',bio:data.bio||'',createdAt:data.created_at||'',isOfficial:data.is_official,isPrivate:data.is_private} as User;
+  return await fetchBlueskyProfile(username!,signal) as User|null;
+ },enabled:!!username});
+ const list=useInfiniteQuery({queryKey:['follow-list',target.data?.id,tab,viewer?.id],enabled:!!target.data&&!!viewer,initialPageParam:null as string|null,queryFn:({pageParam,signal})=>fetchFollowListPage(target.data!,tab,viewer!.id,pageParam,signal),getNextPageParam:page=>page.cursor??undefined});
+ const users=[...new Map((list.data?.pages.flatMap(page=>page.users)??[]).map(user=>[user.id,user])).values()];
+ useEffect(()=>{
+  const missing=users.filter(user=>/^(did:|misskey-user:)/.test(user.id)&&(!user.avatarUrl||user.displayName===user.username));if(!missing.length)return;
+  let cancelled=false,index=0;const resolved=new Map<string,User>();
+  void Promise.all(Array.from({length:Math.min(3,missing.length)},async()=>{while(index<missing.length&&!cancelled){const row=missing[index++];const profile=await externalProfileMetadata(row.username);if(profile)resolved.set(row.id,profile);}})).then(()=>{if(cancelled||!resolved.size)return;client.setQueryData(['follow-list',target.data?.id,tab,viewer?.id],(data:typeof list.data)=>data?{...data,pages:data.pages.map(page=>({...page,users:page.users.map(row=>resolved.get(row.id)??row)}))}:data);});
+  return()=>{cancelled=true};
+ },[list.data,target.data?.id,tab,viewer?.id,client]);
+ const changeTab=(tab:FollowListTab)=>{setParams(previous=>{const next=new URLSearchParams(previous);next.set('tab',tab);return next});};
+ return <section className="follow-list-page" aria-label="フォロー一覧">
+  <ProfileListHeader name={target.data?.displayName??username??''} username={target.data?.username??username??''} back={()=>window.history.state?.idx>0?navigate(-1):navigate(`/u/${encodeURIComponent(username??'')}`)}/>
+  <div className="follow-list-tabs" role="tablist" aria-label="フォロー一覧の種類">{([{id:'known',label:'知り合いのフォロワー'},{id:'followers',label:'フォロワー'},{id:'following',label:'フォロー中'}] as const).map(item=><button key={item.id} id={`follow-tab-${item.id}`} type="button" role="tab" aria-selected={tab===item.id} aria-controls="follow-list-panel" onClick={()=>changeTab(item.id)}><span>{item.label}</span></button>)}</div>
+  <div id="follow-list-panel" role="tabpanel" aria-labelledby={`follow-tab-${tab}`} aria-busy={target.isPending||list.isFetching}>
+   {target.isPending||target.data&&list.isPending?<div className="follow-list-status" role="status"><Loader2 className="animate-spin" size={24}/><p>読み込み中…</p></div>:target.isError||list.isError?<div className="follow-list-status" role="alert"><AlertTriangle size={24}/><p>一覧を読み込めませんでした。</p><button onClick={()=>void (target.isError?target.refetch():list.refetch())}>再試行</button></div>:!target.data?<div className="follow-list-status"><p>ユーザーが見つかりませんでした。</p></div>:<>
+    {users.map(user=><article key={user.id} className="follow-list-row" aria-label={user.displayName}>
+     <Link className="follow-list-avatar" to={`/u/${encodeURIComponent(user.username)}`} aria-label={`${user.displayName}のプロフィール`}><Avatar><AvatarImage src={user.avatarUrl} alt=""/><AvatarFallback>{user.displayName.slice(0,1)}</AvatarFallback></Avatar></Link>
+     <div className="follow-list-user"><div className="follow-list-identity"><Link to={`/u/${encodeURIComponent(user.username)}`}><span className="follow-list-name"><span className="follow-list-display">{user.displayName}</span>{user.isPrivate&&<PrivateAccountBadge/>}{user.isOfficial&&<img src={`${import.meta.env.BASE_URL}verified.png`} alt="認証済み"/>}</span><span className="follow-list-handle">@{user.username}</span></Link>{user.id!==viewer?.id&&<div className="follow-list-action"><FollowButton userId={user.id} externalProfile={user.id.startsWith('did:')||user.id.startsWith('misskey-user:')?user:undefined}/></div>}</div>{user.bio&&<Bio text={user.bio}/>}</div>
+    </article>)}
+    {!users.length&&!list.hasNextPage&&<div className="follow-list-status"><p>{tab==='known'?'知り合いのフォロワーはいません':tab==='following'?'まだ誰もフォローしていません':'まだフォロワーはいません'}</p></div>}
+    {list.hasNextPage&&<button className="follow-list-more" disabled={list.isFetchingNextPage} onClick={()=>void list.fetchNextPage()}>{list.isFetchingNextPage?'読み込み中…':'もっと見る'}</button>}
+   </>}
+  </div>
+ </section>;
 }
