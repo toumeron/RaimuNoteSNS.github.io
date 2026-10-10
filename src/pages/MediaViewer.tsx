@@ -1222,7 +1222,7 @@ export default function MediaViewer() {
           placeholder="検索"
           value={searchQuery}
           onChange={(event) => setSearchQuery(event.target.value)}
-          className="h-8 w-full rounded-lg border border-black/[0.08] bg-black/[0.03] px-2.5 text-xs font-medium text-foreground outline-none transition-colors placeholder:text-muted-foreground/40 focus:border-pink-500/50 dark:border-white/10 dark:bg-black/30"
+          className="h-8 w-full rounded-lg border border-black/[0.08] bg-black/[0.03] px-2.5 text-xs font-medium text-foreground outline-none transition-colors placeholder:text-muted-foreground/40 focus:border-primary/50 dark:border-white/10 dark:bg-black/30"
         />
       </div>
     );
@@ -1297,7 +1297,7 @@ export default function MediaViewer() {
             href={part}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-pink-500 transition-colors hover:underline dark:text-pink-400"
+            className="text-primary transition-colors hover:underline dark:text-primary"
             onClick={(event) => event.stopPropagation()}
           >
             {part}
@@ -1327,7 +1327,7 @@ export default function MediaViewer() {
               event.stopPropagation();
               navigate(`/search?q=${encodeURIComponent(part)}`);
             }}
-            className="inline-block align-baseline text-pink-500 transition-colors hover:underline dark:text-pink-400"
+            className="inline-block align-baseline text-primary transition-colors hover:underline dark:text-primary"
           >
             {part}
           </button>
@@ -1354,7 +1354,7 @@ export default function MediaViewer() {
           <Link
             key={`mention-${index}-${part}`}
             to={`/u/${mentionUsername}`}
-            className="text-pink-500 transition-colors hover:underline dark:text-pink-400"
+            className="text-primary transition-colors hover:underline dark:text-primary"
             onClick={(event) => event.stopPropagation()}
           >
             {part}

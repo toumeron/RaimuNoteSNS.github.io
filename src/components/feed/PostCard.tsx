@@ -671,9 +671,9 @@ const POST_CARD_GLOBAL_STYLES = `
           text-shadow: none !important;
         }
 
-        .timeline-glass-card .text-pink-500,
-        .timeline-mobile-readable .text-pink-500 {
-          color: hsl(var(--timeline-link, 330 96% 60%)) !important;
+        .timeline-glass-card .text-primary,
+        .timeline-mobile-readable .text-primary {
+          color: hsl(var(--timeline-link, var(--primary))) !important;
           text-shadow: none !important;
         }
 
@@ -695,9 +695,9 @@ const POST_CARD_GLOBAL_STYLES = `
           color: rgba(226, 232, 240, 0.76) !important;
         }
 
-        .timeline-theme-dark .timeline-glass-card .text-pink-500,
-        .timeline-theme-dark .timeline-mobile-readable .text-pink-500 {
-          color: rgb(255, 87, 166) !important;
+        .timeline-theme-dark .timeline-glass-card .text-primary,
+        .timeline-theme-dark .timeline-mobile-readable .text-primary {
+          color: hsl(var(--primary)) !important;
         }
 
         .timeline-theme-light .timeline-glass-card,
@@ -718,9 +718,9 @@ const POST_CARD_GLOBAL_STYLES = `
           color: rgba(86, 74, 66, 0.74) !important;
         }
 
-        .timeline-theme-light .timeline-glass-card .text-pink-500,
-        .timeline-theme-light .timeline-mobile-readable .text-pink-500 {
-          color: rgb(224, 32, 122) !important;
+        .timeline-theme-light .timeline-glass-card .text-primary,
+        .timeline-theme-light .timeline-mobile-readable .text-primary {
+          color: hsl(var(--primary)) !important;
         }
 
         .timeline-glass-card svg,
@@ -1665,7 +1665,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
             href={part}
             target="_blank"
             rel="noopener noreferrer"
-            className={embedded ? "inline-block max-w-full truncate align-bottom text-pink-500 hover:underline transition-colors" : "text-pink-500 hover:underline transition-colors"}
+            className={embedded ? "inline-block max-w-full truncate align-bottom text-primary hover:underline transition-colors" : "text-primary hover:underline transition-colors"}
             onClick={(e) => e.stopPropagation()}
           >
             {embedded ? (() => { const label = part.replace(/^https?:\/\//, ''); return label.length > 32 ? `${label.slice(0, 29)}…` : label; })() : part}
@@ -1688,7 +1688,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
           <Link
             key={`mention-${index}`}
             to={`/u/${username}`}
-            className={embedded ? "inline-block max-w-full truncate align-bottom text-pink-500 hover:underline transition-colors" : "text-pink-500 hover:underline transition-colors"}
+            className={embedded ? "inline-block max-w-full truncate align-bottom text-primary hover:underline transition-colors" : "text-primary hover:underline transition-colors"}
             onClick={(e) => e.stopPropagation()}
           >
             {embedded ? (() => { const label = part.replace(/^https?:\/\//, ''); return label.length > 32 ? `${label.slice(0, 29)}…` : label; })() : part}
@@ -1713,7 +1713,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
               e.stopPropagation();
               navigate(`/search?q=${encodeURIComponent(part)}`);
             }}
-            className="text-pink-500 hover:underline transition-colors inline-block align-baseline"
+            className="text-primary hover:underline transition-colors inline-block align-baseline"
           >
             {part}
           </button>
@@ -2596,7 +2596,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                           placeholder="検索"
                           value={searchQuery}
                           onChange={(e) => setSearchQuery(e.target.value)}
-                          className="timeline-portal-search w-full h-8 bg-black/[0.03] dark:bg-black/30 border border-black/[0.08] dark:border-white/10 rounded-lg px-2.5 text-xs font-medium text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-pink-500/50 transition-colors"
+                          className="timeline-portal-search w-full h-8 bg-black/[0.03] dark:bg-black/30 border border-black/[0.08] dark:border-white/10 rounded-lg px-2.5 text-xs font-medium text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/50 transition-colors"
                         />
                       </div>
                     </div>

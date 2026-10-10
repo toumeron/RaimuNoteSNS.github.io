@@ -35,8 +35,10 @@ export default function FollowersFollowingPage(){
  },[list.data,target.data?.id,tab,viewer?.id,client]);
  const changeTab=(tab:FollowListTab)=>{setParams(previous=>{const next=new URLSearchParams(previous);next.set('tab',tab);return next});};
  return <section className="follow-list-page" aria-label="フォロー一覧">
+  <div className="follow-list-sticky">
   <ProfileListHeader name={target.data?.displayName??username??''} username={target.data?.username??username??''} back={()=>window.history.state?.idx>0?navigate(-1):navigate(`/u/${encodeURIComponent(username??'')}`)}/>
   <div className="follow-list-tabs" role="tablist" aria-label="フォロー一覧の種類">{([{id:'known',label:'知り合いのフォロワー'},{id:'followers',label:'フォロワー'},{id:'following',label:'フォロー中'}] as const).map(item=><button key={item.id} id={`follow-tab-${item.id}`} type="button" role="tab" aria-selected={tab===item.id} aria-controls="follow-list-panel" onClick={()=>changeTab(item.id)}><span>{item.label}</span></button>)}</div>
+  </div>
   <div id="follow-list-panel" role="tabpanel" aria-labelledby={`follow-tab-${tab}`} aria-busy={target.isPending||list.isFetching}>
    {target.isPending||target.data&&list.isPending?<div className="follow-list-status" role="status"><Loader2 className="animate-spin" size={24}/><p>読み込み中…</p></div>:target.isError||list.isError?<div className="follow-list-status" role="alert"><AlertTriangle size={24}/><p>一覧を読み込めませんでした。</p><button onClick={()=>void (target.isError?target.refetch():list.refetch())}>再試行</button></div>:!target.data?<div className="follow-list-status"><p>ユーザーが見つかりませんでした。</p></div>:<>
     {users.map(user=><article key={user.id} className="follow-list-row" aria-label={user.displayName}>

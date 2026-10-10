@@ -710,7 +710,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
             href={part}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-pink-500 hover:underline transition-colors"
+            className="text-primary hover:underline transition-colors"
             onClick={(e) => e.stopPropagation()}
           >
             {part}
@@ -737,7 +737,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
           <Link
             key={`mention-${index}`}
             to={`/u/${username}`}
-            className="text-pink-500 hover:underline transition-colors"
+            className="text-primary hover:underline transition-colors"
             onClick={(e) => e.stopPropagation()}
           >
             {part}
@@ -750,7 +750,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
           <Link
             key={`hashtag-${index}`}
             to={`/search?q=${encodeURIComponent(part)}`}
-            className="text-pink-500 hover:underline transition-colors"
+            className="text-primary hover:underline transition-colors"
             onClick={(e) => e.stopPropagation()}
           >
             {part}
@@ -2108,7 +2108,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                           placeholder="検索"
                           value={searchQuery}
                           onChange={(e) => setSearchQuery(e.target.value)}
-                          className="w-full h-8 bg-black/[0.03] dark:bg-black/30 border border-black/[0.08] dark:border-white/10 rounded-lg px-2.5 text-xs font-medium text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-pink-500/50 transition-colors"
+                          className="w-full h-8 bg-black/[0.03] dark:bg-black/30 border border-black/[0.08] dark:border-white/10 rounded-lg px-2.5 text-xs font-medium text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/50 transition-colors"
                         />
                       </div>
                     </div>

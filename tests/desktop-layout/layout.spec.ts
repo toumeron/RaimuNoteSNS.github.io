@@ -922,6 +922,7 @@ for (const width of [390,1440]) {
     await page.route('**/src/api/posts.ts*',route=>route.fulfill({contentType:'application/javascript',body:`
       import {toggleReplyRepost,getProfileReplyReposts,getReplyPost} from '/RaimuNoteSNS.github.io/src/api/reply-reposts.ts';
       const posts=${JSON.stringify(posts)};
+      export const getHighlightedPosts=async()=>[];export const getPostQuotes=async()=>[];export const getPostReposters=async()=>[];export const getMapPosts=async()=>[];export const setPostMapLocation=async()=>{};
       export const getFeed=async()=>posts;export const getFollowingFeed=async()=>posts;export const getPostsByUser=async()=>posts;
       export const getProfilePosts=async()=>[...posts,...await getProfileReplyReposts('${user.id}',10)];
       export const getLikedPostsByUser=async()=>[];export const searchPosts=async()=>posts;
@@ -947,7 +948,7 @@ for (const width of [390,1440]) {
     await expect(thread).toContainText(reply.content);
     await expect(thread.getByRole('button',{name:'リポスト',exact:true})).toHaveCount(2);
     const replyButton=thread.getByRole('button',{name:'リポスト',exact:true}).last();
-    await replyButton.click();await page.getByRole('menuitem',{name:'リポストする',exact:true}).click();
+    await replyButton.click();await page.getByRole('menuitem',{name:'リポストする',exact:true}).or(page.getByRole('button',{name:'リポストする',exact:true})).click();
     const sharedCard=page.locator(`[data-lime-comment-card="${reply.id}"]`).filter({hasText:'あなたがリポストしました'});
     await expect(sharedCard).toBeVisible();
     await expect(sharedCard).toContainText('返信先: @limeさん');
@@ -960,7 +961,7 @@ for (const width of [390,1440]) {
     const header=(await sharedCard.locator('[data-lime-post-header]').boundingBox())!;
     expect(label.y).toBeLessThan(header.y);expect(Math.abs(label.x-header.x)).toBeLessThan(1);
     await sharedCard.getByRole('button',{name:'リポスト',exact:true}).click();
-    await page.getByRole('menuitem',{name:'引用リポスト',exact:true}).click();
+    await page.getByRole('menuitem',{name:'引用リポスト',exact:true}).or(page.getByRole('button',{name:'引用リポスト',exact:true})).click();
     const dialog=page.getByRole('dialog',{name:'引用リポスト'});
     await expect(dialog).toBeVisible();
     await expect(dialog.locator('[data-lime-quoted-post]')).toContainText('返信先: @limeさん');
@@ -969,7 +970,7 @@ for (const width of [390,1440]) {
     await dialog.getByRole('button',{name:'引用ポスト',exact:true}).click();
     expect(await page.evaluate(()=>(window as any).__lastCreatedPost)).toMatchObject({parentId:`reply:${reply.id}`,content:'返信を引用',isQuote:true});
     await sharedCard.getByRole('button',{name:'リポスト',exact:true}).click();
-    await page.getByRole('menuitem',{name:'リポストを取り消す',exact:true}).click();
+    await page.getByRole('menuitem',{name:'リポストを取り消す',exact:true}).or(page.getByRole('button',{name:'リポストを取り消す',exact:true})).click();
     await expect(sharedCard).toHaveCount(0);
     expect(shared).toBe(false);expect(errors).toEqual([]);
   });
@@ -1859,6 +1860,43 @@ for(const account of ['limeai','human'])test(`DM pinch zoom leaves ${account} co
  await expect.poll(()=>page.locator('.dm-workspace').evaluate(el=>el.style.getPropertyValue('--dm-viewport-height'))).toBe('550px');expect((await composer.boundingBox())!.y).toBeLessThan(before!.y);
 });
 
+for(const kind of ['human','group','limeai','friend'])test(`iPad DM mobile viewport keeps header and input visible during keyboard panning for ${kind}`,async({page})=>{
+ const id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+ const friend={id:'custom:keyboard',slug:null,name:'入力フレンド',description:'友達',systemPrompt:'友達',starter:'',greeting:'こんにちは',category:'カスタム',builtin:false};
+ const peer={...user,id:'22222222-2222-4222-8222-222222222222',username:'member',displayName:'参加者',avatarUrl:image};
+ const conversation={id,isGroup:kind==='group',status:'accepted',initiatedBy:user.id,updatedAt:user.createdAt,createdAt:user.createdAt,peer,description:'',adminOnly:true,muted:false,members:[{...user,status:'accepted',admin:true},{...peer,status:'accepted',admin:false}],friends:[],requests:[],preview:'',unreadCount:0};
+ await page.addInitScript(({uid,friend})=>{
+  const viewport=Object.assign(new EventTarget(),{height:844,scale:1,offsetTop:0});Object.defineProperty(window,'visualViewport',{configurable:true,value:viewport});
+  localStorage.setItem(`limeai:${uid}:assistants`,JSON.stringify([friend]));
+  localStorage.setItem(`limeai:${uid}:session-meta`,JSON.stringify({'keyboard-history':{assistantId:friend.id}}));
+ },{uid:user.id,friend});
+ await page.route('**/*.supabase.co/rest/v1/chat_sessions*',route=>route.fulfill({contentType:'application/json',body:'[]'}));
+ await page.route('**/*.supabase.co/rest/v1/rpc/*',route=>{const endpoint=new URL(route.request().url()).pathname.split('/').pop();const data=endpoint==='get_direct_inbox'?[conversation]:endpoint==='get_group_direct_conversation'?conversation:endpoint==='get_dm_preferences'?'everyone':undefined;if(data===undefined)return route.fallback();return route.fulfill({contentType:'application/json',body:JSON.stringify(data)});});
+ await page.route('**/*.supabase.co/rest/v1/direct_conversations*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({id,is_group:kind==='group',status:'accepted',user_low:user.id,user_high:peer.id,initiated_by:user.id})}));
+ await page.route('**/*.supabase.co/rest/v1/direct_messages*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify(Array.from({length:30},(_,i)=>({id:`message-${i}`,conversation_id:id,sender_id:peer.id,content:'長い会話のメッセージです。'.repeat(8),attachments:[],created_at:`2026-10-10T04:${String(i).padStart(2,'0')}:00Z`})))}));
+ const chatId=kind==='limeai'?'limeai':kind==='friend'?'friend:'+friend.id:id;
+ await page.setViewportSize({width:390,height:844});await page.goto('messages/'+encodeURIComponent(chatId));
+ const workspace=page.locator('.dm-workspace'),header=page.locator('.dm-thread-header'),input=page.getByRole('textbox',{name:'メッセージ',exact:true});
+ await expect(input).toBeVisible();await expect(header).toBeVisible();await expect(workspace).toHaveCSS('position','fixed');
+ // Reproduce the scrollIntoView calls made when message history loads.
+ await page.locator('.dm-history').evaluate(el=>{el.scrollTop=el.scrollHeight;el.lastElementChild?.scrollIntoView({block:'end'});});
+ expect((await header.boundingBox())!.y).toBeGreaterThanOrEqual(0);expect(await page.evaluate(()=>window.scrollY)).toBe(0);
+ await input.focus();await input.fill('入力を続ける');
+ // iOS can pan the visual viewport without a resize event after opening its keyboard.
+ await page.evaluate(()=>{Object.assign(window.visualViewport!,{height:420,offsetTop:84});window.visualViewport!.dispatchEvent(new Event('resize'));});
+ await expect(workspace).toHaveCSS('top','84px');
+ await page.evaluate(()=>{Object.assign(window.visualViewport!,{offsetTop:120});window.visualViewport!.dispatchEvent(new Event('scroll'));});
+ await expect(workspace).toHaveCSS('top','120px');
+ await expect.poll(async()=>{const box=await input.boundingBox();return box!.y+box!.height;}).toBeLessThanOrEqual(540);
+ expect((await header.boundingBox())!.y).toBeGreaterThanOrEqual(120);expect((await header.boundingBox())!.y).toBeLessThan(200);
+ await expect(input).toBeFocused();await expect(input).toHaveValue('入力を続ける');
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await input.blur();await page.evaluate(()=>{Object.assign(window.visualViewport!,{height:844,offsetTop:0});window.visualViewport!.dispatchEvent(new Event('resize'));});
+ await expect(workspace).toHaveCSS('top','0px');await expect(page.locator('[data-lime-bottom-nav-root] ul')).toBeVisible();
+ await expect.poll(async()=>{const box=await input.boundingBox(),nav=await page.locator('[data-lime-bottom-nav-root]').boundingBox();return box!.y+box!.height<=nav!.y;}).toBe(true);
+ await page.getByRole('link',{name:'ホーム',exact:true}).click();await expect(page.locator('html')).not.toHaveAttribute('data-lime-mobile-dm');await expect(page.locator('body')).not.toHaveCSS('overflow','hidden');
+});
+
 for(const width of [390,834,1440])test(`iPad DM message reactions deletion and blurred header at ${width}px`,async({page})=>{
  const id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';const peer={...user,id:'22222222-2222-4222-8222-222222222222',username:'member',displayName:'参加者',avatarUrl:image};
  const group={id,isGroup:true,status:'accepted',initiatedBy:user.id,updatedAt:user.createdAt,createdAt:user.createdAt,peer:{id,username:'',displayName:'グループ',avatarUrl:'',createdAt:user.createdAt},description:'',adminOnly:true,muted:false,members:[{...user,status:'accepted',admin:true},{...peer,status:'accepted',admin:false}],requests:[],preview:'こんにちは',unreadCount:0};
@@ -1869,7 +1907,7 @@ for(const width of [390,834,1440])test(`iPad DM message reactions deletion and b
  await page.setViewportSize({width,height:900});await page.goto(`messages/${id}`);
  const incoming=page.locator('[data-message-id="incoming"]');await expect(incoming.locator('.dm-sender-avatar')).toBeVisible();await expect(incoming.locator('.dm-group-sender')).toHaveText('参加者');await expect(incoming.locator('.dm-bubble time')).toBeVisible();
  const blur=await page.locator('.dm-thread-header').evaluate(el=>({bg:getComputedStyle(el).backgroundColor,blur:getComputedStyle(el,'::before').backdropFilter,mask:getComputedStyle(el,'::before').maskImage,position:getComputedStyle(el).position}));expect(blur.bg).toBe('rgba(0, 0, 0, 0)');expect(blur.blur).toBe('blur(24px)');expect(blur.mask).toContain('linear-gradient');expect(blur.position).toBe('absolute');
- await incoming.locator('.dm-bubble').click();await incoming.hover();await incoming.getByRole('button',{name:'リアクションを追加',exact:true}).click();const actions=await incoming.locator('.dm-message-actions').boundingBox();const bubble=await incoming.locator('.dm-bubble').boundingBox();expect(actions!.x).toBeGreaterThanOrEqual(bubble!.x+bubble!.width);expect(actions!.y).toBeLessThan(bubble!.y+bubble!.height);const picker=page.locator('.dm-reaction-picker');await expect(picker).toBeVisible();const box=await picker.boundingBox();expect(box!.width).toBeLessThan(width);expect(box!.height).toBeLessThan(250);await picker.getByRole('button',{name:'👍',exact:true}).click();await expect(incoming.getByRole('button',{name:'👍 2件のリアクション'})).toHaveAttribute('aria-pressed','true');await incoming.getByRole('button',{name:'👍 2件のリアクション'}).click();await expect(incoming.getByRole('button',{name:'👍 1件のリアクション'})).toHaveAttribute('aria-pressed','false');
+ await incoming.locator('.dm-bubble').click();await incoming.hover();await incoming.getByRole('button',{name:'リアクションを追加',exact:true}).click();const actions=await incoming.locator('.dm-message-actions').boundingBox();const bubble=await incoming.locator('.dm-bubble').boundingBox();expect(actions!.x).toBeGreaterThanOrEqual(bubble!.x+bubble!.width);expect(actions!.y).toBeLessThan(bubble!.y+bubble!.height);await expect(incoming.locator('.dm-reaction-add-icon svg')).toHaveCount(1);await expect(incoming.locator('.dm-reaction-add-icon svg')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');const picker=page.locator('.dm-reaction-picker');await expect(picker).toBeVisible();const box=await picker.boundingBox();expect(box!.width).toBeLessThan(width);expect(box!.height).toBeLessThan(250);await picker.getByRole('button',{name:'👍',exact:true}).click();await expect(incoming.getByRole('button',{name:'👍 2件のリアクション'})).toHaveAttribute('aria-pressed','true');await incoming.getByRole('button',{name:'👍 2件のリアクション'}).click();await expect(incoming.getByRole('button',{name:'👍 1件のリアクション'})).toHaveAttribute('aria-pressed','false');
  await incoming.locator('.dm-bubble').click();await incoming.hover();await incoming.getByRole('button',{name:'返信',exact:true}).click();await expect(page.locator('.dm-reply-draft')).toContainText('こんにちは');await page.getByRole('textbox',{name:'メッセージ',exact:true}).fill('返信の本文');await page.getByRole('button',{name:'送信',exact:true}).click();await expect(page.locator('.dm-reply-context')).toContainText('こんにちは');await expect(page.locator('.dm-reply-draft')).toHaveCount(0);await page.screenshot({path:`/private/tmp/lime-message-reactions-${width}.png`});await incoming.locator('.dm-bubble').click();await expect(page.getByRole('menu')).toHaveCount(0);if(width<640){await incoming.locator('.dm-message-content').dispatchEvent('pointerdown',{pointerType:'touch',clientX:100,clientY:200});await expect(page.getByRole('menu')).toBeVisible();await incoming.locator('.dm-message-content').dispatchEvent('pointerup',{pointerType:'touch'});}else{await incoming.hover();await incoming.getByRole('button',{name:'メッセージの操作',exact:true}).click();}await expect(page.getByRole('menuitem',{name:'全員から削除',exact:true})).toHaveCount(0);await page.getByRole('menuitem',{name:'自分から削除',exact:true}).click();await page.getByRole('dialog').getByRole('button',{name:'削除する',exact:true}).click();await expect(incoming).toHaveCount(0);
  const own=page.locator('[data-message-id="own"]');await own.locator('.dm-bubble').click();await own.hover();await own.getByRole('button',{name:'メッセージの操作',exact:true}).click();await page.getByRole('menuitem',{name:'全員から削除',exact:true}).click();await page.getByRole('dialog').getByRole('button',{name:'削除する',exact:true}).click();await expect(own).toHaveCount(0);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
@@ -1895,16 +1933,137 @@ for(const width of [320,390,834,1440])for(const provider of ['lime','bluesky','m
  const actor=provider==='lime'?'listowner':provider==='misskey'?'listowner@misskey.io':'listowner.bsky.social';
  const target={id:provider==='lime'?'22222222-2222-4222-8222-222222222222':provider==='misskey'?'misskey-user:owner':'did:plc:owner',username:actor,displayName:'とんペチ🐷☕',bio:'',avatarUrl:image,coverUrl:'',createdAt:user.createdAt};
  let followed=false;await page.route('**/rest/v1/rpc/get_account_follow_state',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({followed,requested:false,canView:true})}));await page.route('**/rest/v1/rpc/toggle_account_follow',route=>{followed=!followed;return route.fulfill({contentType:'application/json',body:JSON.stringify({followed,requested:false,canView:true})});});
- const accounts=[0,1].map(i=>({...target,id:provider==='lime'?`33333333-3333-4333-8333-${String(i).padStart(12,'0')}`:provider==='misskey'?`misskey-user:friend${i}`:`did:plc:friend${i}`,username:provider==='lime'?`friend${i}`:provider==='misskey'?`friend${i}@misskey.io`:`friend${i}.bsky.social`,displayName:i?'とても長い名前'.repeat(9):'CORE',bio:'自己紹介の全文を表示します。'.repeat(12)+' https://example.com/profile',isOfficial:provider==='lime',avatarUrl:image}));
+ const accounts=Array.from({length:8},(_,i)=>i).map(i=>({...target,id:provider==='lime'?`33333333-3333-4333-8333-${String(i).padStart(12,'0')}`:provider==='misskey'?`misskey-user:friend${i}`:`did:plc:friend${i}`,username:provider==='lime'?`friend${i}`:provider==='misskey'?`friend${i}@misskey.io`:`friend${i}.bsky.social`,displayName:i?'とても長い名前'.repeat(9):'CORE',bio:'自己紹介の全文を表示します。'.repeat(12)+' https://example.com/profile',isOfficial:provider==='lime',avatarUrl:image}));
  await page.route('**/src/api/followLists.ts*',route=>route.fulfill({contentType:'application/javascript',body:`const accounts=${JSON.stringify(accounts)};export async function fetchFollowListPage(target,tab,viewer,cursor){window.__followListCalls=[...(window.__followListCalls??[]),{target,tab,cursor}];return {users:tab==='known'?[accounts[1]]:accounts,cursor:null};}` }));
  await page.route('**/*.supabase.co/rest/v1/profiles*',route=>{const isTarget=new URL(route.request().url()).searchParams.get('username')===`eq.${actor}`;return route.fulfill({contentType:'application/json',body:JSON.stringify(isTarget&&provider!=='lime'?null:isTarget?{...target,display_name:target.displayName,avatar_url:image}:profile)});});
  await page.route('**/public.api.bsky.app/xrpc/app.bsky.actor.getProfile*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({did:target.id,handle:actor,displayName:target.displayName,avatar:image})}));
  await page.route('https://misskey.io/api/users/show',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({id:'owner',username:'listowner',name:target.displayName,avatarUrl:image})}));
  await page.route('**/functions/v1/link-preview',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({data:{id:'owner',username:'listowner',name:target.displayName,avatarUrl:image}})}));
  await page.setViewportSize({width,height:950});await page.goto(`u/${encodeURIComponent(actor)}/followers_following?tab=followers`);
- const root=page.locator('.follow-list-page');await expect(root.getByRole('heading',{name:target.displayName})).toBeVisible();await expect(root.getByRole('tab',{name:'フォロワー',exact:true})).toHaveAttribute('aria-selected','true');await expect(root.locator('.follow-list-row')).toHaveCount(2);await expect(root.locator('.follow-list-bio').first()).toHaveText(accounts[0].bio);await expect(root.locator('.follow-list-action button').first()).toBeVisible();await expect(root.locator('.follow-list-bio a').first()).toHaveAttribute('href','https://example.com/profile');
+ const root=page.locator('.follow-list-page');await expect(root.getByRole('heading',{name:target.displayName})).toBeVisible();await expect(root.getByRole('tab',{name:'フォロワー',exact:true})).toHaveAttribute('aria-selected','true');await expect(root.locator('.follow-list-row')).toHaveCount(accounts.length);await expect(root.locator('.follow-list-bio').first()).toHaveText(accounts[0].bio);await expect(root.locator('.follow-list-action button').first()).toBeVisible();await expect(root.locator('.follow-list-bio a').first()).toHaveAttribute('href','https://example.com/profile');
  if(provider==='lime'){await root.locator('.follow-list-action button').first().click();await expect(root.locator('.follow-list-action button').first()).toContainText(/フォロー中|フォロー解除/);}
  const tabBounds=await root.getByRole('tab',{name:'知り合いのフォロワー',exact:true}).locator('span').boundingBox();expect(tabBounds!.x).toBeGreaterThanOrEqual(0);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);const row=root.locator('.follow-list-row').last();const rect=await row.boundingBox(),button=await row.locator('.follow-list-action').boundingBox();expect(button!.x+button!.width).toBeLessThanOrEqual(rect!.x+rect!.width);await expect(page.locator('[data-lime-app-header]')).toBeHidden();
+  const tabsRect=await root.locator('.follow-list-tabs').boundingBox(),pageRect=await root.boundingBox();expect(tabsRect!.width).toBeCloseTo(pageRect!.width,0);await page.evaluate(()=>window.scrollTo(0,600));await expect.poll(async()=>Math.round((await root.locator('.follow-list-sticky').boundingBox())!.y)).toBe(0);await expect(root.getByRole('heading',{name:target.displayName})).toBeInViewport();await expect(root.getByRole('tab',{name:'フォロワー',exact:true})).toBeInViewport();await page.evaluate(()=>window.scrollTo(0,0));
  await root.getByRole('tab',{name:'フォロー中',exact:true}).click();await expect(root.getByRole('tab',{name:'フォロー中',exact:true})).toHaveAttribute('aria-selected','true');await expect.poll(()=>page.evaluate(()=>window.__followListCalls.at(-1).tab)).toBe('following');
  await root.getByRole('tab',{name:'知り合いのフォロワー',exact:true}).click();await expect(root.locator('.follow-list-row')).toHaveCount(1);if(width===390&&provider==='lime')await page.screenshot({path:'/private/tmp/lime-follow-list-mobile.png'});
+});
+
+for(const width of [390,834,1440])test(`iPad DM friend photos are optional, persistent and open the existing viewer at ${width}px`,async({page})=>{
+ const friend={id:'custom:photo',slug:null,name:'写真フレンド',description:'友達',systemPrompt:'自然に話す友達',starter:'',greeting:'こんにちは',category:'カスタム',builtin:false};
+ const photo={url:'https://upload.wikimedia.org/wikipedia/commons/e/ee/Dandan_Noodles.jpg',sourceUrl:'https://commons.wikimedia.org/wiki/File:Dandan_Noodles.jpg',title:'Dandan Noodles.jpg',artist:'Photographer',license:'CC BY-SA 4.0'};
+ const history={id:'photo-history',title:'写真の会話',updated_at:'2026-10-11T00:00:00Z',messages:[] as any[]};let generated=0;let searches=0;
+ await page.route('**/src/hooks/useAuth.tsx*',route=>route.fulfill({contentType:'application/javascript',body:`const user=${JSON.stringify(user)};export const useAuth=()=>({user,loading:false,session:null,accounts:[],logout:async()=>{}});export const AuthProvider=({children})=>children;`}));
+ await page.addInitScript(({uid,friend})=>{localStorage.setItem(`limeai:${uid}:assistants`,JSON.stringify([friend]));localStorage.setItem(`limeai:${uid}:session-meta`,JSON.stringify({'photo-history':{assistantId:friend.id}}));},{uid:user.id,friend});
+ await page.route('**/*.supabase.co/rest/v1/chat_sessions*',route=>{if(route.request().method()!=='GET'){const body=route.request().postDataJSON();if(body?.messages)history.messages=body.messages;}return route.fulfill({contentType:'application/json',body:route.request().method()==='GET'?JSON.stringify([history]):'[]'});});
+ await page.route('**/*.supabase.co/functions/v1/chat-gemma',route=>{generated++;const content=generated===1?'<reaction>😋</reaction><image-query>dandan noodles</image-query>担々麺は辛い麺料理だよ。':'<reaction>👍</reaction>どういたしまして！';return route.fulfill({contentType:'text/event-stream',body:`data: ${JSON.stringify({choices:[{delta:{content}}]})}\n\ndata: [DONE]\n\n`.replaceAll('\\n','\n')});});
+ await page.route('**/*.supabase.co/functions/v1/friend-images',route=>{searches++;expect(route.request().postDataJSON()).toEqual({query:'dandan noodles'});return route.fulfill({contentType:'application/json',body:JSON.stringify({photo})});});
+ await page.route(photo.url,route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="pink"/></svg>'}));
+ await page.setViewportSize({width,height:900});await page.goto('messages/'+encodeURIComponent('friend:'+friend.id));const root=page.locator('.dm-ai-root');const input=root.getByRole('textbox',{name:'メッセージ',exact:true});
+ await input.fill('担々麺ってどんな食べ物？');await root.getByRole('button',{name:'送信',exact:true}).click();await expect(root.getByText('担々麺は辛い麺料理だよ。',{exact:true})).toBeVisible();await expect(root.getByRole('button',{name:'フレンドの画像を拡大'})).toBeVisible();await expect(root.locator('.dm-friend-photo figcaption')).toContainText('Photographer');await expect(root).not.toContainText('<image-query>');await expect(root).not.toContainText('<friend-photo>');
+ await input.fill('ありがとう');await root.getByRole('button',{name:'送信',exact:true}).click();await expect(root.getByText('どういたしまして！',{exact:true})).toBeVisible();expect(searches).toBe(1);await expect(root.locator('.dm-friend-photo')).toHaveCount(1);
+ await page.reload();await expect(root.getByRole('button',{name:'フレンドの画像を拡大'})).toBeVisible();await expect(root).not.toContainText('<friend-photo>');await root.getByRole('button',{name:'フレンドの画像を拡大'}).click();await expect(page.locator('.lime-media-lightbox')).toBeVisible();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});
+
+for(const width of [390,1440])for(const kind of ['limeai','friend','human','group'])test(`iPad DM individual backgrounds persist and remain isolated for ${kind} at ${width}px`,async({page})=>{
+ const id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';const friend={id:'custom:background',slug:null,name:'背景フレンド',description:'友達',systemPrompt:'自然に話す友達',starter:'',greeting:'こんにちは',category:'カスタム',builtin:false};
+ const peer={...user,id:'22222222-2222-4222-8222-222222222222',username:'member',displayName:'参加者',avatarUrl:image};
+ const conversation={id,isGroup:kind==='group',status:'accepted',initiatedBy:user.id,updatedAt:user.createdAt,createdAt:user.createdAt,peer:kind==='group'?{...peer,id,displayName:'背景グループ'}:peer,description:'',adminOnly:true,muted:false,members:[{...user,status:'accepted',admin:true},{...peer,status:'accepted',admin:false}],friends:[],requests:[],preview:'',unreadCount:0};
+ await page.addInitScript(({uid,friend})=>{localStorage.setItem(`limeai:${uid}:assistants`,JSON.stringify([friend]));localStorage.setItem(`limeai:${uid}:session-meta`,JSON.stringify({'background-history':{assistantId:friend.id}}));},{uid:user.id,friend});
+ await page.route('**/*.supabase.co/rest/v1/chat_sessions*',route=>route.fulfill({contentType:'application/json',body:route.request().method()==='GET'?JSON.stringify([{id:'background-history',title:'背景の会話',messages:[],updated_at:user.createdAt}]):'[]'}));
+ await page.route('**/*.supabase.co/rest/v1/rpc/*',route=>{const endpoint=new URL(route.request().url()).pathname.split('/').pop();const data=endpoint==='get_direct_inbox'?[conversation]:endpoint==='get_group_direct_conversation'?conversation:endpoint==='get_dm_preferences'?'everyone':undefined;if(data===undefined)return route.fallback();return route.fulfill({contentType:'application/json',body:JSON.stringify(data)});});
+ await page.route('**/*.supabase.co/rest/v1/direct_conversations*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({id,is_group:kind==='group',status:'accepted',user_low:user.id,user_high:peer.id,initiated_by:user.id})}));
+ await page.route('**/*.supabase.co/rest/v1/direct_messages*',route=>route.fulfill({contentType:'application/json',body:'[]'}));
+ const chatId=kind==='limeai'?'limeai':kind==='friend'?'friend:'+friend.id:id;const path='messages/'+encodeURIComponent(chatId);
+ await page.setViewportSize({width,height:900});await page.goto(path);
+ const openBackground=async()=>{if(kind==='limeai'||kind==='friend'){await page.getByRole('button',{name:'LimeAIのメニュー',exact:true}).click();await page.getByRole('menuitem',{name:'チャットの背景',exact:true}).click();}else{await page.getByRole('button',{name:'会話の詳細',exact:true}).click();await page.getByRole('dialog').getByRole('button',{name:'チャットの背景',exact:true}).click();}await expect(page.getByRole('dialog',{name:'チャットの背景',exact:true})).toBeVisible();};
+ await openBackground();let dialog=page.getByRole('dialog',{name:'チャットの背景',exact:true});await expect(dialog).toContainText('背景なし');await expect(dialog.getByRole('button',{name:'保存',exact:true})).toBeDisabled();
+ if(width===390){const bounds=await dialog.boundingBox();expect(bounds!.width).toBeCloseTo(width,0);expect(bounds!.x).toBeCloseTo(0,0);}
+ const png=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=600;c.height=400;const ctx=c.getContext('2d')!;ctx.fillStyle='#e9a2bd';ctx.fillRect(0,0,600,400);ctx.fillStyle='#6c3159';ctx.fillRect(0,0,300,200);return c.toDataURL('image/png').split(',')[1]});
+ const chooserPromise=page.waitForEvent('filechooser');await dialog.getByRole('button',{name:'画像を選択',exact:true}).click();await (await chooserPromise).setFiles({name:'background.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')});await expect(dialog.getByRole('button',{name:'保存',exact:true})).toBeEnabled();await dialog.getByRole('button',{name:'保存',exact:true}).click();await expect(dialog).toBeHidden();
+ const background=page.locator('.dm-chat-background');await expect(background).toBeVisible();await expect(page.locator('.dm-thread')).toHaveAttribute('data-chat-background','true');const bounds=await background.boundingBox(),thread=await page.locator('.dm-workspace').boundingBox();expect(bounds!.width).toBeCloseTo(thread!.width,0);expect(bounds!.height).toBeCloseTo(thread!.height,0);
+ await expect(page.locator('.dm-inbox')).toHaveCSS('backdrop-filter','none');expect(await page.locator('.dm-inbox').evaluate(el=>getComputedStyle(el).backgroundColor)).not.toContain('0.5');
+ await expect(page.locator('.dm-thread-header')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await expect(page.getByRole('textbox',{name:'メッセージ',exact:true})).toBeVisible();
+ await page.reload();await expect(background).toBeVisible();await page.screenshot({path:`/private/tmp/lime-background-${kind}-${width}.png`});
+ await page.goto('messages/'+(kind==='limeai'?encodeURIComponent('friend:'+friend.id):'limeai'));await expect(background).toHaveCount(0);await page.goto(path);await expect(background).toBeVisible();
+ await openBackground();dialog=page.getByRole('dialog',{name:'チャットの背景',exact:true});await dialog.getByRole('button',{name:'背景を解除',exact:true}).click();await dialog.getByRole('button',{name:'キャンセル',exact:true}).click();await expect(background).toBeVisible();
+ await openBackground();dialog=page.getByRole('dialog',{name:'チャットの背景',exact:true});await dialog.getByRole('button',{name:'背景を解除',exact:true}).click();await dialog.getByRole('button',{name:'保存',exact:true}).click();await expect(background).toHaveCount(0);await page.reload();await expect(background).toHaveCount(0);
+});
+
+test('iPad DM backgrounds reject unsupported files and do not cross accounts',async({page})=>{
+ await page.setViewportSize({width:390,height:900});await page.goto('messages/limeai');
+ await page.getByRole('button',{name:'LimeAIのメニュー',exact:true}).click();await page.getByRole('menuitem',{name:'チャットの背景',exact:true}).click();let dialog=page.getByRole('dialog',{name:'チャットの背景',exact:true});
+ let chooserPromise=page.waitForEvent('filechooser');await dialog.getByRole('button',{name:'画像を選択',exact:true}).click();await (await chooserPromise).setFiles({name:'text.txt',mimeType:'text/plain',buffer:Buffer.from('not an image')});await expect(dialog.getByRole('alert')).toContainText('10MB以内');await expect(dialog.getByRole('button',{name:'保存',exact:true})).toBeDisabled();
+ const png=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=8;c.height=8;c.getContext('2d')!.fillRect(0,0,8,8);return c.toDataURL('image/png').split(',')[1]});chooserPromise=page.waitForEvent('filechooser');await dialog.getByRole('button',{name:'画像を選択',exact:true}).click();await (await chooserPromise).setFiles({name:'background.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')});await expect(dialog.getByRole('button',{name:'保存',exact:true})).toBeEnabled();await dialog.getByRole('button',{name:'保存',exact:true}).click();await expect(page.locator('.dm-chat-background')).toBeVisible();
+ const alternateUser={...user,id:'99999999-9999-4999-8999-999999999999'};const alternateAuth=(route:any)=>route.fulfill({contentType:'application/javascript',body:`export const useAuth=()=>({user:${JSON.stringify(alternateUser)},loading:false,session:null,accounts:[],logout:async()=>{}});export const AuthProvider=({children})=>children;`});
+ await page.route('**/src/hooks/useAuth.tsx*',alternateAuth);await page.reload();await expect(page.getByRole('button',{name:'LimeAIのメニュー',exact:true})).toBeVisible();await expect(page.locator('.dm-chat-background')).toHaveCount(0);await page.unroute('**/src/hooks/useAuth.tsx*',alternateAuth);await page.reload();await expect(page.locator('.dm-chat-background')).toBeVisible();
+});
+
+for(const kind of ['friend','limeai'])test(`iPad DM ${kind} visual questions without model tags show and retain images`,async({page})=>{
+ const friend={id:'custom:visual',slug:null,name:'写真フレンド',description:'友達',systemPrompt:'自然に話す友達',starter:'',greeting:'こんにちは',category:'カスタム',builtin:false};
+ const photo={url:'https://upload.wikimedia.org/wikipedia/commons/e/ee/Dandan_Noodles.jpg',sourceUrl:'https://commons.wikimedia.org/wiki/File:Dandan_Noodles.jpg',title:'Dandan Noodles.jpg',artist:'Photographer',license:'CC BY-SA 4.0'};
+ const history={id:'visual-history',title:'写真の会話',updated_at:user.createdAt,messages:[{id:'old-empty',role:'assistant',content:''}] as any[]};let downloads=0,searches=0;
+ await page.addInitScript(({uid,friend,kind})=>{localStorage.setItem(`limeai:${uid}:assistants`,JSON.stringify([friend]));if(kind==='friend')localStorage.setItem(`limeai:${uid}:session-meta`,JSON.stringify({'visual-history':{assistantId:friend.id}}));},{uid:user.id,friend,kind});
+ await page.route('**/*.supabase.co/rest/v1/chat_sessions*',route=>{if(route.request().method()!=='GET'){const body=route.request().postDataJSON();if(body?.messages)history.messages=body.messages;}return route.fulfill({contentType:'application/json',body:route.request().method()==='GET'?JSON.stringify([history]):'[]'});});
+ await page.route('**/*.supabase.co/functions/v1/chat-gemma',route=>route.fulfill({contentType:'text/event-stream',body:`data: ${JSON.stringify({choices:[{delta:{content:'担々麺は四川料理の辛い麺料理だよ。'}}]})}\n\ndata: [DONE]\n\n`}));
+ await page.route('**/*.supabase.co/functions/v1/friend-images',route=>{searches++;expect(route.request().postDataJSON()).toEqual({query:'担々麺'});return route.fulfill({contentType:'application/json',body:JSON.stringify({photo})});});
+ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aT1sAAAAASUVORK5CYII=','base64');
+ await page.route(photo.url,route=>{downloads++;return route.fulfill({contentType:'image/png',headers:{'access-control-allow-origin':'*'},body:png})});
+ await page.setViewportSize({width:390,height:900});await page.goto('messages/'+encodeURIComponent(kind==='friend'?'friend:'+friend.id:'limeai'));const root=page.locator('.dm-ai-root');await expect(root.getByRole('textbox',{name:'メッセージ',exact:true})).toBeVisible();await expect(root.locator('.dm-bubble')).toHaveCount(0);
+ await root.getByRole('textbox',{name:'メッセージ',exact:true}).fill('担々麺ってなんですか？');await root.getByRole('button',{name:'送信',exact:true}).click();await expect(root.getByText('担々麺は四川料理の辛い麺料理だよ。',{exact:true})).toBeVisible();await expect(root.locator('.dm-friend-photo img')).toHaveAttribute('src',/^blob:/);expect(searches).toBe(1);expect(downloads).toBe(1);
+ await page.reload();await expect(root.locator('.dm-friend-photo img')).toHaveAttribute('src',/^blob:/);expect(downloads).toBe(1);await root.getByRole('button',{name:'フレンドの画像を拡大'}).click();await expect(page.locator('.lime-media-lightbox')).toBeVisible();expect(downloads).toBe(1);
+});
+
+for(const width of [320,390,1440])test(`iPad DM appearance accent persists independently of mode at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900});await page.goto('settings?section=appearance');
+ const colors=page.getByRole('radiogroup',{name:'テーマの色'});
+ await expect(colors.getByRole('radio',{name:'ピンク',exact:true})).toBeChecked();
+ await page.getByRole('button',{name:'ライト',exact:true}).click();
+ const original=await page.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--primary').trim());
+ for(const [id,label] of [['blue','ブルー'],['yellow','イエロー'],['purple','パープル'],['orange','オレンジ'],['green','グリーン']]){
+  await colors.getByRole('radio',{name:label,exact:true}).locator('..').click();await expect(colors.getByRole('radio',{name:label,exact:true})).toBeChecked();
+  await expect(page.locator('html')).toHaveAttribute('data-accent',id);
+  expect(await page.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--primary').trim())).not.toBe(original);
+  await expect(page.locator('body')).toHaveCSS('background-color','rgb(255, 255, 255)');expect(await page.evaluate(()=>{const probe=document.createElement('div');probe.style.border='1px solid hsl(var(--border))';document.body.append(probe);const value=getComputedStyle(probe).borderTopColor;probe.remove();return value})).toBe('rgb(239, 243, 244)');
+ }
+ await page.getByRole('button',{name:'ダーク',exact:true}).click();await expect(page.locator('html')).toHaveClass(/dark/);await expect(page.locator('html')).toHaveAttribute('data-accent','green');
+ await page.reload();await expect(colors.getByRole('radio',{name:'グリーン',exact:true})).toBeChecked();await expect(page.locator('html')).toHaveClass(/dark/);
+ await page.getByRole('button',{name:'ライト',exact:true}).click();await colors.getByRole('radio',{name:'ピンク',exact:true}).locator('..').click();
+ expect(await page.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--primary').trim())).toBe(original);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await page.screenshot({path:`/private/tmp/lime-accent-${width}.png`});
+});
+
+test('theme follows links and tabs while the brand logo stays pink',async({page})=>{
+ await page.setViewportSize({width:1440,height:950});await page.goto('settings?section=appearance');
+ const logo=page.locator('[data-lime-brand-logo] span').first();await expect(logo).toBeAttached();
+ const brand=await logo.evaluate(el=>getComputedStyle(el).backgroundImage);
+ await page.getByRole('radiogroup',{name:'テーマの色'}).getByRole('radio',{name:'ブルー',exact:true}).locator('..').click();
+ await expect(logo).toHaveCSS('background-image',brand);
+ await page.goto('u/lime');
+ const underline=page.locator('.profile-tabs-underline');await expect(underline).toBeAttached();
+ expect(await underline.evaluate(el=>getComputedStyle(el).backgroundColor)).toBe('rgb(29, 161, 242)');
+ await expect(page.locator('[data-lime-brand-logo] span').first()).toHaveCSS('background-image',brand);
+});
+for(const width of [390,1440])for(const first of ['posts','replies'])test(`profile publishes posts and replies together when ${first} arrive first at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900});
+ let releasePosts!:()=>void,releaseReplies!:()=>void;
+ const postGate=new Promise<void>(resolve=>releasePosts=resolve),replyGate=new Promise<void>(resolve=>releaseReplies=resolve);
+ let postRequested=false,replyRequested=false;
+ const ownPosts=posts.map(p=>({...p,content:'同期した通常ポスト '+p.id}));
+ const reply={id:'22222222-2222-2222-2222-222222222222',post_id:'post-0',user_id:user.id,content:'同期した返信',created_at:'2026-10-03T00:00:00Z',image_urls:[],likes_count:0,parent_comment_id:null,profiles:profile};
+ await page.route('https://fixture.test/profile-posts',async route=>{postRequested=true;await postGate;return route.fulfill({contentType:'application/json',body:JSON.stringify(ownPosts)});});
+
+ await page.route('**/src/api/posts.ts*',route=>route.fulfill({contentType:'application/javascript',body:`const posts=${JSON.stringify(ownPosts)};export const getPostQuotes=async()=>[];export const getPostReposters=async()=>[];export const getHighlightedPosts=async()=>[];export const getMapPosts=async()=>[];export const setPostMapLocation=async()=>{};export const getFeed=async()=>posts;export const getFollowingFeed=async()=>posts;export const getPostsByUser=async()=>posts;export const getProfilePosts=async()=>{const result=await fetch('https://fixture.test/profile-posts');return result.json()};export const getLikedPostsByUser=async()=>[];export const searchPosts=async()=>posts;export const getPostById=async()=>posts[0];export const createPost=async()=>posts[0];export const toggleLike=async()=>({liked:true,likesCount:1});export const toggleRepost=async()=>({reposted:true,repostsCount:1});export const deletePost=async()=>{};export const getPostLikers=async()=>[];`}));
+ await page.route('**/*.supabase.co/rest/v1/comments*',async route=>{replyRequested=true;await replyGate;return route.fulfill({contentType:'application/json',body:JSON.stringify([reply])});});
+ await page.goto('u/lime');await expect.poll(()=>postRequested&&replyRequested).toBe(true);
+ if(first==='posts')releasePosts();else releaseReplies();
+ // Hold the slower request while the faster branch has time to update React.
+ await page.waitForTimeout(400);
+ const list=page.locator('[data-lime-profile-posts]');await expect(list.locator('[data-lime-post-card]')).toHaveCount(0);await expect(list.locator('.profile-reply-thread')).toHaveCount(0);
+ releasePosts();releaseReplies();await expect(list.locator('.profile-reply-thread')).toContainText(reply.content);await expect(list.getByText('同期した通常ポスト post-1',{exact:true})).toBeVisible();
+});
+for(const width of [390,1440])test(`post composer has a visible shadow on white backgrounds at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900});await page.addInitScript(()=>{localStorage.setItem('lime-accent-color','blue');localStorage.setItem('theme','light')});await page.goto('./');
+ const composer=page.locator('[data-lime-post-composer]');await expect(composer).toBeVisible();expect(await composer.evaluate(el=>getComputedStyle(el).boxShadow)).toContain('rgba(0, 0, 0, 0.07) 0px 3px 14px 0px');
+ await page.screenshot({path:`/private/tmp/lime-composer-shadow-${width}.png`});
 });

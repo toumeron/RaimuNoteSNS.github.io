@@ -1448,9 +1448,9 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
       <div
         data-lime-post-composer
         className={cn(
-        "rounded-3xl bg-card p-5 shadow-soft transition-all duration-300",
+        "rounded-3xl bg-card p-5 shadow-[0_3px_14px_rgb(0_0_0/0.07)] transition-all duration-300",
         timelineGlass &&
-          "border border-border/45 bg-card/70 shadow-none backdrop-blur-2xl supports-[backdrop-filter]:bg-card/60"
+          "border border-border/45 bg-card/70 backdrop-blur-2xl supports-[backdrop-filter]:bg-card/60"
       )}
     >
       <div className="flex gap-3">
@@ -1629,8 +1629,8 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
                     )}
                     {visibility === 'members' && (
                       <>
-                        <Crown className="sm:mr-1.5 h-4 w-4 text-fuchsia-500" />
-                        <span className="text-fuchsia-500 hidden sm:inline">メンバー限定</span>
+                        <Crown className="sm:mr-1.5 h-4 w-4 text-primary" />
+                        <span className="text-primary hidden sm:inline">メンバー限定</span>
                       </>
                     )}
                   </Button>

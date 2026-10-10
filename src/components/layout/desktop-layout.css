@@ -133,7 +133,7 @@
   .lime-app-shell [data-lime-feed-intro] > div > div { order: initial; }
   .lime-app-shell [data-lime-feed-intro] .ribbon-tag:not(.hidden) { display: inline-flex; }
   .lime-app-shell [data-lime-feed-intro] .hidden { display: none; }
-  .lime-app-shell [data-lime-post-composer] { margin: 0 16px 16px; box-shadow: none; }
+  .lime-app-shell [data-lime-post-composer] { margin: 0 16px 16px; box-shadow: 0 3px 14px rgb(0 0 0 / .07); }
   .lime-app-shell [data-lime-profile-header] {
     margin-top: 0 !important;
     border-radius: 0;
@@ -155,7 +155,7 @@
   .lime-app-shell [data-lime-profile-mobile-tabs] > .profile-tabs-underline {
     display: block !important; position: absolute; bottom: 8px; width: 64px; height: 4px;
     margin: 0; z-index: 3; opacity: 1 !important; visibility: visible !important;
-    background: #ec4899 !important; transform: translateX(-50%); border-radius: 9999px;
+    background: hsl(var(--primary)) !important; transform: translateX(-50%); border-radius: 9999px;
   }
   .lime-app-shell [data-lime-profile-posts] > * + * { margin-top: 0; }
   .lime-app-shell .profile-reply-thread {

@@ -1540,7 +1540,7 @@ export default function Feed() {
             --muted: 217 28% 17%;
             --muted-foreground: 215 24% 82%;
             --border: 217 18% 28%;
-            --timeline-link: 330 96% 66%;
+            --timeline-link: var(--primary);
           }
 
           .timeline-theme-light {
@@ -1553,10 +1553,10 @@ export default function Feed() {
             --muted: 24 16% 92%;
             --muted-foreground: 24 8% 42%;
             --border: 24 10% 82%;
-            --timeline-link: 330 88% 48%;
+            --timeline-link: var(--primary);
           }
 
-          .timeline-theme-scope .text-pink-500 {
+          .timeline-theme-scope .text-primary {
             color: hsl(var(--timeline-link)) !important;
           }
 
@@ -1665,7 +1665,7 @@ export default function Feed() {
                 href="https://toumeron.github.io/LimeNoteJP/" 
                 target="_blank" 
                 rel="noopener noreferrer"
-                className="inline-flex items-center justify-center h-6 px-3 rounded-full bg-pink-600/15 hover:bg-pink-600/45 text-pink-600 text-xs font-bold transition-colors whitespace-nowrap select-none leading-none border-none shadow-none"
+                className="inline-flex items-center justify-center h-6 px-3 rounded-full bg-primary/15 hover:bg-primary/45 text-primary text-xs font-bold transition-colors whitespace-nowrap select-none leading-none border-none shadow-none"
               >
                 ↗︎ 公式サイト
               </a>
@@ -1674,7 +1674,7 @@ export default function Feed() {
                 href="https://forms.gle/1FUHzrWL38iVbUju5" 
                 target="_blank" 
                 rel="noopener noreferrer"
-                className="inline-flex items-center justify-center h-6 px-3 rounded-full bg-pink-600/15 hover:bg-pink-600/25 text-pink-600 text-xs font-bold transition-colors whitespace-nowrap select-none leading-none border-none shadow-none"
+                className="inline-flex items-center justify-center h-6 px-3 rounded-full bg-primary/15 hover:bg-primary/25 text-primary text-xs font-bold transition-colors whitespace-nowrap select-none leading-none border-none shadow-none"
               >
                 ↗︎ お問い合わせ
               </a>

@@ -1,3 +1,5 @@
+import {FRIEND_IMAGE_INSTRUCTION,chooseFriendImageQuery,stripImageQuery,appendFriendPhoto,readFriendPhoto,validFriendPhoto} from '../../supabase/functions/_shared/friendImages';
+import {FriendPhoto} from '@/components/chat/FriendPhoto';
 import {waitForFriendReply} from '../../supabase/functions/_shared/friendPacing';
 import {FRIEND_REACTION_INSTRUCTION,parseFriendResponse} from '../../supabase/functions/_shared/friendReaction';
 import {boundedChatContext} from '../../supabase/functions/_shared/chatContext';
@@ -2688,7 +2690,7 @@ export function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
   const ttsOk = ttsSupported();
   const sttOk = typeof window !== "undefined" ? sttSupported() : true;
   const panelBtn = "rounded-full border px-3 py-1.5 text-xs font-medium transition";
-  const on = night ? "border-pink-400/60 bg-pink-500/20 text-pink-200" : "border-pink-400/60 bg-pink-500/10 text-pink-600";
+  const on = night ? "border-primary/60 bg-primary/20 text-primary" : "border-primary/60 bg-primary/10 text-primary";
   const off = night ? "border-white/10 text-white/70 hover:bg-white/10" : "border-black/10 text-black/60 hover:bg-black/5";
   const label = night ? "text-white/60" : "text-black/50";
   const fg = night ? "text-white" : "text-slate-800";
@@ -2700,7 +2702,7 @@ export function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
         {[...Array(14)].map((_, i) => (
           <span
             key={i}
-            className={`absolute rounded-full ${night ? "bg-pink-200/20" : "bg-white/20"}`}
+            className={`absolute rounded-full ${night ? "bg-primary/20" : "bg-white/20"}`}
             style={{
               left: `${(i * 37 + 7) % 100}%`,
               top: `${(i * 53 + 11) % 90}%`,
@@ -2723,7 +2725,7 @@ export function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
       {status.state === "loading" && (
         <div className="pointer-events-none absolute inset-0 grid place-items-center">
           <div className="glass flex items-center gap-3 rounded-2xl px-5 py-3 text-sm font-medium shadow-lg">
-            <Loader2 size={18} className="spin text-pink-500" />
+            <Loader2 size={18} className="spin text-primary" />
             キャラクターを読み込み中… {Math.round(status.progress * 100)}%
           </div>
         </div>
@@ -2733,7 +2735,7 @@ export function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
           <div className="glass max-w-md rounded-2xl p-5 text-sm shadow-lg">
             <div className="mb-1 font-bold text-red-500">モデルを読み込めませんでした</div>
             <div className="break-words opacity-80">{status.message}</div>
-            <button type="button" onClick={() => update({ modelId: "default" })} className="mt-3 rounded-full bg-pink-500 px-4 py-1.5 text-white">
+            <button type="button" onClick={() => update({ modelId: "default" })} className="mt-3 rounded-full bg-primary px-4 py-1.5 text-white">
               デフォルトのキャラクターに戻す
             </button>
           </div>
@@ -2759,7 +2761,7 @@ export function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
             onClick={() => setPanel(!panel)}
             aria-label="設定"
             title="キャラクター・音声設定"
-            className={`glass pointer-events-auto grid h-10 w-10 place-items-center rounded-full shadow-sm hover:scale-105 ${panel ? "!bg-pink-500 !text-white" : ""}`}
+            className={`glass pointer-events-auto grid h-10 w-10 place-items-center rounded-full shadow-sm hover:scale-105 ${panel ? "!bg-primary !text-white" : ""}`}
           >
             <SlidersHorizontal size={18} />
           </button>
@@ -2779,7 +2781,7 @@ export function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
           {history.length === 0 && <div className="px-2 py-6 text-center text-xs opacity-60">まだ返答がありません</div>}
           {history.map((h) => (
             <button key={h.id} type="button" onClick={() => speak(h.text)} className="flex w-full items-start gap-2 rounded-xl px-2 py-2 text-left text-sm hover:bg-black/5">
-              <Play size={13} className="mt-1 shrink-0 text-pink-500" />
+              <Play size={13} className="mt-1 shrink-0 text-primary" />
               <span className="line-clamp-2">{h.text}</span>
             </button>
           ))}
@@ -2834,12 +2836,12 @@ export function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
                 const f = e.dataTransfer.files?.[0];
                 if (f) uploadModel(f);
               }}
-              className="mt-2 rounded-xl border border-dashed border-pink-400/60"
+              className="mt-2 rounded-xl border border-dashed border-primary/60"
             >
               <button
                 type="button"
                 onClick={() => fileInput.current?.click()}
-                className="flex w-full items-center justify-center gap-2 py-2.5 text-sm font-medium text-pink-500 hover:bg-pink-500/10"
+                className="flex w-full items-center justify-center gap-2 py-2.5 text-sm font-medium text-primary hover:bg-primary/10"
               >
                 <Upload size={15} /> 3Dモデル / ZIP を読み込む
               </button>
@@ -2886,7 +2888,7 @@ export function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
                 <span className="w-9 text-right text-xs tabular-nums opacity-70">{prefs[k].toFixed(2)}</span>
               </label>
             ))}
-            <button type="button" onClick={testVoice} className="flex items-center gap-1.5 rounded-full bg-pink-500 px-4 py-2 text-sm font-semibold text-white hover:bg-pink-600">
+            <button type="button" onClick={testVoice} className="flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary">
               <Volume2 size={15} /> テスト再生
             </button>
           </section>
@@ -2952,7 +2954,7 @@ export function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
               aria-label={micOn ? "マイクをオフ" : "マイクをオン"}
               title={sttOk ? (micOn ? "マイクをオフ" : "マイクで話しかける") : "このブラウザは音声認識に未対応です"}
               className={`relative grid h-12 w-12 place-items-center rounded-full text-white shadow-lg transition hover:scale-105 ${
-                micOn ? "bg-emerald-500" : sttOk ? "bg-gradient-to-br from-pink-500 to-violet-500" : "bg-slate-400"
+                micOn ? "bg-emerald-500" : sttOk ? "bg-gradient-to-br from-primary to-violet-500" : "bg-slate-400"
               }`}
             >
               {micOn ? <Mic size={21} /> : <MicOff size={21} />}
@@ -2982,7 +2984,7 @@ export function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
                 type="submit"
                 disabled={!text.trim() || !ttsOk}
                 aria-label="AIに送信"
-                className="grid h-10 w-10 place-items-center rounded-full bg-gradient-to-br from-pink-500 to-violet-500 text-white transition disabled:opacity-40"
+                className="grid h-10 w-10 place-items-center rounded-full bg-gradient-to-br from-primary to-violet-500 text-white transition disabled:opacity-40"
               >
                 <SendHorizontal size={18} />
               </button>
@@ -4849,7 +4851,7 @@ const buildContents = (
   const contentsPayload: GeminiContent[] = validHistory
     .map((msg): GeminiContent => {
       if (msg.role !== 'user') {
-        return { role: 'model', parts: [{ text: cleanContext(msg.content) }] }
+        return { role: 'model', parts: [{ text: cleanContext(readFriendPhoto(msg.content).text) }] }
       }
 
       let text = formatUserMessageForAi(msg)
@@ -5059,7 +5061,7 @@ const MessageMarkdown = memo(function MessageMarkdown({
   )
 })
 
-export default function ChatPage({ embedded = false, initialAction, friendId, onEditFriend, onFriendCreated, onBack }: { embedded?: boolean; initialAction?: 'friend'; friendId?: string; onEditFriend?: () => void; onFriendCreated?: (id: string) => void; onBack?: () => void } = {}) {
+export default function ChatPage({ embedded = false, initialAction, friendId, onEditFriend, onFriendCreated, onBack, onBackgroundChange }: { embedded?: boolean; initialAction?: 'friend'; friendId?: string; onEditFriend?: () => void; onFriendCreated?: (id: string) => void; onBack?: () => void; onBackgroundChange?: () => void } = {}) {
   const { user } = useAuth()
   const uid: string | null = user?.id ?? null
   
@@ -5700,8 +5702,8 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
     const contentOptions = {
       userLabel: user ? `${user.displayName} (@${user.username})` : '未ログインユーザー',
       modelLabel: model === 'advanced' ? 'LimeAI 5.5 Thinking' : 'LimeAI 5.0 Fast',
-      character: assistant ? { name: assistant.name, prompt: (embedded ? FRIEND_REACTION_INSTRUCTION+'\n' : '') + assistant.systemPrompt } : null,
-      extra: buildExtraInstructions({
+      character: assistant ? { name: assistant.name, prompt: (embedded ? FRIEND_REACTION_INSTRUCTION+'\n'+FRIEND_IMAGE_INSTRUCTION+'\n' : '') + assistant.systemPrompt } : null,
+      extra: (embedded&&!assistant?FRIEND_IMAGE_INSTRUCTION+"\n":"")+buildExtraInstructions({
         mode,
         character: !!assistant,
         userName: chatSettings.userName,
@@ -5731,7 +5733,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
     const flushContent = () => {
       flushTimer = null
       if (pacedFriend) return
-      patchAssistant({ content: embedded && assistant ? parseFriendResponse(accumulatedText).reply : accumulatedText })
+      patchAssistant({ content: embedded ? (assistant ? parseFriendResponse(accumulatedText).reply : stripImageQuery(accumulatedText).reply) : accumulatedText })
     }
     const scheduleFlush = () => {
       if (flushTimer === null) flushTimer = window.setTimeout(flushContent, 40)
@@ -5899,10 +5901,11 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
       }
     }
 
+    let finalFriendContent:string|undefined;
     const buildFinalAssistantMessage = (): Message => ({
       id: assistantMessageId,
       role: 'assistant',
-      content: embedded && assistant ? parseFriendResponse(accumulatedText).reply : accumulatedText,
+      content: finalFriendContent ?? (embedded ? (assistant ? parseFriendResponse(accumulatedText).reply : stripImageQuery(accumulatedText).reply) : accumulatedText),
       references: referencedPosts.length > 0 ? referencedPosts : undefined,
       codingArtifact,
       thinking: thinkingSummary ? { summary: thinkingSummary, steps: thinkingSteps } : undefined,
@@ -5920,6 +5923,19 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
       )
 
       if (flushTimer !== null) window.clearTimeout(flushTimer)
+      if(!accumulatedText.trim())throw new Error('返答を受信できませんでした。もう一度送信してください。');
+      if(embedded){
+        const parsed=assistant?parseFriendResponse(accumulatedText):stripImageQuery(accumulatedText);
+        if(!parsed.reply.trim())throw new Error('返答を受信できませんでした。もう一度送信してください。');
+        finalFriendContent=parsed.reply;
+        const imageQuery=chooseFriendImageQuery(parsed.imageQuery,[...updatedMessages].reverse().find(message=>message.role==='user')?.content??'',parsed.reply);
+        if(imageQuery&&!ac.signal.aborted){
+          try{const {data,error}=await supabase.functions.invoke('friend-images',{body:{query:imageQuery},signal:ac.signal});
+            if(error)toast.error('画像を取得できませんでした。文章の返信は保存しました。');
+            else if(validFriendPhoto(data?.photo))finalFriendContent=appendFriendPhoto(parsed.reply,data.photo);
+          }catch{/* Keep the text reply when image search is unavailable. */}
+        }
+      }
       if (pacedFriend) await waitForFriendReply(parseFriendResponse(accumulatedText).reply,friendStartedAt,ac.signal)
       flushContent()
 
@@ -6437,6 +6453,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
           {!friendId && <button type="button" className="dm-icon-button dm-round" aria-label="ビデオ通話" onClick={openVoiceMode}><Video size={23}/></button>}
           <DropdownMenu><DropdownMenuTrigger asChild><button type="button" className="dm-icon-button dm-round" aria-label="LimeAIのメニュー"><MoreHorizontal size={23}/></button></DropdownMenuTrigger><ChatMenuContent align="end" className="dm-menu">
             {friendId && assistant && !assistant.builtin && <><DropdownMenuItem onSelect={onEditFriend}>フレンドを編集</DropdownMenuItem><DropdownMenuItem onSelect={()=>{if(confirm(`「${assistant.name}」を削除しますか?`)){deleteCustomAssistant(uid,assistant.id);onBack?.()}}}>フレンドを削除</DropdownMenuItem></>}
+            {onBackgroundChange&&<DropdownMenuItem onSelect={()=>window.setTimeout(onBackgroundChange,0)}>チャットの背景</DropdownMenuItem>}
             <DropdownMenuItem onSelect={createNewSession}>新しいチャット</DropdownMenuItem>
             <DropdownMenuItem onSelect={() => setIsSidebarOpen(true)}>履歴を検索</DropdownMenuItem>
             <DropdownMenuItem onSelect={() => setSelectedModel('fast')}>LimeAI 5.0 Fast {selectedModel === 'fast' && <Check size={16}/>}</DropdownMenuItem>
@@ -6596,9 +6613,9 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
           ) : embedded ? (
             <>
               {messages.length === 0 && <div className="dm-peer-intro"><Avatar className="dm-avatar"><AvatarImage src={friendId && assistant ? avatarOf(assistant,avatars) : `${import.meta.env.BASE_URL}pwa-192x192.png`}/><AvatarFallback>AI</AvatarFallback></Avatar><span className="dm-peer-name">{assistant?.name ?? 'LimeAI'}</span></div>}
-              {messages.filter(msg=>!(assistant&&isLoading&&msg.id===streamingMessageId)).map(msg=><div key={msg.id} className={`dm-message ${msg.role === 'user' ? 'is-own' : ''}`}><ChatPostPreview content={msg.content} fallback={<div className="dm-bubble">
-                {!msg.content && isLoading ? <Skeleton className="h-5 w-16 rounded-full"/> : msg.role === 'user' ? <p>{msg.content}</p> : <MessageMarkdown messageId={msg.id} content={msg.content} sources={msg.sources} activeArtifactId={activeArtifactId} streaming={streamingMessageId===msg.id} onOpenArtifact={openArtifact}/>}
-              </div>}/>{msg.reactions&&<div className="dm-reactions">{Object.entries(msg.reactions).map(([emoji,users])=><span className="dm-friend-reaction" key={emoji} title={`${assistant?.name??'フレンド'}のリアクション`}>{emoji}<strong>{Object.keys(users).length}</strong></span>)}</div>}</div>)}
+              {messages.filter(msg=>!(assistant&&isLoading&&msg.id===streamingMessageId)&&(msg.role!=='assistant'||msg.content.trim()||msg.id===streamingMessageId&&isLoading)).map(msg=>{const displayed=msg.role==='assistant'?readFriendPhoto(msg.content):{text:msg.content,photo:null};return <div key={msg.id} className={`dm-message ${msg.role === 'user' ? 'is-own' : ''}`}><FriendPhoto photo={displayed.photo} account={uid}/><ChatPostPreview content={displayed.text} fallback={<div className="dm-bubble">
+                {!msg.content && isLoading ? <Skeleton className="h-5 w-16 rounded-full"/> : msg.role === 'user' ? <p>{msg.content}</p> : <MessageMarkdown messageId={msg.id} content={displayed.text} sources={msg.sources} activeArtifactId={activeArtifactId} streaming={streamingMessageId===msg.id} onOpenArtifact={openArtifact}/>}
+              </div>}/>{msg.reactions&&<div className="dm-reactions">{Object.entries(msg.reactions).map(([emoji,users])=><span className="dm-friend-reaction" key={emoji} title={`${assistant?.name??'フレンド'}のリアクション`}>{emoji}<strong>{Object.keys(users).length}</strong></span>)}</div>}</div>})}
               <div ref={messagesEndRef}/>
             </>
           ) : messages.length === 0 ? (

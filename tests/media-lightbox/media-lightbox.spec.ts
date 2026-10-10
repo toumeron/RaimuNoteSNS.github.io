@@ -423,7 +423,10 @@ test('profile header fills the status area instead of adding top padding',async(
  test.skip(!['mobile','WebKit-iPhone'].includes(info.project.name),'Phone status area');
  await setup(page,false);
  await page.route('**/*.supabase.co/rest/v1/profiles*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({id:'11111111-1111-1111-1111-111111111111',username:'lime',display_name:'Lime Note',avatar_url:'',cover_url:'https://media.example/one.svg',created_at:'2026-10-01T00:00:00Z'})}));
+ await page.goto('./');
+ const initialMedia=await page.evaluate(()=>Array.from(document.querySelectorAll('meta[name="theme-color"]')).map(meta=>meta.getAttribute('media')));
  await page.goto('u/lime');
+ await expect.poll(()=>page.evaluate(()=>Array.from(document.querySelectorAll('meta[name="theme-color"]')).every(meta=>meta.getAttribute('media')==='not all'))).toBe(true);
  await page.evaluate(()=>document.documentElement.style.setProperty('--lime-profile-system-top','44px'));
  const row=page.locator('header[data-lime-mobile-profile-header-hidden=true] [data-lime-header-row]');
  const cover=page.locator('.profile-header-cover-avatar-gap');
@@ -434,5 +437,7 @@ test('profile header fills the status area instead of adding top padding',async(
  await page.evaluate(()=>window.scrollTo(0,600));
  const background=row.locator('.lime-profile-bar-background');await expect(background).toBeVisible();
  expect((await background.boundingBox())!.y).toBe(0);expect((await background.boundingBox())!.height).toBe(100);
+ await expect(row.locator('.lime-profile-bar-title')).toHaveCSS('text-shadow','rgba(0, 0, 0, 0.18) 0px 1px 2px');
  await page.screenshot({path:info.outputPath('expanded-profile-header.png')});
+ await page.goto('./');await expect.poll(()=>page.evaluate(()=>Array.from(document.querySelectorAll('meta[name="theme-color"]')).map(meta=>meta.getAttribute('media')))).toEqual(initialMedia);
 });

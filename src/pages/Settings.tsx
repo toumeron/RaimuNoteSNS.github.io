@@ -1,3 +1,4 @@
+import {ACCENT_COLORS,useAccentColor,setAccentColor} from '@/lib/accentTheme';
 import {AccountPrivacySettings} from '@/components/profile/AccountPrivacySettings';
 import { NotificationSettings } from '@/components/profile/NotificationSettings';
 import { setExternalAccountAdded } from '@/lib/externalAccounts';
@@ -112,6 +113,7 @@ export default function Settings() {
   };
 
   const { theme, setTheme } = useTheme();
+  const accentColor=useAccentColor();
   const navigate = useNavigate();
   const desktop = useDesktopLayout();
   const [settingsParams, setSettingsParams] = useSearchParams();
@@ -1154,6 +1156,17 @@ export default function Settings() {
         <h2 className="font-display text-base font-bold">外観の設定</h2>
         <p className="mt-1 text-sm text-muted-foreground">LimeNoteの表示を切り替えます</p>
 
+        <fieldset className="mt-5">
+          <legend className="text-sm font-bold">色</legend>
+          <div role="radiogroup" aria-label="テーマの色" className="mt-4 grid grid-cols-6 gap-2">
+            {ACCENT_COLORS.map(color=><label key={color.id} title={color.label} className="flex cursor-pointer flex-col items-center gap-2 text-xs">
+              <input type="radio" name="accent-color" className="peer sr-only" value={color.id} checked={accentColor===color.id} onChange={()=>setAccentColor(color.id)}/>
+              <span className="flex h-9 w-9 items-center justify-center rounded-full peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-background sm:h-12 sm:w-12" style={{backgroundColor:color.color,color:color.id==='yellow'?'#171717':'white'}}>{accentColor===color.id&&<Check className="h-6 w-6" aria-hidden="true"/>}</span>
+              <span className="sr-only">{color.label}</span>
+            </label>)}
+          </div>
+        </fieldset>
+        <h3 className="mt-6 text-sm font-bold">背景</h3>
         <div className="mt-4 grid grid-cols-3 gap-2 rounded-2xl bg-muted p-1">
           <button
             onClick={() => setTheme('light')}

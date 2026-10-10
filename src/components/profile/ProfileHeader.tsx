@@ -287,7 +287,7 @@ export function ProfileHeader({
             href={part}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-pink-500 transition-colors hover:underline"
+            className="text-primary transition-colors hover:underline"
             onClick={(e) => e.stopPropagation()}
           >
             {part}
@@ -309,7 +309,7 @@ export function ProfileHeader({
           <Link
             key={`mention-${index}`}
             to={`/u/${username}`}
-            className="text-pink-500 transition-colors hover:underline"
+            className="text-primary transition-colors hover:underline"
             onClick={(e) => e.stopPropagation()}
           >
             {part}
@@ -337,7 +337,7 @@ export function ProfileHeader({
               // 検索ページに「#タグ名」で遷移。
               navigate(`/search?q=${encodeURIComponent(part)}`);
             }}
-            className="inline-block align-baseline text-pink-500 transition-colors hover:underline"
+            className="inline-block align-baseline text-primary transition-colors hover:underline"
           >
             {part}
           </button>
@@ -771,7 +771,7 @@ export function ProfileHeader({
               ) : (
                 <Button
                   type="button"
-                  className="h-11 w-full rounded-full bg-fuchsia-500 px-6 text-base font-black text-white shadow-soft transition hover:bg-fuchsia-600 hover:shadow-pop disabled:opacity-60"
+                  className="h-11 w-full rounded-full bg-primary px-6 text-base font-black text-white shadow-soft transition hover:bg-primary/90 hover:shadow-pop disabled:opacity-60"
                   onClick={handleJoinMembership}
                   disabled={joinMembership.isPending}
                 >

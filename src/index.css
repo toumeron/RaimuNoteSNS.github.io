@@ -187,7 +187,7 @@
     position: absolute;
     inset: 0;
     background-image:
-      linear-gradient(45deg, hsl(340 85% 70% / 0.1) 25%, transparent 25%),
+      linear-gradient(45deg, hsl(var(--primary) / 0.1) 25%, transparent 25%),
       linear-gradient(-45deg, hsl(185 70% 65% / 0.08) 25%, transparent 25%);
     background-size: 24px 24px;
     pointer-events: none;
@@ -241,3 +241,33 @@ body {
   --tw-ring-color: hsl(var(--muted-foreground)) !important;
   outline-color: hsl(var(--muted-foreground));
 }
+
+/* Accent choice is independent of light/dark mode; pink preserves the defaults. */
+:root[data-accent="blue"]{--theme-hue:203;--theme-primary:202.8169 89.1213% 53.1373%;--theme-on-primary:0 0% 100%;}
+:root[data-accent="yellow"]{--theme-hue:49;--theme-primary:49 100% 50%;--theme-on-primary:25 30% 12%;}
+:root[data-accent="purple"]{--theme-hue:252;--theme-primary:252 100% 67%;--theme-on-primary:0 0% 100%;}
+:root[data-accent="orange"]{--theme-hue:29;--theme-primary:29 100% 50%;--theme-on-primary:25 30% 12%;}
+:root[data-accent="green"]{--theme-hue:164;--theme-primary:164 100% 34%;--theme-on-primary:0 0% 100%;}
+:root[data-accent]:not([data-accent="pink"]){
+ --primary:var(--theme-primary);--primary-foreground:var(--theme-on-primary);--ring:var(--theme-primary);
+ --primary-soft:var(--theme-hue) 85% 92%;--secondary:var(--theme-hue) 90% 95%;--secondary-foreground:var(--theme-hue) 60% 30%;
+ --border:var(--theme-hue) 50% 90%;--input:var(--theme-hue) 40% 92%;--chat-received:hsl(var(--theme-hue) 75% 94%);
+ --sidebar-primary:var(--theme-primary);--sidebar-primary-foreground:var(--theme-on-primary);--sidebar-ring:var(--theme-primary);
+ --sidebar-accent:var(--secondary);--sidebar-accent-foreground:var(--secondary-foreground);--sidebar-border:var(--border);
+ --gradient-primary:linear-gradient(135deg,hsl(var(--theme-hue) 90% 70%),hsl(var(--theme-primary)));
+ --gradient-cream:linear-gradient(180deg,hsl(var(--background)),hsl(var(--theme-hue) 80% 96%));
+ --shadow-soft:0 4px 14px -4px hsl(var(--theme-hue) 60% 75% / .25);--shadow-card:0 8px 24px -8px hsl(var(--theme-hue) 50% 70% / .18);--shadow-pop:0 12px 32px -8px hsl(var(--theme-hue) 70% 65% / .35);
+ --decoration-pink:hsl(var(--theme-hue) 100% 95% / .6);
+}
+:root.dark[data-accent]:not([data-accent="pink"]){--primary-soft:var(--theme-hue) 50% 20%;--secondary:210 20% 18%;--secondary-foreground:var(--theme-hue) 80% 85%;--border:var(--theme-hue) 15% 25%;--input:var(--theme-hue) 15% 25%;--gradient-cream:linear-gradient(180deg,hsl(var(--background)),hsl(var(--theme-hue) 20% 8%));--decoration-pink:hsl(var(--theme-hue) 35% 18% / .6);}
+
+/* Alternative accents use neutral white surfaces and separators only in light mode. */
+:root:not(.dark)[data-accent]:not([data-accent="pink"]){
+ --background:0 0% 100%;--sidebar-background:0 0% 100%;
+ --border:192 18.5185% 94.7059%;--input:192 18.5185% 94.7059%;
+ --sidebar-border:var(--border);--muted:192 18.5185% 94.7059%;
+ --gradient-cream:linear-gradient(#fff,#fff);--decoration-pink:transparent;--decoration-teal:transparent;
+}
+:root:not(.dark)[data-accent]:not([data-accent="pink"]) .lime-app-shell{--desktop-line:#EFF3F4;}
+:root:not(.dark)[data-accent]:not([data-accent="pink"]) .dm-workspace{--dm-line:#EFF3F4;}
+:root:not(.dark)[data-accent]:not([data-accent="pink"]) :where([class*="border-border"]){border-color:#EFF3F4;}

@@ -1,3 +1,5 @@
+import {useCachedChatImage} from '@/lib/chatImageCache';
+import {forwardRef,type ImgHTMLAttributes} from 'react';
 import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
 import {getBlueskyPostUrl} from '@/lib/bluesky';
 import { OfflineBookmarkContext } from '@/components/stickers/OfflineBookmarkContext';
@@ -23,6 +25,8 @@ import type { PostWithAuthor } from '@/types';
 import { MEDIA_VIEWER_EVENT, type MediaViewerSelection } from './openMediaViewer';
 import './media-lightbox.css';
 import { containSize, clampPan, focalPan, pinchZoom } from './mediaGeometry';
+
+const CachedLightboxImage=forwardRef<HTMLImageElement,ImgHTMLAttributes<HTMLImageElement>&{account?:string}>(({src,account,...props},ref)=>{const cached=useCachedChatImage(src??'',account);return <img {...props} ref={ref} src={cached||undefined}/>});
 
 export function MediaLightboxRoot() {
   const [selection, setSelection] = useState<MediaViewerSelection | null>(null);
@@ -270,7 +274,7 @@ export function MediaLightbox({ selection, onClose }: { selection: MediaViewerSe
         {imageFailed ? <p>画像を読み込めませんでした。<button onClick={() => setImageFailed(false)}>再試行</button></p> : current?.type === 'youtube' ?
           <iframe src={`https://www.youtube-nocookie.com/embed/${current.youtubeId}?autoplay=1&rel=0&playsinline=1`} title="YouTube" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen /> : current?.type === 'video' ?
           <video src={current.src} controls playsInline /> : <div ref={track} className="lime-media-image-track" style={{ transform: `translateX(${swipeOffset}px)` }}>
-            {media.map((item, itemIndex) => (!item.type || item.type === 'image') && <img key={item.src} ref={itemIndex === index ? image : undefined} className={itemIndex === index ? undefined : 'lime-media-adjacent'} src={item.src} alt={itemIndex === index ? `拡大画像 ${index + 1}` : ''} aria-hidden={itemIndex !== index || undefined} draggable={false} onError={() => { if (itemIndex === index) setImageFailed(true); }} style={{ transform: itemIndex === index ? `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` : `translateX(${(itemIndex - index) * 100}%)` }} />)}
+            {media.map((item, itemIndex) => (!item.type || item.type === 'image') && <CachedLightboxImage account={user?.id} key={item.src} ref={itemIndex === index ? image : undefined} className={itemIndex === index ? undefined : 'lime-media-adjacent'} src={item.src} alt={itemIndex === index ? `拡大画像 ${index + 1}` : ''} aria-hidden={itemIndex !== index || undefined} draggable={false} onError={() => { if (itemIndex === index) setImageFailed(true); }} style={{ transform: itemIndex === index ? `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` : `translateX(${(itemIndex - index) * 100}%)` }} />)}
           </div>}
       </div>
       {index > 0 && <button className="lime-media-prev" aria-label="前の画像" onClick={() => move(-1)}><ChevronLeft /></button>}

@@ -2395,6 +2395,10 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
     }
 
     const root = document.documentElement;
+    // Let the profile cover extend behind iOS browser chrome, instead of forcing
+    // the app's solid theme color over the status area. Restore other routes.
+    const themeMetas = hideHeaderOnMobileProfile ? Array.from(document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')).map(meta=>({meta,media:meta.getAttribute('media')})) : [];
+    themeMetas.forEach(({meta})=>meta.setAttribute('media','not all'));
 
     if (hideHeaderOnMobileProfile) {
       root.setAttribute('data-lime-mobile-profile-page', 'true');
@@ -2406,6 +2410,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
     }
 
     return () => {
+      themeMetas.forEach(({meta,media})=>media===null?meta.removeAttribute('media'):meta.setAttribute('media',media));
       if (root.getAttribute('data-lime-mobile-profile-page') === 'true') {
         root.removeAttribute('data-lime-mobile-profile-page');
       root.removeAttribute('data-lime-iphone-profile');
@@ -3490,7 +3495,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
             .lime-profile-bar-background::before { content: ""; position: absolute; inset: -24px; background: inherit; filter: blur(12px); }
             [data-lime-profile-no-cover] .lime-profile-bar-background { background: #b4b2b2; }
             .dark [data-lime-profile-no-cover] .lime-profile-bar-background { background: #646262; }
-            .lime-profile-bar-title { height: 40px; display: flex; flex-direction: column; justify-content: center; pointer-events: none; opacity: var(--lime-profile-title-progress, 0); transform: translateY(calc((1 - var(--lime-profile-title-progress, 0)) * 20px)); min-width: 0; flex: 1; color: white; }
+            .lime-profile-bar-title { height: 40px; display: flex; flex-direction: column; justify-content: center; pointer-events: none; opacity: var(--lime-profile-title-progress, 0); transform: translateY(calc((1 - var(--lime-profile-title-progress, 0)) * 20px)); min-width: 0; flex: 1; color: white; text-shadow: 0 1px 2px rgb(0 0 0 / .18); }
             .lime-profile-bar-control { transition: width 180ms ease, opacity 180ms ease, margin 180ms ease; }
             .lime-profile-bar-control.is-collapsed { width: 0; opacity: 0; margin-right: -8px; pointer-events: none; overflow: hidden; }
             .lime-profile-bar-follow { width: 0; opacity: 0; overflow: hidden; flex-shrink: 0; margin-left: -8px; transition: width 180ms ease, opacity 180ms ease, margin 180ms ease; }
@@ -3631,7 +3636,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
                   return (
                     <span
                       aria-hidden="true"
-                      className="pointer-events-none absolute bottom-0 left-0 h-[3px] -translate-x-1/2 rounded-full bg-pink-500 will-change-[left,width] transition-[left,width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+                      className="pointer-events-none absolute bottom-0 left-0 h-[3px] -translate-x-1/2 rounded-full bg-primary will-change-[left,width] transition-[left,width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
                       style={{
                         left: `${activeCenterPercent}%`,
                         width: `${activeUnderlineWidth}px`,

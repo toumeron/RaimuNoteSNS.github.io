@@ -605,7 +605,7 @@ const renderProfileThreadTextWithUrls = (text: string) => {
           href={part}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-pink-500 hover:underline transition-colors"
+          className="text-primary hover:underline transition-colors"
           onClick={(event) => event.stopPropagation()}
         >
           {part}
@@ -633,7 +633,7 @@ const renderProfileThreadTextWithHashtags = (text: string, navigate: (to: string
             event.stopPropagation();
             navigate(`/search?q=${encodeURIComponent(part)}`);
           }}
-          className="text-pink-500 hover:underline transition-colors inline-block align-baseline"
+          className="text-primary hover:underline transition-colors inline-block align-baseline"
         >
           {part}
         </button>
@@ -658,7 +658,7 @@ const renderProfileThreadTextWithMentions = (text: string, navigate: (to: string
         <Link
           key={`profile-thread-mention-${index}`}
           to={`/u/${username}`}
-          className="text-pink-500 hover:underline transition-colors"
+          className="text-primary hover:underline transition-colors"
           onClick={(event) => event.stopPropagation()}
         >
           {part}
@@ -1516,7 +1516,7 @@ const ProfileReactionButton = memo(function ProfileReactionButton({
           placeholder="検索"
           value={searchQuery}
           onChange={(event) => setSearchQuery(event.target.value)}
-          className="h-8 w-full rounded-lg border border-black/[0.08] bg-black/[0.03] px-2.5 text-xs font-medium text-foreground placeholder:text-muted-foreground/40 transition-colors focus:border-pink-500/50 focus:outline-none dark:border-white/10 dark:bg-black/30"
+          className="h-8 w-full rounded-lg border border-black/[0.08] bg-black/[0.03] px-2.5 text-xs font-medium text-foreground placeholder:text-muted-foreground/40 transition-colors focus:border-primary/50 focus:outline-none dark:border-white/10 dark:bg-black/30"
         />
       </div>
     </div>
@@ -2933,6 +2933,7 @@ export default function Profile() {
     let cancelled = false;
 
     const fetchProfileReplies = async () => {
+      setProfileRepliesReady(false);
       setProfileRepliesError(false);
 
       try {
@@ -3246,8 +3247,9 @@ export default function Profile() {
   const profileAuxiliaryLoading = activeTab === 'posts'
     ? contentLoading || !profileRepliesReady || (!isBlueskyProfile && (pinQuery.isPending || (!!pinQuery.data && pinnedPostQuery.isPending)))
     : contentLoading;
-  // Keep already fetched posts visible while replies and pinned posts refresh.
-  const profilePostsLoading = profileAuxiliaryLoading && items.length === 0 && !pinnedPost;
+  // Publish the chronologically merged list only after posts, replies and the pin resolve.
+  // Otherwise the fastest request briefly shows an incomplete list and moves rows later.
+  const profilePostsLoading = profileAuxiliaryLoading;
   const profilePostsEmpty = !profileAuxiliaryLoading && !contentError && !isFetchingNextPage && items.length === 0 && !pinnedPost;
 
   if (userLoading) {
@@ -3320,7 +3322,7 @@ export default function Profile() {
         <div className="mt-2 flex h-10 w-10 items-center justify-center rounded-full border border-border/70 bg-card/95 shadow-lg backdrop-blur-sm">
           <span className="lime-profile-refresh-spinner sm:hidden" data-refreshing={isPullRefreshing || undefined}>{Array.from({length:12}, (_,i) => <i key={i} style={{transform:`rotate(${i * 30}deg) translateY(-6px)`,opacity:(i + 1) / 12}} />)}</span>
           <Loader2
-            className={`max-sm:hidden h-5 w-5 text-pink-500 ${isPullRefreshing ? 'animate-spin' : ''}`}
+            className={`max-sm:hidden h-5 w-5 text-primary ${isPullRefreshing ? 'animate-spin' : ''}`}
             style={
               isPullRefreshing
                 ? undefined
@@ -3385,7 +3387,7 @@ export default function Profile() {
           <TabsList ref={mobileTabsRef} data-lime-profile-mobile-tabs data-lime-profile-tabs-scrollable={hasExtraTabs ? '' : undefined} className={`relative z-20 h-full w-full rounded-none bg-transparent p-0 shadow-none sm:hidden ${hasExtraTabs ? 'flex justify-start overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden' : 'grid grid-cols-4'}`}>
             <span
               aria-hidden="true"
-              className="profile-tabs-underline pointer-events-none absolute bottom-2 left-0 z-[2] h-[4px] w-16 -translate-x-1/2 rounded-full bg-pink-500 sm:w-10"
+              className="profile-tabs-underline pointer-events-none absolute bottom-2 left-0 z-[2] h-[4px] w-16 -translate-x-1/2 rounded-full bg-primary sm:w-10"
               style={{
                 left: hasExtraTabs ? highlightTabCenter : `${((Math.max(0, visibleProfileTabs.findIndex((tab) => tab.value === activeTab)) + 0.5) / visibleProfileTabs.length) * 100}%`,
               }}
@@ -3451,7 +3453,7 @@ export default function Profile() {
             </div>
           )}
 
-          {pinnedPost && <div className="animate-float-up"><PostCard post={pinnedPost} pinned/></div>}
+          {!profilePostsLoading && pinnedPost && <div className="animate-float-up"><PostCard post={pinnedPost} pinned/></div>}
           {!profilePostsLoading && (activeTab === 'media' ? (
             <div className="grid grid-cols-3 gap-1 px-0 md:gap-2">
               {items.map((p: any, idx: number) => (

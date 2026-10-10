@@ -1,11 +1,11 @@
-.follow-list-page{width:100%;min-width:0;max-width:672px;margin:0 auto;background:transparent;}
+.follow-list-page{width:100%;min-width:0;max-width:none;margin:0 auto;background:transparent;}
 .follow-list-heading{display:flex;align-items:center;gap:24px;padding:10px 16px;min-height:72px;}
 .follow-list-heading>button{display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:50%;flex-shrink:0;}
 .follow-list-heading>button:hover{background:hsl(var(--muted));}
 .follow-list-heading>div{min-width:0;}
 .follow-list-heading h1{font-size:22px;line-height:1.3;font-weight:800;overflow-wrap:anywhere;}
 .follow-list-heading p{font-size:14px;color:hsl(var(--muted-foreground));overflow-wrap:anywhere;}
-.follow-list-tabs{display:flex;border-bottom:1px solid hsl(var(--border)/.65);}
+.follow-list-tabs{display:flex;border-bottom:1px solid hsl(var(--border));}
 .follow-list-tabs button{display:flex;flex:1;min-width:0;align-items:center;justify-content:center;padding:18px 6px 16px;font-size:15px;font-weight:500;color:hsl(var(--muted-foreground));}
 .follow-list-tabs button:hover{background:hsl(var(--muted)/.4);}
 .follow-list-tabs button span{position:relative;white-space:nowrap;}
@@ -30,3 +30,5 @@
 
 .follow-list-display{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 @media(max-width:639px){.follow-list-tabs button:first-child{flex:1.4;}.follow-list-tabs button{font-size:12px;}}
+
+.follow-list-sticky{position:sticky;top:0;z-index:30;background:hsl(var(--background));padding-top:env(safe-area-inset-top);}

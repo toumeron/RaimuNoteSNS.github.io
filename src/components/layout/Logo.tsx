@@ -159,7 +159,7 @@ export function Logo({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
   }, []);
 
   return (
-    <Link to="/" className="inline-flex items-center gap-2 font-display font-black">
+    <Link data-lime-brand-logo to="/" style={{'--gradient-primary':'linear-gradient(135deg, hsl(340 90% 70%), hsl(340 85% 58%))'} as React.CSSProperties} className="inline-flex items-center gap-2 font-display font-black">
       <span className={`${s.text} bg-gradient-primary bg-clip-text text-transparent`}>
         Lime
       </span>

@@ -461,3 +461,6 @@ verify_jwt = true
 
 [functions.group-friends]
 verify_jwt = true
+
+[functions.friend-images]
+verify_jwt = true
