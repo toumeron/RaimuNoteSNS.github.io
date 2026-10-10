@@ -1,12 +1,12 @@
 import {refreshNotificationBadge} from '@/lib/notificationBadge';
 import {dismissNotificationToasts} from '@/lib/notificationToast';
 import { supabase } from '@/lib/supabase';
-export const notificationKinds = ['new_post','mention','reply','like','repost','reaction','follow'] as const;
+export const notificationKinds = ['new_post','mention','reply','like','repost','reaction','follow','dm','dm_request'] as const;
 export type NotificationKind = typeof notificationKinds[number];
 export type NotificationPreference = NotificationKind | 'push';
 export type NotificationPreferences = Record<NotificationPreference, boolean>;
-export const notificationLabels: Record<NotificationPreference,string> = {new_post:'新着ポスト',mention:'メンション',reply:'返信',like:'いいね',repost:'リポスト',reaction:'リアクション',follow:'フォロー',push:'端末へのプッシュ通知'};
-export type NotificationRow = {id:string;user_id:string;actor_id:string|null;post_id:string|null;comment_id?:string|null;type:NotificationKind;actor_name:string|null;actor_username?:string|null;actor_avatar_url:string|null;actor_is_official?:boolean;actor_is_private?:boolean;content_preview:string|null;image_urls?:string[];emoji?:string|null;external_post_id?:string|null;is_read:boolean;created_at:string};
+export const notificationLabels: Record<NotificationPreference,string> = {new_post:'新着ポスト',mention:'メンション',reply:'返信',like:'いいね',repost:'リポスト',reaction:'リアクション',follow:'フォロー',dm:'ダイレクトメッセージ',dm_request:'メッセージリクエスト',push:'端末へのプッシュ通知'};
+export type NotificationRow = {id:string;user_id:string;actor_id:string|null;post_id:string|null;comment_id?:string|null;conversation_id?:string|null;direct_message_id?:string|null;type:NotificationKind;actor_name:string|null;actor_username?:string|null;actor_avatar_url:string|null;actor_is_official?:boolean;actor_is_private?:boolean;content_preview:string|null;image_urls?:string[];emoji?:string|null;external_post_id?:string|null;is_read:boolean;created_at:string};
 export type NotificationSubscription = {id:string;subscriber_id:string;provider:'limenote'|'bluesky'|'misskey';target_user_id:string|null;external_actor:string|null;target_name:string|null;target_avatar_url:string|null;profiles?:{username:string;display_name:string;avatar_url:string}|null};
 export function normalizePreferences(value: Partial<NotificationPreferences> = {}): NotificationPreferences {
  return Object.fromEntries([...notificationKinds,'push'].map(kind=>[kind,value[kind]!==false])) as NotificationPreferences;
@@ -42,6 +42,7 @@ export async function removeNotificationSubscription(userId:string,id:string) {
  const {error}=await supabase.from('post_notification_subscriptions').delete().eq('subscriber_id',userId).eq('id',id);if(error)throw error;
 }
 export function notificationLink(n:NotificationRow) {
+ if((n.type==='dm'||n.type==='dm_request')&&n.conversation_id)return `/messages/${encodeURIComponent(n.conversation_id)}`;
  if(n.external_post_id)return `/post/${encodeURIComponent(n.external_post_id)}`;
  if(n.comment_id)return `/post/${encodeURIComponent(`reply:${n.comment_id}`)}`;
  if(n.post_id)return `/post/${encodeURIComponent(n.post_id)}`;
@@ -59,5 +60,5 @@ export function groupNotifications(rows:NotificationRow[]) {
  return groups;
 }
 export function notificationDescription(kind:NotificationKind,emoji?:string|null) {
- return {new_post:'さんが新しく投稿しました',mention:'さんがあなたをメンションしました',reply:'さんがあなたに返信しました',like:'さんがあなたのポストをいいねしました',repost:'さんがあなたのポストをリポストしました',reaction:`さんがあなたのポストに${emoji??''}でリアクションしました`,follow:'さんがあなたをフォローしました'}[kind]??'さんからの通知';
+ return {new_post:'さんが新しく投稿しました',mention:'さんがあなたをメンションしました',reply:'さんがあなたに返信しました',like:'さんがあなたのポストをいいねしました',repost:'さんがあなたのポストをリポストしました',reaction:`さんがあなたのポストに${emoji??''}でリアクションしました`,follow:'さんがあなたをフォローしました',dm:'さんからメッセージが届きました',dm_request:'さんからメッセージリクエストが届きました'}[kind]??'さんからの通知';
 }

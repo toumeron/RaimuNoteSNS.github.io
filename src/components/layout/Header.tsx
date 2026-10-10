@@ -11,6 +11,7 @@ import { MobileAccountShortcuts } from './AccountSwitcher';
 import { SearchExploreTabs } from '@/components/search/SearchExploreTabs';
 import { useSpaces } from '@/components/spaces/SpaceContext';
 import { DesktopAccountFooter } from './DesktopAccountFooter';
+import type { ReactNode } from 'react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
@@ -34,6 +35,8 @@ import { searchExternalUsers } from '@/lib/bluesky';
 import type { User } from '@/types';
 import {
   ArrowLeft,
+  ArrowUpDown,
+  Check,
   MoreHorizontal,
   LogOut,
   Settings as SettingsIcon,
@@ -2115,8 +2118,9 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   }, [headerSearchValue, headerLiveUserSuggestions, headerSearchHistory]);
 
   const isSearchPage = normalizeAppPath(location.pathname) === '/u/LimeBiz';
-  const isChatPage = normalizeAppPath(location.pathname) === '/chat';
+  const isChatPage = normalizeAppPath(location.pathname) === '/chat' || /^\/messages(?:\/|$)/.test(normalizeAppPath(location.pathname));
   const isNotificationsPage = normalizeAppPath(location.pathname) === '/notifications';
+  const isPostActivityPage = /^\/post\/[^/]+\/activity\/?$/.test(normalizeAppPath(location.pathname));
   const isMapsPage = normalizeAppPath(location.pathname) === '/maps';
   const isNewsHistoryPage = normalizeAppPath(location.pathname) === '/news/history';
   const isNewsPage = normalizeAppPath(location.pathname) === '/news' || isNewsHistoryPage;
@@ -2458,8 +2462,8 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
             <span className="relative mr-2 inline-flex"><Bell className="h-4 w-4" /><UnreadBadge /></span> 通知
           </DropdownMenuItem>
 
-          <DropdownMenuItem onClick={() => navigate('/chat')} className={menuItemClass}>
-            <MessageSquare className="mr-2 h-4 w-4" /> LimeAI
+          <DropdownMenuItem onClick={() => navigate('/messages')} className={menuItemClass}>
+            <MessageSquare className="mr-2 h-4 w-4" /> チャット
           </DropdownMenuItem>
 
           <DropdownMenuItem onClick={() => navigate('/media')} className={menuItemClass}>
@@ -2776,10 +2780,10 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
           onClick: () => navigate('/notifications'),
         },
         {
-          label: 'LimeAI',
-          path: '/chat',
+          label: 'チャット',
+          path: '/messages',
           icon: MessageSquare,
-          onClick: () => navigate('/chat'),
+          onClick: () => navigate('/messages'),
         },
         ...(!desktopLayout ? [{
           label: 'フォト',
@@ -2812,6 +2816,11 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
         },
       ]
     : [];
+
+  const sidebarItems = desktopLayout && /^\/messages(?:\/|$)/.test(normalizeAppPath(location.pathname))
+    ? [mobileSidebarItems.find(item=>item.path==='/'), mobileSidebarItems.find(item=>item.path==='/search'), mobileSidebarItems.find(item=>item.path==='/notifications'),
+      {label:'LimeAI',path:'/messages',icon:MessageSquare,onClick:()=>navigate('/messages')},mobileSidebarItems.find(item=>item.path.startsWith('/u/')),mobileSidebarItems.find(item=>item.path==='/settings')].filter((item):item is NonNullable<typeof item>=>!!item)
+    : mobileSidebarItems;
 
   const renderMobileSidebar = () => {
     if (!user || typeof document === 'undefined' || (desktopLayout && !desktopSidebarContainer)) return null;
@@ -2918,7 +2927,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
 
             <nav className="min-h-0 flex-1 overflow-y-auto px-[clamp(24px,8vw,68px)] pb-4 pt-7 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               <div className="space-y-1">
-                {mobileSidebarItems.map((item) => {
+                {sidebarItems.map((item) => {
                   const Icon = item.icon;
                   const isCurrent = desktopLayout && (item.path === '/'
                     ? location.pathname === '/'
@@ -3006,6 +3015,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
       data-lime-profile-scrolled={hideHeaderOnMobileProfile && profileCoverHidden || undefined}
       data-lime-profile-no-cover={hideHeaderOnMobileProfile && mobileProfileInfo && !mobileProfileInfo.user.coverUrl || undefined}
       data-lime-profile-title-visible={hideHeaderOnMobileProfile && profileTitleVisible || undefined}
+      data-lime-post-activity-header={isPostActivityPage || undefined}
       data-lime-mobile-profile-header-hidden={hideHeaderOnMobileProfile ? 'true' : undefined}
       data-lime-mobile-post-detail-header-hidden={hidePostDetailHeaderOnMobile ? 'true' : undefined}
       data-lime-chat-header-hidden-mobile={isChatPage ? 'true' : undefined}
@@ -3527,6 +3537,10 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
             <Link className={`lime-profile-bar-control ${profileSummaryOffscreen && mobileProfileInfo?.user.id !== user?.id ? 'is-collapsed' : ''}`} aria-hidden={profileSummaryOffscreen && mobileProfileInfo?.user.id !== user?.id || undefined} tabIndex={profileSummaryOffscreen && mobileProfileInfo?.user.id !== user?.id ? -1 : undefined} aria-label="プロフィールを検索" to={`/search?q=${encodeURIComponent(`@${mobileProfileInfo?.user.username ?? ''}`)}`}><Search className="h-5 w-5" /></Link>
             <DropdownMenu modal={false}><DropdownMenuTrigger asChild><button className="lime-profile-bar-control" aria-label="プロフィールのその他のメニュー"><MoreHorizontal className="h-5 w-5" /></button></DropdownMenuTrigger><DropdownMenuContent align="end" className="z-[600]" onCloseAutoFocus={event => event.preventDefault()}><DropdownMenuItem onClick={() => {void navigator.clipboard.writeText(window.location.href);toast.success('リンクをコピーしました');}}>リンクをコピー</DropdownMenuItem><DropdownMenuItem onClick={() => { if (navigator.share) void navigator.share({title: mobileProfileInfo?.user.displayName, url: window.location.href}).catch(() => {}); else {void navigator.clipboard.writeText(window.location.href);toast.success('リンクをコピーしました');} }}>プロフィールを共有</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
             {mobileProfileInfo && mobileProfileInfo.user.id !== user?.id && <div className={`relative lime-profile-bar-follow ${profileSummaryOffscreen ? 'is-visible' : ''}`} ref={element => element?.toggleAttribute('inert', !(profileSummaryOffscreen))} aria-hidden={!(profileSummaryOffscreen)}><FollowButton userId={mobileProfileInfo.user.id} externalProfile={mobileProfileInfo.user.id.startsWith('did:') || mobileProfileInfo.user.id.startsWith('misskey-user:') ? mobileProfileInfo.user : undefined} /></div>}
+          </> : isPostActivityPage ? <>
+            <Button variant="ghost" size="icon" className="shrink-0 rounded-full" aria-label="戻る" onClick={()=>window.history.state?.idx>0?navigate(-1):navigate('/')}><ArrowLeft className="h-5 w-5"/></Button>
+            <h1 className="min-w-0 flex-1 truncate text-center text-lg font-bold sm:text-left sm:text-xl">ポストアクティビティ</h1>
+            {(settingsParams.get('tab')==='quotes'||!settingsParams.get('tab')&&!settingsParams.get('reply'))?<DropdownMenu modal={false}><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="shrink-0 rounded-full" aria-label="エンゲージメントを並べ替え"><ArrowUpDown className="h-5 w-5"/></Button></DropdownMenuTrigger><DropdownMenuContent data-lime-activity-sort align="end" className="z-[600] w-64 rounded-2xl border-0 p-0 shadow-lg"><div className="border-b border-border px-4 py-3 text-sm text-muted-foreground">エンゲージメントを並べ替え</div>{[{id:'top',label:'話題のポスト'},{id:'latest',label:'最新'}].map(option=><DropdownMenuItem key={option.id} className="flex justify-between px-4 py-3 text-base focus:bg-muted/40 focus:text-foreground" onClick={()=>setSettingsParams(previous=>{const next=new URLSearchParams(previous);next.set('sort',option.id);return next;})}>{option.label}{(settingsParams.get('sort')==='latest'?'latest':'top')===option.id&&<Check className="h-5 w-5 text-primary"/>}</DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu>:<span className="w-10 shrink-0"/>}
           </> : isMapsPage ? <>
             <Button variant="ghost" size="icon" className="shrink-0 rounded-full" aria-label="戻る" onClick={() => window.history.state?.idx > 0 ? navigate(-1) : navigate('/')}><ArrowLeft className="h-5 w-5" /></Button><h1 className="ml-2 flex-1 text-xl font-bold">LimeMaps</h1>
           </> : isNewsPage ? <>
@@ -3670,3 +3684,11 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
     {renderMobileSidebar()}
   </>;
 };
+
+/** Panel variant of the existing Header, used by the split chat workspace. */
+export function DirectMessagePanelHeader({children,actions,back,className=''}:{children:ReactNode;actions?:ReactNode;back?:()=>void;className?:string}){
+ return <header className={`dm-panel-header ${className}`}>
+  {back&&<button type="button" className="dm-icon-button dm-back" aria-label="戻る" onClick={back}><ArrowLeft aria-hidden="true" size={22}/></button>}
+  <div className="dm-panel-title">{children}</div><div className="dm-header-actions">{actions}</div>
+ </header>;
+}

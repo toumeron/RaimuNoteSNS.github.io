@@ -14,6 +14,8 @@ type NotificationRecord = {
   actor_username?: string | null;
   emoji?: string | null;
   comment_id?: string | null;
+  conversation_id?: string | null;
+  direct_message_id?: string | null;
 };
 
 type PushSubscriptionRow = {
@@ -144,9 +146,10 @@ const hkdf = async (salt: Uint8Array, ikm: Uint8Array, info: Uint8Array, length:
   return output.slice(0, length);
 };
 
-const getNotificationTitle = (record: NotificationRecord) => {
+export const getNotificationTitle = (record: NotificationRecord) => {
   const actorName = record.actor_name || 'ユーザー';
 
+  if (record.type === 'dm'||record.type === 'dm_request') return actorName;
   if (record.type === 'mention') {
     return `${actorName}さんからのメンション`;
   }
@@ -160,8 +163,10 @@ const getNotificationTitle = (record: NotificationRecord) => {
   return `${actorName}さんからの${labels[record.type??'']??'通知'}`;
 };
 
-const getNotificationBody = (record: NotificationRecord) => {
+export const getNotificationBody = (record: NotificationRecord) => {
   if (record.content_preview) return record.content_preview;
+  if(record.type==='dm_request')return 'メッセージリクエストが届きました';
+  if(record.type==='dm')return 'メッセージが届きました';
 
   if (record.type === 'mention') {
     return 'ポストであなたをメンションしました';
@@ -175,8 +180,8 @@ const getNotificationBody = (record: NotificationRecord) => {
   return labels[record.type??'']??'新しい通知があります';
 };
 
-const getNotificationUrl = (appOrigin: string, record: NotificationRecord) => {
-  const path = record.external_post_id
+export const getNotificationUrl = (appOrigin: string, record: NotificationRecord) => {
+  const path = (record.type==='dm'||record.type==='dm_request') && record.conversation_id ? `/RaimuNoteSNS.github.io/messages/${record.conversation_id}` : record.external_post_id
     ? `/RaimuNoteSNS.github.io/post/${encodeURIComponent(record.external_post_id)}`
     : record.comment_id
       ? `/RaimuNoteSNS.github.io/post/${encodeURIComponent(`reply:${record.comment_id}`)}`
@@ -236,7 +241,7 @@ const deleteRows = async (config: SupabaseRestConfig, pathAndQuery: string) => {
 };
 
 const getExistingNotification = async (config: SupabaseRestConfig, notificationId: string) => {
-  const select = 'id,is_read,expires_at,user_id,actor_id,post_id,type,actor_name,actor_avatar_url,content_preview,external_post_id,actor_username,emoji,comment_id';
+  const select = 'id,is_read,expires_at,user_id,actor_id,post_id,type,actor_name,actor_avatar_url,content_preview,external_post_id,actor_username,emoji,comment_id,conversation_id,direct_message_id';
   const rows = await selectRows<NotificationRecord>(
     config,
     `notifications?select=${encodeURIComponent(select)}&id=eq.${encodeURIComponent(notificationId)}&limit=1`,
@@ -435,7 +440,7 @@ const sendWebPush = async ({
   }
 };
 
-Deno.serve(async (req: Request) => {
+export const handlePush = async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -490,7 +495,17 @@ Deno.serve(async (req: Request) => {
       if (!profiles[0].is_private) return true;
       return (await selectRows(config, `follows?select=follower_id&follower_id=eq.${encodeURIComponent(record.user_id)}&followee_id=eq.${encodeURIComponent(actor)}&approved=eq.true&limit=1`)).length > 0;
     };
-    if (record.actor_id && !await accountVisible(record.actor_id)) return jsonResponse({ok:true,sent:0,skipped:true});
+    const isDirect=record.type==='dm'||record.type==='dm_request';
+    if(isDirect){
+      if(!record.conversation_id||!record.direct_message_id||!record.actor_id)return jsonResponse({ok:true,sent:0,skipped:true});
+      const conversations=await selectRows<{user_low:string;user_high:string;status:string;read_low:string;read_high:string;deleted_low:string|null;deleted_high:string|null}>(config,`direct_conversations?select=user_low,user_high,status,read_low,read_high,deleted_low,deleted_high&id=eq.${encodeURIComponent(record.conversation_id)}&limit=1`);
+      const messages=await selectRows<{sender_id:string;conversation_id:string;created_at:string}>(config,`direct_messages?select=sender_id,conversation_id,created_at&id=eq.${encodeURIComponent(record.direct_message_id)}&limit=1`);
+      const c=conversations[0],m=messages[0];
+      if(!c||!m||c.status==='declined'||![c.user_low,c.user_high].includes(record.user_id)||m.sender_id!==record.actor_id||m.sender_id===record.user_id||![c.user_low,c.user_high].includes(m.sender_id)||m.conversation_id!==record.conversation_id)return jsonResponse({ok:true,sent:0,skipped:true});
+      const cutoff=record.user_id===c.user_low?[c.read_low,c.deleted_low]:[c.read_high,c.deleted_high];
+      if(cutoff.some(time=>time&&Date.parse(time)>=Date.parse(m.created_at)))return jsonResponse({ok:true,sent:0,skipped:true});
+    }
+    if (!isDirect && record.actor_id && !await accountVisible(record.actor_id)) return jsonResponse({ok:true,sent:0,skipped:true});
 
     if (record.post_id) {
       const posts = await selectRows<{user_id: string; visibility: string}>(config,
@@ -579,4 +594,5 @@ Deno.serve(async (req: Request) => {
     console.error('send-push failed:', error);
     return jsonResponse({ error: 'Notification delivery failed' }, 500);
   }
-});
+};
+if(import.meta.main)Deno.serve(handlePush);

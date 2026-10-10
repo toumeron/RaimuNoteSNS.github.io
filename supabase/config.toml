@@ -455,3 +455,6 @@ verify_jwt = true
 
 [functions.check-external-notifications]
 verify_jwt = false
+
+[functions.direct-media]
+verify_jwt = true

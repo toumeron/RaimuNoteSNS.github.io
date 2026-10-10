@@ -284,7 +284,7 @@ export function BottomNav() {
     { to: '/search', icon: Search, label: '検索', onClick: handleSearchNavClick },
     { to: `/u/${user.username}`, icon: UserIcon, label: 'プロフ' },
     { to: '/notifications', icon: Bell, label: '通知' },
-    { to: '/chat', icon: MessageSquare, label: 'チャット' },
+    { to: '/messages', icon: MessageSquare, label: 'チャット' },
     { to: '/settings', icon: SettingsIcon, label: '設定' },
   ];
 

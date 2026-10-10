@@ -35,7 +35,9 @@ export function AppLayout() {
     window.scrollTo(0, 0);
   }, [location.pathname]);
 
+  const isDirectMessagesPage = location.pathname === '/messages' || location.pathname.startsWith('/messages/');
   const isAccountAboutPage = /^\/u\/[^/]+\/about$/.test(location.pathname);
+  const isPostActivityPage = /^\/post\/[^/]+\/activity$/.test(location.pathname);
   const isPostDetailPage = /^\/post\/[^/]+$/.test(location.pathname);
   // 大文字小文字を区別せず /limepro または /LimePro にマッチさせる判定
   const isLimeProPage = /^\/limepro$/i.test(location.pathname);
@@ -54,6 +56,7 @@ export function AppLayout() {
   let mainClassName = 'mx-auto max-w-2xl px-4 py-6';
   if (location.pathname === '/maps' || location.pathname === '/notifications' || location.pathname === '/topics' || location.pathname === '/settings' || location.pathname.startsWith('/news')) mainClassName = 'w-full max-w-none px-0 py-0';
   if (/^\/u\/[^/]+$/.test(location.pathname)) mainClassName = 'mx-auto max-w-2xl px-4 py-6 max-sm:pt-0';
+  if (isPostActivityPage) mainClassName = 'mx-auto max-w-2xl px-0 py-0';
   if (isAccountAboutPage) mainClassName = 'mx-auto max-w-2xl px-0 py-0';
   
   if (isLimeProPage) {
@@ -65,19 +68,22 @@ export function AppLayout() {
     mainClassName = 'mx-auto max-w-2xl px-4 pb-6 pt-0';
   }
 
+  if (isDirectMessagesPage) mainClassName = 'w-full max-w-none p-0';
+
   if (isDesktop) {
-    const isWorkspacePage = location.pathname === '/chat' || location.pathname.startsWith('/media');
-    const hideHeader = location.pathname === '/maps' || (location.pathname.startsWith('/u/') && !isAccountAboutPage) || ['/search', '/settings', '/chat', '/bookmarks'].includes(location.pathname) || location.pathname.startsWith('/media') || isPostDetailPage;
-    const showRightSidebar = !['/chat', '/settings', '/maps'].includes(location.pathname);
-    const isEdgePage = location.pathname === '/maps' || location.pathname.startsWith('/news') || location.pathname === '/settings' || location.pathname === '/notifications' || location.pathname === '/topics' || isWorkspacePage || location.pathname === '/bookmarks' || location.pathname === '/' || location.pathname.startsWith('/u/') || isPostDetailPage;
+    const isWorkspacePage = isDirectMessagesPage || location.pathname === '/chat' || location.pathname.startsWith('/media');
+    const hideHeader = isDirectMessagesPage || location.pathname === '/maps' || (location.pathname.startsWith('/u/') && !isAccountAboutPage) || ['/search', '/settings', '/chat', '/bookmarks'].includes(location.pathname) || location.pathname.startsWith('/media') || isPostDetailPage;
+    const showRightSidebar = !isDirectMessagesPage && !['/chat', '/settings', '/maps'].includes(location.pathname);
+    const isEdgePage = isPostActivityPage || location.pathname === '/maps' || location.pathname.startsWith('/news') || location.pathname === '/settings' || location.pathname === '/notifications' || location.pathname === '/topics' || isWorkspacePage || location.pathname === '/bookmarks' || location.pathname === '/' || location.pathname.startsWith('/u/') || isPostDetailPage;
     return (
       <CallSessionProvider>
-        <PageCompanion userId={user.id} />
+        {!isDirectMessagesPage && <PageCompanion userId={user.id} />}
         <DesktopLayoutContext.Provider value={true}>
         <div className="lime-app-shell" data-lime-page={location.pathname}
           data-lime-map-sidebar-collapsed={location.pathname === '/maps' && mapSidebarClosed && !isIpad() || undefined}
           data-lime-ipad={isIpad() || undefined}
-          data-lime-workspace={location.pathname === '/chat' || undefined}
+          data-lime-workspace={isDirectMessagesPage || location.pathname === '/chat' || undefined}
+          data-lime-direct-workspace={isDirectMessagesPage || undefined}
           data-lime-hide-header={hideHeader || undefined}
           data-lime-edge={isEdgePage || undefined}
           data-lime-timeline={location.pathname === '/' || undefined}>
@@ -96,8 +102,8 @@ export function AppLayout() {
   return (
     // LimeProページの場合はボトムナビゲーション用の余白(pb-20)を削除する
     <CallSessionProvider>
-        <PageCompanion userId={user.id} />
-      <div className={`min-h-screen ${isLimeProPage || location.pathname === '/maps' ? 'pb-0' : location.pathname === '/topics' ? 'pb-[var(--lime-bottom-nav-height,64px)] md:pb-0' : 'pb-20 md:pb-0'}`}>
+        {!isDirectMessagesPage && <PageCompanion userId={user.id} />}
+      <div className={`min-h-screen ${isDirectMessagesPage || isLimeProPage || location.pathname === '/maps' ? 'pb-0' : location.pathname === '/topics' ? 'pb-[var(--lime-bottom-nav-height,64px)] md:pb-0' : 'pb-20 md:pb-0'}`}>
       
         {/* LimeProページ以外でのみヘッダーを表示する */}
         {!isLimeProPage && location.pathname !== '/bookmarks' && <Header />}

@@ -24,6 +24,7 @@ const PostDetail = lazy(() => import("./pages/PostDetail"));
 const Profile = lazy(() => import("./pages/Profile"));
 const Settings = lazy(() => import("./pages/Settings"));
 const SearchPage = lazy(() => import("./pages/SearchPage"));
+const DirectMessages = lazy(() => import("./pages/DirectMessages"));
 const PostActivity = lazy(() => import("./pages/PostActivity"));
 const Share = lazy(() => import("./pages/Share"));
 const NotFound = lazy(() => import("./pages/NotFound"));
@@ -34,7 +35,6 @@ const SpacePage = lazy(() => import("./pages/SpacePage"));
 import { SpaceProvider } from '@/components/spaces/SpaceProvider';
 const LimeMaps = lazy(() => import('./pages/LimeMaps'));
 const NewsPage = lazy(() => import("./pages/NewsPage"));
-const ChatPage = lazy(() => import("./pages/ChatPage"));
 const TermsPage = lazy(() => import("./pages/terms"));
 const LimeProLanding = lazy(() => import("./pages/LimePro"));
 const MediaViewer = lazy(() => import("./pages/MediaViewer"));
@@ -2692,7 +2692,7 @@ const isPostDetailPage = lowerPath.includes("/post/");
 const isMediaPage = lowerPath === "/media" || lowerPath.startsWith("/media/");
 
 // いずれかの非表示対象ページであるか、またはスクロールによって非表示にするか
-const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage || isMediaPage || isPostDetailPage || lowerPath === '/topics' || lowerPath === '/maps';
+const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage || isMediaPage || isPostDetailPage || lowerPath === '/topics' || lowerPath === '/maps' || /\/messages(?:\/|$)/.test(lowerPath);
 
   return (
     <PostOverlayContext.Provider value={openPostOverlay}>
@@ -2716,7 +2716,8 @@ const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage |
             <Route path="/news/history" element={<Suspense fallback={<RouteLoading />}><NewsPage /></Suspense>} />
             <Route path="/maps" element={<Suspense fallback={<RouteLoading />}><LimeMaps /></Suspense>} />
             <Route path="/news" element={<Suspense fallback={<RouteLoading />}><NewsPage /></Suspense>} />
-            <Route path="/chat" element={<Suspense fallback={<RouteLoading />}><ChatPage /></Suspense>} /> {/* AIチャットページのルーティングを追加 */}
+            <Route path="/messages/:conversationId?" element={<Suspense fallback={<RouteLoading />}><DirectMessages /></Suspense>} />
+            <Route path="/chat" element={<Suspense fallback={<RouteLoading />}><Navigate to="/messages/limeai" replace /></Suspense>} /> {/* AIチャットページのルーティングを追加 */}
             <Route path="/post/:id" element={<Suspense fallback={<RouteLoading />}><PostDetail /></Suspense>} />
             <Route path="/post/:postId/activity" element={<Suspense fallback={<RouteLoading />}><PostActivity /></Suspense>} />
             <Route path="/u/:username" element={<Suspense fallback={<RouteLoading />}><Profile /></Suspense>} />

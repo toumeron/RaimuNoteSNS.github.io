@@ -1,3 +1,11 @@
+import {ChatMenuContent} from '@/components/ai/ChatMenuContent';
+import { ProfileImageCropper } from '@/components/profile/ProfileImageCropper';
+import { AI_CHAT_DELETED, AI_CHAT_HISTORY_CHANGED, AI_FRIENDS_CHANGED, avatarOf, loadAvatars, saveAvatars, defaultAvatarUrl, listAssistants, findAssistant, saveCustomAssistant, deleteCustomAssistant, type AssistantItem, type AssistantDraft, type AvatarMap } from '@/lib/aiFriends';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { DirectMessagePanelHeader } from '@/components/layout/Header';
+import { DropdownMenu,  DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Video, MoreHorizontal } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { PrivateAccountBadge } from '@/components/common/PrivateAccountBadge';
 import { createSandboxWorker, sandboxDocument, type SandboxWorker } from '@/lib/sandboxExecution';
@@ -121,23 +129,6 @@ type Artifact = ArtifactRecord & { messageId: string }
 /** 会話モード(現在は通常のチャットのみ) */
 type Mode = 'chat'
 
-type AssistantItem = {
-  id: string
-  slug: string | null
-  name: string
-  description: string
-  systemPrompt: string
-  starter: string
-  /** 電話に出たときの第一声 */
-  greeting: string
-  category: string
-  builtin: boolean
-  gender?: 'female' | 'male'
-  lang?: 'ja-JP' | 'en-US'
-  pitch?: number
-  rate?: number
-}
-
 const MODE_META: Record<
   Mode,
   { label: string; short: string; placeholder: string; desc: string }
@@ -153,48 +144,6 @@ const MODE_META: Record<
 /* ==================================================================
    LimeAI 拡張: アシスタントのプリセット
    ================================================================== */
-
-type Preset = {
-  slug: string;
-  name: string;
-  category: string;
-  description: string;
-  starter: string;
-  greeting: string;
-  systemPrompt: string;
-  gender: "female" | "male";
-  lang?: "ja-JP" | "en-US";
-  pitch?: number;
-  rate?: number;
-};
-
-/** 「機能」ではなく「人」として話せるキャラクター。会話の共通ルールは buildContents 側で付与します */
-const PRESETS: Preset[] = [
-  {
-    slug: "nakkar7",
-    name: "なか",
-    category: "友達",
-    gender: "female",
-    description: "かわいいイラストレーター〜！",
-    starter: "こんにちは",
-    greeting: "猫です。",
-    systemPrompt:
-      "あなたの名前は「なか」でファンへの丁寧なお礼を中心に穏やかで親しみやすいトーンで投稿し、仕事熱心でファンを大切にしつつ控えめに日常を過ごす優しい性格のイラストレーター。",
-  },
-
-    {
-    slug: "km170",
-    name: "担々麺",
-    category: "友達",
-    gender: "female",
-    description: "猫ちゃん",
-    starter: "こんにちは",
-    greeting: "猫です。",
-    systemPrompt:
-      "あなたの名前は「たんたんめん」でお寿司ともふもふを愛し、引きこもり気味の自由気ままでユーモラスな内向的性格のイラストレーター。",
-  },
-
-];
 
 /* ==================================================================
    LimeAI 拡張: ローカル保存 (設定 / メモリ / ピン留め / カスタムアシスタント)
@@ -251,94 +200,9 @@ const loadMemories = (uid?: string | null) => readList<MemoryItem>(uid, 'memorie
 type SessionMeta = { pinned?: boolean; mode?: Mode; assistantId?: string | null }
 type SessionMetaMap = Record<string, SessionMeta>
 const loadSessionMeta = (uid?: string | null) => read<SessionMetaMap>(uid, 'session-meta', {})
-const saveSessionMeta = (uid: string | null | undefined, m: SessionMetaMap) => write(uid, 'session-meta', m)
+const saveSessionMeta = (uid: string | null | undefined, m: SessionMetaMap) => { write(uid, 'session-meta', m); window.dispatchEvent(new Event(AI_CHAT_HISTORY_CHANGED)); }
 
 /* ---------- 自作キャラクター ---------- */
-type AssistantDraft = {
-  id?: string
-  name: string
-  description: string
-  systemPrompt: string
-  starter: string
-  greeting: string
-  gender: 'female' | 'male'
-}
-
-function loadCustomAssistants(uid?: string | null): AssistantItem[] {
-  return readList<AssistantItem>(uid, 'assistants')
-}
-
-function saveCustomAssistant(uid: string | null | undefined, draft: AssistantDraft): AssistantItem[] {
-  const list = loadCustomAssistants(uid)
-  if (draft.id) {
-    const next = list.map((a) => (a.id === draft.id ? { ...a, ...draft, id: a.id } : a))
-    write(uid, 'assistants', next)
-    return next
-  }
-  const item: AssistantItem = {
-    id: `custom:${crypto.randomUUID()}`,
-    slug: null,
-    name: draft.name,
-    description: draft.description,
-    systemPrompt: draft.systemPrompt,
-    starter: draft.starter,
-    greeting: draft.greeting,
-    category: 'カスタム',
-    builtin: false,
-    gender: draft.gender,
-  }
-  const next = [...list, item]
-  write(uid, 'assistants', next)
-  return next
-}
-
-function deleteCustomAssistant(uid: string | null | undefined, id: string): AssistantItem[] {
-  const next = loadCustomAssistants(uid).filter((a) => a.id !== id)
-  write(uid, 'assistants', next)
-  return next
-}
-
-/* ---------- キャラクターのアイコン画像 (ブラウザ内に保存) ---------- */
-type AvatarMap = Record<string, string>
-
-const loadAvatars = (uid?: string | null) => read<AvatarMap>(uid, 'avatars', {})
-
-/** 保存に成功したら true(容量超過などで失敗したら false) */
-function saveAvatars(uid: string | null | undefined, map: AvatarMap): boolean {
-  try {
-    localStorage.setItem(key(uid, 'avatars'), JSON.stringify(map))
-    return true
-  } catch {
-    return false
-  }
-}
-
-const AVATAR_COLORS: [string, string][] = [
-  ['#ffb3c7', '#ff7a9c'],
-  ['#a8d8f4', '#4fb3e8'],
-  ['#c5b8f5', '#8b6fe0'],
-  ['#ffd59a', '#ff9f43'],
-  ['#9fe0c2', '#38b17f'],
-  ['#f6b7a4', '#e5745a'],
-]
-
-/** 初期アイコン(人のシルエット)。キャラクターIDごとに色が決まる */
-function defaultAvatarUrl(seed: string): string {
-  let h = 0
-  for (const ch of seed) h = (h * 31 + ch.charCodeAt(0)) >>> 0
-  const [c1, c2] = AVATAR_COLORS[h % AVATAR_COLORS.length]
-  const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">` +
-    `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${c1}"/><stop offset="1" stop-color="${c2}"/></linearGradient></defs>` +
-    `<rect width="128" height="128" fill="url(#g)"/>` +
-    `<circle cx="64" cy="50" r="22" fill="#fff" fill-opacity=".92"/>` +
-    `<path d="M20 128c0-27 19-44 44-44s44 17 44 44z" fill="#fff" fill-opacity=".92"/>` +
-    `</svg>`
-  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
-}
-
-const avatarOf = (a: { id: string }, avatars: AvatarMap) => avatars[a.id] || defaultAvatarUrl(a.id)
-
 /** 選んだ画像を中央で正方形に切り抜き、256pxのJPEGにする(localStorageに収まる大きさ) */
 async function avatarFromFile(file: File): Promise<string> {
   if (!file.type.startsWith('image/')) throw new Error('画像ファイルを選んでください')
@@ -367,30 +231,6 @@ async function avatarFromFile(file: File): Promise<string> {
 /* ==================================================================
    LimeAI 拡張: アシスタント(キャラクター)一覧
    ================================================================== */
-
-const BUILTIN_ASSISTANTS: AssistantItem[] = PRESETS.map((p) => ({
-  id: `builtin:${p.slug}`,
-  slug: p.slug,
-  name: p.name,
-  description: p.description,
-  systemPrompt: p.systemPrompt,
-  starter: p.starter,
-  greeting: p.greeting,
-  category: p.category,
-  builtin: true,
-  gender: p.gender,
-  lang: p.lang,
-  pitch: p.pitch,
-  rate: p.rate,
-}))
-
-const listAssistants = (uid?: string | null): AssistantItem[] => [
-  ...BUILTIN_ASSISTANTS,
-  ...loadCustomAssistants(uid),
-]
-
-const findAssistant = (uid: string | null | undefined, id: string | null | undefined) =>
-  id ? listAssistants(uid).find((a) => a.id === id) ?? null : null
 
 /** 電話に出たときの第一声(未設定なら名前だけ名乗る) */
 const greetingOf = (a: AssistantItem) => a.greeting?.trim() || `もしもし、${a.name}です。`
@@ -1752,7 +1592,8 @@ function ArtifactPanel({ artifacts, activeId, streaming, onSelect, onClose }: Ar
             {artifacts.length > 1 && <ChevronDown size={14} className="shrink-0 text-[#69707a] dark:text-[#a8b0ba]" />}
           </button>
           {menu && artifacts.length > 1 && (
-            <div className="absolute left-0 top-10 z-50 max-h-72 w-72 overflow-y-auto rounded-xl border border-[#dfe3e8] dark:border-[#252b33] bg-white dark:bg-[#141920] p-1 shadow-[var(--nr-shadow-m)]">
+            <div className="dm-artifact-menu absolute left-0 top-10 z-50 max-h-72 w-72 overflow-y-auto rounded-xl border border-[#dfe3e8] dark:border-[#252b33] bg-white dark:bg-[#141920] p-1 shadow-[var(--nr-shadow-m)]">
+              <button type="button" className="hidden max-sm:flex items-center gap-2 px-3 py-3" onClick={()=>setMenu(false)}><X size={18}/>閉じる</button>
               {artifacts.map((a, i) => (
                 <button
                   key={a.id}
@@ -2042,6 +1883,24 @@ function AssistantAvatarPicker({
   );
 }
 
+function ChatMobileOverlay({children}:{children:ReactNode}){
+ const [mobile,setMobile]=useState(()=>window.matchMedia('(max-width:639px)').matches);
+ useEffect(()=>{const query=window.matchMedia('(max-width:639px)');const update=()=>setMobile(query.matches);query.addEventListener('change',update);return()=>query.removeEventListener('change',update);},[]);
+ return mobile?createPortal(<div className="dm-mobile-artifact-overlay">{children}</div>,document.body):children;
+}
+
+function ChatVoiceOverlay({embedded,children}:{embedded:boolean;children:ReactNode}){
+ const [mobile,setMobile]=useState(()=>window.matchMedia('(max-width:639px)').matches);
+ useEffect(()=>{const query=window.matchMedia('(max-width:639px)');const update=()=>setMobile(query.matches);query.addEventListener('change',update);return()=>query.removeEventListener('change',update);},[]);
+ const content=<div className={embedded&&mobile?'dm-mobile-voice-overlay':'chat-overlay'}>{children}</div>;
+ return embedded&&mobile?createPortal(content,document.body):content;
+}
+
+function FriendEditorShell({simple,onClose,children,portalRef}:{simple:boolean;onClose:()=>void;children:ReactNode;portalRef:{current:HTMLDivElement|null}}) {
+  if(simple)return <Dialog open onOpenChange={open=>{if(!open)onClose()}}><DialogContent className="dm-dialog dm-friend-dialog"><DialogDescription className="sr-only">フレンドの名前、アイコン、会話設定を保存します</DialogDescription><div ref={portalRef} className="dm-friend-form">{children}</div></DialogContent></Dialog>;
+  return <div className="absolute inset-0 z-[70] grid place-items-center bg-black/40 p-4" onMouseDown={onClose}><div ref={portalRef} className="fade-up max-h-full w-full max-w-lg overflow-y-auto rounded-3xl border border-[#dfe3e8] dark:border-[#252b33] bg-white dark:bg-[#12161b] p-6 shadow-2xl" onMouseDown={event=>event.stopPropagation()}>{children}</div></div>;
+}
+
 function AssistantsView({
   uid,
   avatars,
@@ -2049,7 +1908,17 @@ function AssistantsView({
   onCall,
   onChanged,
   onAvatarChange,
+  initialCreate = false,
+  simple = false,
+  onSaved,
+  onCancel,
+  initialFriend,
 }: {
+  initialCreate?: boolean
+  simple?: boolean
+  onSaved?: (friend: AssistantItem) => void
+  onCancel?: () => void
+  initialFriend?: AssistantItem | null
   uid: string | null
   avatars: AvatarMap
   onUse: (a: AssistantItem) => void
@@ -2060,12 +1929,16 @@ function AssistantsView({
   const [items, setItems] = useState<AssistantItem[]>(() => listAssistants(uid));
   const [cat, setCat] = useState("すべて");
   const [q, setQ] = useState("");
-  const [draft, setDraft] = useState<Draft | null>(null);
-  const [draftAvatar, setDraftAvatar] = useState<string | null>(null);
-  const [draftAvatarInitial, setDraftAvatarInitial] = useState<string | null>(null);
+  const [draft, setDraft] = useState<Draft | null>(() => initialCreate ? (initialFriend ? { ...EMPTY,...initialFriend,gender:initialFriend.gender??'female' } : { ...EMPTY }) : null);
+  const [draftAvatar, setDraftAvatar] = useState<string | null>(()=>initialFriend ? avatars[initialFriend.id]??null : null);
+  const [draftAvatarInitial, setDraftAvatarInitial] = useState<string | null>(()=>initialFriend ? avatars[initialFriend.id]??null : null);
   const [err, setErr] = useState("");
   const [avatarMenuId, setAvatarMenuId] = useState<string | null>(null);
   const iconInput = useRef<HTMLInputElement>(null);
+  const cropPortalRef=useRef<HTMLDivElement>(null);
+  const [cropSrc,setCropSrc]=useState<string|null>(null);
+  const closeCrop=useCallback(()=>setCropSrc(null),[]);
+  useEffect(()=>()=>{if(cropSrc)URL.revokeObjectURL(cropSrc);},[cropSrc]);
   const iconTarget = useRef<string>("");
 
   const load = () => {
@@ -2085,17 +1958,20 @@ function AssistantsView({
     iconInput.current?.click();
   };
 
-  const onIconFile = async (file: File | undefined) => {
+  const onIconFile = (file: File | undefined) => {
     if (!file) return;
     setErr("");
-    try {
-      const url = await avatarFromFile(file);
-      if (iconTarget.current === "__draft__") setDraftAvatar(url);
-      else onAvatarChange(iconTarget.current, url);
-      setAvatarMenuId(null);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    }
+    if(!file.type.startsWith('image/')){setErr('画像ファイルを選んでください');return;}
+    setCropSrc(URL.createObjectURL(file));
+  };
+  const applyIconCrop=async(url:string)=>{
+    try{
+      const blob=await fetch(url).then(response=>response.blob());
+      const avatar=await avatarFromFile(new File([blob],'friend-icon.jpg',{type:blob.type}));
+      if(iconTarget.current==='__draft__')setDraftAvatar(avatar);else onAvatarChange(iconTarget.current,avatar);
+      setAvatarMenuId(null);closeCrop();
+    }catch(error){setErr(error instanceof Error?error.message:String(error));}
+    finally{URL.revokeObjectURL(url);}
   };
 
   const openNew = () => {
@@ -2132,16 +2008,18 @@ function AssistantsView({
       if (savedId && draftAvatar !== draftAvatarInitial) onAvatarChange(savedId, draftAvatar);
       setDraft(null);
       load();
+      const saved = list.find(friend => friend.id === savedId);
+      if (saved) onSaved?.(saved);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
   };
 
-  const field = "w-full rounded-xl border border-[#dfe3e8] dark:border-[#252b33] bg-white dark:bg-[#12161b] px-3 text-sm outline-none focus:border-[#4fb3e8]";
+  const field = simple ? "dm-friend-input" : "w-full rounded-xl border border-[#dfe3e8] dark:border-[#252b33] bg-white dark:bg-[#12161b] px-3 text-sm outline-none focus:border-[#4fb3e8]";
   const iconBtn = "grid h-7 w-7 place-items-center rounded-lg text-[#69707a] dark:text-[#a8b0ba] hover:bg-[#e2e6ea]/55 dark:hover:bg-[#1c2128]";
 
   return (
-    <div className="h-full overflow-y-auto custom-scrollbar">
+    <div className={simple ? "dm-friends" : "h-full overflow-y-auto custom-scrollbar"}>
       <input
         ref={iconInput}
         type="file"
@@ -2152,7 +2030,8 @@ function AssistantsView({
           e.target.value = "";
         }}
       />
-      <div className="mx-auto max-w-[1000px] px-6 pb-16 pt-10">
+      {cropSrc&&<ProfileImageCropper src={cropSrc} target="avatar" onApply={url=>void applyIconCrop(url)} onClose={closeCrop} portalContainer={cropPortalRef.current??undefined}/>}
+      {!simple && <div className={simple ? "dm-friend-list" : "mx-auto max-w-[1000px] px-6 pb-16 pt-10"}>
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <h1 className="text-[28px] font-bold tracking-tight">
@@ -2195,11 +2074,11 @@ function AssistantsView({
         </div>
 
         {err && !draft && <div className="mt-4 text-sm text-red-500">{err}</div>}
-        <div className="mt-6 grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
+        <div className={simple ? "dm-friend-rows" : "mt-6 grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3"}>
           {shown.map((a) => (
             <div
               key={a.id}
-              className="group relative flex cursor-pointer flex-col rounded-2xl border border-[#dfe3e8] dark:border-[#252b33] bg-white dark:bg-[#141920] p-4 transition hover:-translate-y-0.5 hover:border-[#a8b0ba] dark:hover:border-[#7e868f] hover:shadow-[var(--nr-shadow-m)]"
+              className={simple ? "dm-conversation dm-friend-row" : "group relative flex cursor-pointer flex-col rounded-2xl border border-[#dfe3e8] dark:border-[#252b33] bg-white dark:bg-[#141920] p-4 transition hover:-translate-y-0.5 hover:border-[#a8b0ba] dark:hover:border-[#7e868f] hover:shadow-[var(--nr-shadow-m)]"}
               onClick={() => onUse(a)}
               role="button"
               tabIndex={0}
@@ -2275,12 +2154,12 @@ function AssistantsView({
         {shown.length === 0 && <div className="py-20 text-center text-sm text-[#a8b0ba] dark:text-[#7e868f]">友達がいません</div>}
       </div>
 
+      }
       {draft && (
-        <div className="absolute inset-0 z-[70] grid place-items-center bg-black/40 p-4" onMouseDown={() => setDraft(null)}>
-          <div className="fade-up max-h-full w-full max-w-lg overflow-y-auto rounded-3xl border border-[#dfe3e8] dark:border-[#252b33] bg-white dark:bg-[#12161b] p-6 shadow-2xl" onMouseDown={(e) => e.stopPropagation()}>
+        <FriendEditorShell portalRef={cropPortalRef} simple={simple} onClose={()=>{setDraft(null);onCancel?.()}}>
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-bold">{draft.id ? "キャラクターを編集" : "キャラクターを作成"}</h2>
-              <button type="button" onClick={() => setDraft(null)} aria-label="閉じる" className="text-[#69707a] dark:text-[#a8b0ba]">
+              {simple ? <DialogTitle>{draft.id ? "フレンドを編集" : "フレンドを作成"}</DialogTitle> : <h2 className="text-lg font-bold">{draft.id ? "キャラクターを編集" : "キャラクターを作成"}</h2>}
+              <button hidden={simple} type="button" onClick={() => {setDraft(null);onCancel?.()}} aria-label="閉じる" className="text-[#69707a] dark:text-[#a8b0ba]">
                 <X size={18} />
               </button>
             </div>
@@ -2309,7 +2188,7 @@ function AssistantsView({
                   初期アイコンに戻す
                 </button>
               )}
-              <input className={`${field} h-10`} value={draft.description} placeholder="紹介文 (一覧に表示されます)" onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
+              <input className={`${field} h-10`} value={draft.description} placeholder="紹介文" onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
               <textarea
                 className={`${field} min-h-[140px] resize-y py-2.5 leading-relaxed`}
                 value={draft.systemPrompt}
@@ -2335,8 +2214,8 @@ function AssistantsView({
               </div>
             </div>
             {err && <div className="mt-3 text-sm text-red-500">{err}</div>}
-            <div className="mt-5 flex justify-end gap-2">
-              <button type="button" onClick={() => setDraft(null)} className="rounded-xl px-4 py-2 text-sm text-[#69707a] dark:text-[#a8b0ba] hover:bg-[#e2e6ea]/55 dark:hover:bg-[#1c2128]">
+            <div className="dm-friend-actions mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => {setDraft(null);onCancel?.()}} className="rounded-xl px-4 py-2 text-sm text-[#69707a] dark:text-[#a8b0ba] hover:bg-[#e2e6ea]/55 dark:hover:bg-[#1c2128]">
                 キャンセル
               </button>
               <button
@@ -2348,8 +2227,7 @@ function AssistantsView({
                 保存
               </button>
             </div>
-          </div>
-        </div>
+        </FriendEditorShell>
       )}
     </div>
   );
@@ -5173,7 +5051,7 @@ const MessageMarkdown = memo(function MessageMarkdown({
   )
 })
 
-export default function ChatPage() {
+export default function ChatPage({ embedded = false, initialAction, friendId, onEditFriend, onFriendCreated, onBack }: { embedded?: boolean; initialAction?: 'friend'; friendId?: string; onEditFriend?: () => void; onFriendCreated?: (id: string) => void; onBack?: () => void } = {}) {
   const { user } = useAuth()
   const uid: string | null = user?.id ?? null
   
@@ -5198,10 +5076,13 @@ export default function ChatPage() {
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null)
 
   // --- 統合した機能の状態 ---
-  const [view, setView] = useState<'chat' | 'assistants'>('chat')
+  const [createFriendRequested, setCreateFriendRequested] = useState(initialAction === 'friend')
+  const [view, setView] = useState<'chat' | 'assistants'>(() => !embedded && initialAction === 'friend' ? 'assistants' : 'chat')
   // モードは通常のチャットのみ(コーディング/リサーチ/デザイン/エージェントは削除)
+  useEffect(() => { if (view === 'assistants') setCreateFriendRequested(false) }, [view])
   const mode: Mode = 'chat'
-  const [assistant, setAssistant] = useState<AssistantItem | null>(null)
+  const [assistant, setAssistant] = useState<AssistantItem | null>(() => findAssistant(uid,friendId))
+  useEffect(()=>{setAssistant(findAssistant(uid,friendId));},[uid,friendId])
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([])
   const [attachLoading, setAttachLoading] = useState(0)
   const [attachError, setAttachError] = useState('')
@@ -5221,13 +5102,16 @@ export default function ChatPage() {
   // アシスタント専用の通話モード(PC・タブレット・モバイル対応)
   const callSession = useCallSession()
   // キャラクターのアイコン画像(ブラウザ内保存)
-  const [avatars, setAvatars] = useState<AvatarMap>({})
+  const [avatars, setAvatars] = useState<AvatarMap>(()=>loadAvatars(uid))
 
   // モバイルでソフトキーボードが開いたときのレイアウト崩れ対策
   const { isKeyboardOpen, viewportHeight } = useMobileKeyboardViewport()
 
+  const aiNearBottom = useRef(true)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const deletedSessionIds=useRef(new Set<string>());
+  useEffect(()=>{const deleted=(event:Event)=>{const detail=(event as CustomEvent<{uid:string;ids:string[]}>).detail;if(detail?.uid!==uid)return;for(const id of detail.ids)deletedSessionIds.current.add(id);if(detail.ids.includes(currentSessionId??''))abortRef.current?.abort();};window.addEventListener(AI_CHAT_DELETED,deleted);return()=>window.removeEventListener(AI_CHAT_DELETED,deleted);},[uid,currentSessionId]);
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const lastArtifactCountRef = useRef(0)
   const voiceHistoryRef = useRef<Message[]>([])
@@ -5395,6 +5279,7 @@ export default function ChatPage() {
   }, [])
 
   useEffect(() => {
+    if (embedded) return
     const desktop = window.matchMedia('(min-width: 768px)')
     setIsSidebarOpen(desktop.matches)
     const onChange = (event: MediaQueryListEvent) => setIsSidebarOpen(event.matches)
@@ -5419,6 +5304,8 @@ export default function ChatPage() {
   }, [uid])
 
 
+  useEffect(()=>{const refresh=()=>{setAvatars(loadAvatars(uid));setAssistant(previous=>previous ? findAssistant(uid,previous.id) ?? previous : null)};window.addEventListener(AI_FRIENDS_CHANGED,refresh);window.addEventListener('storage',refresh);return()=>{window.removeEventListener(AI_FRIENDS_CHANGED,refresh);window.removeEventListener('storage',refresh)}},[uid])
+
   // ユーザー情報が取得できた段階でSupabaseからチャット履歴を取得
   useEffect(() => {
     if (!user) return
@@ -5433,35 +5320,15 @@ export default function ChatPage() {
 
         if (error) throw error
 
-        if (data && data.length > 0) {
-          const formattedSessions: ChatSession[] = data.map((item: any) => ({
-            id: item.id,
-            title: item.title,
-            messages: item.messages || [],
-            updatedAt: item.updated_at
-          }))
-          setSessions(formattedSessions)
-          setCurrentSessionId(formattedSessions[0].id)
-        } else {
-          // 初回利用時などデータが無い場合は新規作成
-          const newId = crypto.randomUUID()
-          const now = Date.now()
-          const newSession: ChatSession = {
-            id: newId,
-            title: '新しいチャット',
-            messages: [],
-            updatedAt: now
-          }
-          setSessions([newSession])
-          setCurrentSessionId(newId)
-
-          await supabase.from('chat_sessions').insert({
-            id: newId,
-            user_id: user.id,
-            title: '新しいチャット',
-            messages: [],
-            updated_at: now
-          })
+        const formattedSessions: ChatSession[] = (data ?? []).map((item: any) => ({id:item.id,title:item.title,messages:item.messages||[],updatedAt:item.updated_at}));
+        const meta = loadSessionMeta(uid);
+        const existing = embedded ? formattedSessions.find(session => (meta[session.id]?.assistantId ?? null) === (friendId ?? null)) : formattedSessions[0];
+        if(existing){setSessions(formattedSessions);setCurrentSessionId(existing.id);setAssistant(findAssistant(uid,friendId ?? meta[existing.id]?.assistantId));}
+        else {
+          const newId=crypto.randomUUID();const now=Date.now();
+          setSessions([{id:newId,title:'新しいチャット',messages:[],updatedAt:now},...formattedSessions]);setCurrentSessionId(newId);
+          if(friendId){const next={...meta,[newId]:{assistantId:friendId}};saveSessionMeta(uid,next);setSessionMeta(next);}
+          await supabase.from('chat_sessions').insert({id:newId,user_id:user.id,title:'新しいチャット',messages:[],updated_at:now});
         }
       } catch (e) {
         console.error(e)
@@ -5479,7 +5346,7 @@ export default function ChatPage() {
     }
 
     fetchSessions()
-  }, [user])
+  }, [user, friendId, embedded, uid])
 
   const currentSession = sessions.find(s => s.id === currentSessionId)
   const messages = currentSession ? currentSession.messages : []
@@ -5492,7 +5359,7 @@ export default function ChatPage() {
   const panelOpen = artifactOpen && artifacts.length > 0 && view === 'chat'
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (!embedded || aiNearBottom.current) messagesEndRef.current?.scrollIntoView({ behavior: embedded ? 'auto' : 'smooth' })
   }, [messages, isLoading])
 
   // ストリーミング中に新しいHTML/SVGコードブロックが現れたらプレビューパネルを開く
@@ -5600,14 +5467,15 @@ export default function ChatPage() {
   }
 
   const persistSession = async (id: string, title: string, msgs: Message[], updatedAt: number) => {
-    if (!user) return
-    await supabase.from('chat_sessions').upsert({
+    if (!user || deletedSessionIds.current.has(id)) return
+    const {error} = await supabase.from('chat_sessions').upsert({
       id,
       user_id: user.id,
       title,
       messages: toPersistableMessages(msgs),
       updated_at: updatedAt
     })
+    if(!error)window.dispatchEvent(new CustomEvent(AI_CHAT_HISTORY_CHANGED,{detail:{uid:user.id,session:{id,messages:toPersistableMessages(msgs),updated_at:updatedAt}}}))
   }
 
   const resetComposerExtras = () => {
@@ -5636,7 +5504,8 @@ export default function ChatPage() {
     setPostLinkPreview(null)
     setPostLinkPreviewLoading(false)
     setDismissedPostPreviewId(null)
-    setAssistant(null)
+    setAssistant(findAssistant(uid,friendId))
+    if(embedded)updateSessionMeta(newId,{assistantId:friendId??null})
     resetComposerExtras()
     if (window.innerWidth < 768) {
       setIsSidebarOpen(false)
@@ -5758,19 +5627,7 @@ export default function ChatPage() {
     }
   }
 
-  const handleExportMarkdown = () => {
-    const title = currentSession?.title || 'chat'
-    const md =
-      `# ${title}\n\n` +
-      messages
-        .map((m) => `## ${m.role === 'user' ? 'You' : 'LimeAI'}\n\n${m.content}\n`)
-        .join('\n')
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(new Blob([md], { type: 'text/markdown;charset=utf-8' }))
-    a.download = `${title.replace(/[\\/:*?"<>|]/g, '_')}.md`
-    a.click()
-    setTimeout(() => URL.revokeObjectURL(a.href), 2000)
-  }
+
 
   /* ---------- 添付ファイル(ドラッグ&ドロップ・貼り付け) ---------- */
 
@@ -6312,11 +6169,12 @@ export default function ChatPage() {
   // サイドバーに表示するチャット一覧(検索・ピン留め・日付グループ)
   const sessionGroups = useMemo(() => {
     const q = sessionQuery.trim().toLowerCase()
+    const accountSessions = embedded ? sessions.filter(session => (sessionMeta[session.id]?.assistantId ?? null) === (friendId ?? null)) : sessions
     const filtered = q
-      ? sessions.filter(s =>
+      ? accountSessions.filter(s =>
           s.title.toLowerCase().includes(q) ||
           s.messages.some(m => m.content.toLowerCase().includes(q)))
-      : sessions
+      : accountSessions
 
     const groups = new Map<string, ChatSession[]>()
     for (const s of filtered) {
@@ -6324,16 +6182,16 @@ export default function ChatPage() {
       groups.set(group, [...(groups.get(group) || []), s])
     }
     return SESSION_GROUP_ORDER.filter(g => groups.has(g)).map(g => [g, groups.get(g)!] as const)
-  }, [sessions, sessionQuery, sessionMeta])
+  }, [sessions, sessionQuery, sessionMeta, embedded, friendId])
 
   return (
     <div
-      className={`vpop-root fixed left-0 right-0 w-full text-[#333a42] dark:text-[#e4e7ea] overflow-hidden flex z-40 ${
+      className={embedded ? "vpop-root dm-ai-root" : `vpop-root fixed left-0 right-0 w-full text-[#333a42] dark:text-[#e4e7ea] overflow-hidden flex z-40 ${
         isKeyboardOpen
           ? 'top-0 bottom-auto'
           : 'top-0 md:top-16 bottom-[var(--lime-bottom-nav-height,calc(4rem+env(safe-area-inset-bottom,0px)))] md:bottom-0'
       }`}
-      style={{ paddingTop: 'env(safe-area-inset-top, 0px)', ...(isKeyboardOpen && viewportHeight ? { height: `${viewportHeight}px`, bottom: 'auto' } : {}) }}
+      style={embedded ? undefined : { paddingTop: 'env(safe-area-inset-top, 0px)', ...(isKeyboardOpen && viewportHeight ? { height: `${viewportHeight}px`, bottom: 'auto' } : {}) }}
     >
       <style>{VPOP_STYLES}</style>
       <style>{CHAT_EXT_STYLES}</style>
@@ -6360,7 +6218,9 @@ export default function ChatPage() {
       </div>
 
 
+      {embedded && <Dialog open={isSidebarOpen} onOpenChange={setIsSidebarOpen}><DialogContent className="dm-dialog"><DialogTitle>チャット履歴</DialogTitle><DialogDescription className="sr-only">LimeAIとの会話を選択</DialogDescription><label className="dm-search"><Search size={19}/><input placeholder="履歴を検索" aria-label="履歴を検索" value={sessionQuery} onChange={event=>setSessionQuery(event.target.value)}/></label><div className="dm-peer-results">{sessionGroups.flatMap(([,group])=>group).map(session=><button type="button" className="dm-conversation" key={session.id} onClick={()=>{selectSession(session.id);setIsSidebarOpen(false)}}>{session.title}</button>)}</div></DialogContent></Dialog>}
       {/* サイドバー */}
+      {!embedded && <>
       <div ref={sidebarRef} id="chat-sidebar" data-open={isSidebarOpen} aria-hidden={!isSidebarOpen} className="chat-sidebar shrink-0 bg-white/95 dark:bg-[#12161b] flex flex-col h-full border-r border-[#dfe3e8] dark:border-[#252b33] overflow-hidden absolute md:relative z-50 md:z-auto">
         <div className="w-full md:w-64 flex flex-col h-full shrink-0">
           <div className="p-3.5 flex items-center justify-between gap-2">
@@ -6551,11 +6411,24 @@ export default function ChatPage() {
         onClick={() => setIsSidebarOpen(false)}
       />
 
+      </>}
       {/* メインエリア */}
       <div className="flex flex-col flex-1 h-full bg-transparent relative min-w-0 w-full">
         
         {/* ヘッダーエリア */}
-        <div className="flex items-center h-12 md:h-16 px-2 md:px-5 w-full shrink-0 z-30">
+        {embedded && <DirectMessagePanelHeader className={`dm-thread-header ${view === 'assistants' ? 'dm-ai-friends' : ''}`} back={onBack} actions={<>
+          <button type="button" className="dm-icon-button dm-round" aria-label="通話" onClick={() => openAssistantCall(assistant ?? {id:'limeai',slug:null,name:'LimeAI',description:'',systemPrompt:'あなたはLimeAIです。日本語で親しみやすく会話してください。',starter:'',greeting:'こんにちは、LimeAIです。',category:'',builtin:true})}><Phone size={23}/></button>
+          {!friendId && <button type="button" className="dm-icon-button dm-round" aria-label="ビデオ通話" onClick={openVoiceMode}><Video size={23}/></button>}
+          <DropdownMenu><DropdownMenuTrigger asChild><button type="button" className="dm-icon-button dm-round" aria-label="LimeAIのメニュー"><MoreHorizontal size={23}/></button></DropdownMenuTrigger><ChatMenuContent align="end" className="dm-menu">
+            {friendId && assistant && !assistant.builtin && <><DropdownMenuItem onSelect={onEditFriend}>フレンドを編集</DropdownMenuItem><DropdownMenuItem onSelect={()=>{if(confirm(`「${assistant.name}」を削除しますか?`)){deleteCustomAssistant(uid,assistant.id);onBack?.()}}}>フレンドを削除</DropdownMenuItem></>}
+            <DropdownMenuItem onSelect={createNewSession}>新しいチャット</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setIsSidebarOpen(true)}>履歴を検索</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setSelectedModel('fast')}>LimeAI 5.0 Fast {selectedModel === 'fast' && <Check size={16}/>}</DropdownMenuItem>
+            <DropdownMenuItem disabled={!hasLimePro} onSelect={() => setSelectedModel('advanced')}>LimeAI 5.5 Thinking {selectedModel === 'advanced' && <Check size={16}/>}</DropdownMenuItem>
+            {artifacts.length > 0 && <DropdownMenuItem onSelect={() => setArtifactOpen(!artifactOpen)}>プレビューパネル</DropdownMenuItem>}
+          </ChatMenuContent></DropdownMenu>
+        </>}><div className="dm-thread-peer"><Avatar className="dm-avatar"><AvatarImage src={friendId && assistant ? avatarOf(assistant,avatars) : `${import.meta.env.BASE_URL}pwa-192x192.png`}/><AvatarFallback>AI</AvatarFallback></Avatar><span className="dm-peer-name">{view === 'assistants' ? 'フレンド' : assistant?.name ?? 'LimeAI'}</span></div></DirectMessagePanelHeader>}
+        <div hidden={embedded} className={embedded ? "hidden" : "flex items-center h-12 md:h-16 px-2 md:px-5 w-full shrink-0 z-30"}>
           
           {!isSidebarOpen && (
             <button
@@ -6661,18 +6534,7 @@ export default function ChatPage() {
           </div>
 
           <div className="flex-1 min-w-0" />
-          {/* ヘッダー右側: エクスポート / ボイスモード / プレビューパネル */}
-          {view === 'chat' && messages.length > 0 && (
-            <button
-              type="button"
-              onClick={handleExportMarkdown}
-              title="Markdownでエクスポート"
-              aria-label="エクスポート"
-              className="p-2 md:p-2.5 rounded-2xl hover:bg-[#e2e6ea]/55 dark:hover:bg-[#1c2128] text-[#69707a] dark:text-[#a8b0ba] hover:text-[#333a42] dark:hover:text-[#e4e7ea] transition"
-            >
-              <Download className="w-4 h-4 md:w-5 md:h-5" />
-            </button>
-          )}
+          {/* ヘッダー右側: ボイスモード / プレビューパネル */}
           <button
             type="button"
             onClick={openVoiceMode}
@@ -6697,10 +6559,17 @@ export default function ChatPage() {
           )}
         </div>
 
+        {embedded && uid && initialAction==='friend' && <AssistantsView key={`${uid}:${friendId??'new'}`} simple initialCreate initialFriend={findAssistant(uid,friendId)} onSaved={friend=>onFriendCreated?.(friend.id)} onCancel={onBack} uid={uid} avatars={avatars} onUse={applyAssistantPreset} onCall={openAssistantCall} onChanged={refreshAssistant} onAvatarChange={changeAssistantAvatar}/>}
+
         {/* タイムライン */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar bg-transparent">
+        <div className={embedded ? "dm-history" : "flex-1 overflow-y-auto custom-scrollbar bg-transparent"} onScroll={embedded ? event=>{const element=event.currentTarget;aiNearBottom.current=element.scrollHeight-element.scrollTop-element.clientHeight<64} : undefined}>
           {view === 'assistants' ? (
             <AssistantsView
+              simple={embedded}
+              initialFriend={initialAction==='friend' ? assistant : undefined}
+              onSaved={embedded ? friend=>onFriendCreated?.(friend.id) : undefined}
+              onCancel={embedded ? onBack : undefined}
+              initialCreate={createFriendRequested}
               uid={uid}
               avatars={avatars}
               onUse={applyAssistantPreset}
@@ -6708,8 +6577,16 @@ export default function ChatPage() {
               onChanged={refreshAssistant}
               onAvatarChange={changeAssistantAvatar}
             />
+          ) : embedded ? (
+            <>
+              {messages.length === 0 && <div className="dm-peer-intro"><Avatar className="dm-avatar"><AvatarImage src={friendId && assistant ? avatarOf(assistant,avatars) : `${import.meta.env.BASE_URL}pwa-192x192.png`}/><AvatarFallback>AI</AvatarFallback></Avatar><span className="dm-peer-name">{assistant?.name ?? 'LimeAI'}</span></div>}
+              {messages.map(msg=><div key={msg.id} className={`dm-message ${msg.role === 'user' ? 'is-own' : ''}`}><div className="dm-bubble">
+                {!msg.content && isLoading ? <Skeleton className="h-5 w-16 rounded-full"/> : msg.role === 'user' ? <p>{msg.content}</p> : <MessageMarkdown messageId={msg.id} content={msg.content} sources={msg.sources} activeArtifactId={activeArtifactId} streaming={streamingMessageId===msg.id} onOpenArtifact={openArtifact}/>}
+              </div></div>)}
+              <div ref={messagesEndRef}/>
+            </>
           ) : messages.length === 0 ? (
-            <div className="min-h-full flex flex-col items-center justify-center text-center max-w-xl mx-auto space-y-5 px-4 pt-2 pb-20">
+            <div className="dm-ai-welcome min-h-full flex flex-col items-center justify-center text-center max-w-xl mx-auto space-y-5 px-4 pt-2 pb-20">
               {assistant ? (
                 <>
                   <div className="vpop-standee">
@@ -6748,6 +6625,7 @@ export default function ChatPage() {
                 return (
                   <div
                     key={msg.id}
+                    data-ai-role={msg.role}
                     className="vpop-in w-full py-4 md:py-5 flex justify-center bg-transparent transition-colors duration-150"
                   >
                     <div className="max-w-3xl w-full flex gap-4 px-4 sm:px-6">
@@ -7037,8 +6915,8 @@ export default function ChatPage() {
         </div>
 
         {/* 入力フォームエリア */}
-        {view === 'chat' && (
-        <div className="p-4 w-full max-w-3xl mx-auto shrink-0">
+        {view === 'chat' && (embedded ? <form className="dm-compose" onSubmit={event=>{aiNearBottom.current=true;void handleSend(event)}}><div className="dm-compose-row"><div className="dm-input"><textarea ref={composerRef} aria-label="メッセージ" placeholder="メッセージ" rows={1} value={input} onChange={event=>setInput(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing&&window.matchMedia('(hover: hover) and (pointer: fine)').matches){event.preventDefault();event.currentTarget.form?.requestSubmit()}}}/>{isLoading ? <button type="button" className="dm-icon-button" aria-label="停止" onClick={handleStop}><Square size={20}/></button> : <button type="submit" className="dm-icon-button" aria-label="送信" disabled={!input.trim()}><Send size={21}/></button>}</div></div></form> :
+        <div className="dm-ai-composer p-4 w-full max-w-3xl mx-auto shrink-0">
           {(postLinkPreviewLoading || postLinkPreview) && (
             <div className="mb-3">
               {postLinkPreviewLoading && !postLinkPreview ? (
@@ -7111,6 +6989,7 @@ export default function ChatPage() {
             }}
             className={`vpop-composer relative flex items-end w-full border-2 ${isDragging ? 'border-[#4fb3e8]' : 'border-[#bfe3f7] dark:border-[#2c333c]'} rounded-[2rem] bg-white/95 dark:bg-[#1a1f26] pl-2 pr-2 py-1.5 shadow-[0_10px_30px_-16px_rgba(58,165,224,0.8)]`}
           >
+
             <textarea
               ref={composerRef}
               rows={1}
@@ -7155,6 +7034,7 @@ export default function ChatPage() {
             ) : (
               <button
                 type="submit"
+                aria-label="送信"
                 disabled={(!input.trim() && pendingAttachments.length === 0) || attachLoading > 0}
                 className={`p-3 rounded-full transition flex items-center justify-center shrink-0 ${(!input.trim() && pendingAttachments.length === 0) || attachLoading > 0 ? 'bg-[#e4e7ea] dark:bg-[#252b33] text-[#a8b0ba]' : 'bg-gradient-to-br from-[#86c9ee] to-[#3aa5e0] text-white shadow-[0_6px_18px_-6px_rgba(58,165,224,0.9)]'}`}
               >
@@ -7172,20 +7052,20 @@ export default function ChatPage() {
 
       {/* HTML / SVG / ドキュメントのプレビューパネル */}
       {panelOpen && (
-        <ArtifactPanel
+        <ChatMobileOverlay><ArtifactPanel
           artifacts={artifacts}
           activeId={activeArtifactId}
           streaming={isLoading}
           onSelect={setActiveArtifactId}
           onClose={() => setArtifactOpen(false)}
-        />
+        /></ChatMobileOverlay>
       )}
 
       {/* ボイスモード (3Dアバター) */}
       {voiceOpen && (
-        <div className="chat-overlay">
+        <ChatVoiceOverlay embedded={embedded}>
           <VoiceMode onClose={() => setVoiceOpen(false)} onAsk={askForVoice} />
-        </div>
+        </ChatVoiceOverlay>
       )}
 
 

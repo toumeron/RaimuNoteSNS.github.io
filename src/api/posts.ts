@@ -579,3 +579,22 @@ export async function setPostMapLocation(postId: string, location: MapLocation |
   const {error} = await supabase.rpc('set_post_map_location', {post_id:postId, latitude:location?.latitude ?? null, longitude:location?.longitude ?? null});
   if (error) throw error;
 }
+
+export async function getPostQuotes(postId:string,replyId:string|null=null,sort:'top'|'latest'='top',page=0):Promise<PostWithAuthor[]> {
+ const viewer=await getCurrentUserId();
+ let query=supabase.from('posts').select(POST_SELECT_QUERY).eq('is_quote',true);
+ query=replyId?query.eq('quoted_reply_id',replyId):isExternalPostId(postId)?query.eq('quoted_external_post->>id',postId):query.eq('parent_id',postId);
+ if(sort==='top')query=query.order('likes_count',{ascending:false}).order('reposts_count',{ascending:false});
+ const {data,error}=await query.order('created_at',{ascending:false}).order('id',{ascending:false}).range(page*20,page*20+19);
+ if(error)throw error;
+ const rows=await filterVisibleRows(data??[],viewer);
+ const {likedIds,repostedIds}=await getViewerReactions(viewer,rows);
+ return rows.map(row=>rowToPost(row,likedIds,repostedIds));
+}
+
+export async function getPostReposters(postId:string,replyId:string|null=null,page=0):Promise<User[]> {
+ const table=replyId?'reply_reposts':isExternalPostId(postId)?'external_reposts':'reposts';
+ const {data,error}=await supabase.from(table).select('profiles(*)').eq(replyId?'comment_id':'post_id',replyId??postId).order('created_at',{ascending:false}).range(page*50,page*50+49);
+ if(error)throw error;
+ return (data??[]).filter((row:any)=>row.profiles).map((row:any)=>rowToUser(row.profiles));
+}

@@ -1,10 +1,11 @@
+import {canDirectMessage,openDirectConversation} from '@/api/directMessages';
 import { getKnownFollowers } from '@/api/follows';
 import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
 import {cloudExternalHandles,initialiseExternalAccounts,setExternalAccountOwner} from '@/lib/externalAccounts';
 import { ReviewStars } from '@/components/reviews/ReviewStars';
 import { accountReviewsKey, getAccountReviews } from '@/api/account-reviews';
 import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
-import { ArrowLeft, CalendarDays, MapPin, Link2, MoreHorizontal, Radio, Search, Share2, X } from 'lucide-react';
+import { ArrowLeft, CalendarDays, MapPin, Link2, MoreHorizontal, MessageCircle, Radio, Search, Share2, X } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import {
@@ -127,7 +128,10 @@ export function ProfileHeader({
     return()=>{window.removeEventListener('lime-bluesky-handles-changed',update);window.removeEventListener('lime-misskey-changed',update);};
   },[me?.id,isBlueskyProfile,user.id,user.username]);
   const isFollowing = isBlueskyProfile?externalFollowing:stats?.followedByMe ?? false;
+  const {data:canMessage} = useQuery({queryKey:['direct-permission',me?.id,user.id,isFollowing],queryFn:()=>canDirectMessage(user.id),enabled:!!me?.id&&!isMe&&!isBlueskyProfile,staleTime:0});
+  const [openingDirect,setOpeningDirect]=useState(false);
   const navigate = useNavigate();
+  const handleOpenDirect=async()=>{if(openingDirect||!canMessage)return;setOpeningDirect(true);try{const id=await openDirectConversation(user.id);navigate(`/messages/${id}`);}catch(error){toast.error(error instanceof Error?error.message:'チャットを開けませんでした');}finally{setOpeningDirect(false);}};
   const location = useLocation();
   useEffect(() => {
     const publish = () => window.dispatchEvent(new CustomEvent('lime-profile-header-info', {detail: {user, posts: activityCount ?? blueskyStats?.posts ?? 0, following: isFollowing, pathname: location.pathname}}));
@@ -354,6 +358,20 @@ export function ProfileHeader({
             margin-top: 0 !important;
           }
         }
+        @media (max-width:639px) {
+          [data-lime-profile-dm-actions][data-lime-profile-membership-actions] { flex-wrap:nowrap; }
+          [data-lime-profile-dm-actions][data-lime-profile-membership-actions]>button { height:32px!important; min-width:0; padding-inline:6px!important; font-size:12px!important; margin-right:4px!important; letter-spacing:0; }
+          [data-lime-profile-dm-actions][data-lime-profile-membership-actions]>button[data-profile-icon-action] { width:28px!important; padding:0!important; }
+          [data-lime-profile-dm-actions]>button:last-child { margin-right:0!important; }
+        }
+        @media (min-width:360px) and (max-width:639px) {
+          [data-lime-profile-dm-actions][data-lime-profile-membership-actions]>button { padding-inline:8px!important; font-size:13px!important; }
+          [data-lime-profile-dm-actions][data-lime-profile-membership-actions]>button[data-profile-icon-action] { width:32px!important; padding:0!important; }
+        }
+        @media (max-width:359px) {
+          [data-lime-profile-dm-actions]:not([data-lime-profile-membership-actions])>button { height:36px!important; padding-inline:8px!important; font-size:13px!important; margin-right:4px!important; }
+          [data-lime-profile-dm-actions]:not([data-lime-profile-membership-actions])>button[data-profile-icon-action] { width:32px!important; padding:0!important; }
+        }
         @media (min-width: 640px) {
           .profile-header-cover-avatar-gap {
             -webkit-mask-image: radial-gradient(circle 56px at 80px 192px, transparent 55.5px, #000 56px);
@@ -458,7 +476,7 @@ export function ProfileHeader({
               </AvatarFallback>
             </Avatar>
           </button>
-          <div data-lime-profile-actions className={`mt-3 flex shrink-0 items-center ${showSubscriptionButton ? 'max-sm:[&>button]:h-9 max-sm:[&>button]:px-1.5 max-sm:[&>button]:text-[13px] min-[360px]:max-sm:[&>button]:px-3 min-[360px]:max-sm:[&>button]:text-sm max-sm:[&>button]:mr-1 max-sm:[&>button:last-child]:mr-0 max-sm:[&>button[aria-pressed]]:w-9 max-sm:[&>button[aria-pressed]]:p-0' : ''}`}>
+          <div data-lime-profile-actions data-lime-profile-dm-actions={canMessage&&!isMe&&!isBlueskyProfile || undefined} data-lime-profile-membership-actions={showSubscriptionButton || undefined} className={`mt-3 flex shrink-0 items-center ${showSubscriptionButton ? 'max-sm:[&>button]:h-9 max-sm:[&>button]:px-1.5 max-sm:[&>button]:text-[13px] min-[360px]:max-sm:[&>button]:px-3 min-[360px]:max-sm:[&>button]:text-sm max-sm:[&>button]:mr-1 max-sm:[&>button:last-child]:mr-0 max-sm:[&>button[data-profile-icon-action]]:w-9 max-sm:[&>button[data-profile-icon-action]]:p-0' : ''}`}>
             {showSubscriptionButton && (
               <Button
                 type="button"
@@ -472,12 +490,14 @@ export function ProfileHeader({
                 {isMember ? '登録済み' : 'メンバー'}
               </Button>
             )}
+            {!isMe&&!isBlueskyProfile&&canMessage&&<Button type="button" variant="ghost" data-profile-icon-action onClick={handleOpenDirect} disabled={openingDirect} aria-label="ダイレクトメッセージを送る" className="mr-2 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-solid border-[#d9d9d9] bg-transparent p-0 text-[#111111] shadow-none hover:bg-black/5 hover:text-[#111111] focus-visible:ring-2 focus-visible:ring-black/20 disabled:opacity-60 dark:border-[#555555] dark:text-white dark:hover:bg-white/10 dark:hover:text-white dark:focus-visible:ring-white/20"><MessageCircle style={bellIconStyle}/></Button>}
             {showPostNotificationButton && (
               // FollowButton と同じ高さ(40px)・枠線色・文字色・フォーカス表現に揃えている。背景は透明。
               // フォロー中のときのみ表示される。
               <Button
                 type="button"
                 variant="ghost"
+                data-profile-icon-action
                 onClick={handleTogglePostNotification}
                 disabled={isPostNotificationPending}
                 aria-pressed={isPostNotificationEnabled}

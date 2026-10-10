@@ -1,22 +1,26 @@
 import { PrivateAccountBadge } from '@/components/common/PrivateAccountBadge';
 import { useEffect, useMemo } from 'react';
-import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
+import { type InfiniteData, useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { AtSign, Bell, Heart, MessageCircle, Repeat2, Smile, UserPlus } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { getNotifications, groupNotifications, markNotificationsRead, notificationDescription, notificationLink, type NotificationKind } from '@/api/notifications';
+import { getNotifications, groupNotifications, markNotificationsRead, notificationDescription, notificationLink, type NotificationKind, type NotificationRow } from '@/api/notifications';
 import { Button } from '@/components/ui/button';
-const icons = {new_post:Bell,mention:AtSign,reply:MessageCircle,like:Heart,repost:Repeat2,reaction:Smile,follow:UserPlus};
-const colors:Record<NotificationKind,string>={new_post:'text-primary',mention:'text-primary',reply:'text-primary',like:'text-pink-500',repost:'text-green-500',reaction:'text-amber-500',follow:'text-primary'};
+const icons = {new_post:Bell,mention:AtSign,reply:MessageCircle,like:Heart,repost:Repeat2,reaction:Smile,follow:UserPlus,dm:MessageCircle,dm_request:MessageCircle};
+const colors:Record<NotificationKind,string>={new_post:'text-primary',mention:'text-primary',reply:'text-primary',like:'text-pink-500',repost:'text-green-500',reaction:'text-amber-500',follow:'text-primary',dm:'text-muted-foreground',dm_request:'text-muted-foreground'};
 export default function Notifications(){
  const {user}=useAuth();const queryClient=useQueryClient();const [params]=useSearchParams();const tab=params.get('tab')==='mention'?'mention':'all';
  const key=['notifications',user?.id];
  const query=useInfiniteQuery({queryKey:key,enabled:!!user?.id,initialPageParam:0,queryFn:({pageParam})=>getNotifications(user!.id,pageParam),getNextPageParam:(last,_,page)=>last.length===50?page+1:undefined});
  const rows=useMemo(()=>query.data?.pages.flat()??[],[query.data]);
  useEffect(()=>{if(!user?.id)return;const channel=supabase.channel(`notification-page-${user.id}`).on('postgres_changes',{event:'*',schema:'public',table:'notifications',filter:`user_id=eq.${user.id}`},()=>void queryClient.invalidateQueries({queryKey:['notifications',user.id]})).subscribe();return()=>{void supabase.removeChannel(channel);};},[user?.id,queryClient]);
- useEffect(()=>{if(!user?.id)return;const ids=rows.filter(n=>!n.is_read&&(tab==='all'||n.type==='mention')).map(n=>n.id);if(ids.length)void markNotificationsRead(user.id,ids).catch(()=>{});},[rows,user?.id,tab]);
+ useEffect(()=>{if(!user?.id)return;const ids=rows.filter(n=>!n.is_read&&(tab==='all'||n.type==='mention')).map(n=>n.id);if(ids.length)void markNotificationsRead(user.id,ids).then(()=>{
+  const readIds=new Set(ids);
+  queryClient.setQueryData<InfiniteData<NotificationRow[]>>(['notifications',user.id],data=>data?{...data,pages:data.pages.map(page=>page.map(row=>readIds.has(row.id)?{...row,is_read:true}:row))}:data);
+  void queryClient.invalidateQueries({queryKey:['notification-unread-count',user.id],exact:true});
+ }).catch(()=>{});},[rows,user?.id,tab,queryClient]);
  const groups=groupNotifications(rows.filter(n=>tab==='all'||n.type==='mention'));
  return <div className="w-full" data-lime-notifications>
   <div role="tabpanel" id="notification-list" aria-labelledby={`notification-tab-${tab}`}>

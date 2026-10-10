@@ -10,7 +10,7 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/src/hooks/useAuth.tsx*', route => route.fulfill({ contentType: 'application/javascript', body: `export const useAuth=()=>({user:${JSON.stringify(user)},loading:false,session:null,accounts:[],logout:async()=>{}});export const AuthProvider=({children})=>children;` }));
   await page.route('**/src/lib/currentUser.ts*', route => route.fulfill({ contentType: 'application/javascript', body: `export const getCurrentUserId=async()=> '${user.id}';` }));
   await page.route('**/src/api/posts.ts*', route => route.fulfill({ contentType: 'application/javascript', body: `const posts=${JSON.stringify(posts)};
-    export const getHighlightedPosts=async()=>[]; export const getMapPosts=async()=>[]; export const setPostMapLocation=async()=>{};
+    export const getPostQuotes=async()=>[]; export const getPostReposters=async()=>[]; export const getHighlightedPosts=async()=>[]; export const getMapPosts=async()=>[]; export const setPostMapLocation=async()=>{};
     export const getFeed=async()=>posts; export const getFollowingFeed=async()=>[posts[1]];
     export const getPostsByUser=async()=>posts; export const getProfilePosts=async()=>posts.map(post=>post.repostedByMe?{...post,profileRepostedBy:post.userId,profileRepostedAt:"2026-10-03T00:00:00Z"}:post); export const getLikedPostsByUser=async()=>posts;
     export const searchPosts=async()=>posts; export const getPostById=async()=>posts[0];
@@ -1513,4 +1513,245 @@ for(const width of [390,1440])test(`profile displays known followers below count
  const bounds=await known.boundingBox();expect(bounds!.width).toBeLessThan(width);expect(bounds!.x).toBeGreaterThanOrEqual(0);
  matches=0;await page.reload();await expect(page.locator('[data-lime-profile-name]')).toBeVisible();await expect(known).toHaveCount(0);
  await page.unroute('**/*.supabase.co/rest/v1/profiles*');matches=42;await page.goto('u/lime');await expect(page.locator('[data-lime-profile-name]')).toBeVisible();await expect(known).toHaveCount(0);
+});
+
+for(const width of [390,1440])test(`post activity has quote repost and like tabs with sorting at ${width}px`,async({page})=>{
+ const actor={...profile,id:'22222222-2222-4222-8222-222222222222',username:'activity-user',display_name:'アクティビティのユーザー',avatar_url:image,bio:'イラストを描いています https://example.com @lime',is_official:true,is_private:true};
+ const parent={id:'post-0',user_id:user.id,content:'引用元のポスト',created_at:user.createdAt,profiles:profile,image_urls:[]};
+ const quote={id:'quote-1',user_id:actor.id,content:'引用したポストです',created_at:user.createdAt,profiles:actor,image_urls:[],parent_id:parent.id,parent_post:parent,is_quote:true,likes_count:9};
+ const orders:string[]=[];
+ await page.route('**/src/api/posts.ts*',route=>route.continue());
+ await page.route('**/*.supabase.co/rest/v1/posts*',route=>{
+  const url=new URL(route.request().url());
+  if(url.searchParams.get('is_quote')==='eq.true'){orders.push(url.searchParams.get('order')??'');return route.fulfill({contentType:'application/json',body:JSON.stringify([quote])});}
+  return route.fulfill({contentType:'application/json',body:JSON.stringify((route.request().headers().accept??'').includes('vnd.pgrst.object')?parent:[parent])});
+ });
+ for(const table of ['likes','reposts'])await page.route(`**/*.supabase.co/rest/v1/${table}*`,route=>route.fulfill({contentType:'application/json',body:JSON.stringify([{profiles:actor}])}));
+ await page.emulateMedia({colorScheme:width===390?'dark':'light'});await page.setViewportSize({width,height:900});await page.goto('post/post-0/activity');
+ await expect(page.getByRole('heading',{name:'ポストアクティビティ',exact:true})).toHaveCount(1);
+ await expect(page.locator('header[data-lime-post-activity-header]')).toHaveCSS('border-bottom-width','0px');
+ await expect(page.getByRole('tablist',{name:'ポストアクティビティ'}).locator('svg')).toHaveCount(0);
+ await expect(page.getByRole('tab',{name:'引用',exact:true})).toHaveCSS('-webkit-tap-highlight-color','rgba(0, 0, 0, 0)');
+ await expect(page.getByRole('button',{name:'さらに表示',exact:true})).toHaveCount(0);
+ await page.emulateMedia({reducedMotion:'no-preference'});
+ await expect(page.locator('.post-activity-tab-indicator')).toHaveCSS('transition-duration','0.22s');
+ await expect(page.locator('.post-activity-panel')).toHaveCSS('animation-name','activity-panel-enter');
+ for(const label of ['引用','リポスト','いいね'])await expect(page.getByRole('tab',{name:label,exact:true})).toBeVisible();
+ await expect(page.locator('[data-lime-post-activity]')).toContainText('引用したポストです');await expect(page.locator('[data-lime-post-activity]')).toContainText('引用元のポスト');
+ await page.getByRole('button',{name:'エンゲージメントを並べ替え',exact:true}).click();await page.getByRole('menuitem',{name:'最新',exact:true}).click();
+ await expect.poll(()=>orders.at(-1)).toBe('created_at.desc,id.desc');
+ for(const label of ['リポスト','いいね']){
+  await page.getByRole('tab',{name:label,exact:true}).click();
+  const list=page.getByRole('tabpanel');await expect(list).toContainText(actor.display_name);await expect(list).toContainText(actor.bio);
+  await expect(list.getByRole('img',{name:'非公開アカウント'})).toBeVisible();await expect(list.getByAltText('Official')).toBeVisible();
+  await expect(list.getByRole('button',{name:'フォロー',exact:true})).toBeVisible();await expect(list.getByRole('link',{name:'https://example.com',exact:true})).toHaveAttribute('href','https://example.com');
+ }
+ await page.screenshot({path:`/private/tmp/lime-activity-${width}.png`});
+});
+
+test('post activity loads the next quote page at the bottom without a load button',async({page})=>{
+ await page.route('**/src/api/posts.ts*',route=>route.continue());
+ const offsets:number[]=[];
+ await page.route('**/*.supabase.co/rest/v1/posts*',route=>{
+  const url=new URL(route.request().url());if(url.searchParams.get('is_quote')!=='eq.true')return route.fallback();
+  const offset=Number(url.searchParams.get('offset')??0);offsets.push(offset);
+  const rows=Array.from({length:offset===0?20:1},(_,index)=>({id:`quote-${offset+index}`,user_id:user.id,content:`引用番号 ${offset+index}`,created_at:user.createdAt,profiles:profile,is_quote:true,parent_id:'post-0',parent_post:{id:'post-0',user_id:user.id,content:'引用元',created_at:user.createdAt,profiles:profile}}));
+  return route.fulfill({contentType:'application/json',body:JSON.stringify(rows)});
+ });
+ await page.setViewportSize({width:390,height:900});await page.goto('post/post-0/activity');
+ await expect(page.locator('[data-lime-post-card]').filter({hasText:'引用番号'})).toHaveCount(20);
+ await expect(page.getByRole('button',{name:'さらに表示',exact:true})).toHaveCount(0);
+ await page.evaluate(()=>window.scrollTo(0,document.body.scrollHeight));
+ await expect(page.locator('[data-lime-post-card]').filter({hasText:'引用番号'})).toHaveCount(21);
+ expect(offsets).toEqual([0,20]);await expect(page.locator('[data-lime-post-activity]')).toContainText('引用番号 20');
+});
+
+for(const width of [390,1440])test(`unread badge stays small and overlaps the bell at ${width}px`,async({page})=>{
+ await page.route('**/*.supabase.co/rest/v1/notifications*',route=>{
+  expect(new URL(route.request().url()).searchParams.get('is_read')).toBe('eq.false');
+  return route.fulfill({contentType:'application/json',headers:{'access-control-expose-headers':'content-range','content-range':'0-3/4'},body:'[]'});
+ });
+ await page.setViewportSize({width,height:900});await page.goto('./');
+ const badge=page.locator(width===390?'[data-lime-bottom-nav-root] [data-lime-unread-count]':'[data-lime-desktop-sidebar] nav [data-lime-unread-count]');
+ await expect(badge).toHaveText('4');
+ const geometry=await badge.evaluate(el=>{const b=el.getBoundingClientRect();const icon=el.parentElement!.querySelector('svg')!.getBoundingClientRect();const style=getComputedStyle(el);return {height:b.height,width:b.width,font:style.fontSize,weight:style.fontWeight,centerX:b.x+b.width/2,centerY:b.y+b.height/2,iconRight:icon.right,iconTop:icon.top,background:style.backgroundColor,border:style.borderTopWidth};});
+ expect(geometry.height).toBe(19);expect(geometry.width).toBe(19);expect(geometry.font).toBe('13px');expect(geometry.weight).toBe('400');expect(geometry.border).toBe('1px');
+ expect(geometry.centerX).toBe(geometry.iconRight-2);expect(geometry.centerY-geometry.iconTop).toBe(1);
+ await page.screenshot({path:`/private/tmp/lime-unread-${width}.png`});
+ await page.evaluate(id=>window.dispatchEvent(new CustomEvent('lime-notification-count-changed',{detail:{userId:id,count:0}})),user.id);await expect(badge).toHaveCount(0);
+});
+
+test('activity uses existing skeletons for pending quotes and user lists',async({page})=>{
+ let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});
+ await page.route('**/src/api/posts.ts*',route=>route.continue());
+ await page.route('**/*.supabase.co/rest/v1/posts*',async route=>{if(new URL(route.request().url()).searchParams.get('is_quote')==='eq.true'){await gate;return route.fulfill({contentType:'application/json',body:'[]'});}return route.fallback();});
+ await page.setViewportSize({width:390,height:900});await page.goto('post/post-0/activity');
+ const status=page.getByRole('status',{name:'読み込み中',exact:true});await expect(status).toBeVisible();await expect(status.locator('[data-lime-post-skeleton]')).toHaveCount(3);await expect(status).toHaveText('');
+ release();await expect(page.getByText('まだ引用はありません',{exact:true})).toBeVisible();
+ let releaseLikes!:()=>void;const likesGate=new Promise<void>(resolve=>{releaseLikes=resolve;});
+ await page.route('**/*.supabase.co/rest/v1/likes*',async route=>{await likesGate;return route.fulfill({contentType:'application/json',body:'[]'});});
+ await page.getByRole('tab',{name:'いいね',exact:true}).click();await expect(status).toBeVisible();await expect(status.locator('.post-activity-user')).toHaveCount(3);await expect(status).toHaveText('');
+ releaseLikes();await expect(page.getByText('まだいいねはありません',{exact:true})).toBeVisible();
+});
+
+for(const width of [390,1440])test(`viewing notifications clears the unread badge at ${width}px`,async({page})=>{
+ let read=false;let writes=0;
+ await page.addInitScript(()=>Object.defineProperty(navigator,'clearAppBadge',{configurable:true,value:()=>new Promise(()=>{})}));
+ await page.route('**/*.supabase.co/rest/v1/notifications*',route=>{
+  if(route.request().method()==='PATCH'){
+   expect(route.request().postDataJSON()).toEqual({is_read:true});expect(new URL(route.request().url()).searchParams.get('user_id')).toBe(`eq.${user.id}`);
+   read=true;writes++;return route.fulfill({status:204,body:''});
+  }
+  if(route.request().method()==='HEAD')return route.fulfill({headers:{'access-control-expose-headers':'content-range','content-range':`*/${read?0:1}`},body:''});
+  return route.fulfill({contentType:'application/json',body:JSON.stringify([{id:'notice-one',user_id:user.id,actor_id:null,post_id:'post-0',type:'like',actor_name:'通知テスト',actor_avatar_url:null,content_preview:'確認する通知',is_read:read,created_at:new Date().toISOString()}])});
+ });
+ await page.setViewportSize({width,height:900});await page.goto('./');
+ const badge=page.locator(width===390?'[data-lime-bottom-nav-root] [data-lime-unread-count]':'[data-lime-desktop-sidebar] nav [data-lime-unread-count]');
+ await expect(badge).toHaveText('1');
+ await badge.locator('..').locator('..').click();
+ await expect(page.locator('[data-lime-notifications]')).toContainText('確認する通知');await expect(badge).toHaveCount(0);expect(writes).toBe(1);
+ await page.goto('./');await expect(badge).toHaveCount(0);
+});
+
+for(const width of [390,834,1440])test(`${width===834?'iPad DM':'DM'} requests, composer, settings and responsive workspace at ${width}px`,async({page})=>{
+ const peer={id:'22222222-2222-4222-8222-222222222222',username:'dmfriend',displayName:'チャット相手',avatarUrl:image,isPrivate:true,isOfficial:true,createdAt:'2025-01-01T00:00:00Z'};
+ const id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';let status='pending';let preference='everyone';const sent:string[]=[];const readTimes:string[]=[];
+ const rows=[{id:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',conversation_id:id,sender_id:peer.id,content:'受信したメッセージ',attachments:[],created_at:'2026-10-10T04:00:00Z'}];
+ await page.route('**/*.supabase.co/rest/v1/rpc/*',route=>{
+  const endpoint=new URL(route.request().url()).pathname.split('/').pop();const args=route.request().postDataJSON()??{};
+  let data:unknown=null;
+  if(endpoint==='get_direct_inbox')data=[{id,status,initiatedBy:peer.id,updatedAt:'2026-10-10T04:00:00Z',peer,preview:rows.at(-1)?.content,unreadCount:readTimes.length?0:1}];
+  else if(endpoint==='get_dm_preferences')data=preference;
+  else if(endpoint==='set_dm_preferences'){preference=args.value;}
+  else if(endpoint==='respond_direct_request'){expect(args).toEqual({target:id,accept_request:true});status='accepted';}
+  else if(endpoint==='send_direct_message'){expect(args.target_user).toBe(peer.id);sent.push(args.body);rows.push({id:args.message_id,conversation_id:id,sender_id:user.id,content:args.body,attachments:[],created_at:'2026-10-10T05:00:00Z'});data=id;}
+  else if(endpoint==='read_direct_conversation'){expect(args.target).toBe(id);readTimes.push(args.through_time);}
+  else return route.fallback();
+  return route.fulfill({contentType:'application/json',body:JSON.stringify(data)});
+ });
+ await page.route('**/*.supabase.co/rest/v1/direct_conversations*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({id,user_low:user.id,user_high:peer.id,initiated_by:peer.id,status})}));
+ await page.route('**/*.supabase.co/rest/v1/direct_messages*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify([...rows].reverse())}));
+ await page.route('**/*.supabase.co/rest/v1/profiles*',route=>{if(new URL(route.request().url()).searchParams.get('id')===`eq.${peer.id}`)return route.fulfill({contentType:'application/json',body:JSON.stringify({...peer,display_name:peer.displayName,avatar_url:peer.avatarUrl,is_private:true,is_official:true,created_at:peer.createdAt})});return route.fallback();});
+ await page.setViewportSize({width,height:900});await page.goto('messages');if(width===1440)await page.evaluate(()=>document.documentElement.classList.add('dark'));
+ await expect(page.getByRole('heading',{name:'LimeAI',exact:true})).toBeVisible();await expect(page.locator('.dm-inbox').getByRole('button',{name:'戻る',exact:true})).toHaveCount(0);await page.getByRole('button',{name:/チャット相手/}).click();
+ await expect(page.getByText('受信したメッセージ',{exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'承認',exact:true})).toBeVisible();await expect(page.getByRole('textbox',{name:'メッセージ',exact:true})).toHaveCount(0);
+ await expect(page.getByRole('button',{name:/通話|GIF|絵文字/})).toHaveCount(0);await expect(page.locator('[data-lime-bottom-nav-root]')).toHaveCount(width<640?1:0);
+ if(width>=640){const box=await page.locator('.lime-desktop-menu').boundingBox();expect(box?.width).toBe(72);await expect(page.locator('[data-lime-sidebar-item-label]').first()).toBeHidden();await expect(page.locator('.dm-inbox')).toBeVisible();}else await expect(page.locator('.dm-inbox')).toBeHidden();
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await page.getByRole('button',{name:'承認',exact:true}).click();const input=page.getByRole('textbox',{name:'メッセージ',exact:true});await expect(input).toBeVisible();await input.fill('送信テスト');await expect(input).toHaveCSS('outline-style','none');await expect(input).toHaveCSS('box-shadow','none');await page.evaluate(()=>Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'}));await page.getByRole('button',{name:'送信',exact:true}).click();await expect(page.locator('.dm-message.is-own .dm-bubble')).toHaveText('送信テスト');expect(sent).toEqual(['送信テスト']);await expect(input).toHaveValue('');expect(readTimes).not.toContain('2026-10-10T05:00:00Z');await page.evaluate(()=>{Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});document.dispatchEvent(new Event('visibilitychange'));});await expect.poll(()=>readTimes).toContain('2026-10-10T05:00:00Z');
+ await page.getByRole('button',{name:'会話の詳細',exact:true}).click();await expect(page.getByRole('dialog')).toContainText('@dmfriend');if(width<640){const bounds=await page.getByRole('dialog').boundingBox();expect(bounds?.x).toBe(0);expect(bounds?.y).toBe(0);expect(bounds?.width).toBe(width);expect(bounds?.height).toBe(900);await page.screenshot({path:'/private/tmp/lime-dm-fullscreen-details.png'});}await expect(page.getByRole('dialog').getByAltText('認証済み')).toBeVisible();await expect(page.getByRole('dialog').locator('svg[aria-label="非公開アカウント"]')).toHaveCount(1);await page.getByRole('dialog').getByRole('button',{name:'Close',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0);
+ await page.screenshot({path:`/private/tmp/lime-dm-${width}.png`});
+ if(width<640)await page.getByRole('button',{name:'戻る',exact:true}).click();
+ await page.getByRole('button',{name:'すべて',exact:true}).click();if(width<640){const bounds=await page.getByRole('menu').boundingBox();expect(bounds?.x).toBe(0);expect(bounds?.y).toBe(0);expect(bounds?.width).toBe(width);expect(bounds?.height).toBe(900);await page.screenshot({path:'/private/tmp/lime-dm-fullscreen-menu.png'});}await page.getByRole('menuitem',{name:'設定',exact:true}).click();await page.getByRole('button',{name:/メッセージリクエストを許可/}).click();await page.getByRole('radio',{name:'なし',exact:true}).check();await page.getByRole('button',{name:'確認する',exact:true}).click();await expect(page.getByRole('button',{name:/メッセージリクエストを許可/})).toContainText('なし');expect(preference).toBe('none');
+});
+
+for(const width of [390,1440])test(`DM entry and a new outgoing request at ${width}px`,async({page})=>{
+ const peer={id:'22222222-2222-4222-8222-222222222222',username:'recipient',display_name:'送信先',avatar_url:image,is_private:true,is_official:false,created_at:'2025-01-01T00:00:00Z'};
+ const id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';const messages:Record<string,unknown>[]=[];
+ await page.route('**/*.supabase.co/rest/v1/profiles*',route=>{const url=new URL(route.request().url());if(url.searchParams.has('or'))return route.fulfill({contentType:'application/json',body:JSON.stringify([peer])});if(url.searchParams.get('id')===`eq.${peer.id}`)return route.fulfill({contentType:'application/json',body:JSON.stringify(peer)});return route.fallback();});
+ await page.route('**/*.supabase.co/rest/v1/rpc/*',route=>{const endpoint=new URL(route.request().url()).pathname.split('/').pop();if(endpoint==='get_direct_inbox')return route.fulfill({contentType:'application/json',body:'[]'});if(endpoint==='get_dm_preferences')return route.fulfill({contentType:'application/json',body:'"everyone"'});if(endpoint==='open_direct_conversation')return route.fulfill({contentType:'application/json',body:JSON.stringify(id)});if(endpoint==='send_direct_message'){const args=route.request().postDataJSON();expect(args.target_user).toBe(peer.id);messages.push({id:args.message_id,sender_id:user.id,content:args.body,created_at:'2026-10-10T05:00:00Z',attachments:[]});return route.fulfill({contentType:'application/json',body:JSON.stringify(id)});}if(endpoint==='read_direct_conversation')return route.fulfill({contentType:'application/json',body:'null'});return route.fallback();});
+ await page.route('**/*.supabase.co/rest/v1/direct_conversations*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({id,user_low:user.id,user_high:peer.id,initiated_by:user.id,status:'pending'})}));
+ await page.route('**/*.supabase.co/rest/v1/direct_messages*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify(messages)}));
+ await page.setViewportSize({width,height:900});await page.goto('./');
+ if(width<640){await page.getByRole('button',{name:'メニューを開く',exact:true}).click();await page.locator('[data-lime-mobile-sidebar]').getByRole('button',{name:'LimeAI',exact:true}).click();}
+ else {await expect(page.locator('[data-lime-desktop-sidebar] nav').getByRole('button',{name:'LimeAI',exact:true})).toHaveCount(1);await page.locator('[data-lime-desktop-sidebar] nav').getByRole('button',{name:'LimeAI',exact:true}).click();}
+ await expect(page.locator('[data-lime-dm]')).toBeVisible();await expect(page.getByRole('button',{name:'チャット',exact:true})).toHaveCount(0);await page.getByRole('button',{name:'新しいチャット',exact:true}).first().click();await page.getByRole('textbox',{name:'ユーザーを検索',exact:true}).fill('recipient');await page.getByRole('dialog').getByRole('button',{name:/送信先/}).click();
+ await expect(page.getByText('最初のメッセージはリクエストとして送信されます。',{exact:true})).toBeVisible();await page.getByRole('textbox',{name:'メッセージ',exact:true}).fill('初めまして');await page.getByRole('button',{name:'送信',exact:true}).click();await expect(page.getByText('リクエストを送信しました。承認されると続けてメッセージを送れます。',{exact:true})).toBeVisible();await expect(page.getByRole('textbox',{name:'メッセージ',exact:true})).toHaveCount(0);expect(messages).toHaveLength(1);
+});
+
+for(const width of [390,834,1440])test(`${width===834?'iPad DM':'DM'} integrates LimeAI without merging message backends at ${width}px`,async({page})=>{
+ const aiCalls:unknown[]=[];const directCalls:string[]=[];
+ await page.route('**/src/hooks/useAuth.tsx*',route=>route.fulfill({contentType:'application/javascript',body:`const user=${JSON.stringify(user)};export const useAuth=()=>({user,loading:false,session:null,accounts:[],logout:async()=>{}});export const AuthProvider=({children})=>children;`}));
+ await page.route('**/*.supabase.co/rest/v1/rpc/get_direct_inbox',route=>route.fulfill({contentType:'application/json',body:'[]'}));
+ await page.route('**/*.supabase.co/rest/v1/direct_conversations*',route=>{directCalls.push(route.request().url());return route.fulfill({contentType:'application/json',body:'[]'});});
+ await page.route('**/*.supabase.co/rest/v1/direct_messages*',route=>{directCalls.push(route.request().url());return route.fulfill({contentType:'application/json',body:'[]'});});
+ await page.route('**/*.supabase.co/rest/v1/chat_sessions*',route=>route.fulfill({contentType:'application/json',body:route.request().method()==='GET'?JSON.stringify([{id:'ai-history',title:'以前の会話',updated_at:'2026-10-10T04:00:00Z',messages:[{id:'ai-old',role:'assistant',content:'LimeAIの既存履歴'}]}]):'[]'}));
+ await page.route('**/*.supabase.co/functions/v1/chat-gemma',route=>{aiCalls.push(route.request().postDataJSON());return route.fulfill({contentType:'text/event-stream',body:'data: {"choices":[{"delta":{"content":"LimeAIからの返答"}}]}\n\ndata: [DONE]\n\n'});});
+ await page.setViewportSize({width,height:900});await page.goto('chat');await expect(page).toHaveURL(/messages\/limeai$/);
+ const root=page.locator('.dm-ai-root');await expect(root).toBeVisible();await expect(root.getByText('LimeAIの既存履歴',{exact:true})).toBeVisible();
+ await expect(root.getByRole('button',{name:'通話',exact:true})).toBeVisible();await expect(root.getByRole('button',{name:'ビデオ通話',exact:true})).toBeVisible();
+ await expect(root.locator('#chat-sidebar')).toHaveCount(0);await expect(root.locator('.vpop-in')).toHaveCount(0);await expect(root.locator('.vpop-composer')).toHaveCount(0);await expect(root.getByLabel('ファイルを添付')).toHaveCount(0);await expect(root.locator('.dm-input')).toBeVisible();await expect(root.getByRole('button',{name:'コピー',exact:true})).toHaveCount(0);
+ if(width===390){const nav=page.locator('[data-lime-bottom-nav-root]');await expect(nav).toBeVisible();const n=await nav.boundingBox();const c=await root.locator('.dm-compose').boundingBox();expect(c!.y+c!.height).toBeLessThanOrEqual(n!.y+1);}
+ const bounds=await root.boundingBox();expect(bounds!.width).toBeLessThanOrEqual(width);expect(bounds!.x).toBeGreaterThanOrEqual(0);
+ await root.locator('textarea').fill('UI統合テスト');await expect(root.locator('textarea')).toHaveCSS('outline-style','none');await expect(root.locator('textarea')).toHaveCSS('box-shadow','none');await root.getByRole('button',{name:'送信',exact:true}).click();await expect(root.getByText('LimeAIからの返答',{exact:true})).toBeVisible();expect(aiCalls).toHaveLength(1);expect(directCalls).toEqual([]);
+ if(width===1440){await page.evaluate(()=>document.documentElement.classList.add('dark'));await expect(root).toHaveCSS('background-image','none');}
+ await page.screenshot({path:`/private/tmp/lime-unified-${width}.png`});
+ await root.getByRole('button',{name:'ビデオ通話',exact:true}).click();await expect(page.getByRole('dialog',{name:'ボイスモード',exact:true})).toBeVisible();if(width<640){const bounds=await page.locator('.dm-mobile-voice-overlay').boundingBox();expect(bounds).toEqual({x:0,y:0,width,height:900});}await page.getByRole('dialog',{name:'ボイスモード',exact:true}).getByRole('button',{name:'閉じる',exact:true}).click();
+ await expect(root.getByRole('heading',{name:'フレンド',exact:true})).toHaveCount(0);
+ if(width<640)await root.getByRole('button',{name:'戻る',exact:true}).click();
+ await page.getByRole('button',{name:'新しいチャット',exact:true}).first().click();await page.getByRole('dialog').getByRole('button',{name:'フレンドを作成',exact:true}).click();
+ await expect(page.locator('.dm-ai-root')).toBeVisible();await expect(page.getByRole('heading',{name:'フレンドを作成',exact:true})).toBeVisible();await expect(page.getByRole('dialog',{name:'フレンドを作成',exact:true})).toBeVisible();if(width<640){const bounds=await page.getByRole('dialog',{name:'フレンドを作成',exact:true}).boundingBox();expect(bounds).toEqual({x:0,y:0,width,height:900});}await expect(page.locator('.dm-ai-root .dm-input')).toBeVisible();await page.screenshot({path:`/private/tmp/lime-friend-simple-${width}.png`});
+ await page.getByRole('textbox',{name:'名前',exact:true}).fill('統合テストフレンド');await page.getByRole('textbox',{name:/キャラクター設定/}).fill('穏やかに日本語で会話する友達');await page.getByRole('button',{name:'保存',exact:true}).click();await expect(page.getByRole('heading',{name:'フレンドを作成',exact:true})).toHaveCount(0);await expect(page).toHaveURL(/messages\/friend/);await expect(page.locator('.dm-ai-root .dm-thread-peer')).toContainText('統合テストフレンド');
+ expect(directCalls).toEqual([]);
+ if(width===390){await page.locator('[data-lime-bottom-nav-root]').getByRole('link',{name:'LimeAI',exact:true}).click();await expect(page).toHaveURL(/\/messages$/);await expect(page.locator('.dm-inbox')).toBeVisible();}
+});
+
+for(const width of [390,834,1440])test(`${width===834?'iPad DM':'DM'} owned friends appear in the inbox with their icons and separate histories at ${width}px`,async({page})=>{
+ const id='custom:owned';const friend={id,slug:null,name:'保存済みフレンド',description:'以前に追加した友達',systemPrompt:'保存済みフレンドとして会話する',starter:'',greeting:'こんにちは',category:'カスタム',builtin:false,gender:'female'};
+ await page.route('**/src/hooks/useAuth.tsx*',route=>route.fulfill({contentType:'application/javascript',body:`const user=${JSON.stringify(user)};export const useAuth=()=>({user,loading:false,session:null,accounts:[],logout:async()=>{}});export const AuthProvider=({children})=>children;`}));
+ await page.addInitScript(({uid,friend,image})=>{localStorage.setItem(`limeai:${uid}:assistants`,JSON.stringify([friend]));localStorage.setItem(`limeai:${uid}:avatars`,JSON.stringify({[friend.id]:image}));localStorage.setItem(`limeai:${uid}:session-meta`,JSON.stringify({'friend-history':{assistantId:friend.id}}));},{uid:user.id,friend,image});
+ const messages=[{id:'friend-history',title:'友達との会話',updated_at:'2026-10-10T06:00:00Z',messages:[{id:'friend-message',role:'assistant',content:'友達との保存済み会話'}]},{id:'base-history',title:'LimeAIとの会話',updated_at:'2026-10-10T05:00:00Z',messages:[{id:'base-message',role:'assistant',content:'LimeAIの保存済み会話'}]}];
+ const calls:Record<string,any>[]=[];
+ await page.route('**/*.supabase.co/rest/v1/rpc/get_direct_inbox',route=>route.fulfill({contentType:'application/json',body:'[]'}));
+ await page.route('**/*.supabase.co/rest/v1/chat_sessions*',route=>route.fulfill({contentType:'application/json',body:route.request().method()==='GET'?JSON.stringify(messages):'[]'}));
+ await page.route('**/*.supabase.co/functions/v1/chat-gemma',route=>{calls.push(route.request().postDataJSON());return route.fulfill({contentType:'text/event-stream',body:'data: {"choices":[{"delta":{"content":"友達からの返信"}}]}\n\ndata: [DONE]\n\n'});});
+ await page.setViewportSize({width,height:900});await page.goto('messages');
+ const inbox=page.locator('.dm-inbox');await expect(inbox.getByRole('button',{name:/保存済みフレンド/})).toBeVisible();await expect(inbox.getByRole('button',{name:/保存済みフレンド/}).locator('.dm-preview')).toHaveText('友達との保存済み会話');const rows=inbox.locator('.dm-conversation');const bounds=await rows.evaluateAll(elements=>elements.map(element=>element.getBoundingClientRect()).map(rect=>({top:rect.top,bottom:rect.bottom})));for(let i=1;i<bounds.length;i++)expect(bounds[i].top-bounds[i-1].bottom).toBeGreaterThanOrEqual(8);await inbox.getByRole('button',{name:/保存済みフレンド/}).click();
+ const root=page.locator('.dm-ai-root');await expect(root.locator('.dm-thread-peer')).toContainText(friend.name);await expect(root.locator('.dm-thread-peer img')).toHaveAttribute('src',image);await expect(root.getByText('友達との保存済み会話',{exact:true})).toBeVisible();await expect(root.getByText('LimeAIの保存済み会話',{exact:true})).toHaveCount(0);await expect(root.getByRole('heading',{name:'フレンド',exact:true})).toHaveCount(0);
+ if(width>=640)await expect(page.locator('.lime-desktop-menu').getByRole('button',{name:'設定',exact:true})).toBeVisible();await expect(root.getByRole('button',{name:'ビデオ通話',exact:true})).toHaveCount(0);await expect(root.getByRole('button',{name:'通話',exact:true})).toBeVisible();await root.getByRole('textbox',{name:'メッセージ',exact:true}).fill('フレンドへ送信');await expect(root.locator('textarea')).toHaveCSS('outline-style','none');await root.getByRole('button',{name:'送信',exact:true}).click();await expect(root.getByText('友達からの返信',{exact:true})).toBeVisible();expect(JSON.stringify(calls)).toContain(friend.systemPrompt);if(width>=640)await expect(inbox.getByRole('button',{name:/保存済みフレンド/}).locator('.dm-preview')).toHaveText('友達からの返信');
+ await root.getByRole('button',{name:'LimeAIのメニュー',exact:true}).click();await page.getByRole('menuitem',{name:'フレンドを編集',exact:true}).click();await page.getByRole('dialog',{name:'フレンドを編集',exact:true}).getByRole('button',{name:'キャンセル',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0);await expect(page).not.toHaveURL(/action=friend/);await expect(root.locator('.dm-thread-peer')).toContainText(friend.name);await root.getByRole('button',{name:'LimeAIのメニュー',exact:true}).click();await page.getByRole('menuitem',{name:'フレンドを編集',exact:true}).click();const editor=page.getByRole('dialog',{name:'フレンドを編集',exact:true});await expect(editor).toBeVisible();await expect(root.locator('.dm-input')).toBeVisible();await expect(editor.getByRole('textbox',{name:'名前',exact:true})).toHaveValue(friend.name);await expect(editor.locator('button[aria-label="アイコン画像を選ぶ"] img')).toHaveAttribute('src',image);const cropFile={name:'friend-icon.svg',mimeType:'image/svg+xml',buffer:Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="600"><rect width="500" height="600" fill="red"/><rect x="500" width="500" height="600" fill="blue"/></svg>')};
+ const chooseCrop=async()=>{const chooser=page.waitForEvent('filechooser');await editor.getByRole('button',{name:'アイコン画像を選ぶ',exact:true}).click();await (await chooser).setFiles(cropFile);};await chooseCrop();let crop=page.locator('[data-profile-image-cropper]');await expect(crop).toBeVisible();await crop.getByRole('button',{name:'閉じる',exact:true}).click();await expect(crop).toHaveCount(0);await expect(editor.locator('button[aria-label="アイコン画像を選ぶ"] img')).toHaveAttribute('src',image);
+ await chooseCrop();crop=page.locator('[data-profile-image-cropper]');await expect(crop).toBeVisible();await crop.getByRole('button',{name:'拡大',exact:true}).click();await expect(crop.getByRole('slider',{name:'ズーム'})).toHaveValue('1.15');const frame=crop.locator('.cursor-grab');const cropBox=await frame.boundingBox();await page.mouse.move(cropBox!.x+cropBox!.width/2,cropBox!.y+cropBox!.height/2);await page.mouse.down();await page.mouse.move(cropBox!.x+cropBox!.width/2+30,cropBox!.y+cropBox!.height/2);await page.mouse.up();await expect(frame.locator('.bg-no-repeat')).toHaveCSS('background-position',/30px/);await page.screenshot({path:`/private/tmp/lime-friend-crop-${width}.png`});await crop.getByRole('button',{name:'適用',exact:true}).click();await expect(crop).toHaveCount(0);await expect(editor).toBeVisible();await expect(editor.locator('button[aria-label="アイコン画像を選ぶ"] img')).toHaveAttribute('src',/^data:image\/jpeg/);const croppedAvatar=await editor.locator('button[aria-label="アイコン画像を選ぶ"] img').getAttribute('src');await editor.getByRole('textbox',{name:'名前',exact:true}).fill('更新済みフレンド');await editor.getByRole('button',{name:'保存',exact:true}).click();await expect(root.locator('.dm-thread-peer')).toContainText('更新済みフレンド');await expect(inbox.locator('button.dm-conversation').filter({hasText:'更新済みフレンド'})).toHaveCount(1);await expect(root.locator('.dm-thread-peer img')).toHaveAttribute('src',croppedAvatar!);
+ await page.screenshot({path:`/private/tmp/lime-owned-friend-${width}.png`});
+ if(width<640)await root.getByRole('button',{name:'戻る',exact:true}).click();await inbox.locator('button.dm-conversation').filter({has:page.locator('.dm-peer-name',{hasText:/^LimeAI$/})}).click();await expect(root.getByText('LimeAIの保存済み会話',{exact:true})).toBeVisible();await expect(root.getByText('友達との保存済み会話',{exact:true})).toHaveCount(0);
+ if(width<640)await root.getByRole('button',{name:'戻る',exact:true}).click();await inbox.getByRole('textbox',{name:'チャットを検索',exact:true}).fill('更新済みフレンド');await expect(inbox.getByRole('button',{name:/更新済みフレンド/})).toBeVisible();await expect(inbox.getByText('該当するチャットはありません',{exact:true})).toHaveCount(0);
+});
+
+for(const width of [390,834,1440])test(`${width===834?'iPad DM':'DM'} conversation actions pin, edit and delete only the viewer history at ${width}px`,async({page})=>{
+ const friend={id:'custom:actions',slug:null,name:'操作フレンド',description:'自己紹介',systemPrompt:'日本語で会話する',starter:'',greeting:'こんにちは',category:'カスタム',builtin:false};
+ const chat={id:'77777777-7777-4777-8777-777777777777',status:'accepted',initiatedBy:user.id,updatedAt:'2026-10-10T07:00:00Z',peer:{id:'88888888-8888-4888-8888-888888888888',username:'human',displayName:'操作相手',avatarUrl:image,createdAt:'2026-09-01T00:00:00Z'},preview:'相手との会話',unreadCount:0};
+ const prefs:{pins:Record<string,boolean>;hidden:Record<string,boolean>}={pins:{},hidden:{}};let deleted=false;const deletions:string[]=[];let history=[{id:'action-friend-session',title:'友達',updated_at:'2026-10-10T07:00:00Z',messages:[{id:'m',role:'assistant',content:'フレンドの会話履歴'}]}];
+ await page.route('**/src/hooks/useAuth.tsx*',route=>route.fulfill({contentType:'application/javascript',body:`const user=${JSON.stringify(user)};export const useAuth=()=>({user,loading:false,session:null,accounts:[],logout:async()=>{}});export const AuthProvider=({children})=>children;`}));
+ await page.addInitScript(({uid,friend})=>{localStorage.setItem(`limeai:${uid}:assistants`,JSON.stringify([friend]));localStorage.setItem(`limeai:${uid}:session-meta`,JSON.stringify({'action-friend-session':{assistantId:friend.id}}));},{uid:user.id,friend});
+ await page.route('**/*.supabase.co/rest/v1/rpc/*',route=>{const endpoint=route.request().url().split('/').pop();const args=route.request().postDataJSON()??{};let result:unknown=null;if(endpoint==='get_direct_inbox')result=deleted?[]:[chat];else if(endpoint==='get_chat_inbox_preferences')result=prefs;else if(endpoint==='set_chat_inbox_preference'){prefs[args.kind as 'pins'|'hidden'][args.chat]=args.value;}else if(endpoint==='delete_direct_chat'){deletions.push(args.target);deleted=true;}else if(endpoint==='get_dm_preferences')result='everyone';else return route.fallback();return route.fulfill({contentType:'application/json',body:JSON.stringify(result)});});
+ await page.route('**/*.supabase.co/rest/v1/chat_sessions*',route=>{if(route.request().method()==='DELETE'){expect(new URL(route.request().url()).searchParams.get('user_id')).toBe(`eq.${user.id}`);expect(new URL(route.request().url()).searchParams.get('id')).toContain('action-friend-session');history=[];}return route.fulfill({contentType:'application/json',body:route.request().method()==='GET'?JSON.stringify(history):'[]'});});
+ await page.route('**/*.supabase.co/rest/v1/direct_conversations*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({id:chat.id,user_low:user.id,user_high:chat.peer.id,initiated_by:user.id,status:'accepted'})}));
+ await page.route('**/*.supabase.co/rest/v1/direct_messages*',route=>{expect(route.request().method()).toBe('GET');return route.fulfill({contentType:'application/json',body:'[]'});});
+ await page.setViewportSize({width,height:900});await page.goto('messages');if(width===1440)await page.evaluate(()=>document.documentElement.classList.add('dark'));
+ const inbox=page.locator('.dm-inbox');const row=(name:string)=>inbox.getByRole('button',{name:new RegExp(name)});
+ const openMenu=async(name:string)=>{if(width>=1024){await row(name).click({button:'right'});}else{await row(name).dispatchEvent('pointerdown',{pointerType:'touch',clientX:100,clientY:200,pointerId:1});await page.waitForTimeout(550);await row(name).dispatchEvent('pointerup',{pointerType:'touch',clientX:100,clientY:200,pointerId:1});}await expect(page.locator('.dm-conversation-menu[data-state="open"]')).toBeVisible();};
+ if(width>=1024){await row('LimeAI').click();await expect(page.getByRole('menu')).toHaveCount(0);await expect(page.locator('.dm-ai-root')).toBeVisible();await expect(page.locator('.lime-desktop-menu').getByRole('button',{name:'設定',exact:true})).toBeVisible();}
+ await openMenu('LimeAI');await expect(page.getByRole('menuitem',{name:'チャットを削除',exact:true})).toHaveCount(0);await expect(page.getByRole('menuitem',{name:/エクスポート/})).toHaveCount(0);await page.keyboard.press('Escape');await expect(page.getByRole('menu')).toHaveCount(0);
+ if(width<640&&await page.locator('.dm-ai-root').isVisible())await page.locator('.dm-ai-root').getByRole('button',{name:'戻る',exact:true}).click();
+ await openMenu('操作フレンド');await expect(page.getByRole('menuitem',{name:'フレンドを編集',exact:true})).toBeVisible();await page.screenshot({path:`/private/tmp/lime-chat-menu-${width}.png`});await page.getByRole('menuitem',{name:'チャットを固定',exact:true}).click();await expect.poll(()=>prefs.pins['friend:custom:actions']).toBe(true);await expect(inbox.locator('.dm-conversation-row').first()).toHaveAttribute('data-chat-id','friend:custom:actions');
+ if(width<640&&await page.locator('.dm-ai-root').isVisible())await page.locator('.dm-ai-root').getByRole('button',{name:'戻る',exact:true}).click();
+ await openMenu('操作フレンド');await page.getByRole('menuitem',{name:'フレンドを編集',exact:true}).click();await expect(page.getByRole('dialog',{name:'フレンドを編集'}).getByRole('textbox',{name:'名前',exact:true})).toHaveValue(friend.name);await page.getByRole('dialog').getByRole('button',{name:'キャンセル',exact:true}).click();
+ if(width<640&&await page.locator('.dm-ai-root').isVisible())await page.locator('.dm-ai-root').getByRole('button',{name:'戻る',exact:true}).click();
+ await openMenu('操作フレンド');await page.getByRole('menuitem',{name:'チャットを削除',exact:true}).click();await expect(page.getByRole('dialog')).toContainText('相手の画面には会話が残ります');await page.getByRole('button',{name:'削除する',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0);await expect(row('操作フレンド')).toHaveCount(0);expect(history).toEqual([]);expect(deletions).toEqual([]);expect(await page.evaluate(uid=>JSON.parse(localStorage.getItem(`limeai:${uid}:assistants`)??'[]').length,user.id)).toBe(1);
+ await openMenu('操作相手');await page.getByRole('menuitem',{name:'チャットを削除',exact:true}).click();await page.getByRole('button',{name:'削除する',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0);await expect(row('操作相手')).toHaveCount(0);expect(deletions).toEqual([chat.id]);
+});
+
+for(const width of [390,1440])test(`DM built-in friend edits survive reopening at ${width}px`,async({page})=>{
+ await page.route('**/src/hooks/useAuth.tsx*',route=>route.fulfill({contentType:'application/javascript',body:`const user=${JSON.stringify(user)};export const useAuth=()=>({user,loading:false,session:null,accounts:[],logout:async()=>{}});export const AuthProvider=({children})=>children;`}));
+ await page.route('**/*.supabase.co/rest/v1/chat_sessions*',route=>route.fulfill({contentType:'application/json',body:'[]'}));
+ await page.setViewportSize({width,height:900});await page.goto('messages/friend%3Abuiltin%3Akm170?action=friend');
+ const dialog=page.getByRole('dialog',{name:'フレンドを編集',exact:true});await expect(dialog).toBeVisible();await dialog.getByRole('textbox',{name:'名前',exact:true}).fill('編集済み担々麺');await dialog.getByRole('textbox',{name:'紹介文',exact:true}).fill('変更した紹介');await dialog.getByRole('textbox',{name:/キャラクター設定/}).fill('変更した会話設定');await dialog.getByRole('button',{name:'保存',exact:true}).click();
+ await expect(dialog).toHaveCount(0);await expect(page.locator('.dm-thread-peer')).toContainText('編集済み担々麺');
+ expect(await page.evaluate(uid=>JSON.parse(localStorage.getItem(`limeai:${uid}:assistants`)??'[]').filter((a:any)=>a.id==='builtin:km170').length,user.id)).toBe(1);
+ await page.goto('messages/friend%3Abuiltin%3Akm170?action=friend');await expect(dialog.getByRole('textbox',{name:'名前',exact:true})).toHaveValue('編集済み担々麺');await expect(dialog.getByRole('textbox',{name:'紹介文',exact:true})).toHaveValue('変更した紹介');await expect(dialog.getByRole('textbox',{name:/キャラクター設定/})).toHaveValue('変更した会話設定');
+});
+
+for(const width of [320,390,834,1440])for(const username of ['cat','LimeNote','dmprofile'])test(`${width===834?'iPad DM':'DM'} profile entry permission and action layout for ${username} at ${width}px`,async({page})=>{
+ const target='22222222-2222-4222-8222-222222222222',chat='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';let allowed=true;let opened=0;
+ const other={...profile,id:target,username,display_name:username,avatar_url:image,is_official:true};
+ await page.route('**/*.supabase.co/rest/v1/profiles*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify(other)}));
+ await page.route('**/rest/v1/rpc/get_account_follow_state',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({followed:true,requested:false,canView:true})}));
+ await page.route('**/rest/v1/rpc/can_direct_message',route=>{expect(route.request().postDataJSON()).toEqual({target_user:target});return route.fulfill({contentType:'application/json',body:JSON.stringify(allowed)});});
+ await page.route('**/rest/v1/rpc/open_direct_conversation',route=>{expect(route.request().postDataJSON()).toEqual({target_user:target});opened++;return route.fulfill({contentType:'application/json',body:JSON.stringify(chat)});});
+ await page.route('**/*.supabase.co/rest/v1/direct_conversations*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({id:chat,user_low:user.id,user_high:target,initiated_by:user.id,status:'accepted'})}));
+ await page.setViewportSize({width,height:900});await page.goto(`u/${username}`);const actions=page.locator('[data-lime-profile-actions]');const dm=actions.getByRole('button',{name:'ダイレクトメッセージを送る',exact:true});await expect(dm).toBeVisible();const notify=actions.getByRole('button',{name:'新しい投稿を通知する',exact:true});await expect(notify).toBeVisible();
+ const a=await dm.boundingBox(),b=await notify.boundingBox();expect(a!.x+a!.width).toBeLessThanOrEqual(b!.x+1);expect(Math.abs(a!.y+a!.height/2-b!.y-b!.height/2)).toBeLessThan(1);
+ const boxes=await actions.locator('button:visible').evaluateAll(elements=>elements.map(element=>{const r=element.getBoundingClientRect();return{x:r.x,y:r.y,right:r.right,bottom:r.bottom};}));expect(new Set(boxes.map(box=>Math.round((box.y+box.bottom)/2))).size).toBe(1);for(let i=0;i<boxes.length;i++){expect(boxes[i].x).toBeGreaterThanOrEqual(0);expect(boxes[i].right).toBeLessThanOrEqual(width);for(let j=i+1;j<boxes.length;j++)expect(boxes[i].right<=boxes[j].x||boxes[j].right<=boxes[i].x||boxes[i].bottom<=boxes[j].y||boxes[j].bottom<=boxes[i].y).toBe(true);}
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);if(width===390)await page.screenshot({path:`/private/tmp/lime-profile-dm-${username}.png`});await dm.click();await expect(page).toHaveURL(new RegExp(`messages/${chat}$`));expect(opened).toBe(1);
+ allowed=false;await page.goto(`u/${username}`);await expect(actions.getByRole('button',{name:'フォロー中',exact:true})).toBeVisible();await expect(dm).toHaveCount(0);expect(opened).toBe(1);
 });

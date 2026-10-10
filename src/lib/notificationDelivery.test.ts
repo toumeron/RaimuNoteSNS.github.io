@@ -10,3 +10,10 @@ it('dismisses notification popups after five seconds independently of toast hove
 it('reading closes the relevant popup without dismissing unrelated notifications',()=>{showNotificationToast('one','title','body');showNotificationToast('two','title','body');dismissNotificationToasts(['one']);expect(state.dismiss.mock.calls).toEqual([['notification-one']]);});
 it('updates unread badge from the saved count and clears badge and read OS notices at zero',async()=>{await refreshNotificationBadge('owner');expect(state.set).toHaveBeenCalledWith(3);state.count=0;await refreshNotificationBadge('owner',['read']);expect(state.clear).toHaveBeenCalled();expect(state.closed).toHaveBeenCalled();expect(state.message).toHaveBeenCalledWith({type:'LIME_NOTIFICATIONS_READ',ids:['read'],count:0});});
 it('does not wait indefinitely for serviceWorker.ready on an unregistered page',async()=>{Object.defineProperty(navigator,'serviceWorker',{configurable:true,value:{ready:new Promise(()=>{}),getRegistration:async()=>undefined}});await refreshNotificationBadge('owner');expect(state.set).toHaveBeenCalledWith(3);});
+
+it('updates the in-app count even when the OS badge API never completes',async()=>{
+ state.count=0;state.clear.mockImplementationOnce(()=>new Promise(()=>{}));
+ const changed=vi.fn();window.addEventListener('lime-notification-count-changed',changed);
+ try{await refreshNotificationBadge('owner',['read']);expect(changed).toHaveBeenCalledOnce();expect((changed.mock.calls[0][0] as CustomEvent).detail).toEqual({userId:'owner',count:0});expect(state.closed).toHaveBeenCalled();}
+ finally{window.removeEventListener('lime-notification-count-changed',changed);}
+});

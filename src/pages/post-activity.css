@@ -1,0 +1,21 @@
+.post-activity-page { width: 100%; min-width: 0; }
+.post-activity-tabs { position: sticky; top: 56px; z-index: 40; display: flex; border-bottom: 1px solid hsl(var(--border)); background: hsl(var(--background) / .94); backdrop-filter: blur(12px); }
+.post-activity-tabs > button { flex: 1; min-width: 0; padding: 0 8px; transition: color 160ms ease; color: hsl(var(--muted-foreground)); }
+.post-activity-tabs > button > span { position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 52px; padding: 0 10px; font-weight: 700; font-size: 15px; }
+.post-activity-tabs > button[aria-selected="true"] { color: hsl(var(--foreground)); }
+.post-activity-tabs > button:hover { background: hsl(var(--muted) / .3); }
+.post-activity-tabs > button:focus-visible { outline: 2px solid hsl(var(--primary)); outline-offset: -2px; }
+.post-activity-user { display: flex; align-items: flex-start; gap: 12px; padding: 16px; }
+.post-activity-user:hover { background: hsl(var(--muted) / .2); }
+@media (min-width: 640px) { .post-activity-tabs { top: var(--desktop-header-height,64px); } }
+header[data-lime-post-activity-header="true"] { border-bottom: 0 !important; box-shadow: none !important; }
+header[data-lime-post-activity-header="true"] button:hover { background: hsl(var(--muted) / .3); color: hsl(var(--foreground)); }
+.post-activity-tab-indicator { pointer-events: none; position: absolute; bottom: 0; left: 0; width: calc(100% / 3); height: 4px; transition: transform 220ms cubic-bezier(.22,1,.36,1); }
+.post-activity-tab-indicator::after { content: ''; display: block; width: 64%; max-width: 88px; height: 4px; margin: 0 auto; border-radius: 99px; background: hsl(var(--primary)); }
+.post-activity-panel { animation: activity-panel-enter 160ms ease-out; }
+@keyframes activity-panel-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .post-activity-tab-indicator, .post-activity-tabs > button { transition: none; } .post-activity-panel { animation: none; } }
+.post-activity-user button[class~="bg-transparent"]:hover { color: hsl(var(--foreground)); border-color: hsl(var(--border)); background: transparent; }
+.post-activity-user button[class~="bg-transparent"]::after { background: transparent; }
+
+.post-activity-page :is(button,a), header[data-lime-post-activity-header="true"] button, [data-lime-activity-sort] [role="menuitem"] { -webkit-tap-highlight-color: transparent; }

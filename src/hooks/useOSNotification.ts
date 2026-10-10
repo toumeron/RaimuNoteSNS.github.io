@@ -278,7 +278,7 @@ export function useOSNotification(currentUserId: string | null) {
 
           const actorName = actor_name || 'ユーザー';
           // 種類ごとの文言。new_post はプロフィールのベルボタンで購読したユーザーの新規投稿。
-          const title = type === 'mention'
+          const title = type === 'dm'||type === 'dm_request' ? actorName : type === 'mention'
             ? `${actorName}さんからのメンション`
             : type === 'new_post'
               ? `${actorName}`

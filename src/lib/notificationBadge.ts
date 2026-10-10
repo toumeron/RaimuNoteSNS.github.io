@@ -6,9 +6,12 @@ export async function refreshNotificationBadge(userId:string,readIds:string[]=[]
  const {count,error}=await supabase.from('notifications').select('id',{count:'exact',head:true}).eq('user_id',userId).eq('is_read',false);
  if(error||request!==latest)return;
  const unread=Math.max(0,count??0);const nav=navigator as BadgeNavigator;
- try{if(unread&&nav.setAppBadge)await nav.setAppBadge(unread);else if(!unread&&nav.clearAppBadge)await nav.clearAppBadge();}catch{/* Badge APIs are optional. */}
- if(request!==latest)return;
+ // In-app unread counts must not wait for the optional OS badge API.
  window.dispatchEvent(new CustomEvent('lime-notification-count-changed',{detail:{userId,count:unread}}));
+ try{
+  const update=unread?nav.setAppBadge?.(unread):nav.clearAppBadge?.();
+  void update?.catch(()=>{});
+ }catch{/* Badge APIs are optional. */}
  try{
   // ready never resolves on an unregistered page; badge refresh must not wait for it.
   const registration=await navigator.serviceWorker?.getRegistration(import.meta.env.BASE_URL);
