@@ -2137,6 +2137,15 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   const [profileCoverHidden, setProfileCoverHidden] = useState(false);
   const [profileSummaryOffscreen, setProfileSummaryOffscreen] = useState(false);
   useLayoutEffect(() => {
+    if (!hideHeaderOnMobileProfile) return;
+    const root = document.documentElement;
+    // Safari can paint its upper obscured inset from the page canvas instead of
+    // the fixed header's child. Give both surfaces the same cover, not white.
+    const cover = mobileProfileInfo?.user.coverUrl;
+    root.style.setProperty('--lime-profile-edge-cover', cover ? `url(${JSON.stringify(cover)})` : 'none');
+    return () => { root.style.removeProperty('--lime-profile-edge-cover'); };
+  }, [hideHeaderOnMobileProfile, mobileProfileInfo?.user.coverUrl]);
+  useLayoutEffect(() => {
     setMobileProfileInfo(null);
     if (!hideHeaderOnMobileProfile) return;
     let frame = 0;
@@ -3505,6 +3514,14 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
             .lime-profile-bar-follow button::after, .dark .lime-profile-bar-follow button::after { background: rgb(255 77 90 / .15); }
             .lime-profile-bar-control { position: relative; display: flex; width: 40px; height: 40px; z-index: 1; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 50%; background: rgb(0 0 0 / .45); color: white; }
             html[data-lime-mobile-profile-page="true"] body { padding-top: 0 !important; }
+            html[data-lime-mobile-profile-page="true"], html[data-lime-mobile-profile-page="true"] body {
+              background-image: var(--lime-profile-edge-cover, none) !important;
+              background-repeat: no-repeat;
+              background-position: center top;
+              background-size: 100% calc(150px + var(--lime-profile-system-top, env(safe-area-inset-top)));
+              background-attachment: fixed;
+            }
+            html[data-lime-mobile-profile-page="true"] body { background-color: transparent; }
 
           }
 

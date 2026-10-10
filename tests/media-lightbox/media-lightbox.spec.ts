@@ -431,6 +431,10 @@ test('profile header fills the status area instead of adding top padding',async(
  const row=page.locator('header[data-lime-mobile-profile-header-hidden=true] [data-lime-header-row]');
  const cover=page.locator('.profile-header-cover-avatar-gap');
  await expect(cover).toBeVisible();
+ await expect(page.locator('html')).toHaveCSS('background-image','url("https://media.example/one.svg")');
+ await expect(page.locator('body')).toHaveCSS('background-image','url("https://media.example/one.svg")');
+ await expect(page.locator('body')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
+ await expect(page.locator('body')).toHaveCSS('background-size','100% 194px');
  await expect(row).toHaveCSS('height','100px');await expect(row).toHaveCSS('padding-top','0px');
  expect((await cover.boundingBox())!.y).toBe(0);await expect(cover).toHaveCSS('height','194px');
  expect((await row.getByRole('button',{name:'戻る',exact:true}).boundingBox())!.y).toBe(52);
@@ -440,4 +444,6 @@ test('profile header fills the status area instead of adding top padding',async(
  await expect(row.locator('.lime-profile-bar-title')).toHaveCSS('text-shadow','rgba(0, 0, 0, 0.18) 0px 1px 2px');
  await page.screenshot({path:info.outputPath('expanded-profile-header.png')});
  await page.goto('./');await expect.poll(()=>page.evaluate(()=>Array.from(document.querySelectorAll('meta[name="theme-color"]')).map(meta=>meta.getAttribute('media')))).toEqual(initialMedia);
+ await expect(page.locator('html')).toHaveCSS('background-image','none');await expect(page.locator('body')).toHaveCSS('background-image','none');
+ expect(await page.evaluate(()=>document.documentElement.style.getPropertyValue('--lime-profile-edge-cover'))).toBe('');
 });
