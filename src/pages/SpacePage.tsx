@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
-import { useSpaces } from '@/components/spaces/SpaceContext';
+import { useSpaces } from "@/components/spaces/SpaceProvider";
 export default function SpacePage() {
   const { id } = useParams();
   const spaces = useSpaces();

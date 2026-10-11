@@ -1,11 +1,15 @@
-import {DraftEmojiText} from '@/components/stickers/DraftEmojiText';
+import {ComposerIcon} from '@/components/feed/ComposerIcon';
+import {PollIcon} from "@/components/feed/ComposerIcon";
+import {PollEditor,newPollDraft} from './PollEditor';
+import {validatePollDraft,type PollDraft} from '@/lib/polls';
+import {DraftEmojiText} from "@/components/stickers/Stickers";
 import { StickerPicker, StickerDraft } from '@/components/stickers/Stickers';
 import { appendSticker, insertDraftEmoji, draftEmojiCharacter } from '@/lib/stickers';
 import { QuotedPost } from '@/components/feed/QuotedPost';
 import { memo, useCallback, useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type PointerEvent as ReactPointerEvent, type UIEvent as ReactUIEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ImagePlus, Loader2, Send, X, AtSign, Hash, Globe, Users, Crown } from 'lucide-react'; // Globe, Users, Crownを追加
+import { Loader2, X, AtSign, Hash, Globe, Users, Crown } from 'lucide-react'; // Globe, Users, Crownを追加
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -178,6 +182,10 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
   const { mutateAsync, isPending } = useCreatePost();
   
   const [content, setContent] = useState(initialContent);
+  const [poll,setPoll]=useState<PollDraft|null>(null);
+  const pollRef=useRef(poll);pollRef.current=poll;
+  const removePoll=()=>{pollRef.current?.options.forEach(option=>{if(option.image)URL.revokeObjectURL(option.image);});setPoll(null);};
+  useEffect(()=>()=>{pollRef.current?.options.forEach(option=>{if(option.image)URL.revokeObjectURL(option.image);});},[]);
   const [sticker,setSticker]=useState<string|null>(null);
   const [previews, setPreviews] = useState<string[]>([]);
   const [previewOriginals, setPreviewOriginals] = useState<string[]>([]);
@@ -1257,10 +1265,12 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
       toast.error(`本文は${MAX_LEN}文字以内で入力してください`);
       return;
     }
+    if(poll){const message=validatePollDraft(poll);if(message){toast.error(message);return;}}
     try {
       // 投稿処理を先に実行し、確実に完了を待つ (visibilityを追加)
       await mutateAsync({ 
         ...(mapLocation ? {mapLocation} : {}),
+        ...(poll?{poll}:{}),
         content: trimmed, 
         imageUrls: previews,
         parentId: quotedPost?.id,
@@ -1289,6 +1299,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
       urls.forEach((url) => URL.revokeObjectURL(url));
       setPreviews([]);
       setPreviewOriginals([]);
+      removePoll();
       setVisibility('public'); // リセット
       cancelQuote();
       requestAnimationFrame(resizeTextarea);
@@ -1470,7 +1481,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
           <div className="relative w-full overflow-hidden">
             {!content && (
               <div className="absolute inset-0 pointer-events-none px-0 py-2 text-[20px] leading-relaxed text-muted-foreground z-0">
-                {quotedPost ? "コメントを添えてリポスト" : "いまどうしてる？"}
+                {quotedPost ? "コメントを添えてリポスト" : poll ? "質問する" : "いまどうしてる？"}
               </div>
             )}
 
@@ -1485,6 +1496,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
 
             <Textarea
               ref={textareaRef}
+              aria-label={poll?"投票の質問":"ポスト本文"}
               value={content}
               onChange={handleContentChange}
               onPaste={handlePaste}
@@ -1591,6 +1603,8 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
             </div>
           )}
 
+          {poll&&<PollEditor value={poll} onChange={setPoll} onRemove={removePoll} disabled={isPending}/>}
+
           <div className="flex items-center justify-between pt-3">
             <div className="flex items-center gap-2">
               <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={onFile} />
@@ -1598,13 +1612,15 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
                 type="button"
                 size="sm"
                 variant="ghost"
-                className="h-9 rounded-full text-accent hover:bg-accent-soft hover:text-accent"
-                data-lime-attachment-tool onClick={() => fileRef.current?.click()}
+                aria-label="画像を追加" className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
+                data-lime-composer-tool data-lime-attachment-tool onClick={() => fileRef.current?.click()}
                 disabled={previews.length >= MAX_IMAGES}
               >
-                <ImagePlus className="sm:mr-1.5 h-5 w-5" />
-                <span className="hidden sm:inline">画像</span>
+                <ComposerIcon kind="image"/>
+
               </Button>
+
+<Button type="button" size="sm" variant="ghost" data-lime-composer-tool aria-label="投票を追加" aria-pressed={!!poll} disabled={isPending||!!poll} className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={()=>setPoll(newPollDraft())}><PollIcon className="h-5 w-5"/></Button>
 
               {/* 公開範囲選択 (追加) */}
               <DropdownMenu>
@@ -1613,24 +1629,24 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
                     type="button"
                     size="sm"
                     variant="ghost"
-                    className="h-9 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                    data-lime-composer-audience="true" aria-label="公開範囲を選択" className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
                   >
                     {visibility === 'public' && (
                       <>
-                        <Globe className="sm:mr-1.5 h-4 w-4" />
-                        <span className="hidden sm:inline">全員</span>
+                        <ComposerIcon kind="globe"/>
+
                       </>
                     )}
                     {visibility === 'following' && (
                       <>
-                        <Users className="sm:mr-1.5 h-4 w-4 text-accent" />
-                        <span className="text-accent hidden sm:inline">限定</span>
+                        <ComposerIcon kind="users"/>
+
                       </>
                     )}
                     {visibility === 'members' && (
                       <>
-                        <Crown className="sm:mr-1.5 h-4 w-4 text-primary" />
-                        <span className="text-primary hidden sm:inline">メンバー限定</span>
+                        <ComposerIcon kind="members"/>
+
                       </>
                     )}
                   </Button>
@@ -1641,23 +1657,23 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
                   className="z-[2147483647] rounded-xl"
                   style={{ zIndex: 2147483647 }}
                 >
-                  <DropdownMenuItem onClick={() => setVisibility('public')}>
-                    <Globe className="mr-2 h-4 w-4" />
+                  <DropdownMenuItem className="gap-2 focus:bg-muted/40 focus:text-foreground" onClick={() => setVisibility('public')}>
+                    <ComposerIcon kind="globe" className="mr-2 shrink-0"/>
                     全員
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setVisibility('following')}>
-                    <Users className="mr-2 h-4 w-4" />
+                  <DropdownMenuItem className="gap-2 focus:bg-muted/40 focus:text-foreground" onClick={() => setVisibility('following')}>
+                    <ComposerIcon kind="users" className="mr-2 shrink-0"/>
                     フォロー中
                   </DropdownMenuItem>
                   {canPostMembersOnly && (
-                    <DropdownMenuItem onClick={() => setVisibility('members')}>
+                    <DropdownMenuItem className="gap-2 focus:bg-muted/40 focus:text-foreground" onClick={() => setVisibility('members')}>
                       <Crown className="mr-2 h-4 w-4" />
                       メンバー限定
                     </DropdownMenuItem>
                   )}
                 </DropdownMenuContent>
               </DropdownMenu>
-              <StickerPicker disabled={isPending} onSelect={name=>{if(content.trim()){insertDraftEmoji(textareaRef.current,content,name,setContent);}else setSticker(name);}} />
+              <StickerPicker iconOnly simple disabled={isPending} onSelect={name=>{if(content.trim()){insertDraftEmoji(textareaRef.current,content,name,setContent);}else setSticker(name);}} />
 
               <span className={cn('text-xs tabular-nums', overLimit ? 'font-bold text-destructive' : 'text-muted-foreground')}>
                 {remaining}
@@ -1666,7 +1682,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
             <Button
               type="button"
               onClick={submit}
-              disabled={isPending || overLimit || !appendSticker(content,sticker)}
+              disabled={isPending || overLimit || !appendSticker(content,sticker) || !!(poll&&validatePollDraft(poll))}
               aria-label={quotedPost?'引用ポスト':'ポスト'}
               className={cn("shrink-0 rounded-full bg-gradient-primary font-bold shadow-soft transition hover:shadow-pop",homeInline?"h-9 w-9 p-0 sm:h-10 sm:w-auto sm:px-5":"px-5")}
             >
@@ -1674,7 +1690,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <>
-                  <Send className={cn("h-4 w-4",homeInline?"sm:mr-1.5":"mr-1.5")} />
+                  <ComposerIcon kind="send" className={cn("h-4 w-4",homeInline?"sm:mr-1.5":"mr-1.5")} />
                   <span className={homeInline?"hidden sm:inline":undefined}>{quotedPost ? '引用ポスト' : 'ポスト'}</span>
                 </>
               )}

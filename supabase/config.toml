@@ -464,3 +464,13 @@ verify_jwt = true
 
 [functions.friend-images]
 verify_jwt = true
+
+# Training authenticates with a dedicated secret; normal ranking verifies the user JWT.
+[functions.recommendation-ranker]
+verify_jwt = false
+
+[functions.poll-media]
+verify_jwt = false
+
+[functions.list-media]
+verify_jwt = false

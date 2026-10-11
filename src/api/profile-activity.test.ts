@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({ data: 15 as unknown, error: null as Error | null, rpc: vi.fn() }));
 vi.mock('@/lib/supabase', () => ({ supabase: { rpc: state.rpc } }));
-import { getProfileActivityCount } from './profile-activity';
+import { getProfileActivityCount } from "@/api/users";
 beforeEach(() => { state.data = 15; state.error = null; state.rpc.mockReset(); state.rpc.mockImplementation(async()=>({data:state.data,error:state.error})); });
 it('uses only the aggregate RPC so audience policies do not reduce the total', async () => {
   expect(await getProfileActivityCount('author')).toBe(15);

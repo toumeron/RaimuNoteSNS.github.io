@@ -6,7 +6,7 @@ import {useAuth} from '@/hooks/useAuth';
 import {findChatPostLink} from '@/lib/chatPostLink';
 import {openMediaViewer} from '@/components/media/openMediaViewer';
 import {Avatar,AvatarImage,AvatarFallback} from '@/components/ui/avatar';
-import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
+import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 
 export function ChatPostPreview({content,fallback}:{content:string;fallback:ReactNode}){
  const link=findChatPostLink(content);

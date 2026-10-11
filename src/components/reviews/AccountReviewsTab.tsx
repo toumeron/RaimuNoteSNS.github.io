@@ -1,4 +1,5 @@
-import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
+import { useAutoPagination } from '@/hooks/use-mobile';
+import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 import { ReviewStars } from './ReviewStars';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -6,7 +7,7 @@ import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-q
 import { Star } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
-import { accountReviewsKey, getAccountReviews, setAccountReviewLike, submitAccountReview } from '@/api/account-reviews';
+import { accountReviewsKey, getAccountReviews, setAccountReviewLike, submitAccountReview } from "@/api/users";
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,6 +26,7 @@ export function AccountReviewsTab({ profileId }: { profileId: string }) {
       && last.reviews.length ? pages.reduce((n,p)=>n+p.reviews.length,0) : undefined,
   });
   const summary = query.data?.pages[0];
+ const pageEnd = useAutoPagination(query, true);
   const reviews = query.data?.pages.flatMap(page => page.reviews) ?? [];
   const ownReview = reviews.find(review => review.author_id === user?.id);
   const [open, setOpen] = useState(false);
@@ -76,7 +78,7 @@ export function AccountReviewsTab({ profileId }: { profileId: string }) {
           catch(error) { toast.error(user ? 'いいねを保存できませんでした' : 'いいねにはログインが必要です'); throw error; }
         }} onChange={()=>{void queryClient.invalidateQueries({queryKey:key});}}/></div>
     </article>)}</div>
-    {query.hasNextPage && <Button variant="outline" className="mt-4 w-full" disabled={query.isFetchingNextPage} onClick={()=>query.fetchNextPage()}>さらに読み込む</Button>}
+    <div ref={pageEnd} className="h-px" aria-hidden="true" />
     {query.isFetchNextPageError && <p role="alert" className="mt-2 text-sm text-destructive">追加のレビューを取得できませんでした。再度読み込んでください。</p>}
     <Dialog open={open} onOpenChange={value=>{if(!mutation.isPending)setOpen(value);}}>
       <DialogContent className="max-h-[85dvh] overflow-y-auto max-sm:inset-0 max-sm:z-[2147483200] max-sm:flex max-sm:h-[100dvh] max-sm:max-h-[100dvh] max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:flex-col max-sm:rounded-none max-sm:border-0 max-sm:pt-[calc(1.5rem+env(safe-area-inset-top))] max-sm:pb-[calc(1.5rem+env(safe-area-inset-bottom))] max-sm:shadow-none max-sm:data-[state=open]:animate-none max-sm:data-[state=closed]:animate-none max-sm:[&>button]:top-[calc(1rem+env(safe-area-inset-top))]"><DialogHeader><DialogTitle>{ownReview ? 'レビューを編集' : 'レビューを書く'}</DialogTitle><DialogDescription>星評価と感想を入力してください。</DialogDescription></DialogHeader>

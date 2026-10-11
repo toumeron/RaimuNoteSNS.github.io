@@ -1,3 +1,4 @@
+import { recordLearnedRecommendation } from '@/api/learned-recommendations';
 import { useEffect } from 'react';
 import { recordRecommendationImpression } from '@/lib/recommendations';
 
@@ -18,6 +19,7 @@ export function useRecommendationImpressions(enabled:boolean,viewerId:string|nul
         timers.set(entry.target,setTimeout(()=>{
           timers.delete(entry.target);
           if(document.hidden || !entry.target.isConnected || entry.target.getAttribute('data-lime-recommendation-post')!==id) return;
+          recordLearnedRecommendation(id,viewerId,0);
           recorded.add(id);recordRecommendationImpression(id,viewerId,Date.now(),entry.target.getAttribute('data-lime-recommendation-fingerprint')??undefined);
         },1500));
       }

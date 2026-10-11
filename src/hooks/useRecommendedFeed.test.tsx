@@ -104,7 +104,7 @@ it.each([true,false])('resumes an empty first screen with pending sources=%s whe
  const cursor=api.createRecommendationCursor([]);cursor.preferences={authors:{},terms:{}};cursor.stalledPages=3;
  const pages=Array.from({length:8},(_,i)=>({posts:[],preferences:{authors:{},terms:{}},next:hasNext?cursor:undefined,pendingAnalysis:false,automaticPaused:i===7,requestKey:100+i}));
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
- const key=['feed','recommended','scoring-v26-healthy-reads-and-history-resume','pixel-viewer',[]];
+ const key=['feed','recommended','scoring-v27-first-screen-reservations','pixel-viewer',[]];
  client.setQueryData(key,{pages,pageParams:Array(8).fill(cursor)});
  vi.mocked(api.getRecommendationPreferences).mockResolvedValueOnce({authors:{'new-creator':10},terms:{}});
  vi.mocked(api.getRecommendationPage).mockResolvedValueOnce({posts:[work('bsky:restored','new-creator')],preferences:{authors:{'new-creator':10},terms:{}},next:undefined,pendingAnalysis:false,automaticPaused:false,requestKey:200});
@@ -133,12 +133,28 @@ it('does not lose hydrated creator preferences when an older empty read complete
 it('uses fresh initial preferences on refresh instead of an older cached dismissal',async()=>{
  const api=await import('@/api/recommendations');const cursor=api.createRecommendationCursor([]);
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
- const key=['feed','recommended','scoring-v26-healthy-reads-and-history-resume','pixel-viewer',[]];
+ const key=['feed','recommended','scoring-v27-first-screen-reservations','pixel-viewer',[]];
  const old={authors:{},terms:{},feedback:[{id:'old-dismissal',userId:'new-creator',createdAt:'2026-10-01T00:00:00Z'}]};
  client.setQueryData(key,{pages:[{posts:[],preferences:old,next:undefined,pendingAnalysis:false,automaticPaused:false,requestKey:400}],pageParams:[cursor]});
  vi.mocked(api.getRecommendationPage).mockResolvedValueOnce({posts:[work('bsky:fresh-initial','new-creator')],preferences:{authors:{'new-creator':10},terms:{}},next:undefined,pendingAnalysis:false,automaticPaused:false,requestKey:401});
  const view=renderHook(()=>useRecommendedFeed(true),{wrapper:({children})=><QueryClientProvider client={client}>{children}</QueryClientProvider>});
  await act(async()=>{await client.refetchQueries({queryKey:key});});
  await waitFor(()=>expect(view.result.current.data?.pages[0].posts.map(post=>post.id)).toEqual(['bsky:fresh-initial']));
+ view.unmount();client.clear();
+});
+
+it('finishes an empty initial scan with retained source cursors and allows a visible empty state',async()=>{
+ const api=await import('@/api/recommendations');
+ const {showTimelineEmpty}=await import("@/lib/timelinePaging");
+ const cursor=api.createRecommendationCursor([]);cursor.preferences={authors:{},terms:{}};
+ const pages=Array.from({length:8},(_,i)=>({posts:[],preferences:{authors:{},terms:{}},next:cursor,pendingAnalysis:false,automaticPaused:false,requestKey:500+i}));
+ const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
+ client.setQueryData(['feed','recommended','scoring-v27-first-screen-reservations','pixel-viewer',[]],{pages,pageParams:Array(8).fill(cursor)});
+ const view=renderHook(()=>useRecommendedFeed(true),{wrapper:({children})=><QueryClientProvider client={client}>{children}</QueryClientProvider>});
+ expect(view.result.current.hasNextPage).toBe(true);
+ expect(view.result.current.isFilling).toBe(false);
+ const count=view.result.current.data!.pages.reduce((sum,page)=>sum+page.posts.length,0);
+ expect(showTimelineEmpty(view.result.current.isPending||view.result.current.isFilling,view.result.current.isFetching,view.result.current.isError,count)).toBe(true);
+ expect(api.getRecommendationPage).not.toHaveBeenCalled();
  view.unmount();client.clear();
 });

@@ -1,4 +1,5 @@
-import {DraftEmojiText} from '@/components/stickers/DraftEmojiText';
+import {ComposerIcon} from '@/components/feed/ComposerIcon';
+import {DraftEmojiText} from "@/components/stickers/Stickers";
 import { StickerPicker, StickerDraft } from '@/components/stickers/Stickers';
 import { appendSticker, insertDraftEmoji, hasDraftEmojis, draftEmojiCharacter } from '@/lib/stickers';
 import { createPortal } from 'react-dom';
@@ -8,7 +9,7 @@ import { ReplyChain } from '@/components/post/ReplyChain';
 import { Link } from 'react-router-dom';
 import { Input } from '@/components/ui/input';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowLeft, ImagePlus, Loader2, Send, X } from 'lucide-react';
+import { ArrowLeft, Loader2, X } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -184,8 +185,8 @@ export function CommentForm({
 )}
         </div>
         <div className={`reply-attachment-tools flex shrink-0 items-center ${editing?"":"invisible pointer-events-none"}`} aria-hidden={!editing}>
-        {<button type="button" onPointerDown={event=>event.preventDefault()} onClick={() => fileRef.current?.click()} disabled={isPending || !editing || images.length >= 4} data-lime-attachment-tool aria-label="返信に画像を添付" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-accent hover:bg-accent-soft hover:text-accent disabled:opacity-50"><ImagePlus className="h-5 w-5" /></button>}
-        <StickerPicker iconOnly disabled={isPending || !editing} onSelect={name=>{if(text.trim())insertDraftEmoji(compactMobile?compactInputRef.current:textareaRef.current,text,name,setText);else setSticker(name);setEditing(true);}} />
+        {<button type="button" onPointerDown={event=>event.preventDefault()} onClick={() => fileRef.current?.click()} disabled={isPending || !editing || images.length >= 4} data-lime-composer-tool data-lime-attachment-tool aria-label="返信に画像を添付" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-transparent hover:text-foreground disabled:opacity-50"><ComposerIcon kind="image"/></button>}
+        <StickerPicker iconOnly simple disabled={isPending || !editing} onSelect={name=>{if(text.trim())insertDraftEmoji(compactMobile?compactInputRef.current:textareaRef.current,text,name,setText);else setSticker(name);setEditing(true);}} />
         </div>
         <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addImages(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
         </div>
@@ -207,7 +208,7 @@ export function CommentForm({
           } ${isBottomNav ? 'comment-form-bottom-nav-submit' : ''} ${isDesktopReply ? 'comment-form-desktop-reply-submit' : ''}`}
           aria-label="コメントを送信"
         >
-          {isPending ? <Loader2 className="h-5 w-5 animate-spin" /> : (isDesktopReply || variant === 'mediaViewer') ? '返信' : <Send className="h-5 w-5" />}
+          {isPending ? <Loader2 className="h-5 w-5 animate-spin" /> : (isDesktopReply || variant === 'mediaViewer') ? '返信' : <ComposerIcon kind="send" className="h-5 w-5" />}
         </Button>
       </div>
   );

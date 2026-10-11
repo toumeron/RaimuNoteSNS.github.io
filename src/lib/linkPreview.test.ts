@@ -1,6 +1,9 @@
-import {describe,it,expect} from 'vitest';
-import {singlePreviewUrl} from './linkPreview';
-import {metadata,publicAddress,publicUrl} from '../../supabase/functions/link-preview/metadata';
+import { describe, it, expect, beforeEach } from "vitest";
+import { singlePreviewUrl } from "./linkPreview";
+import { metadata, publicAddress, publicUrl } from "../../supabase/functions/link-preview/metadata";
+import { readSavedPreview, savePreview } from "@/lib/linkPreview";
+
+describe("linkPreview", () => {
 describe('URL preview eligibility',()=>{
  it('accepts exactly one ordinary URL and trims Japanese sentence punctuation',()=>{expect(singlePreviewUrl('日記 https://example.com/diary。')).toBe('https://example.com/diary');});
  it('suppresses two URLs, including duplicates',()=>{expect(singlePreviewUrl('https://example.com https://example.com')).toBeNull();});
@@ -37,4 +40,25 @@ describe('product preview metadata',()=>{
   expect(metadata('<script type="application/ld+json">{"@graph":[{"@type":"Product","name":"商品名","image":{"url":"/product.jpg"},"description":"商品の説明"}]}</script>','https://shop.example')).toMatchObject({title:'商品名',image:'https://shop.example/product.jpg',description:'商品の説明'});
   expect(metadata('<title>記事</title><script type="application/ld+json">bad</script><img src="/ad.jpg">','https://shop.example')).toMatchObject({title:'記事',image:''});
  });
+});
+});
+
+describe("linkPreviewCache", () => {
+const preview={url:'https://example.com/a',title:'保存した見出し',domain:'example.com',image:'https://example.com/cover.jpg'};
+beforeEach(()=>localStorage.clear());
+it('reuses saved positive metadata without expiring it',()=>{
+ savePreview(preview.url,preview);
+ expect(readSavedPreview(preview.url)?.preview).toEqual(preview);
+ const saved=JSON.parse(localStorage.getItem('lime-link-previews-v1')!);saved[preview.url].savedAt=1;localStorage.setItem('lime-link-previews-v1',JSON.stringify(saved));
+ expect(readSavedPreview(preview.url)?.preview).toEqual(preview);
+});
+it('recovers malformed storage and expires negative entries',()=>{
+ for(const value of ['null','[]','bad']){localStorage.setItem('lime-link-previews-v1',value);expect(readSavedPreview(preview.url)).toBeUndefined();savePreview(preview.url,preview);expect(readSavedPreview(preview.url)?.preview).toEqual(preview);}
+ localStorage.setItem('lime-link-previews-v1',JSON.stringify({[preview.url]:{preview:null,savedAt:1}}));expect(readSavedPreview(preview.url)).toBeUndefined();
+});
+
+it('re-fetches old incomplete Amazon cards while preserving existing complete previews',()=>{
+ const url='https://amzn.asia/d/0h2mtcX5';localStorage.setItem('lime-link-previews-v1',JSON.stringify({[url]:{preview:{url,domain:'amazon.co.jp',title:'Amazon.co.jp',image:''},savedAt:Date.now(),version:3}}));expect(readSavedPreview(url)).toBeUndefined();
+ savePreview(url,{url,domain:'amazon.co.jp',title:'商品名',image:'https://m.media-amazon.com/images/I/cover.jpg'});expect(readSavedPreview(url)?.preview?.title).toBe('商品名');
+});
 });

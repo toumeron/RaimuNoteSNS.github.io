@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { useTrends } from '@/hooks/useTrends';
-import { useHiddenTrends } from '@/hooks/useHiddenTrends';
+import { useHiddenTrends } from "@/hooks/useTrends";
 import { useAuth } from '@/hooks/useAuth';
 import { TrendSection } from '@/components/search/TrendSection';
 

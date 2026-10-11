@@ -1,15 +1,19 @@
-import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
-import { useMobilePostMenu } from '@/components/post/mobilePostMenu';
+import {ProfileListPicker} from '@/components/lists/ListDialogs';
+import {ListHeaderActions} from '@/components/lists/ListHeaderActions';
+import { TimelineTabBar } from '@/components/feed/TimelineTabBar';
+import { isFeedTabValue, type FeedTabValue, useTimelineTabs } from '@/lib/timelineTabs';
+import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
+import { useMobilePostMenu } from "@/components/post/PostActionSheet";
 import { FollowButton } from '@/components/profile/FollowButton';
 import { useFollowStats } from '@/hooks/useProfile';
-import { UnreadBadge } from '@/components/notifications/UnreadBadge';
+import { UnreadBadge } from "@/components/notifications/NotificationTabs";
 import { NewsHeaderActions } from '@/components/news/NewsHeaderActions';
 import { NotificationTabs } from '@/components/notifications/NotificationTabs';
 import { TopicTabs } from '@/components/topics/TopicTabs';
-import { usePostOverlay } from './PostOverlayContext';
+import { usePostOverlay } from "@/components/layout/DesktopLayoutContext";
 import { MobileAccountShortcuts } from './AccountSwitcher';
 import { SearchExploreTabs } from '@/components/search/SearchExploreTabs';
-import { useSpaces } from '@/components/spaces/SpaceContext';
+import { useSpaces } from "@/components/spaces/SpaceProvider";
 import { DesktopAccountFooter } from './DesktopAccountFooter';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -55,6 +59,7 @@ import {
   Mic,
   Hash,
   MapPin,
+  List,
 } from 'lucide-react';
 
 type TimelineChromeTheme = 'light' | 'dark';
@@ -67,7 +72,7 @@ type TimelineChromeState = {
 // 最新/フォロー中/トレンドタブの選択状態。タブUI自体はFeed.tsxから移設してここに置く。
 // Feed.tsx側は 'lime-active-feed-tab-changed' イベントとこのlocalStorageキーを
 // 監視するだけで、実際の切り替えはこちら(Header)が起点になる。
-type FeedTabValue = 'all' | 'following' | 'recommended' | 'trending';
+
 
 const ACTIVE_FEED_TAB_STORAGE_KEY = 'lime_active_feed_tab';
 const ACTIVE_FEED_TAB_CHANGED_EVENT = 'lime-active-feed-tab-changed';
@@ -139,7 +144,7 @@ function readStoredSearchPageTab(): SearchPageTabValue {
 function readStoredActiveFeedTab(): FeedTabValue {
   if (typeof window === 'undefined') return 'all';
   const stored = localStorage.getItem(ACTIVE_FEED_TAB_STORAGE_KEY);
-  return stored === 'following' ? 'following' : stored === 'recommended' ? 'recommended' : stored === 'trending' ? 'trending' : 'all';
+  return isFeedTabValue(stored)?stored:'all';
 }
 
 // --- 検索サジェスト(モバイル・ヘッダー検索バー用) ---------------------------------
@@ -501,6 +506,7 @@ function useMobileFeedTabSwipe(
   disabled: boolean,
   activeFeedTab: FeedTabValue,
   changeActiveFeedTab: (value: FeedTabValue) => void,
+  tabs: typeof FEED_TABS,
 ) {
   const gestureRef = useRef({
     active: false,
@@ -525,7 +531,7 @@ function useMobileFeedTabSwipe(
       if (!(target instanceof Element)) return false;
       return Boolean(
         target.closest(
-          'button, a, input, textarea, select, option, [role="button"], [data-radix-collection-item], [data-lime-mobile-sidebar="true"]'
+          'button, a, input, textarea, select, option, [role="button"], [data-radix-collection-item], [role="dialog"], [data-lime-mobile-sidebar="true"]'
         )
       );
     };
@@ -613,14 +619,14 @@ function useMobileFeedTabSwipe(
 
       if (Math.abs(dx) < SWIPE_THRESHOLD || Math.abs(dx) <= Math.abs(dy) * 1.25) return;
 
-      const currentIndex = FEED_TABS.findIndex((tab) => tab.value === activeFeedTab);
+      const currentIndex = tabs.findIndex((tab) => tab.value === activeFeedTab);
       if (currentIndex < 0) return;
 
       // 左スワイプ → 次のタブ、右スワイプ → 前のタブ。
       const nextIndex = dx < 0 ? currentIndex + 1 : currentIndex - 1;
-      if (nextIndex < 0 || nextIndex >= FEED_TABS.length) return;
+      if (nextIndex < 0 || nextIndex >= tabs.length) return;
 
-      changeActiveFeedTab(FEED_TABS[nextIndex].value);
+      changeActiveFeedTab(tabs[nextIndex].value);
     };
 
     const handleTouchCancel = () => resetGesture();
@@ -636,7 +642,7 @@ function useMobileFeedTabSwipe(
       document.removeEventListener('touchend', handleTouchEnd, true);
       document.removeEventListener('touchcancel', handleTouchCancel, true);
     };
-  }, [enabled, disabled]);
+  }, [enabled, disabled, activeFeedTab, changeActiveFeedTab, tabs.map(t=>t.value).join(',')]);
 }
 
 // タブ文字列の実測幅(px)を計測し、下線の幅を文字数に応じて伸縮させるためのフック。
@@ -650,6 +656,7 @@ function useFeedTabWheelSwipe(
   disabled: boolean,
   activeFeedTab: FeedTabValue,
   changeActiveFeedTab: (value: FeedTabValue) => void,
+  tabs: typeof FEED_TABS,
 ) {
   const wheelRef = useRef({
     accumulatedX: 0,
@@ -680,7 +687,7 @@ function useFeedTabWheelSwipe(
       if (!(target instanceof Element)) return false;
       return Boolean(
         target.closest(
-          'button, a, input, textarea, select, option, [role="button"], [data-radix-collection-item], [data-lime-mobile-sidebar="true"]'
+          'button, a, input, textarea, select, option, [role="button"], [data-radix-collection-item], [role="dialog"], [data-lime-mobile-sidebar="true"]'
         )
       );
     };
@@ -739,17 +746,17 @@ function useFeedTabWheelSwipe(
 
       state.triggered = true;
 
-      const currentIndex = FEED_TABS.findIndex((tab) => tab.value === activeFeedTabRef.current);
+      const currentIndex = tabs.findIndex((tab) => tab.value === activeFeedTabRef.current);
       if (currentIndex < 0) return;
 
       const nextIndex = direction > 0 ? currentIndex + 1 : currentIndex - 1;
-      if (nextIndex < 0 || nextIndex >= FEED_TABS.length) return;
+      if (nextIndex < 0 || nextIndex >= tabs.length) return;
 
       // Macトラックパッドの自然な横スワイプ方向に合わせて反転。
       // 左スワイプ → 次のタブ、右スワイプ → 前のタブ。
       // 横方向のページスクロールはタブ切り替えとして消費する。
       if (event.cancelable) event.preventDefault();
-      changeActiveFeedTabRef.current(FEED_TABS[nextIndex].value);
+      changeActiveFeedTabRef.current(tabs[nextIndex].value);
     };
 
     window.addEventListener('wheel', handleWheel, { passive: false, capture: true });
@@ -762,7 +769,7 @@ function useFeedTabWheelSwipe(
         state.resetTimer = null;
       }
     };
-  }, [enabled, disabled, activeFeedTab, changeActiveFeedTab]);
+  }, [enabled, disabled, activeFeedTab, changeActiveFeedTab, tabs.map(t=>t.value).join(',')]);
 }
 
 function useFeedTabUnderlineWidths() {
@@ -1487,6 +1494,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
 } = {}) => {
   const spaces = useSpaces();
   const { user, logout } = useAuth();
+  const visibleFeedTabs = useTimelineTabs(user?.id);
   const openPostOverlay = usePostOverlay();
   const navigate = useNavigate();
   const location = useLocation();
@@ -1496,7 +1504,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
     activeFeedTab,
     changeActiveFeedTab,
   );
-  const { registerLabelRef: registerFeedTabLabelRef, widths: feedTabUnderlineWidths } = useFeedTabUnderlineWidths();
+  useEffect(() => { if (!visibleFeedTabs.some(tab => tab.value === activeFeedTab)) changeActiveFeedTab(visibleFeedTabs[0].value); }, [activeFeedTab, visibleFeedTabs.map(tab => tab.value).join(',')]);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const {data: sidebarFollowStats} = useFollowStats(isMobileSidebarOpen && !desktopLayout ? user?.id : undefined);
   useEffect(() => {
@@ -1818,8 +1826,8 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
       unlockDocumentHeightForTransition(heightLockVersion);
     };
 
-    const previousIndex = FEED_TABS.findIndex((tab) => tab.value === activeFeedTab);
-    const nextIndex = FEED_TABS.findIndex((tab) => tab.value === value);
+    const previousIndex = visibleFeedTabs.findIndex((tab) => tab.value === activeFeedTab);
+    const nextIndex = visibleFeedTabs.findIndex((tab) => tab.value === value);
     const direction = nextIndex > previousIndex ? 'forward' : 'backward';
     const root = document.documentElement;
 
@@ -1898,12 +1906,14 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
     isMobileSidebarOpen,
     activeFeedTab,
     changeFeedTabWithAnimation,
+    visibleFeedTabs,
   );
   useFeedTabWheelSwipe(
     isHomeTimeline,
     isMobileSidebarOpen,
     activeFeedTab,
     changeFeedTabWithAnimation,
+    visibleFeedTabs,
   );
 
   // タブ切替アニメーション用に、これまでに観測したdocumentの最大の高さを
@@ -2128,10 +2138,12 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   const [settingsParams, setSettingsParams] = useSearchParams();
   const settingsSection = SETTINGS_SECTIONS.find(section => section.id === settingsParams.get('section'));
   const settingsGroup = settingsGroupForSection(settingsSection?.id ?? '') ?? SETTINGS_GROUPS.find(group => group.id === settingsParams.get('group'));
+  const isListsPage=normalizeAppPath(location.pathname)==='/lists'||normalizeAppPath(location.pathname).startsWith('/lists/');
   const isTopicsPage = normalizeAppPath(location.pathname) === '/topics';
   const accountAboutMatch = normalizeAppPath(location.pathname).match(/^\/u\/([^/]+)\/about\/?$/);
   const mobileProfileViewport = useMobilePostMenu();
   const hideHeaderOnMobileProfile = mobileProfileViewport && isProfilePath(location.pathname);
+  const [profileListsOpen,setProfileListsOpen]=useState(false);
   const [mobileProfileInfo, setMobileProfileInfo] = useState<{user: User; posts: number; following: boolean} | null>(null);
   const [profileTitleVisible, setProfileTitleVisible] = useState(false);
   const [profileCoverHidden, setProfileCoverHidden] = useState(false);
@@ -2812,6 +2824,8 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
         }, {
           label: 'LimeMaps', path: '/maps', icon: MapPin, onClick: () => navigate('/maps'),
         }, {
+          label: 'リスト',path: '/lists',icon:List,onClick:()=>navigate('/lists'),
+        }, {
           label: 'トピック',
           path: '/topics',
           icon: Hash,
@@ -2990,6 +3004,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
                       <Bookmark className="h-6 w-6 shrink-0 stroke-[2]" />ブックマーク
                     </DropdownMenuItem>
                     <DropdownMenuItem className="gap-3 rounded-xl px-4 py-4 text-base font-bold" onClick={() => navigate('/maps')}><MapPin className="h-6 w-6 shrink-0 stroke-[2]" />LimeMaps</DropdownMenuItem>
+                    <DropdownMenuItem className="gap-3 rounded-xl px-4 py-4 text-base font-bold" onClick={() => navigate('/lists')}><List className="h-6 w-6 shrink-0 stroke-[2]"/>リスト</DropdownMenuItem>
                     <DropdownMenuItem className="gap-3 rounded-xl px-4 py-4 text-base font-bold" onClick={() => navigate('/topics')}>
                       <Hash className="h-6 w-6 shrink-0 stroke-[2]" />トピック
                     </DropdownMenuItem>
@@ -3020,6 +3035,8 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
 
 
   const headerContent = (
+    <>
+      {profileListsOpen&&mobileProfileInfo&&<ProfileListPicker member={mobileProfileInfo.user} onClose={()=>setProfileListsOpen(false)}/>}
       <header
       data-lime-app-header="true"
       data-lime-follow-list-header={/^\/u\/[^/]+\/followers_following\/?$/.test(normalizeAppPath(location.pathname)) || undefined}
@@ -3540,13 +3557,13 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
             - モバイル: アバター(またはログインボタン)を左、その右に検索バー(画像のデザイン)
               +設定歯車アイコンを配置する。ロゴはモバイルでは表示しない。
             - PC(sm以上): ロゴを左端、アバターを右端、その間(中央)にタブを配置。 */}
-        <div data-lime-header-row className="relative mx-auto flex h-14 max-w-5xl items-center gap-2 px-3 sm:h-16 sm:px-4">
+        <div data-lime-header-row className={`relative mx-auto flex h-14 ${isListsPage ? 'w-full max-w-none' : 'max-w-5xl'} items-center gap-2 px-3 sm:h-16 sm:px-4`}>
           {hideHeaderOnMobileProfile && !desktopLayout ? <>
             <div aria-hidden="true" className="lime-profile-bar-background" style={mobileProfileInfo?.user.coverUrl ? {backgroundImage: `linear-gradient(rgb(0 0 0 / .2), rgb(0 0 0 / .2)), url(${JSON.stringify(mobileProfileInfo.user.coverUrl)})`} : undefined} />
             <button className="lime-profile-bar-control" aria-label="戻る" onClick={() => window.history.state?.idx > 0 ? navigate(-1) : navigate('/')}><ArrowLeft className="h-5 w-5" /></button>
             <div className="lime-profile-bar-title relative"><div className="truncate text-base font-bold">{mobileProfileInfo?.user.displayName}{mobileProfileInfo?.user.isPrivate && <PrivateAccountBadge/>}{mobileProfileInfo?.user.isOfficial && <img src={`${import.meta.env.BASE_URL}verified.png`} alt="Official" className="inline-block h-4 w-4"/>}</div><div className="text-xs">{mobileProfileInfo?.posts.toLocaleString()}件のポスト</div></div>
             <Link className={`lime-profile-bar-control ${profileSummaryOffscreen && mobileProfileInfo?.user.id !== user?.id ? 'is-collapsed' : ''}`} aria-hidden={profileSummaryOffscreen && mobileProfileInfo?.user.id !== user?.id || undefined} tabIndex={profileSummaryOffscreen && mobileProfileInfo?.user.id !== user?.id ? -1 : undefined} aria-label="プロフィールを検索" to={`/search?q=${encodeURIComponent(`@${mobileProfileInfo?.user.username ?? ''}`)}`}><Search className="h-5 w-5" /></Link>
-            <DropdownMenu modal={false}><DropdownMenuTrigger asChild><button className="lime-profile-bar-control" aria-label="プロフィールのその他のメニュー"><MoreHorizontal className="h-5 w-5" /></button></DropdownMenuTrigger><DropdownMenuContent align="end" className="z-[600]" onCloseAutoFocus={event => event.preventDefault()}><DropdownMenuItem onClick={() => {void navigator.clipboard.writeText(window.location.href);toast.success('リンクをコピーしました');}}>リンクをコピー</DropdownMenuItem><DropdownMenuItem onClick={() => { if (navigator.share) void navigator.share({title: mobileProfileInfo?.user.displayName, url: window.location.href}).catch(() => {}); else {void navigator.clipboard.writeText(window.location.href);toast.success('リンクをコピーしました');} }}>プロフィールを共有</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
+            <DropdownMenu modal={false}><DropdownMenuTrigger asChild><button className="lime-profile-bar-control" aria-label="プロフィールのその他のメニュー"><MoreHorizontal className="h-5 w-5" /></button></DropdownMenuTrigger><DropdownMenuContent align="end" className="z-[600]" onCloseAutoFocus={event => event.preventDefault()}>{user&&mobileProfileInfo&&<DropdownMenuItem onSelect={()=>setProfileListsOpen(true)}>リストから追加／削除</DropdownMenuItem>}<DropdownMenuItem onClick={() => {void navigator.clipboard.writeText(window.location.href);toast.success('リンクをコピーしました');}}>リンクをコピー</DropdownMenuItem><DropdownMenuItem onClick={() => { if (navigator.share) void navigator.share({title: mobileProfileInfo?.user.displayName, url: window.location.href}).catch(() => {}); else {void navigator.clipboard.writeText(window.location.href);toast.success('リンクをコピーしました');} }}>プロフィールを共有</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
             {mobileProfileInfo && mobileProfileInfo.user.id !== user?.id && <div className={`relative lime-profile-bar-follow ${profileSummaryOffscreen ? 'is-visible' : ''}`} ref={element => element?.toggleAttribute('inert', !(profileSummaryOffscreen))} aria-hidden={!(profileSummaryOffscreen)}><FollowButton userId={mobileProfileInfo.user.id} externalProfile={mobileProfileInfo.user.id.startsWith('did:') || mobileProfileInfo.user.id.startsWith('misskey-user:') ? mobileProfileInfo.user : undefined} /></div>}
           </> : isPostActivityPage ? <>
             <Button variant="ghost" size="icon" className="shrink-0 rounded-full" aria-label="戻る" onClick={()=>window.history.state?.idx>0?navigate(-1):navigate('/')}><ArrowLeft className="h-5 w-5"/></Button>
@@ -3564,7 +3581,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
               else window.history.state?.idx > 0 ? navigate(-1) : navigate('/');
             }}><ArrowLeft className="h-5 w-5" /></Button>
             <div data-lime-settings-mobile-title className="ml-2 min-w-0 flex-1"><h1 className="truncate text-xl font-bold">{settingsSection?.label ?? settingsGroup?.label ?? '設定'}</h1><span className="text-xs text-muted-foreground">@{user?.username}</span></div>
-          </> : isTopicsPage ? <>
+          </> : isListsPage ? <ListHeaderActions/> : isTopicsPage ? <>
             <Button variant="ghost" size="icon" className="shrink-0 rounded-full" aria-label="戻る" onClick={() => window.history.state?.idx > 0 ? navigate(-1) : navigate('/')}><ArrowLeft className="h-5 w-5" /></Button>
             <h1 className="ml-2 min-w-0 flex-1 text-xl font-bold">トピック</h1>
           </> : isNotificationsPage ? <>
@@ -3604,19 +3621,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
               アバターが右端に固定されるよう、枠自体は常に確保しておく)。 */}
           <div data-lime-desktop-feed-tabs className="hidden sm:order-2 sm:flex sm:min-w-0 sm:flex-1 sm:justify-center">
             {showFeedTabs && (
-              <TabsList className="grid w-full max-w-[360px] grid-cols-4 rounded-2xl bg-muted/50 p-1">
-                {FEED_TABS.map((tab) => (
-                  <TabsTrigger
-                    key={tab.value}
-                    value={tab.value}
-                    onClick={() => handleFeedTabClick(tab.value)}
-                    onDoubleClick={() => handleFeedTabDoubleClick(tab.value)}
-                    className="rounded-xl font-bold text-muted-foreground transition-all data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-sm data-[state=inactive]:bg-transparent data-[state=inactive]:text-foreground"
-                  >
-                    {tab.label}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
+              <TimelineTabBar variant="desktop" tabs={visibleFeedTabs} owner={user?.id} active={activeFeedTab} onSelect={value => { handleFeedTabClick(value); changeFeedTabWithAnimation(value); }} onDoubleClick={handleFeedTabDoubleClick}/>
             )}
           </div>
           </>}
@@ -3631,46 +3636,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
             グリフ幅)に応じて動的に伸縮させる。 */}
         {showFeedTabs && (
           <div data-lime-feed-tab-row className="relative z-[1] sm:hidden">
-            <div className="mx-auto max-w-5xl px-2 sm:px-4">
-              <TabsList className="relative flex h-10 w-full items-stretch justify-center gap-0 rounded-none bg-transparent p-0 shadow-none">
-                {(() => {
-                  const activeIndex = FEED_TABS.findIndex((tab) => tab.value === activeFeedTab);
-                  const activeMeasuredWidth = feedTabUnderlineWidths[activeFeedTab];
-                  const activeUnderlineWidth = activeMeasuredWidth
-                    ? activeMeasuredWidth + TAB_UNDERLINE_PADDING * 2
-                    : 64;
-                  const activeCenterPercent = ((Math.max(0, activeIndex) + 0.5) / FEED_TABS.length) * 100;
-
-                  return (
-                    <span
-                      aria-hidden="true"
-                      className="pointer-events-none absolute bottom-0 left-0 h-[3px] -translate-x-1/2 rounded-full bg-primary will-change-[left,width] transition-[left,width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
-                      style={{
-                        left: `${activeCenterPercent}%`,
-                        width: `${activeUnderlineWidth}px`,
-                      }}
-                    />
-                  );
-                })()}
-
-                {FEED_TABS.map((tab) => (
-                  <TabsTrigger
-                    key={tab.value}
-                    value={tab.value}
-                    onClick={() => handleFeedTabClick(tab.value)}
-                    onDoubleClick={() => handleFeedTabDoubleClick(tab.value)}
-                    className="feed-tabs-trigger relative h-10 min-w-0 flex-1 rounded-none border-0 bg-transparent px-0 text-base max-[360px]:text-sm leading-none shadow-none outline-none transition-colors duration-150 hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=inactive]:bg-transparent"
-                  >
-                    <span
-                      ref={registerFeedTabLabelRef(tab.value)}
-                      className="whitespace-nowrap"
-                    >
-                      {tab.label}
-                    </span>
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </div>
+            <TimelineTabBar tabs={visibleFeedTabs} owner={user?.id} active={activeFeedTab} onSelect={value => { handleFeedTabClick(value); changeFeedTabWithAnimation(value); }} onDoubleClick={handleFeedTabDoubleClick}/>
           </div>
         )}
       </Tabs>
@@ -3689,6 +3655,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
         </div>
       )}
       </header>
+    </>
   );
   return <>
     {hideHeaderOnMobileProfile && !desktopLayout ? createPortal(headerContent, document.body) : headerContent}

@@ -1,7 +1,7 @@
 import { randomUUID } from '@/lib/randomUUID';
 import {supabase} from './supabase';
 import type {LinkPreview} from './linkPreview';
-import type {LiveSpace} from '@/components/spaces/SpaceContext';
+import type {LiveSpace} from "@/components/spaces/SpaceProvider";
 import type {PostWithAuthor} from '@/types';
 import type {CustomSticker} from './stickers';
 
@@ -19,36 +19,54 @@ function database():Promise<IDBDatabase> {
   });
 }
 type StoredSnapshot=OfflineBookmarks & {generation?:string;assetUrls?:string[]};
-async function entry<T>(db:IDBDatabase,store:string,key:IDBValidKey):Promise<T|null>{
- return await new Promise((resolve,reject)=>{const request=db.transaction(store).objectStore(store).get(key);request.onsuccess=()=>resolve(request.result??null);request.onerror=()=>reject(request.error);});
-}
 export async function readOfflineBookmarks(userId:string,includeAssets=true):Promise<OfflineBookmarks|null> {
  const db=await database();
  try{
-  const value=await entry<StoredSnapshot>(db,'accounts',userId);if(!value)return null;
-  if(!includeAssets)return {...value,assets:[]};
-  if(!value.generation)return value; // Migrate existing snapshots without deleting them.
-  const assets:OfflineBookmarks['assets']=[];
-  for(const url of value.assetUrls??[]){const asset=await entry<OfflineBookmarks['assets'][number]>(db,'assets',[userId,value.generation,url]);if(!asset)throw new Error('保存した画像データを読み込めませんでした');assets.push({url:asset.url,bytes:asset.bytes,type:asset.type});}
-  return {...value,assets};
+  // Read the snapshot and its generation in one transaction so a concurrent
+  // save cannot delete its image generation halfway through this read.
+  return await new Promise<OfflineBookmarks|null>((resolve,reject)=>{
+   const tx=db.transaction(['accounts','assets'],'readonly');
+   let value:StoredSnapshot|null=null;const assets:OfflineBookmarks['assets']=[];
+   const request=tx.objectStore('accounts').get(userId);
+   request.onsuccess=()=>{
+    value=request.result??null;
+    if(!value||!includeAssets||!value.generation)return;
+    for(const url of value.assetUrls??[]){
+     const asset=tx.objectStore('assets').get([userId,value.generation,url]);
+     asset.onsuccess=()=>{if(asset.result)assets.push({url:asset.result.url,bytes:asset.result.bytes,type:asset.result.type});};
+    }
+   };
+   tx.oncomplete=()=>resolve(!value?null:{...value,assets:!includeAssets?[]:value.generation?assets:value.assets});
+   tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);
+  });
  }finally{db.close();}
 }
-async function mutate(db:IDBDatabase,store:string,action:(store:IDBObjectStore)=>void){
- await new Promise<void>((resolve,reject)=>{const tx=db.transaction(store,'readwrite');action(tx.objectStore(store));tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error??new Error('オフラインデータを保存できませんでした'));tx.onabort=()=>reject(tx.error??new Error('オフライン保存が中断されました'));});
+export async function deleteOfflineBookmarks(userId:string){
+ const db=await database();try{await new Promise<void>((resolve,reject)=>{
+  const tx=db.transaction(['accounts','assets'],'readwrite');tx.objectStore('accounts').delete(userId);
+  const request=tx.objectStore('assets').openCursor(IDBKeyRange.bound([userId],[userId,'\uffff']));
+  request.onsuccess=()=>{const cursor=request.result;if(cursor){cursor.delete();cursor.continue();}};
+  tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);
+ });}finally{db.close();}
 }
-async function removeAssets(db:IDBDatabase,userId:string,keep?:string,only?:string){
- await mutate(db,'assets',store=>{const request=store.openCursor(IDBKeyRange.bound([userId],[userId,'\uffff']));request.onsuccess=()=>{const cursor=request.result;if(!cursor)return;const generation=cursor.value.generation;if((!only||generation===only)&&generation!==keep)cursor.delete();cursor.continue();};});
-}
-export async function deleteOfflineBookmarks(userId:string){const db=await database();try{await mutate(db,'accounts',store=>store.delete(userId));await removeAssets(db,userId);}finally{db.close();}}
 export async function writeOfflineBookmarks(value:OfflineBookmarks){
  const db=await database(),generation=randomUUID();
  try{
-  // Write one binary asset per transaction. WebKit no longer has to clone the
-  // entire image collection along with every post in one large IDB record.
-  for(const asset of value.assets)await mutate(db,'assets',store=>store.put({...asset,userId:value.userId,generation}));
-  await mutate(db,'accounts',store=>store.put({...value,assets:[],generation,assetUrls:value.assets.map(asset=>asset.url)}));
-  await removeAssets(db,value.userId,generation).catch(()=>{});
- }catch(error){await removeAssets(db,value.userId,undefined,generation).catch(()=>{});throw error;}finally{db.close();}
+  // Individual asset records and the snapshot commit atomically. A failed save
+  // retains the previous generation, even when another tab saves concurrently.
+  await new Promise<void>((resolve,reject)=>{
+   const tx=db.transaction(['accounts','assets'],'readwrite');const assets=tx.objectStore('assets');
+   try {
+   assets.openCursor(IDBKeyRange.bound([value.userId],[value.userId,'\uffff'])).onsuccess=event=>{
+    const cursor=(event.target as IDBRequest<IDBCursorWithValue|null>).result;
+    if(cursor){if(cursor.value.generation!==generation)cursor.delete();cursor.continue();}
+   };
+   for(const asset of value.assets)assets.put({...asset,userId:value.userId,generation});
+   tx.objectStore('accounts').put({...value,assets:[],generation,assetUrls:value.assets.map(asset=>asset.url)});
+   tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error??new Error('オフラインデータを保存できませんでした'));tx.onabort=()=>reject(tx.error??new Error('オフライン保存が中断されました'));
+   } catch(error) { tx.abort(); reject(error); }
+  });
+ }finally{db.close();}
 }
 
 export function bookmarkAssetUrls(posts:PostWithAuthor[]):string[] {

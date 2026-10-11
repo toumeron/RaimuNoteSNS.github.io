@@ -1,17 +1,18 @@
-import { ExternalReplyCard } from '@/components/post/ExternalReplyCard';
+import {PostPoll} from './PostPoll';
+import { ExternalReplyCard } from "@/components/post/CommentList";
 import { randomUUID } from '@/lib/randomUUID';
-import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
-import { mobilePostMenuOS } from '@/components/post/mobilePostMenu';
+import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
+import { mobilePostMenuOS } from "@/components/post/PostActionSheet";
 import { toast } from 'sonner';
 import {ExternalLikeButton} from '@/components/post/ExternalLikeButton';
 import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
 import {isIosPwa} from '@/lib/utils';
 import { openMediaViewer } from '@/components/media/openMediaViewer';
 import {HighlightPostMenuButton} from '@/components/post/HighlightPostMenuButton';
-import {PinPostMenuButton} from '@/components/post/PinPostMenuButton';
+import {PinPostMenuButton} from "@/components/post/HighlightPostMenuButton";
 import {LinkPreviewCard,useLinkPreview} from '@/components/post/LinkPreviewCard';
 import {OfflineBookmarkContext} from '@/components/stickers/OfflineBookmarkContext';
-import { renderStickerText } from '@/components/stickers/renderStickerText';
+import { renderStickerText } from "@/components/stickers/Stickers";
 import { hasStickers } from '@/lib/stickers';
 import { SpacePostCard } from '@/components/spaces/SpacePostCard';
 import { spaceLinkIn } from '@/lib/spaceLinks';
@@ -19,7 +20,7 @@ import '@/components/post/post-actions.css';
 import { BookmarkButton } from '@/components/post/BookmarkButton';
 import { RepostButton } from '@/components/feed/RepostButton';
 import { QuotedPost } from '@/components/feed/QuotedPost';
-import { RepostIcon } from '@/components/feed/RepostIcon';
+import { RepostIcon } from "@/components/feed/ComposerIcon";
 import { useDesktopLayout } from '@/components/layout/DesktopLayoutContext';
 import { lazy, Suspense, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -2988,6 +2989,8 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                 </div>
               ))}
             </div>
+
+            {post.poll && <PostPoll post={post}/>}
 
             {post.isQuote && <QuotedPost post={post.parentPost} timelineGlass={timelineGlass} />}
 

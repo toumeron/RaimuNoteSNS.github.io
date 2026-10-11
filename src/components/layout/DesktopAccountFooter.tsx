@@ -1,4 +1,4 @@
-import { PrivateAccountBadge } from '@/components/common/PrivateAccountBadge';
+import { PrivateAccountBadge } from "@/components/common/OfficialBadge";
 import { useSavedAccountUnreadTotal } from '@/hooks/useUnreadNotifications';
 import { AccountSwitcherMenu } from './AccountSwitcher';
 import { useQuery } from '@tanstack/react-query';

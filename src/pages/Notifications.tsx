@@ -1,6 +1,7 @@
+import { useAutoPagination } from '@/hooks/use-mobile';
 import { useSharedDisplay } from '@/lib/sharedAccountDisplay';
 import { useSharedNotifications } from '@/hooks/useSharedAccountLists';
-import { PrivateAccountBadge } from '@/components/common/PrivateAccountBadge';
+import { PrivateAccountBadge } from "@/components/common/OfficialBadge";
 import { useEffect, useMemo } from 'react';
 import { type InfiniteData, useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
@@ -19,6 +20,7 @@ export default function Notifications(){
  const ownQuery=useInfiniteQuery({queryKey:key,enabled:!!user?.id&&!sharing,initialPageParam:0,queryFn:({pageParam})=>getNotifications(user!.id,pageParam),getNextPageParam:(last,_,page)=>last.length===50?page+1:undefined});
  const sharedQuery=useSharedNotifications(sharing);
  const query=sharing?sharedQuery:ownQuery;
+ const pageEnd = useAutoPagination(query, true);
  const rows=useMemo(()=>sharing?sharedQuery.data?.pages.flatMap(page=>page.items)??[]:ownQuery.data?.pages.flat()??[],[sharing,sharedQuery.data,ownQuery.data]);
  useEffect(()=>{if(!user?.id||sharing)return;const channel=supabase.channel(`notification-page-${user.id}`).on('postgres_changes',{event:'*',schema:'public',table:'notifications',filter:`user_id=eq.${user.id}`},()=>{void queryClient.invalidateQueries({queryKey:['notifications',user.id]});if(sharing)void queryClient.invalidateQueries({queryKey:['notifications','shared']});}).subscribe();return()=>{void supabase.removeChannel(channel);};},[user?.id,queryClient,sharing]);
  useEffect(()=>{if(!user?.id||sharing)return;const ids=rows.filter(n=>!n.is_read&&(tab==='all'||n.type==='mention')).map(n=>n.id);if(ids.length)void markNotificationsRead(user.id,ids).then(()=>{
@@ -40,7 +42,7 @@ export default function Notifications(){
      </div>{n.image_urls?.[0]&&<img src={n.image_urls[0]} alt="通知対象のポストの画像" loading="lazy" className="h-16 w-16 shrink-0 rounded-xl object-cover sm:h-20 sm:w-20"/>}
     </Link>;
    })}
-   {query.hasNextPage&&<Button variant="ghost" className="my-4 w-full" disabled={query.isFetchingNextPage} onClick={()=>void query.fetchNextPage()}>さらに読み込む</Button>}
+    <div ref={pageEnd} className="h-px" aria-hidden="true" />
   </div>
  </div>;
 }

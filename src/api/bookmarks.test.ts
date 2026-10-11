@@ -59,3 +59,15 @@ it('loads bookmark state beyond the first server page',async()=>{
   state.rows=Array.from({length:1001},(_,i)=>({post_id:`post-${i}`}));expect(await getBookmarkIds('viewer')).toHaveLength(1001);
   state.error=new Error('read denied');await expect(getBookmarkIds('viewer')).rejects.toThrow('read denied');
 });
+
+it('records confirmed bookmark changes, including removals, without learning failed writes',async()=>{
+ const listener=vi.fn();window.addEventListener('lime:recommendation-engagement',listener);
+ try {
+  await setBookmark({id:'native'},true,'viewer');
+  expect(listener.mock.calls[0][0].detail).toEqual({id:'native',viewer:'viewer',action:'bookmark',active:true});
+  await setBookmark({id:'native'},false,'viewer');
+  expect(listener.mock.calls[1][0].detail.active).toBe(false);
+  state.error=new Error('denied');await expect(setBookmark({id:'native'},true,'viewer')).rejects.toThrow();
+  expect(listener).toHaveBeenCalledTimes(2);
+ }finally{window.removeEventListener('lime:recommendation-engagement',listener);}
+});

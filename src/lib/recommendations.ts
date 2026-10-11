@@ -1,9 +1,10 @@
+import {recordRecommendationEngagement} from "@/lib/recommendationSignals";
 import {matchingTopics} from './topics';
 import type { PostWithAuthor } from '@/types';
 import {TOPICS,isTopicId,topicAffinity,type TopicId} from './topics';
-import {recommendationIdentity,recommendationFingerprint} from './recommendationIdentity';
-import {recommendationIsEligible} from './recommendationEligibility';
-import {isDeclaredGeneratedArt} from './artRecommendations';
+import {recommendationIdentity,recommendationFingerprint} from "@/lib/recommendationSignals";
+import {recommendationIsEligible} from "@/lib/recommendationSignals";
+import {isDeclaredGeneratedArt} from "@/lib/recommendationSignals";
 import {recommendationOriginLanguages,recommendationTopicAffinity,recommendationTopicSignals,recommendationText} from './recommendationSignals';
 import {visualSimilarity as directVisualSimilarity,createVisualSimilarityComparator,readVisualCache,applyCachedRecommendationVisuals} from './recommendationVisual';
 
@@ -270,10 +271,10 @@ export function recommendationIsDismissed(post:PostWithAuthor,preferences:Recomm
  const neighbors=post.recommendationVisual?feedback.filter(row=>row.vector&&visualSimilarity(row.vector,post.recommendationVisual!.vector)>=.70).map(row=>visualSimilarity(row.vector!,post.recommendationVisual!.vector)).sort((a,b)=>b-a):[];
  return neighbors.length>=3&&neighbors.slice(0,3).reduce((sum,value)=>sum+value,0)/3>positive+.025;
 }
-export function rankRecommendations(posts:PostWithAuthor[], preferences:RecommendationPreferences, viewerId:string|null, now=Date.now(), history:PostWithAuthor[]=[],rankLimit=Infinity):PostWithAuthor[] {
- return withScoringComparisons(()=>rankRecommendationsInternal(posts,preferences,viewerId,now,history,rankLimit));
+export function rankRecommendations(posts:PostWithAuthor[], preferences:RecommendationPreferences, viewerId:string|null, now=Date.now(), history:PostWithAuthor[]=[],rankLimit=Infinity,includeReserved=false):PostWithAuthor[] {
+ return withScoringComparisons(()=>rankRecommendationsInternal(posts,preferences,viewerId,now,history,rankLimit,includeReserved));
 }
-function rankRecommendationsInternal(posts:PostWithAuthor[], preferences:RecommendationPreferences, viewerId:string|null, now:number, history:PostWithAuthor[],rankLimit:number):PostWithAuthor[] {
+function rankRecommendationsInternal(posts:PostWithAuthor[], preferences:RecommendationPreferences, viewerId:string|null, now:number, history:PostWithAuthor[],rankLimit:number,includeReserved:boolean):PostWithAuthor[] {
   const impressions=readRecommendationImpressions(viewerId,now);
   const deliveries=readRecommendationDeliveries(viewerId,now);
   const deliveredFingerprints=new Set(Object.values(deliveries).map(row=>row.fingerprint).filter(Boolean));
@@ -302,7 +303,7 @@ function rankRecommendationsInternal(posts:PostWithAuthor[], preferences:Recomme
     }
     if((preferences.followedTopics?.includes('art')||preferences.followedTopics?.includes('digital-illustration'))&&!preferences.followedTopics.includes('ai')&&(post.imageUrls.length>0||post.parentPost?.imageUrls.length)&& (isDeclaredGeneratedArt(post)||(post.parentPost&&isDeclaredGeneratedArt(post.parentPost))))return false;
     // A genuine view suppresses this work on later fetches, including refreshes.
-    if(deliveries[identity]||fingerprint&&deliveredFingerprints.has(fingerprint))return false;
+    if(!includeReserved&&(deliveries[identity]||fingerprint&&deliveredFingerprints.has(fingerprint)))return false;
     if(post.likedByMe || likedIds.has(post.id) || (impressions[identity]?.count ?? 0)>=1 || (fingerprint&&(impressions[fingerprint]?.count??0)>=1))return false;
     if(ids.has(post.id)) return false;
     ids.add(post.id);
@@ -374,6 +375,7 @@ export function readRecommendationLikedIds(viewerId:string|null):string[] {
   } catch {return [];}
 }
 export function recordRecommendationLike(post:PostWithAuthor,liked:boolean,viewerId:string|null,eventAt?:string) {
+ recordRecommendationEngagement(post,viewerId,'like',liked);
   // Consumed IDs outlive the small content sample used to learn current interests.
   try {
     const ids=readRecommendationLikedIds(viewerId).filter(id=>id!==post.id);

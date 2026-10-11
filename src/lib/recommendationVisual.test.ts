@@ -2,7 +2,7 @@ import {beforeEach,expect,it} from 'vitest';
 import fixtures from './fixtures/recommendationVisual.json';
 import {classifyRecommendationVisual} from './recommendationVisualInference';
 import {visualSimilarity,createVisualSimilarityComparator} from './recommendationVisual';
-import {recommendationIsEligible} from './recommendationEligibility';
+import {recommendationIsEligible} from "@/lib/recommendationSignals";
 import {addRecommendationInterest,rankRecommendations,recordRecommendationLike,readRecommendationLikes,type RecommendationPreferences} from './recommendations';
 import {topicAuthorCandidates} from './recommendationSignals';
 import type {PostWithAuthor} from '@/types';

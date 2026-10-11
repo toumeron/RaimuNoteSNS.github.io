@@ -1,6 +1,6 @@
 import {listAssistants,loadAvatars,avatarOf} from '@/lib/aiFriends';
 import {createGroupWithFriends,addGroupFriends,removeGroupFriend} from '@/api/directMessages';
-import {uploadProfileMedia} from '@/lib/uploadProfileMedia';
+import {uploadProfileMedia} from "@/lib/uploadPostMedia";
 import {useEffect,useRef,useState} from 'react';
 import {Link,useNavigate} from 'react-router-dom';
 import {useQuery} from '@tanstack/react-query';
@@ -9,7 +9,7 @@ import {Dialog,DialogContent,DialogDescription,DialogTitle} from '@/components/u
 import {DropdownMenu,DropdownMenuItem,DropdownMenuTrigger} from '@/components/ui/dropdown-menu';
 import {ChatMenuContent} from '@/components/ai/ChatMenuContent';
 import {Avatar,AvatarFallback,AvatarImage} from '@/components/ui/avatar';
-import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
+import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 import {ProfileImageCropper} from '@/components/profile/ProfileImageCropper';
 import {useAuth} from '@/hooks/useAuth';
 import {addDirectGroupMembers,createDirectGroup,getDirectInbox,manageDirectGroupMember,muteDirectGroup,searchDirectPeers,setDirectGroupInvite,updateDirectGroup,type DirectGroup,type DirectPeer} from '@/api/directMessages';

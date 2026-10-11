@@ -1,11 +1,12 @@
+import {ProfileListPicker} from '@/components/lists/ListDialogs';
 import {canDirectMessage,openDirectConversation} from '@/api/directMessages';
 import { getKnownFollowers } from '@/api/follows';
-import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
+import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 import {cloudExternalHandles,initialiseExternalAccounts,setExternalAccountOwner} from '@/lib/externalAccounts';
 import { ReviewStars } from '@/components/reviews/ReviewStars';
-import { accountReviewsKey, getAccountReviews } from '@/api/account-reviews';
+import { accountReviewsKey, getAccountReviews } from "@/api/users";
 import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
-import { ArrowLeft, CalendarDays, MapPin, Link2, MoreHorizontal, MessageCircle, Radio, Search, Share2, X } from 'lucide-react';
+import { ArrowLeft, CalendarDays, MapPin, Link2, MoreHorizontal, MessageCircle, Radio, Search, Share2, X, List } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import {
@@ -16,7 +17,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { FollowButton } from './FollowButton';
 import { useQuery } from '@tanstack/react-query';
-import { getProfileActivityCount } from '@/api/profile-activity';
+import { getProfileActivityCount } from "@/api/users";
 import { useFollowStats } from '@/hooks/useProfile';
 import { useAuth } from '@/hooks/useAuth';
 import { useJoinMembership, useLeaveMembership, useMembershipStatus } from '@/hooks/useMembership';
@@ -152,6 +153,7 @@ export function ProfileHeader({
     isPending: isPostNotificationPending,
     toggle: togglePostNotification,
   } = usePostNotificationSubscription(showPostNotificationButton ? user.id : undefined, isBlueskyProfile ? {provider:user.id.startsWith('misskey-user:')?'misskey':'bluesky',actor:user.username,name:user.displayName,avatarUrl:user.avatarUrl} : undefined);
+  const [listPickerOpen,setListPickerOpen]=useState(false);
   const [isSubscriptionOpen, setIsSubscriptionOpen] = useState(false);
   const [isAvatarOpen, setIsAvatarOpen] = useState(false);
   const [isProfileEditorOpen, setIsProfileEditorOpen] = useState(false);
@@ -349,6 +351,7 @@ export function ProfileHeader({
   };
   return (
     <>
+      {listPickerOpen&&<ProfileListPicker member={user} onClose={()=>setListPickerOpen(false)}/>}
       <style>{`
         @media (max-width: 639px) {
           html[data-lime-mobile-profile-page="true"] [data-lime-profile-cover-controls], html[data-lime-mobile-profile-page="true"] [data-lime-profile-cover-shade] { display: none; }
@@ -438,6 +441,8 @@ export function ProfileHeader({
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                {me&&<DropdownMenuItem onSelect={()=>setListPickerOpen(true)}>リストから追加／削除</DropdownMenuItem>}
+
                 <DropdownMenuItem onClick={handleCopyLink}>
                   <Link2 className="mr-2 h-4 w-4" />
                   リンクをコピー
@@ -477,6 +482,7 @@ export function ProfileHeader({
             </Avatar>
           </button>
           <div data-lime-profile-actions data-lime-profile-dm-actions={canMessage&&!isMe&&!isBlueskyProfile || undefined} data-lime-profile-membership-actions={showSubscriptionButton || undefined} className={`mt-3 flex shrink-0 items-center ${showSubscriptionButton ? 'max-sm:[&>button]:h-9 max-sm:[&>button]:px-1.5 max-sm:[&>button]:text-[13px] min-[360px]:max-sm:[&>button]:px-3 min-[360px]:max-sm:[&>button]:text-sm max-sm:[&>button]:mr-1 max-sm:[&>button:last-child]:mr-0 max-sm:[&>button[data-profile-icon-action]]:w-9 max-sm:[&>button[data-profile-icon-action]]:p-0' : ''}`}>
+            {me&&<DropdownMenu><DropdownMenuTrigger asChild><Button type="button" variant="ghost" data-profile-icon-action aria-label="プロフィールのその他のメニュー" className="mr-2 hidden h-10 w-10 rounded-full border border-border p-0 sm:inline-flex"><MoreHorizontal className="h-5 w-5"/></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={()=>setListPickerOpen(true)}><List className="mr-2 h-4 w-4"/>リストから追加／削除</DropdownMenuItem><DropdownMenuItem onSelect={handleCopyLink}><Link2 className="mr-2 h-4 w-4"/>リンクをコピー</DropdownMenuItem><DropdownMenuItem onSelect={handleShareLink}><Share2 className="mr-2 h-4 w-4"/>プロフィールを共有</DropdownMenuItem></DropdownMenuContent></DropdownMenu>}
             {showSubscriptionButton && (
               <Button
                 type="button"

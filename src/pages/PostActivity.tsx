@@ -2,7 +2,7 @@ import { randomUUID } from '@/lib/randomUUID';
 import {Loader2} from 'lucide-react';
 import {PostCardSkeleton} from '@/components/feed/PostCardSkeleton';
 import {Skeleton} from '@/components/ui/skeleton';
-import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
+import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 import {supabase} from '@/lib/supabase';
 import {useEffect,useState,useRef} from 'react';
 import {useParams,useSearchParams,Link} from 'react-router-dom';

@@ -25,3 +25,33 @@ it('reuses Spaces music, loops it, cancels pending playback and stops on dismiss
     expect(createSpaceMusic).toHaveBeenCalledOnce(); expect(decode).toHaveBeenCalledOnce();
   } finally { vi.unstubAllGlobals(); }
 });
+it('resumes a suspended iOS output, retries after a gesture, and never restarts a dismissed call', async () => {
+  vi.resetModules();
+  const voices: {start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>}[] = [];
+  let context: Context;
+  class Context {
+    state = 'suspended'; destination = {};
+    constructor() { context = this; }
+    resume = vi.fn().mockRejectedValueOnce(new Error('interrupted')).mockImplementation(async () => { this.state = 'running'; });
+    decodeAudioData = vi.fn().mockResolvedValue({});
+    createGain() { return {connect: vi.fn(), disconnect: vi.fn(), gain: {value: 0}}; }
+    createBufferSource() { const source = {buffer: null, loop: false, connect: vi.fn(), disconnect: vi.fn(), start: vi.fn(), stop: vi.fn()}; voices.push(source); return source; }
+  }
+  vi.stubGlobal('AudioContext', Context);
+  let stop: (() => void) | undefined;
+  try {
+    const ringtone = await import('./incomingRingtone');
+    stop = ringtone.playIncomingRingtone();
+    await vi.waitFor(() => expect(context.resume).toHaveBeenCalledOnce());
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(voices).toHaveLength(0);
+    window.dispatchEvent(new Event('touchend'));
+    await vi.waitFor(() => expect(voices).toHaveLength(1));
+    expect(context.state).toBe('running');
+    expect(voices[0].start).toHaveBeenCalledOnce();
+    stop();
+    window.dispatchEvent(new Event('click'));
+    expect(voices[0].stop).toHaveBeenCalledOnce();
+    expect(voices).toHaveLength(1);
+  } finally { stop?.(); vi.unstubAllGlobals(); }
+});

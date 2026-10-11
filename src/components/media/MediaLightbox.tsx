@@ -1,6 +1,6 @@
 import {useCachedChatImage} from '@/lib/chatImageCache';
 import {forwardRef,type ImgHTMLAttributes} from 'react';
-import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
+import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 import {getBlueskyPostUrl} from '@/lib/bluesky';
 import { OfflineBookmarkContext } from '@/components/stickers/OfflineBookmarkContext';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
@@ -18,8 +18,8 @@ import { PostCard } from '@/components/feed/PostCard';
 import { CommentForm } from '@/components/post/CommentForm';
 import { CommentList, CommentCard } from '@/components/post/CommentList';
 import { FollowButton } from '@/components/profile/FollowButton';
-import { renderStickerText } from '@/components/stickers/renderStickerText';
-import { PostOverlayContext, usePostOverlay } from '@/components/layout/PostOverlayContext';
+import { renderStickerText } from "@/components/stickers/Stickers";
+import { PostOverlayContext, usePostOverlay } from "@/components/layout/DesktopLayoutContext";
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import type { PostWithAuthor } from '@/types';
 import { MEDIA_VIEWER_EVENT, type MediaViewerSelection } from './openMediaViewer';

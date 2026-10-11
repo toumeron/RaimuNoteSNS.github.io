@@ -1,3 +1,4 @@
+import { useAutoPagination } from '@/hooks/use-mobile';
 import {useEffect} from 'react';
 import {externalProfileMetadata} from '@/lib/externalProfileMetadata';
 import {useParams,useSearchParams,useNavigate,Link} from 'react-router-dom';
@@ -7,7 +8,7 @@ import {fetchBlueskyProfile} from '@/lib/bluesky';
 import {useAuth} from '@/hooks/useAuth';
 import {fetchFollowListPage,type FollowListTab} from '@/api/followLists';
 import {FollowButton} from '@/components/profile/FollowButton';
-import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
+import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 import {Avatar,AvatarFallback,AvatarImage} from '@/components/ui/avatar';
 import {ProfileListHeader} from '@/components/layout/Header';
 import {Loader2,AlertTriangle} from 'lucide-react';
@@ -26,6 +27,7 @@ export default function FollowersFollowingPage(){
   return await fetchBlueskyProfile(username!,signal) as User|null;
  },enabled:!!username});
  const list=useInfiniteQuery({queryKey:['follow-list',target.data?.id,tab,viewer?.id],enabled:!!target.data&&!!viewer,initialPageParam:null as string|null,queryFn:({pageParam,signal})=>fetchFollowListPage(target.data!,tab,viewer!.id,pageParam,signal),getNextPageParam:page=>page.cursor??undefined});
+ const pageEnd = useAutoPagination(list, true);
  const users=[...new Map((list.data?.pages.flatMap(page=>page.users)??[]).map(user=>[user.id,user])).values()];
  useEffect(()=>{
   const missing=users.filter(user=>/^(did:|misskey-user:)/.test(user.id)&&(!user.avatarUrl||user.displayName===user.username));if(!missing.length)return;
@@ -46,7 +48,7 @@ export default function FollowersFollowingPage(){
      <div className="follow-list-user"><div className="follow-list-identity"><Link to={`/u/${encodeURIComponent(user.username)}`}><span className="follow-list-name"><span className="follow-list-display">{user.displayName}</span>{user.isPrivate&&<PrivateAccountBadge/>}{user.isOfficial&&<img src={`${import.meta.env.BASE_URL}verified.png`} alt="認証済み"/>}</span><span className="follow-list-handle">@{user.username}</span></Link>{user.id!==viewer?.id&&<div className="follow-list-action"><FollowButton userId={user.id} externalProfile={user.id.startsWith('did:')||user.id.startsWith('misskey-user:')?user:undefined}/></div>}</div>{user.bio&&<Bio text={user.bio}/>}</div>
     </article>)}
     {!users.length&&!list.hasNextPage&&<div className="follow-list-status"><p>{tab==='known'?'知り合いのフォロワーはいません':tab==='following'?'まだ誰もフォローしていません':'まだフォロワーはいません'}</p></div>}
-    {list.hasNextPage&&<button className="follow-list-more" disabled={list.isFetchingNextPage} onClick={()=>void list.fetchNextPage()}>{list.isFetchingNextPage?'読み込み中…':'もっと見る'}</button>}
+    <div ref={pageEnd} className="h-px" aria-hidden="true" />
    </>}
   </div>
  </section>;

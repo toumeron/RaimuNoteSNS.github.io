@@ -18,7 +18,7 @@ import {Pencil,Pin,PinOff,Trash2,ArrowDown,Check,CheckCheck,ChevronDown,Link2,Lo
 import {useAuth} from '@/hooks/useAuth';
 import {supabase} from '@/lib/supabase';
 import {DirectMessagePanelHeader} from '@/components/layout/Header';
-import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
+import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 import {Avatar,AvatarFallback,AvatarImage} from '@/components/ui/avatar';
 import {Skeleton} from '@/components/ui/skeleton';
 import {Dialog,DialogContent,DialogDescription,DialogTitle} from '@/components/ui/dialog';

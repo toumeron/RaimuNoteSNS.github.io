@@ -7,8 +7,8 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import { spaceRpc, SPACE_EMOJIS, type SpaceState } from '@/api/spaces';
-import type { LiveSpace, SpeakerPolicy } from './SpaceContext';
-import { SpaceIcon } from './SpaceIcon';
+import type { LiveSpace, SpeakerPolicy } from "@/components/spaces/SpaceProvider";
+import { SpaceIcon } from "@/components/spaces/SpaceProvider";
 
 function HeartPlus() { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 10a5 5 0 0 0-8-5 5 5 0 0 0-8 6l8 8 3-3" /><path d="M19 14v7m-3.5-3.5h7" /></svg>; }
 

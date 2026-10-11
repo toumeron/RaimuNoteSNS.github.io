@@ -1,0 +1,14 @@
+import {ArrowLeft,ListPlus,MoreHorizontal,Search,Share2} from 'lucide-react';
+import {useLocation,useNavigate,useSearchParams} from 'react-router-dom';
+import {DropdownMenu,DropdownMenuContent,DropdownMenuItem,DropdownMenuTrigger} from '@/components/ui/dropdown-menu';
+import {useList} from '@/hooks/useLists';
+import {useAuth} from '@/hooks/useAuth';
+import {toast} from 'sonner';
+export function ListHeaderActions(){
+ const navigate=useNavigate(),location=useLocation(),[params,setParams]=useSearchParams();const id=location.pathname.split('/')[2];const list=useList(id);const {user}=useAuth();
+ const action=(key:string)=>{const next=new URLSearchParams(params);next.set(key,'1');setParams(next);};
+ const share=async()=>{try{const url=window.location.href.split('?')[0];if(navigator.share)await navigator.share({title:list.data?.name??'リスト',url});else{await navigator.clipboard.writeText(url);toast.success('リンクをコピーしました');}}catch(error){if(!(error instanceof Error&&error.name==='AbortError'))toast.error('共有できませんでした');}};
+ return <><button type="button" aria-label="戻る" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full" onClick={()=>id?navigate('/lists'):navigate(-1)}><ArrowLeft className="h-5 w-5"/></button>{id?<h1 className="min-w-0 flex-1 truncate text-xl font-bold">{list.data?.name??'リスト'}</h1>:<label className="flex min-w-0 flex-1 items-center gap-2 rounded-full border border-border px-3 py-2"><Search className="h-4 w-4 shrink-0 text-muted-foreground"/><input aria-label="リストを検索" placeholder="リストを検索" value={params.get('q')??''} onChange={event=>{const next=new URLSearchParams(params);event.target.value?next.set('q',event.target.value):next.delete('q');setParams(next,{replace:true});}} className="min-w-0 w-full flex-1 bg-transparent text-base outline-none sm:text-sm"/></label>}
+ {!id&&user&&<button type="button" aria-label="新しいリストを作成" className="flex h-9 w-9 items-center justify-center" onClick={()=>action('create')}><ListPlus className="h-5 w-5"/></button>}{id&&<><button type="button" aria-label="リストを共有" className="flex h-9 w-9 items-center justify-center" onClick={()=>void share()}><Share2 className="h-5 w-5"/></button><DropdownMenu><DropdownMenuTrigger asChild><button type="button" aria-label="リストのメニュー" className="flex h-9 w-9 items-center justify-center"><MoreHorizontal className="h-5 w-5"/></button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem className="focus:bg-muted/40 focus:text-foreground" onSelect={()=>action('members')}>メンバーを表示</DropdownMenuItem>{list.data?.owner_id===user?.id&&<><DropdownMenuItem className="focus:bg-muted/40 focus:text-foreground" onSelect={()=>action('edit')}>リストを編集</DropdownMenuItem><DropdownMenuItem className="text-destructive focus:bg-muted/40 focus:text-destructive" onSelect={()=>action('delete')}>リストを削除</DropdownMenuItem></>}</DropdownMenuContent></DropdownMenu></>}
+ </>;
+}

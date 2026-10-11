@@ -11,7 +11,7 @@ const db = vi.hoisted(() => ({
   removed: vi.fn(),
 }));
 vi.mock('@/lib/currentUser', () => ({ getCurrentUserId: async () => 'viewer' }));
-vi.mock('@/hooks/useIsPWA', () => ({ useIsPWA: () => false }));
+vi.mock("@/hooks/use-mobile", () => ({ useIsPWA: () => false }));
 vi.mock('@/lib/supabase', () => ({ supabase: {
   from: () => {
     let head = false;

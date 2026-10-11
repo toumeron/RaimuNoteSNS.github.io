@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { getAudioPlaybackContext, unlockAudioPlayback } from './audioPlayback';
 import { CALM_FEMALE_VOICE_ID, PCM_SAMPLE_RATE, resolveVoiceId } from '../../supabase/functions/_shared/aiVoice';
 export { CALM_FEMALE_VOICE_ID, CALM_FEMALE_VOICE_NAME } from '../../supabase/functions/_shared/aiVoice';
 
@@ -16,19 +17,15 @@ export type SpeakHooks = {
   onEnd?: () => void;
   onError?: (message: string) => void;
 };
-let context: AudioContext | undefined;
 export function ttsSupported() {
   return typeof window !== 'undefined' && !!(window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext);
 }
 function audioContext() {
-  if (!ttsSupported()) throw new Error('このブラウザではAI音声を再生できません。');
-  const Constructor = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-  if (!context || context.state === 'closed') context = new Constructor();
-  return context;
+  return getAudioPlaybackContext();
 }
 /** Call in the original click handler so Safari can authorize later AI replies. */
 export function unlockAiAudio() {
-  try { void audioContext().resume().catch(() => {}); } catch { /* reported on playback */ }
+  unlockAudioPlayback();
 }
 
 export function splitForSpeech(text: string, max = 600): string[] {

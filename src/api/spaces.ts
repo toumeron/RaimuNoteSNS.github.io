@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase';
-import type { LiveSpace, SpaceMember } from '@/components/spaces/SpaceContext';
+import type { LiveSpace, SpaceMember } from "@/components/spaces/SpaceProvider";
 export const SPACE_EMOJIS = ['😂', '😲', '😢', '💜', '💯', '👏', '✊', '👍', '👎', '👋', '✋'] as const;
 export async function spaceRpc<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
   const { data, error } = await supabase.rpc(name, args);

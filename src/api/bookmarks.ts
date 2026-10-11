@@ -1,3 +1,4 @@
+import {recordRecommendationEngagement} from "@/lib/recommendationSignals";
 import type { AccountReadContext } from '@/lib/accountReadClient';
 import { supabase } from '@/lib/supabase';
 import { getCurrentUserId } from '@/lib/currentUser';
@@ -29,12 +30,14 @@ export async function setBookmark(target: BookmarkTarget, saved: boolean, expect
   if (!saved) {
     const { error } = await supabase.from('bookmarks').delete().eq('user_id', userId).eq(column, value);
     if (error) throw error;
+    recordRecommendationEngagement(target,userId,'bookmark',false);
     return;
   }
   if (column === 'external_id' && (target.visibility !== 'public' || !target.author || typeof target.content !== 'string')) throw new Error('投稿を読み込んでからブックマークしてください');
   const snapshot = column === 'external_id' ? { ...target, parentPost: null, profileRepostedBy: undefined, profileRepostedAt: undefined } : null;
   const { error } = await supabase.from('bookmarks').insert({ user_id: userId, [column]: value, ...(snapshot ? { external_snapshot: snapshot } : {}) });
   if (error && error.code !== '23505') throw error;
+  recordRecommendationEngagement(target,userId,'bookmark',true);
 }
 export async function getBookmarkPage(userId: string, offset = 0, limit = 20, context?: AccountReadContext) {
   const client = context?.client ?? supabase;

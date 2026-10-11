@@ -1,26 +1,25 @@
-import { getClientName } from '@/lib/clientName';
-import { useCallback, useEffect, useRef, useState, useMemo, type ReactNode } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import * as Dialog from '@radix-ui/react-dialog';
-import { Mic, X } from 'lucide-react';
-import { toast } from 'sonner';
-import type { IAgoraRTCClient, IMicrophoneAudioTrack } from 'agora-rtc-sdk-ng';
-import { useAuth } from '@/hooks/useAuth';
-import { requestMicrophonePermission, microphoneErrorMessage } from '@/lib/microphone';
-import { getLiveSpaces, getSpaceState, getSpaceToken, spaceRpc } from '@/api/spaces';
-import { SpaceContext, SpaceAudioLevelContext, type SpeakerPolicy } from './SpaceContext';
-import { SpaceRoom, SpaceEndConfirmation, SpacePolicySelect } from './SpaceRoom';
-import './spaces.css';
-import { SpaceIcon } from './SpaceIcon';
-import { SpacePlayback } from '@/lib/spacePlayback';
-import { SpaceWaitingAudio } from '@/lib/spaceWaitingAudio';
+import { getClientName } from "@/lib/clientName";
+import { useCallback, useEffect, useRef, useState, useMemo, type ReactNode, createContext, useContext } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import * as Dialog from "@radix-ui/react-dialog";
+import { Mic, X } from "lucide-react";
+import { toast } from "sonner";
+import type { IAgoraRTCClient, IMicrophoneAudioTrack } from "agora-rtc-sdk-ng";
+import { useAuth } from "@/hooks/useAuth";
+import { requestMicrophonePermission, microphoneErrorMessage } from "@/lib/microphone";
+import { getLiveSpaces, getSpaceState, getSpaceToken, spaceRpc } from "@/api/spaces";
+import { SpaceRoom, SpaceEndConfirmation, SpacePolicySelect } from "@/components/spaces/SpaceRoom";
+import "@/components/spaces/spaces.css";
+import { SpacePlayback } from "@/lib/spacePlayback";
+import { SpaceWaitingAudio } from "@/lib/spaceWaitingAudio";
+import type { SVGProps } from "react";
 
 type AudioSession = { announced?: boolean; playback: SpacePlayback; waitingAudio: SpaceWaitingAudio; id: string; uid: number; userId: string; anonymous: boolean; host: boolean; publishing: boolean; client: IAgoraRTCClient; track?: IMicrophoneAudioTrack; restoreAutoplay: () => void; observedSpeaker?: boolean };
 
 export function SpaceProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const live = useQuery({ queryKey: ['live-spaces'], queryFn: getLiveSpaces, refetchInterval: 15000, retry: 1 });
+  const live = useQuery({ queryKey: ['live-spaces'], queryFn: getLiveSpaces, staleTime: 15000, refetchInterval: 30000, retry: 1 });
   const [selected, setSelected] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [title, setTitle] = useState('');
@@ -40,7 +39,7 @@ export function SpaceProvider({ children }: { children: ReactNode }) {
   const operation = useRef(false);
   const generation = useRef(0);
   const inspectedId = selected || audioSession?.id;
-  const state = useQuery({ queryKey: ['space', inspectedId], queryFn: () => getSpaceState(inspectedId!), enabled: !!inspectedId, refetchInterval: 3000, refetchIntervalInBackground: true, retry: 1 });
+  const state = useQuery({ queryKey: ['space', inspectedId], queryFn: () => getSpaceState(inspectedId!), enabled: !!inspectedId, staleTime: 2500, refetchInterval: 3000, refetchIntervalInBackground: false, retry: 1 });
   const space = state.data?.space;
 
   const refresh = useCallback(() => {
@@ -83,7 +82,7 @@ export function SpaceProvider({ children }: { children: ReactNode }) {
       try {
         await spaceRpc('heartbeat_live_space', { p_space_id: audioSession.id });
         if (audioSession.host && !audioSession.announced) { await spaceRpc('announce_live_space', { p_space_id: audioSession.id, p_client_name: getClientName() }); audioSession.announced = true; void queryClient.invalidateQueries({ queryKey: ['feed'] }); void queryClient.invalidateQueries({ queryKey: ['posts'] }); }
-        const current = await getSpaceState(audioSession.id);
+        const current = await queryClient.fetchQuery({ queryKey: ['space', audioSession.id], queryFn: () => getSpaceState(audioSession.id), staleTime: 5000 });
         if (!current.space) {
           await disconnect(false);
           toast('スペースが終了しました');
@@ -351,4 +350,21 @@ export function SpaceProvider({ children }: { children: ReactNode }) {
     <SpaceEndConfirmation open={ending} onOpenChange={setEnding} onEnd={finish} busy={busy} />
     {audioSession && !modalOpen && <div className="lime-space-mini"><button aria-label="参加中のスペース" className="min-w-0 flex-1 px-4 py-3 text-left" onClick={() => open(audioSession.id)}><span className="flex items-center gap-2 font-bold text-primary"><SpaceIcon className="h-4 w-4" />{currentRoom?.profiles.display_name || 'スペース'}</span><span className="block truncate text-sm text-muted-foreground">{currentRoom?.title || title || '参加中のスペース'}</span></button><button className="lime-space-icon" aria-label="スペースを開く" onClick={() => open(audioSession.id)}><Mic /></button><button className="lime-space-icon" aria-label={audioSession.host ? 'スペースを終了' : '退出する'} onClick={() => { if (audioSession.host) setEnding(true); else void disconnect(); }}><X /></button></div>}
   </SpaceAudioLevelContext.Provider></SpaceContext.Provider>;
+}
+
+export type SpeakerPolicy = 'everyone' | 'host' | 'following';
+export type LiveSpace = { id: string; title: string; host_id: string; speaker_policy: SpeakerPolicy; profiles: { display_name: string; username: string; avatar_url: string } };
+export type SpaceMember = { id: string; display_name: string; username?: string; avatar_url: string; role: 'host' | 'speaker' | 'listener'; muted?: boolean; requested?: boolean; rtc_uid?: number };
+export const SpaceContext = createContext<{ spaces: LiveSpace[]; joinedId?: string; open: (id: string) => void; create: () => void }>({ spaces: [], open: () => {}, create: () => {} });
+export const useSpaces = () => useContext(SpaceContext);
+
+export const SpaceAudioLevelContext = createContext<{ id?: string; level: number }>({ level: 0 });
+
+/** The audio bars and curved ring used on live avatars and the creation screen. */
+export function SpaceIcon(props: SVGProps<SVGSVGElement>) {
+  return <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
+    <rect x="5" y="1" width="14" height="16" rx="7" fill="currentColor" />
+    <path d="M3 13a9 9 0 0 0 18 0" stroke="currentColor" strokeWidth="2.2" />
+    <path d="M8.5 8v3m3.5-5v7m3.5-5v3" stroke="var(--space-icon-bars, hsl(var(--background)))" strokeWidth="1.7" strokeLinecap="round" />
+  </svg>;
 }

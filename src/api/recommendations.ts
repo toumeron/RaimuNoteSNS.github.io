@@ -1,10 +1,11 @@
+import { learnedRecommendationScores } from './learned-recommendations';
 import { supabase } from '@/lib/supabase';
 import { getFeed, getPostsByUser, searchPosts } from './posts';
 import {discoverBlueskyTopicFeeds,fetchBlueskyTopicFeed,fetchBlueskyAuthorFeed, fetchBlueskyLikedPosts,fetchBlueskyTopicPosts, fetchTrendingJapaneseBlueskyPosts } from '@/lib/bluesky';
 import {recommendationOriginLanguages,topicAuthorCandidates} from '@/lib/recommendationSignals';
-import {recommendationIdentity,recommendationFingerprint} from '@/lib/recommendationIdentity';
-import {recommendationIsEligible} from '@/lib/recommendationEligibility';
-import {isDeclaredGeneratedArt} from '@/lib/artRecommendations';
+import {recommendationIdentity,recommendationFingerprint} from "@/lib/recommendationSignals";
+import {recommendationIsEligible} from "@/lib/recommendationSignals";
+import {isDeclaredGeneratedArt} from "@/lib/recommendationSignals";
 import {applyCachedRecommendationVisuals,visualSimilarity} from '@/lib/recommendationVisual';
 import type {TopicId} from '@/lib/topics';
 import { normalizeTimelineBlueskyPost } from '@/lib/timelinePaging';
@@ -92,6 +93,7 @@ async function loadRecommendationPreferences(viewerId:string|null,onTopics:((pre
   return preferences;
 }
 export type RecommendationCursor={
+  learnedScores?:Record<string,number>;
   pageKey?:number;
   lime:{page:number;before?:FeedCursor;done:boolean};
   trending:{cursor:string|null;done:boolean};
@@ -255,6 +257,10 @@ async function loadRecommendationPage(previous:RecommendationCursor,viewerId:str
     }
   }
   if(signal?.aborted) throw new DOMException('Aborted','AbortError');
+  if(import.meta.env.VITE_RECOMMENDATION_RANKER_ENABLED==='true') {
+    const candidates=rankRecommendations(applyCachedRecommendationVisuals([...cursor.remaining,...(cursor.pendingVisual??[])]).filter(post=>!cursor.seen.includes(recommendationIdentity(post))&&!(recommendationFingerprint(post)&&cursor.seen.includes(recommendationFingerprint(post)!))),preferences,viewerId,Date.now(),cursor.history,40,cursor.history.length===0);
+    cursor.learnedScores=await learnedRecommendationScores(candidates,preferences,viewerId,signal);
+  } else cursor.learnedScores={};
   return finishRecommendationPage(cursor,preferences,viewerId);
 }
 
@@ -264,7 +270,8 @@ function finishRecommendationPage(cursor:RecommendationCursor,preferences:Recomm
   const waiting=new Set(cursor.pendingVisual.map(post=>post.id));
   cursor.remaining=cursor.remaining.filter(post=>!waiting.has(post.id));
   const seen=new Set(cursor.seen);
-  const ranked=rankRecommendations(cursor.remaining.filter(post=>!seen.has(recommendationIdentity(post))&&!(recommendationFingerprint(post)&&seen.has(recommendationFingerprint(post)!))),preferences,viewerId,Date.now(),cursor.history,40);
+  const ranked=rankRecommendations(cursor.remaining.filter(post=>!seen.has(recommendationIdentity(post))&&!(recommendationFingerprint(post)&&seen.has(recommendationFingerprint(post)!))),preferences,viewerId,Date.now(),cursor.history,40,cursor.history.length===0);
+  if(cursor.learnedScores&&ranked.every(post=>Number.isFinite(cursor.learnedScores![recommendationIdentity(post)])))ranked.sort((a,b)=>cursor.learnedScores![recommendationIdentity(b)]-cursor.learnedScores![recommendationIdentity(a)]);
   const selection=selectRecommendationPage(ranked,preferences,cursor.history,pageSize);
   const posts=selection.posts;cursor.remaining=selection.remaining;cursor.needsCreators=selection.blocked;cursor.seen.push(...posts.flatMap(post=>[recommendationIdentity(post),...(recommendationFingerprint(post)?[recommendationFingerprint(post)!]:[])]));cursor.seen=cursor.seen.slice(-1000);cursor.history=[...cursor.history,...posts].slice(-20);
   const sourcesAvailable=!!cursor.pendingVisual.length || !cursor.lime.done || !cursor.trending.done || Object.values(cursor.authors).some(state=>!state.done) || (preferences.followedTopics??[]).some(topic=>!cursor.topicDiscovery![topic]?.done) || Object.values(cursor.topics).some(state=>!state.limeDone || !state.blueDone || !state.misskeyDone) || Object.values(cursor.nativeAuthors).some(state=>!state.done);

@@ -27,8 +27,8 @@ export function useOfflineBookmarks(userId?:string) {
   },[]);
   useEffect(()=>{
     let live=true,opened:ReturnType<typeof openOfflineBookmarks>|null=null;
-    setSaved(null);setChecking(!!(pwa&&userId));setBusy(false);setProgress('');
-    if(pwa&&userId)void readOfflineBookmarks(userId,!online).then(value=>{
+    setSaved(null);setChecking(!!userId);setBusy(false);setProgress('');
+    if(userId)void readOfflineBookmarks(userId,!online).then(value=>{
       if(!live)return;if(value)opened=openOfflineBookmarks(value);setSaved(opened);
     }).catch(()=>{if(live)toast.error('オフライン保存データを読み込めませんでした');}).finally(()=>{if(live)setChecking(false);});
     return()=>{live=false;opened?.release();};
@@ -46,6 +46,7 @@ export function useOfflineBookmarks(userId?:string) {
         if(current(id)){visibleSaved.release();setSaved(null);toast.success('オフライン保存データを削除しました');}
       }else{
         if(!navigator.onLine)throw new Error('オンラインでブックマークを保存してください');
+        await navigator.storage?.persist?.().catch(()=>false);
         const posts=[];
         for(let offset=0;;){
           const page=await getBookmarkPage(id,offset);

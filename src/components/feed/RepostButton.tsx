@@ -1,11 +1,13 @@
+import {recordRecommendationEngagement} from "@/lib/recommendationSignals";
+import {useAuth} from '@/hooks/useAuth';
 import { PostActionSheet } from '@/components/post/PostActionSheet';
-import { useMobilePostMenu } from '@/components/post/mobilePostMenu';
-import { RepostIcon } from './RepostIcon';
+import { useMobilePostMenu } from "@/components/post/PostActionSheet";
+import { RepostIcon } from "@/components/feed/ComposerIcon";
 import { useRef, useState } from 'react';
 import { Pencil, Quote } from 'lucide-react';
 import { useToggleRepost } from '@/hooks/useFeed';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { usePostOverlay } from '@/components/layout/PostOverlayContext';
+import { usePostOverlay } from "@/components/layout/DesktopLayoutContext";
 import type { PostWithAuthor } from '@/types';
 import { useQuery } from '@tanstack/react-query';
 import { getExternalRepostState, isExternalPostId } from '@/api/external-posts';
@@ -18,6 +20,7 @@ export function RepostButton({ post, mobilePresentation = false, refreshState = 
   const openPostOverlay = usePostOverlay();
   const pendingQuote = useRef(false);
   const mutation = useToggleRepost();
+  const {user} = useAuth();
   const [persistedState,setPersistedState]=useState<{count:number;reposted:boolean;updatedAt:number}|null>(null);
   const externalState = useQuery({queryKey: ['repost-state', post.id],
     queryFn: () => isReplyPostId(post.id) ? getReplyRepostState(post.id) : isExternalPostId(post.id) ? getExternalRepostState(post.id) : getNativeRepostState(post.id), enabled: refreshState || isExternalPostId(post.id) || isReplyPostId(post.id)});
@@ -37,9 +40,10 @@ export function RepostButton({ post, mobilePresentation = false, refreshState = 
       }).catch(() => toast.error('引用元の返信の取得に失敗しました'));
     } else openPostOverlay(post);
   };
-  const repost = () => mutation.mutate(post.id, {onSuccess: result => {
+  const repost = () => { const viewer = user?.id ?? null; mutation.mutate(post.id, {onSuccess: result => {
+    recordRecommendationEngagement(post,viewer,'repost',result.reposted);
     if (refreshState || isExternalPostId(post.id) || isReplyPostId(post.id)) setPersistedState({reposted:result.reposted,count:result.repostsCount ?? Math.max(0,count+(result.reposted?1:-1)),updatedAt:externalState.dataUpdatedAt});
-  }});
+  }}); };
   const trigger = <button type="button" aria-label="リポスト" data-lime-post-action="repost" disabled={mutation.isPending}
     onClick={mobile ? () => setSheetOpen(true) : undefined}
     className={`group inline-flex h-full items-center gap-1.5 rounded-full py-1 transition-colors outline-none select-none disabled:opacity-50 ${mobilePresentation ? 'px-2 text-[13px]' : 'px-2.5 text-sm'} hover:text-green-500 ${reposted ? 'text-green-500' : 'text-muted-foreground'}`}>

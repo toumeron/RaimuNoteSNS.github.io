@@ -6,11 +6,10 @@ const state=vi.hoisted(()=>({sharing:true,get:vi.fn()}));
 vi.mock('@/hooks/useAuth',()=>({useAuth:()=>({user:{id:'a'}})}));
 vi.mock('@/lib/sharedAccountDisplay',()=>({useSharedDisplay:()=>state.sharing}));
 vi.mock('@/hooks/useOfflineBookmarks',()=>({useOfflineBookmarks:()=>({pwa:false,online:true})}));
-vi.mock('@/hooks/useSharedOfflineBookmarks',()=>({useSharedOfflineBookmarks:()=>({posts:[],context:null,checking:false})}));
-vi.mock('@/hooks/useSharedAccountLists',()=>({useSharedBookmarks:()=>({data:{pages:[{items:[{post:{id:'b',content:'Other bookmark',author:{}}}]}]},isPending:false,isError:false})}));
+vi.mock('@/hooks/useSharedAccountLists',()=>({useSharedOfflineBookmarks:()=>({posts:[],context:null,checking:false}),useSharedBookmarks:()=>({data:{pages:[{items:[{post:{id:'b',content:'Other bookmark',author:{}}}]}]},isPending:false,isError:false})}));
 vi.mock('@/api/bookmarks',()=>({getBookmarkPage:state.get}));
 vi.mock('@/components/feed/PostCard',()=>({PostCard:({post}:any)=><p>{post.content}</p>}));
-vi.mock('@/components/post/RepostedReplyCard',()=>({RepostedReplyCard:()=>null}));
+vi.mock("@/components/post/CommentList",()=>({RepostedReplyCard:()=>null}));
 import Bookmarks from './Bookmarks';
 afterEach(cleanup);
 it('switches between the combined view and the original own-account view',async()=>{

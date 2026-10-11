@@ -2,7 +2,7 @@ import {beforeEach,describe,it,expect,vi} from 'vitest';
 const state=vi.hoisted(()=>({user:'owner' as string|null,upload:vi.fn()}));
 vi.mock('./currentUser',()=>({getCurrentUserId:async()=>state.user}));
 vi.mock('./uploadPostMedia',()=>({uploadPostMedia:state.upload}));
-import {uploadCommentImages} from './uploadCommentImages';
+import {uploadCommentImages} from "@/lib/uploadCommentImages";
 beforeEach(()=>{state.user='owner';state.upload.mockReset().mockResolvedValue(['storage://post-media/private']);});
 describe('reply image compatibility helper',()=>{
  it('delegates to private storage instead of an unsigned public upload preset',async()=>{

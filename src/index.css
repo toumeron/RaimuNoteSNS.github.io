@@ -294,3 +294,27 @@ body {
 :root:not(.dark)[data-accent]:not([data-accent="pink"]) .lime-app-shell{--desktop-line:#EFF3F4;}
 :root:not(.dark)[data-accent]:not([data-accent="pink"]) .dm-workspace{--dm-line:#EFF3F4;}
 :root:not(.dark)[data-accent]:not([data-accent="pink"]) :where([class*="border-border"]){border-color:#EFF3F4;}
+
+/* Composer tools share one drawing scale and button box at every viewport width. */
+[data-lime-composer-tool], [data-lime-composer-audience="true"] {
+  width: 36px !important;
+  height: 36px !important;
+  min-width: 36px;
+  padding: 0 !important;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+[data-composer-icon], [data-lime-composer-tool] svg, [data-lime-composer-audience="true"] svg {
+  width: 20px !important;
+  height: 20px !important;
+  flex-shrink: 0;
+}
+
+@media (max-width: 767px) {
+ .list-dialog { position: fixed !important; inset: 0 !important; width: 100dvw !important; max-width: none !important; top: var(--list-dialog-top,0px) !important; bottom: auto !important; height: var(--list-dialog-height,100dvh) !important; max-height: none !important; transform: none !important; border-radius: 0 !important; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+}
+
+/* Tab management is a plain surface, including its rows and search field. */
+.timeline-tab-editor, .timeline-tab-editor [data-timeline-tab-item], .timeline-tab-editor input { border: 0 !important; box-shadow: none !important; }

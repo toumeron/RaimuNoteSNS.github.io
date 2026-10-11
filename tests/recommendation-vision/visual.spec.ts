@@ -34,7 +34,7 @@ test('real image pixels classify without captions, reuse cache on reload and nev
  const result=await page.evaluate(async images=>{
   localStorage.removeItem('lime_recommendation_visual_cache_v1');
   const api=await import('/RaimuNoteSNS.github.io/src/lib/recommendationVisualInference.ts');
-  const {recommendationIsEligible}=await import('/RaimuNoteSNS.github.io/src/lib/recommendationEligibility.ts');
+  const {recommendationIsEligible}=await import('/RaimuNoteSNS.github.io/src/lib/recommendationSignals.ts');
   const rows=images.map(row=>({id:row.name,userId:row.name,content:'',imageAltTexts:[],imageUrls:[row.url],languages:['ja'],recommendationTopics:['digital-illustration'],author:{id:row.name,username:row.name}}));
   const start=performance.now();const enriched=await api.enrichRecommendationVisuals(rows,['digital-illustration','pets','sports','games']);
   return {ms:performance.now()-start,rows:enriched.map(row=>({name:row.id,status:row.recommendationVisualStatus,kind:row.recommendationVisual?.kind,digital:recommendationIsEligible(row,['digital-illustration'])}))};

@@ -2,7 +2,7 @@ import { History, MoreHorizontal, Share } from 'lucide-react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { useNewsStory } from '@/hooks/useNewsStory';
+import { useNewsStory } from "@/hooks/useSearchNews";
 import { toast } from 'sonner';
 
 export function NewsHeaderActions() {

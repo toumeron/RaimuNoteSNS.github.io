@@ -54,7 +54,7 @@ export function AppLayout() {
 
   // ページのパスに応じてメインコンテナのクラス名を切り替える
   let mainClassName = 'mx-auto max-w-2xl px-4 py-6';
-  if (location.pathname === '/maps' || location.pathname === '/notifications' || location.pathname === '/topics' || location.pathname === '/settings' || location.pathname.startsWith('/news')) mainClassName = 'w-full max-w-none px-0 py-0';
+  if (location.pathname === '/maps' || location.pathname === '/notifications' || (location.pathname === '/topics' || location.pathname === '/lists' || location.pathname.startsWith('/lists/')) || location.pathname === '/settings' || location.pathname.startsWith('/news')) mainClassName = 'w-full max-w-none px-0 py-0';
   if (/^\/u\/[^/]+$/.test(location.pathname)) mainClassName = 'mx-auto max-w-2xl px-4 py-6 max-sm:pt-0';
   if (/^\/u\/[^/]+\/followers_following\/?$/.test(location.pathname)) mainClassName = 'mx-auto max-w-2xl px-0 py-0';
   if (isPostActivityPage) mainClassName = 'mx-auto max-w-2xl px-0 py-0';
@@ -75,7 +75,7 @@ export function AppLayout() {
     const isWorkspacePage = isDirectMessagesPage || location.pathname === '/chat' || location.pathname.startsWith('/media');
     const hideHeader = isDirectMessagesPage || location.pathname === '/maps' || (location.pathname.startsWith('/u/') && !isAccountAboutPage) || ['/search', '/settings', '/chat', '/bookmarks'].includes(location.pathname) || location.pathname.startsWith('/media') || isPostDetailPage;
     const showRightSidebar = !isDirectMessagesPage && !['/chat', '/settings', '/maps'].includes(location.pathname);
-    const isEdgePage = isPostActivityPage || location.pathname === '/maps' || location.pathname.startsWith('/news') || location.pathname === '/settings' || location.pathname === '/notifications' || location.pathname === '/topics' || isWorkspacePage || location.pathname === '/bookmarks' || location.pathname === '/' || location.pathname.startsWith('/u/') || isPostDetailPage;
+    const isEdgePage = isPostActivityPage || location.pathname === '/maps' || location.pathname.startsWith('/news') || location.pathname === '/settings' || location.pathname === '/notifications' || (location.pathname === '/topics' || location.pathname === '/lists' || location.pathname.startsWith('/lists/')) || isWorkspacePage || location.pathname === '/bookmarks' || location.pathname === '/' || location.pathname.startsWith('/u/') || isPostDetailPage;
     return (
       <CallSessionProvider>
         {!isDirectMessagesPage && <PageCompanion userId={user.id} />}
@@ -104,7 +104,7 @@ export function AppLayout() {
     // LimeProページの場合はボトムナビゲーション用の余白(pb-20)を削除する
     <CallSessionProvider>
         {!isDirectMessagesPage && <PageCompanion userId={user.id} />}
-      <div className={`min-h-screen ${isDirectMessagesPage || isLimeProPage || location.pathname === '/maps' ? 'pb-0' : location.pathname === '/topics' ? 'pb-[var(--lime-bottom-nav-height,64px)] md:pb-0' : 'pb-20 md:pb-0'}`}>
+      <div className={`min-h-screen ${isDirectMessagesPage || isLimeProPage || location.pathname === '/maps' ? 'pb-0' : (location.pathname === '/topics' || location.pathname === '/lists' || location.pathname.startsWith('/lists/')) ? 'pb-[var(--lime-bottom-nav-height,64px)] md:pb-0' : 'pb-20 md:pb-0'}`}>
       
         {/* LimeProページ以外でのみヘッダーを表示する */}
         {!isLimeProPage && location.pathname !== '/bookmarks' && <Header />}

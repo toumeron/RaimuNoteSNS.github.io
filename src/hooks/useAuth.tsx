@@ -1,6 +1,6 @@
 import { setExternalAccountOwner, initialiseExternalAccounts, refreshExternalAccounts } from '@/lib/externalAccounts';
 import { accountAboutKey, syncAccountConnection } from '@/api/account-about';
-import { getPrivateBotPrompt } from '@/lib/privateProfile';
+import { getPrivateBotPrompt } from "@/lib/privateProfile";
 import { clearPrivateMedia } from '@/lib/privateMediaFetch';
 import {isInstalledPwa} from '@/lib/utils';
 import { useQueryClient } from '@tanstack/react-query';

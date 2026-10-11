@@ -1,3 +1,4 @@
+import {recordRecommendationEngagement} from "@/lib/recommendationSignals";
 import { useInfiniteQuery,useQueryClient } from '@tanstack/react-query';
 import { useRecommendationImpressions } from './useRecommendationImpressions';
 import { useAuth } from './useAuth';
@@ -10,7 +11,7 @@ export function useRecommendedFeed(enabled:boolean) {
   const {user,loading}=useAuth();
   const handles=getConfiguredExternalHandles();
   const queryClient=useQueryClient();
-  const queryKey=['feed','recommended','scoring-v26-healthy-reads-and-history-resume',user?.id ?? null,handles];
+  const queryKey=['feed','recommended','scoring-v27-first-screen-reservations',user?.id ?? null,handles];
   useRecommendationImpressions(enabled && !loading,user?.id ?? null);
   type Cursor=ReturnType<typeof createRecommendationCursor>;
   type Page=Awaited<ReturnType<typeof getRecommendationPage>>;
@@ -125,7 +126,7 @@ export function useRecommendedFeed(enabled:boolean) {
     const remove=(row:typeof post)=>!recommendationIsDismissed(row,preferences);
     return {...page,posts:page.posts.filter(remove),preferences,next:page.next?{...page.next,preferences,remaining:page.next.remaining.filter(remove)}:undefined};
    })}:current);
-   try{await dismissRecommendation(post);}
+   try{await dismissRecommendation(post);recordRecommendationEngagement(post,user?.id??null,'not_interested');}
    catch(error){await queryClient.cancelQueries({queryKey});queryClient.setQueryData(queryKey,previous);throw error;}
    void queryClient.invalidateQueries({queryKey:['recommendation-preferences',user?.id??null]});
   },[queryClient,user?.id,JSON.stringify(handles)]);

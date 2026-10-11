@@ -1,42 +1,39 @@
-import { PrivateAccountBadge } from '@/components/common/PrivateAccountBadge';
-import { mobilePostMenuOS } from '@/components/post/mobilePostMenu';
-import '@/components/post/post-actions.css';
-import { openMediaViewer } from '@/components/media/openMediaViewer';
-import {LinkPreviewCard,useLinkPreview} from '@/components/post/LinkPreviewCard';
-import {OfflineBookmarkContext} from '@/components/stickers/OfflineBookmarkContext';
-import { renderStickerText } from '@/components/stickers/renderStickerText';
-import { hasStickers } from '@/lib/stickers';
-import { useState, useContext, useEffect, useRef, useMemo } from 'react';
-import { createPortal } from 'react-dom';
-import { Link, useNavigate } from 'react-router-dom';
-import { MoreHorizontal, Download, Link as LinkIcon, ChartBarBig, Trash2, CalendarDays, X, Plus, MessageCircle } from 'lucide-react';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
-import type { PostWithAuthor, CommentWithAuthor } from '@/types';
-import { ExternalLikeButton } from './ExternalLikeButton';
-import { ReplyShare } from '@/components/post/ReplyShare';
-import { RepostButton } from '@/components/feed/RepostButton';
-import { RepostIcon } from '@/components/feed/RepostIcon';
-import { replyToPost } from '@/api/reply-reposts';
-import { Commentlikebutton } from '@/components/post/Commentlikebutton';
-import { FollowButton } from '@/components/profile/FollowButton';
-import { useFollowStats } from '@/hooks/useProfile';
-import { useComments } from '@/hooks/useComments';
-import { getCurrentUserId } from '@/lib/currentUser';
-import { formatDate, formatRelative } from '@/lib/format';
-import { supabase } from '@/lib/supabase';
-import { getYouTubeId } from '@/lib/utils';
-import { YouTubeEmbed } from '@/components/YouTubeEmbed';
-import { SpotifyEmbed } from '@/components/SpotifyEmbed';
-import { PostImages } from '@/components/feed/PostImages';
-import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from '@/components/ui/hover-card';
-import dayjs from 'dayjs';
-import { commentThreadUrl, getAuthorReplyConversations } from '@/lib/commentThread';
-import { ReplyChain } from '@/components/post/ReplyChain';
+import { PrivateAccountBadge } from "@/components/common/OfficialBadge";
+import { mobilePostMenuOS } from "@/components/post/PostActionSheet";
+import "@/components/post/post-actions.css";
+import { openMediaViewer } from "@/components/media/openMediaViewer";
+import { LinkPreviewCard, useLinkPreview } from "@/components/post/LinkPreviewCard";
+import { OfflineBookmarkContext } from "@/components/stickers/OfflineBookmarkContext";
+import { renderStickerText } from "@/components/stickers/Stickers";
+import { hasStickers } from "@/lib/stickers";
+import { useState, useContext, useEffect, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { MoreHorizontal, Download, Link as LinkIcon, ChartBarBig, Trash2, CalendarDays, X, Plus, MessageCircle } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { PostCardSkeleton } from "@/components/feed/PostCardSkeleton";
+import type { PostWithAuthor, CommentWithAuthor } from "@/types";
+import { ExternalLikeButton } from "@/components/post/ExternalLikeButton";
+import { ReplyShare } from "@/components/post/ReplyShare";
+import { RepostButton } from "@/components/feed/RepostButton";
+import { RepostIcon } from "@/components/feed/ComposerIcon";
+import { replyToPost } from "@/api/reply-reposts";
+import { Commentlikebutton } from "@/components/post/Commentlikebutton";
+import { FollowButton } from "@/components/profile/FollowButton";
+import { useFollowStats } from "@/hooks/useProfile";
+import { useComments } from "@/hooks/useComments";
+import { getCurrentUserId } from "@/lib/currentUser";
+import { formatDate, formatRelative } from "@/lib/format";
+import { supabase } from "@/lib/supabase";
+import { getYouTubeId } from "@/lib/utils";
+import { YouTubeEmbed } from "@/components/YouTubeEmbed";
+import { SpotifyEmbed } from "@/components/SpotifyEmbed";
+import { PostImages } from "@/components/feed/PostImages";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import dayjs from "dayjs";
+import { commentThreadUrl, getAuthorReplyConversations } from "@/lib/commentThread";
+import { ReplyChain } from "@/components/post/ReplyChain";
+import { useAuth } from "@/hooks/useAuth";
 
 // ─── 型 ───────────────────────────────────────────────────────────────────────
 interface CommentAuthor {
@@ -1469,4 +1466,21 @@ export function CommentConversations({ comments, currentUserId, mobileFlat, thre
       )))}
     </ul>
   );
+}
+
+export function ExternalReplyCard({ post, parentId, replyToUsername, mobileFlat = true, detail = false, thread = false, embedded = false, repostedByLabel }: {
+  post: PostWithAuthor; parentId?: string; replyToUsername?: string; mobileFlat?: boolean;
+  detail?: boolean; thread?: boolean; embedded?: boolean; repostedByLabel?: string;
+}) {
+  const { user } = useAuth();
+  return <CommentCard comment={{ ...post, postId: parentId ?? post.externalReplyToId ?? post.id }} externalPost={post}
+    currentUserId={user?.id ?? null} mobileFlat={mobileFlat} detail={detail} thread={thread} embedded={embedded}
+    repostedByLabel={repostedByLabel} replyToUsername={replyToUsername ?? post.externalReplyToUsername} />;
+}
+
+export function RepostedReplyCard({post,repostedByLabel,embedded=false}:{post:PostWithAuthor;repostedByLabel?:string;embedded?:boolean}) {
+  const {user}=useAuth();
+  return <CommentCard currentUserId={user?.id ?? null} mobileFlat thread={embedded} embedded={embedded} repostedByLabel={repostedByLabel} replyToUsername={post.replyToUsername}
+    comment={{id:post.replyId!,postId:post.replyPostId!,userId:post.userId,content:post.content,imageUrls:post.imageUrls,
+      createdAt:post.createdAt,likesCount:post.likesCount,likedByMe:post.likedByMe,commentsCount:post.commentsCount,author:post.author}} />;
 }

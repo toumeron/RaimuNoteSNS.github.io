@@ -2,8 +2,8 @@ import * as React from "react";
 import * as AvatarPrimitive from "@radix-ui/react-avatar";
 
 import { cn } from "@/lib/utils";
-import { SpaceIcon } from '@/components/spaces/SpaceIcon';
-import { useSpaces } from '@/components/spaces/SpaceContext';
+import { SpaceIcon } from "@/components/spaces/SpaceProvider";
+import { useSpaces } from "@/components/spaces/SpaceProvider";
 
 const Avatar = React.forwardRef<
   React.ElementRef<typeof AvatarPrimitive.Root>,

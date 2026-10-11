@@ -1,6 +1,9 @@
-import { expect, it } from 'vitest';
-import { createSpaceMusic, SPACE_MUSIC_RATE } from './spaceMusic';
-import { SPACE_SCORE_DURATION } from './spaceMusicScore';
+import { describe, expect, it, afterEach, vi } from "vitest";
+import { createSpaceMusic, SPACE_MUSIC_RATE } from "./spaceMusic";
+import { SPACE_SCORE_DURATION } from "@/lib/spaceMusicScore";
+import { SpacePlayback } from "./spacePlayback";
+
+describe("spaceMusic", () => {
 it('generates and reuses a complete audible stereo loop from synthesis parameters', async () => {
   const pending = createSpaceMusic(); expect(createSpaceMusic()).toBe(pending);
   const blob = await pending; expect(await createSpaceMusic()).toBe(blob); expect(blob.type).toBe('audio/wav');
@@ -24,3 +27,44 @@ it('generates and reuses a complete audible stereo loop from synthesis parameter
   expect(peak).toBeLessThan(1);
   expect(stereoDifference).toBeGreaterThan(1);
 }, 30000);
+});
+
+describe("spacePlayback", () => {
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.innerHTML = ''; });
+it('owns native voice players without closing SDK tracks, preserves pause and releases system controls', () => {
+  const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+  vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+  vi.stubGlobal('MediaStream', class { constructor(public tracks: unknown[]) {} });
+  vi.stubGlobal('MediaMetadata', class { constructor(values: object) { Object.assign(this, values); } });
+  const mediaSession = { metadata: null, playbackState: 'none', setActionHandler: vi.fn() }, audioSession = { type: 'auto' };
+  vi.stubGlobal('navigator', { mediaSession, audioSession });
+  const pause = vi.fn(), resume = vi.fn(), track = { getMediaStreamTrack: () => ({}), stop: vi.fn() };
+  const player = new SpacePlayback(vi.fn(), pause, resume); player.setCapturing(false); player.describe('会話', 'ホスト');
+  player.attach(42, track as any); expect(document.querySelectorAll('audio')).toHaveLength(1); expect(play).toHaveBeenCalledTimes(1);
+  player.pause(); player.attach(43, track as any); expect(play).toHaveBeenCalledTimes(1); expect(pause).toHaveBeenCalledTimes(1);
+  player.resume(); expect(play).toHaveBeenCalledTimes(3); expect(resume).toHaveBeenCalledTimes(1);
+  player.setCapturing(true); expect(audioSession.type).toBe('play-and-record');
+  player.close(); expect(document.querySelector('audio')).toBeNull(); expect(track.stop).not.toHaveBeenCalled();
+  expect(mediaSession.metadata).toBeNull(); expect(audioSession.type).toBe('auto');
+});
+it('does not clear metadata belonging to a newer player', () => {
+  const mediaSession = { metadata: null as unknown, playbackState: 'none', setActionHandler: vi.fn() };
+  vi.stubGlobal('MediaMetadata', class { constructor(values: object) { Object.assign(this, values); } });
+  vi.stubGlobal('navigator', { mediaSession });
+  const player = new SpacePlayback(vi.fn(), vi.fn(), vi.fn()); player.describe('会話', 'ホスト');
+  const replacement = {}; mediaSession.metadata = replacement; player.close(); expect(mediaSession.metadata).toBe(replacement);
+});
+});
+
+describe("audioPlayback", () => {
+afterEach(()=>{vi.unstubAllGlobals();vi.restoreAllMocks();});
+it('primes and resumes output in the original gesture and shares it between ringing and speech',async()=>{
+ vi.resetModules();const start=vi.fn(),resume=vi.fn().mockResolvedValue(undefined),created=vi.fn();
+ class Context{state='suspended';sampleRate=44100;destination={};constructor(){created();}resume=resume;createBuffer=vi.fn(()=>({}));createBufferSource=()=>({buffer:null,connect:vi.fn(),disconnect:vi.fn(),start,onended:null});}
+ vi.stubGlobal('AudioContext',Context);const session={type:'auto'};Object.defineProperty(navigator,'audioSession',{configurable:true,value:session});
+ const audio=await import('./audioPlayback');audio.unlockAudioPlayback();
+ expect(start).toHaveBeenCalledWith(0);expect(resume).toHaveBeenCalledOnce();expect(session.type).toBe('playback');
+ expect(audio.getAudioPlaybackContext()).toBe(audio.getAudioPlaybackContext());expect(created).toHaveBeenCalledOnce();
+ delete (navigator as any).audioSession;
+});
+});

@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { extractPostMapLocation, mapBoundsContain } from './mapLocation';
+import { describe, expect, it } from "vitest";
+import { extractPostMapLocation, mapBoundsContain, mapAreaContains, expandedMapBounds } from "./mapLocation";
+import { groupMapPosts } from "./mapPostGroups";
+import { mapBlueskyFeedItemToPost } from "./bluesky";
+import { mapMisskeyNote } from "./misskey";
 
+describe("mapLocation", () => {
 describe('external post locations', () => {
   it.each([
     ['ここにいます geo:35.1,139.2', 35.1, 139.2],
@@ -26,8 +30,6 @@ describe('external post locations', () => {
     expect(mapBoundsContain(bounds, { latitude: NaN, longitude: 175 })).toBe(false);
   });
 });
-
-import {mapAreaContains,expandedMapBounds} from './mapLocation';
 it('reuses a loaded area when zooming inward and detects leaving it',()=>{
  const original={south:34,north:37,west:138,east:141},loaded=expandedMapBounds(original);
  expect(mapAreaContains(loaded,{south:35,north:36,west:139,east:140})).toBe(true);
@@ -36,4 +38,40 @@ it('reuses a loaded area when zooming inward and detects leaving it',()=>{
 it('does not treat a wider date-line crossing area as contained',()=>{
  expect(mapAreaContains({south:-80,north:80,west:170,east:-170},{south:0,north:20,west:175,east:-175})).toBe(true);
  expect(mapAreaContains({south:-80,north:80,west:170,east:-170},{south:0,north:20,west:170,east:180})).toBe(true);
+});
+});
+
+describe("mapPostGroups", () => {
+it('groups 10,000 dense posts without dropping any and skips offscreen projections',()=>{
+ const posts=Array.from({length:10000},(_,i)=>({id:String(i),createdAt:'2026-10-10T00:00:00Z',mapLocation:{latitude:35.68,longitude:139.76}}));
+ const groups=groupMapPosts(posts,()=>({x:100,y:100}));expect(groups).toHaveLength(1);expect(groups[0].posts).toHaveLength(10000);
+ expect(groupMapPosts(posts,()=>null)).toHaveLength(0);
+});
+it('keeps separate cells separately selectable',()=>{
+ const posts=[0,1,2].map(i=>({id:String(i),createdAt:'2026-10-10T00:00:00Z',mapLocation:{latitude:i,longitude:139}}));
+ const groups=groupMapPosts(posts,p=>({x:p.mapLocation.latitude*25,y:0}));expect(groups).toHaveLength(3);expect(groups.flatMap(g=>g.posts)).toEqual(posts);
+});
+
+
+it('keeps coincident posts in one marker at their original position',()=>{
+ const posts=['one','two'].map(id=>({id,createdAt:'2026-10-10T00:00:00Z',mapLocation:{latitude:35.68113,longitude:139.76706}}));
+ const groups=groupMapPosts(posts,()=>({x:120,y:80}));
+ expect(groups).toHaveLength(1);expect(groups[0].point).toEqual({x:120,y:80});expect(groups[0].posts).toEqual(posts);
+});
+});
+
+describe("externalMapMapping", () => {
+it('retains a Bluesky destination hidden behind rich text facets', () => {
+  const post = mapBlueskyFeedItemToPost({ post: {
+    uri: 'at://did:plc:test/app.bsky.feed.post/location', author: { did: 'did:plc:test', handle: 'map.bsky.social' },
+    record: { text: '地図', facets: [{ index: { byteStart: 0, byteEnd: 6 }, features: [{ $type: 'app.bsky.richtext.facet#link', uri: 'https://maps.apple.com/?ll=35,139' }] }] },
+  } });
+  expect(post?.mapLocation).toEqual({ latitude: 35, longitude: 139 });
+});
+it('uses a Misskey note destination and never a private note or quoted location', () => {
+  const note = { id: 'test', text: 'geo:35,139', createdAt: '2026-10-09T00:00:00Z', visibility: 'public', user: { id: 'author', username: 'author' } };
+  expect(mapMisskeyNote(note)?.mapLocation).toEqual({ latitude: 35, longitude: 139 });
+  expect(mapMisskeyNote({ ...note, visibility: 'followers' })).toBeNull();
+  expect(mapMisskeyNote({ ...note, text: '引用へのコメント', renote: note })?.mapLocation).toBeNull();
+});
 });

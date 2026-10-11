@@ -1,6 +1,6 @@
-import { useEffect, type ReactNode } from 'react';
-import * as Dialog from '@radix-ui/react-dialog';
-import '@/components/post/post-actions.css';
+import { useEffect, type ReactNode, useState } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
+import "@/components/post/post-actions.css";
 
 export function PostActionSheet({ open, onOpenChange, title, children, onCloseAutoFocus }: {
   open: boolean; onOpenChange: (open: boolean) => void; title: string; children: ReactNode;
@@ -20,4 +20,20 @@ export function PostActionSheet({ open, onOpenChange, title, children, onCloseAu
       </Dialog.Content>
     </Dialog.Portal>
   </Dialog.Root>;
+}
+
+// PWA menus use OS conventions; the browser cannot create a native OS context menu.
+export function mobilePostMenuOS() {
+  return typeof navigator !== 'undefined' && /iPhone|iPad|iPod/.test(navigator.userAgent) ? 'ios' : 'android';
+}
+
+export function useMobilePostMenu() {
+  const [mobile, setMobile] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches);
+  useEffect(() => {
+    const query = window.matchMedia('(max-width: 639px)');
+    const update = () => setMobile(query.matches);
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+  return mobile;
 }

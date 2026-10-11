@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, type CSSProperties } from 'react';
 import { PostCard } from '@/components/feed/PostCard';
-import { ExternalReplyCard } from './ExternalReplyCard';
+import { ExternalReplyCard } from "@/components/post/CommentList";
 import { ReplyChain } from './ReplyChain';
 import type { PostWithAuthor } from '@/types';
 

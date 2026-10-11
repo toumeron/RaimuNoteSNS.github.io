@@ -6,7 +6,7 @@
 
 | 保存先 | 内容 | 参照・更新コード |
 | --- | --- | --- |
-| `profiles` | 名前、自己紹介、画像、任意の所在地、登録日、固定ポスト、国情報、接続元、ユーザー名変更回数・日時 | `src/api/users.ts`、`src/api/profile-pins.ts`、`src/api/account-about.ts` |
+| `profiles` | 名前、自己紹介、画像、任意の所在地、登録日、固定ポスト、国情報、接続元、ユーザー名変更回数・日時 | `src/api/users.ts`、`src/api/profile-highlights.ts`、`src/api/account-about.ts` |
 | `profile_private_settings` | 非公開のBot指示と外部ユーザー一覧の移行済み日時。種類別の通知設定も同じテーブルに保存する。本人だけが読める | `src/lib/privateProfile.ts`、`import_external_account_users` RPC、`supabase/functions/post-bot/index.ts` |
 | `profile_highlights` | ハイライトしたポストの一覧。1ユーザーが複数件を持ち、ポストの公開範囲を適用する | `src/api/profile-highlights.ts`、`src/api/posts.ts` |
 | `external_account_users` | Bluesky・Misskeyの追加済みユーザー一覧。本人専用、1ユーザーが複数件を持つ | `src/lib/externalAccounts.ts` |

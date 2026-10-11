@@ -53,11 +53,11 @@ describe('LimeMaps API', () => {
     });
     it('saves selected coordinates alongside a new post while normal posts omit the new columns', async () => {
         await createPost({ content: 'map post', imageUrls: [], mapLocation: { latitude: 35, longitude: 139 } });
-        let insert = Object.entries(state.calls[0].filters).find(([key]) => key.startsWith('insert:'))![1] as any;
+        let insert = state.calls.filter(call => call.table === 'posts').flatMap(call => Object.entries(call.filters)).find(([key]) => key.startsWith('insert:'))![1] as any;
         expect(insert).toMatchObject({ content: 'map post', map_latitude: 35, map_longitude: 139 });
         state.calls = [];
         await createPost({ content: 'normal post', imageUrls: [] });
-        insert = Object.entries(state.calls[0].filters).find(([key]) => key.startsWith('insert:'))![1] as any;
+        insert = state.calls.filter(call => call.table === 'posts').flatMap(call => Object.entries(call.filters)).find(([key]) => key.startsWith('insert:'))![1] as any;
         expect(insert).not.toHaveProperty('map_latitude');
         expect(insert).not.toHaveProperty('map_longitude');
     });

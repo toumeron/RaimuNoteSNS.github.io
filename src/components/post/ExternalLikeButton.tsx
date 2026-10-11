@@ -6,7 +6,7 @@ import {useAuth} from '@/hooks/useAuth';
 import {useBlueskySession} from '@/hooks/useBlueskySession';
 import {getExternalLikeState,setExternalLike} from '@/api/external-likes';
 import {fetchBlueskyPostViewerState,getBlueskyUriFromPostId,likeBlueskyPost,unlikeBlueskyPost} from '@/lib/bluesky';
-import {recommendationIdentity,recommendationFingerprint} from '@/lib/recommendationIdentity';
+import {recommendationIdentity,recommendationFingerprint} from "@/lib/recommendationSignals";
 import {recordRecommendationLike,addRecommendationInterest,selectRecommendationLikeSamples} from '@/lib/recommendations';
 import type {PostWithAuthor} from '@/types';
 export function ExternalLikeButton({post,onChange}:{post:PostWithAuthor;onChange?:(state:{liked:boolean;count:number})=>void}){

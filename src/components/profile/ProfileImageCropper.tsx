@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 import { createPortal } from 'react-dom';
 import { Loader2, X, Check } from 'lucide-react';
 import { toast } from 'sonner';
-import { uploadProfileMedia } from '@/lib/uploadProfileMedia';
+import { uploadProfileMedia } from "@/lib/uploadPostMedia";
 import { Button } from '@/components/ui/button';
 export type ProfileImageCropTarget = 'avatar' | 'cover';
 

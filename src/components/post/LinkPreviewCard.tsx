@@ -1,4 +1,4 @@
-import {readSavedPreview,savePreview,savedPreviewImage} from '@/lib/linkPreviewCache';
+import {readSavedPreview,savePreview,savedPreviewImage} from "@/lib/linkPreview";
 import {useContext,useEffect,useState} from 'react';
 import {useQuery} from '@tanstack/react-query';
 import {OfflineBookmarkContext} from '@/components/stickers/OfflineBookmarkContext';

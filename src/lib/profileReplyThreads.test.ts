@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest';
-import { buildProfileReplyThreads } from './profileReplyThreads';
+import { describe, expect, it, vi, afterEach } from "vitest";
+import { buildProfileReplyThreads } from "./profileReplyThreads";
+import { profilePostIdentity, selectProfilePosts, collectProfilePages, externalProfileReplyThread } from "@/lib/profileReplyThreads";
+import { fetchBlueskyAuthorFeed, fetchBlueskyPostThread, mapBlueskyFeedItemToPost } from "./bluesky";
+import { mapMisskeyNote } from "./misskey";
+import type { PostWithAuthor } from "@/types";
+
+describe("profileReplyThreads", () => {
 const posts = new Map([['old-post', { id: 'old-post', author: 'original author' }], ['new-post', { id: 'new-post', author: 'someone else' }]]);
 const reply = (id: string, postId: string, createdAt: string, parentCommentId: string | null = null) => ({ id, postId, createdAt, parentCommentId });
 describe('profile replies', () => {
@@ -30,4 +36,148 @@ describe('profile replies', () => {
   it('does not expose a reply whose original post failed the visibility check', () => {
     expect(buildProfileReplyThreads([reply('child', 'hidden', '2026-10-03')], posts, new Map(), new Map(), new Map())).toEqual([]);
   });
+});
+});
+
+describe("profilePostIdentity", () => {
+it('keeps a self repost and its original as separate entries with stable keys',()=>{
+ const original={id:'same'};
+ const repost={...original,profileRepostedBy:'me',profileRepostedAt:'2026-10-04'};
+ expect(profilePostIdentity(original)).not.toBe(profilePostIdentity(repost));
+ expect(profilePostIdentity({...repost})).toBe(profilePostIdentity(repost));
+ expect(new Set([original,repost,{...repost}].map(profilePostIdentity)).size).toBe(2);
+});
+});
+
+describe("profilePostOptions", () => {
+const items = [
+  {post:{id:'post',createdAt:'2026-10-11',likesCount:2}},
+  {reply:{comment:{id:'reply',likes_count:5}},sortAt:'2026-10-10'},
+  {post:{id:'repost',profileRepostedBy:'owner',createdAt:'2026-10-09',likesCount:9}},
+  {post:{id:'quote',isQuote:true,parentId:'parent',createdAt:'2026-10-08',likesCount:2}},
+  {post:{id:'external-reply',externalReplyToId:'parent',createdAt:'2026-10-07',likesCount:3}},
+];
+const id = (item:any) => item.post?.id ?? item.reply.comment.id;
+it('all includes posts, replies and repost activity in chronological order',()=>{
+ expect(selectProfilePosts(items,'all','latest').map(id)).toEqual(['post','reply','repost','quote','external-reply']);
+});
+it('posts excludes native/external replies and reposts but keeps authored quotes',()=>{
+ expect(selectProfilePosts(items,'posts','latest').map(id)).toEqual(['post','quote']);
+});
+it('popular uses likes and resolves ties by newest first without mutating input',()=>{
+ expect(selectProfilePosts(items,'all','popular').map(id)).toEqual(['repost','reply','external-reply','post','quote']);
+ expect(items.map(id)).toEqual(['post','reply','repost','quote','external-reply']);
+});
+it('uses stable post identity when likes and timestamps are identical', () => {
+ const posts = ['z', 'a', 'm'].map(id => ({ id, createdAt: '2026-10-11', likesCount: 3 }));
+ expect(selectProfilePosts(posts, 'all', 'popular').map(p => p.id)).toEqual(['a', 'm', 'z']);
+ expect(selectProfilePosts([...posts].reverse(), 'all', 'popular').map(p => p.id)).toEqual(['a', 'm', 'z']);
+});
+});
+
+describe("profilePopularity", () => {
+it.each(['lime', 'bsky', 'misskey'])('%s ranks older popular posts before revealing stable pages', async provider => {
+  const newest = Array.from({ length: 20 }, (_, i) => ({ id: `${provider}:new-${i}`, likesCount: 1, createdAt: '2026-10-11' }));
+  const older = { id: `${provider}:older-popular`, likesCount: 100, createdAt: '2026-10-01' };
+  const load = vi.fn(async (cursor: string | null) => cursor === null
+    ? { posts: newest, cursor: 'older' }
+    : { posts: [older], cursor: null });
+  const snapshot = await collectProfilePages(load);
+  const ranked = selectProfilePosts(snapshot, 'all', 'popular');
+  const firstPage = ranked.slice(0, 20);
+  expect(firstPage[0]).toEqual(older);
+  expect(ranked.slice(0, 40).slice(0, 20)).toEqual(firstPage);
+  expect(load).toHaveBeenCalledTimes(2);
+});
+it('continues past pages containing only hidden or filtered posts', async () => {
+  const load = vi.fn(async (cursor: string | null) => cursor === null
+    ? { posts: [] as string[], cursor: 'next' }
+    : { posts: ['public'], cursor: null });
+  expect(await collectProfilePages(load)).toEqual(['public']);
+});
+it('does not publish an incomplete ranking after a later page fails', async () => {
+  const load = vi.fn().mockResolvedValueOnce({ posts: ['new'], cursor: 'next' }).mockRejectedValueOnce(new Error('offline'));
+  await expect(collectProfilePages(load)).rejects.toThrow('offline');
+});
+it('rejects a stalled cursor rather than fetching forever', async () => {
+  const load = vi.fn().mockResolvedValue({ posts: [], cursor: 'same' });
+  await expect(collectProfilePages(load)).rejects.toThrow('カーソル');
+  expect(load).toHaveBeenCalledTimes(2);
+});
+it('stops before fetching the next page when cancelled', async () => {
+  const controller = new AbortController();
+  const load = vi.fn(async () => { controller.abort(); return { posts: ['new'], cursor: 'next' }; });
+  await expect(collectProfilePages(load, controller.signal)).rejects.toThrow();
+  expect(load).toHaveBeenCalledTimes(1);
+});
+});
+
+describe("externalProfileReplies", () => {
+const author={did:'did:plc:alice',handle:'alice.bsky.social',displayName:'Alice'};
+const uri='at://did:plc:alice/app.bsky.feed.post/';
+afterEach(() => vi.unstubAllGlobals());
+it('ranks a later Bluesky feed page using the actual mapped like counts',async()=>{
+ const entry=(id:string,likes:number,date:string)=>({post:{uri:uri+id,author,likeCount:likes,record:{text:id,createdAt:date}}});
+ const fetch=vi.fn().mockResolvedValueOnce({ok:true,status:200,json:async()=>({feed:[entry('new',1,'2026-10-11')],cursor:'next'})})
+  .mockResolvedValueOnce({ok:true,status:200,json:async()=>({feed:[entry('older-popular',50,'2026-10-01')]})});
+ vi.stubGlobal('fetch',fetch);
+ const posts=await collectProfilePages<any,string>(cursor=>fetchBlueskyAuthorFeed({actor:author.handle,cursor,includeReposts:true,filter:'posts_with_replies'}));
+ const ranked=selectProfilePosts(posts,'all','popular');
+ expect(ranked.map(post=>post.id)).toEqual(['bsky:'+uri+'older-popular','bsky:'+uri+'new']);
+ expect(new URL(fetch.mock.calls[1][0]).searchParams.get('cursor')).toBe('next');
+});
+it('uses Misskey reactions and external reply likes for popularity',()=>{
+ const note=(id:string,reactions:Record<string,number>)=>mapMisskeyNote({id,text:id,createdAt:'2026-10-11',visibility:'public',user:{id:'alice',username:'alice'},reactions})!;
+ const original=note('original',{heart:2});
+ const reply=externalProfileReplyThread(normalize({...note('reply',{heart:4,smile:3}),externalReplyToId:original.id}));
+ expect(selectProfilePosts([{post:original},{reply}],'all','popular')[0]).toEqual({reply});
+});
+it('includes repost activity only when requested by the profile all-posts feed',async()=>{
+ const item={post:{uri:uri+'shared',author,record:{text:'shared',createdAt:'2026-10-10'}},reason:{$type:'app.bsky.feed.defs#reasonRepost',by:{did:'did:plc:owner'},indexedAt:'2026-10-11'}};
+ vi.stubGlobal('fetch',vi.fn().mockResolvedValue({ok:true,status:200,json:async()=>({feed:[item]})}));
+ const all=await fetchBlueskyAuthorFeed({actor:author.handle,includeReposts:true});
+ expect(all.posts[0].profileRepostedBy).toBe('did:plc:owner');
+ expect(all.posts[0].profileRepostedAt).toBe('2026-10-11');
+ const regular=await fetchBlueskyAuthorFeed({actor:author.handle});
+ expect(regular.posts).toEqual([]);
+});
+it('loads nested replies with their immediate parents for native conversation layout', async () => {
+ const post=(id:string)=>({uri:uri+id,author,record:{text:id,createdAt:'2026-10-11'}});
+ const fetch=vi.fn().mockResolvedValue({ok:true,json:async()=>({thread:{post:post('root'),replies:[{post:post('reply'),replies:[{post:post('answer')}]}]}})});
+ vi.stubGlobal('fetch',fetch);
+ const result=await fetchBlueskyPostThread('bsky:'+uri+'root');
+ expect(result.replies.map(reply=>reply.externalReplyToId)).toEqual(['bsky:'+uri+'root','bsky:'+uri+'reply']);
+ expect(new URL(fetch.mock.calls[0][0]).searchParams.get('depth')).toBe('6');
+});
+function normalize(post: any): PostWithAuthor { return {repostsCount:0,repostedByMe:false,...post,author:{coverUrl:'',...post.author}}; }
+it('preserves Bluesky reply relationships and renders the native profile thread data',()=>{
+ const parent={uri:uri+'parent',author,record:{text:'parent',createdAt:'2026-10-10'}};
+ const reply=mapBlueskyFeedItemToPost({post:{uri:uri+'reply',author,record:{text:'reply',createdAt:'2026-10-11',reply:{parent:{uri:parent.uri}}}},reply:{parent}})!;
+ expect(reply.externalReplyToId).toBe('bsky:'+parent.uri);
+ expect(reply.externalReplyToUsername).toBe(author.handle);
+ const thread=externalProfileReplyThread(normalize(reply));
+ expect(thread.parentPost?.content).toBe('parent');expect(thread.comments[0].content).toBe('reply');
+ expect(thread.comment.externalPost.id).toBe('bsky:'+uri+'reply');expect(thread.createdAt).toBe('2026-10-11');
+ expect(thread.comment.externalPost.replyId).toBeUndefined();
+});
+it('keeps a reply as a reply when its parent is blocked or unavailable',()=>{
+ const post=mapBlueskyFeedItemToPost({post:{uri:uri+'reply',author,record:{text:'reply',reply:{parent:{uri:uri+'private'}}}}})!;
+ const thread=externalProfileReplyThread(normalize(post));
+ expect(thread.parentPost).toBeNull();expect(thread.comments).toHaveLength(1);expect(thread.comment.postId).toBe('bsky:'+uri+'private');
+});
+it('preserves Misskey reply parents but never renders private parent content',()=>{
+ const user={id:'alice',username:'alice'};
+ const parent={id:'parent123',text:'parent',createdAt:'2026-10-10',visibility:'public',user};
+ const reply={id:'reply123',replyId:parent.id,reply:parent,text:'reply',createdAt:'2026-10-11',visibility:'public',user};
+ const mapped=mapMisskeyNote(reply)!;
+ const thread=externalProfileReplyThread(normalize(mapped));
+ expect(thread.parentPost?.id).toBe('misskey:https://misskey.io/notes/parent123');
+ expect(thread.comment.externalPost.id).toBe('misskey:https://misskey.io/notes/reply123');
+ const privateReply=mapMisskeyNote({...reply,reply:{...parent,visibility:'followers'}})!;
+ expect(privateReply.externalReplyParent).toBeNull();expect(privateReply.externalReplyToId).toBe(mapped.externalReplyToId);
+});
+it('does not classify original posts as replies',()=>{
+ const original=mapBlueskyFeedItemToPost({post:{uri:uri+'original',author,record:{text:'original'}}});
+ expect(original?.externalReplyToId).toBeUndefined();
+});
 });

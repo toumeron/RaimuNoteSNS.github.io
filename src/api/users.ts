@@ -1,7 +1,7 @@
-import { randomUUID } from '@/lib/randomUUID';
-import { getPrivateBotPrompt } from '@/lib/privateProfile';
-import type { User } from '@/types';
-import { supabase } from '@/lib/supabase';
+import { getPrivateBotPrompt } from "@/lib/privateProfile";
+import { randomUUID } from "@/lib/randomUUID";
+import type { User } from "@/types";
+import { supabase } from "@/lib/supabase";
 
 // Keep the fields returned by toUser; exclude unrelated profile settings.
 const USER_SELECT_COLUMNS = 'id, username, display_name, bio, location, avatar_url, cover_url, created_at, is_official, is_private, emoji_effect, bot_enabled, review';
@@ -118,4 +118,42 @@ export async function updateProfile(
 
   if (error || !data) throw new Error('ユーザーが見つかりません');
   return toUser(data);
+}
+
+/** Return the public aggregate, including restricted activity, without bodies. */
+export async function getProfileActivityCount(userId: string): Promise<number> {
+  const { data, error } = await supabase.rpc('get_profile_activity_count', { target_user_id: userId });
+  if (error) throw error;
+  if (typeof data !== 'number' && typeof data !== 'string') throw new Error('Invalid profile activity count');
+  const count = Number(data);
+  if (data == null || !Number.isSafeInteger(count) || count < 0) throw new Error('Invalid profile activity count');
+  return count;
+}
+
+
+
+export type AccountReview = {
+  id: string; author_id: string; rating: number; title: string; content: string; created_at: string;
+  likes_count: number; liked_by_me: boolean;
+  author: { username: string; display_name: string; avatar_url: string; is_official: boolean; is_private?: boolean };
+};
+export type AccountReviews = {
+  enabled: boolean; total: number; average: number; distribution: Record<string, number>; reviews: AccountReview[];
+};
+export const accountReviewsKey = (profileId: string) => ['account-reviews', profileId] as const;
+export async function getAccountReviews(profileId: string, offset = 0): Promise<AccountReviews> {
+  const { data, error } = await supabase.rpc('get_account_reviews', { target_profile: profileId, page_offset: offset });
+  if (error) throw error;
+  return data as AccountReviews;
+}
+export async function submitAccountReview(profileId: string, rating: number, title: string, content: string) {
+  const { error } = await supabase.rpc('submit_account_review', {
+    target_profile: profileId, stars: rating, review_title: title, review_content: content,
+  });
+  if (error) throw error;
+}
+export async function setAccountReviewLike(reviewId: string, enabled: boolean): Promise<{liked: boolean; count: number}> {
+  const { data, error } = await supabase.rpc('set_account_review_like', { target_review: reviewId, enabled });
+  if (error) throw error;
+  return data;
 }

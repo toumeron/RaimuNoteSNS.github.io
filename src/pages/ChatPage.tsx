@@ -20,7 +20,7 @@ import { DirectMessagePanelHeader } from '@/components/layout/Header';
 import { DropdownMenu,  DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Video, MoreHorizontal } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { PrivateAccountBadge } from '@/components/common/PrivateAccountBadge';
+import { PrivateAccountBadge } from "@/components/common/OfficialBadge";
 import { createSandboxWorker, sandboxDocument, type SandboxWorker } from '@/lib/sandboxExecution';
 import {LipSync, type Emotion} from '@/lib/avatarLipSync';
 import {VrmStage, createBus, triggerGesture, type GestureName, type AvatarBus, type CameraPreset, type StageStatus, type ModelInfo} from '@/components/ai/AvatarStage';

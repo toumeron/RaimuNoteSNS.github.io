@@ -3,7 +3,7 @@ import {Link} from 'react-router-dom';
 import {toast} from 'sonner';
 import {getUserById,updateProfile} from '@/api/users';
 import {getFollowRequests,respondFollowRequest} from '@/api/accountPrivacy';
-import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
+import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 import {Button} from '@/components/ui/button';
 import {Checkbox} from '@/components/ui/checkbox';
 

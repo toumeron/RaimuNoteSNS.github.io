@@ -1,3 +1,4 @@
+import { useInView } from 'react-intersection-observer';
 import * as React from "react";
 
 const MOBILE_BREAKPOINT = 768;
@@ -16,4 +17,23 @@ export function useIsMobile() {
   }, []);
 
   return !!isMobile;
+}
+
+export function useIsPWA() {
+  const [isPwa, setIsPwa] = React.useState(false);
+  React.useEffect(() => {
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+                         || (window.navigator as any).standalone;
+    setIsPwa(!!isStandalone);
+  }, []);
+  return isPwa;
+}
+
+/** The same viewport-driven pagination used by the home timeline. */
+export function useAutoPagination(query: {hasNextPage?: boolean; isFetching: boolean; isError: boolean; isFetchNextPageError?: boolean; fetchNextPage: (options?: {cancelRefetch?: boolean}) => Promise<unknown>}, enabled = true) {
+  const {ref, inView} = useInView({rootMargin: '300px', fallbackInView: false});
+  React.useEffect(() => {
+    if (enabled && inView && query.hasNextPage && !query.isFetching && !query.isError && !query.isFetchNextPageError) void query.fetchNextPage({cancelRefetch: false});
+  }, [enabled, inView, query.hasNextPage, query.isFetching, query.isError, query.isFetchNextPageError, query.fetchNextPage]);
+  return ref;
 }

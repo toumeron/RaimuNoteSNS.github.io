@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { microphoneErrorMessage, requestMicrophonePermission } from '@/lib/microphone';
+import { unlockAudioPlayback } from '@/lib/audioPlayback';
 
 type CallSession = {
   start: (render: (close: () => void) => ReactNode) => Promise<boolean>;
@@ -26,6 +27,7 @@ export function CallSessionProvider({ children }: { children: ReactNode }) {
   const start = useCallback((render: (close: () => void) => ReactNode) => {
     if (pending.current || active.current) return Promise.resolve(false);
     pending.current = true;
+    unlockAudioPlayback();
     // Call getUserMedia immediately, before any timer or asynchronous setup.
     return requestMicrophonePermission().then(() => {
       if (!mounted.current) return false;

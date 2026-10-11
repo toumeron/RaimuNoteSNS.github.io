@@ -1,7 +1,7 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, expect, it, vi } from 'vitest';
-import { SpaceContext } from './SpaceContext';
+import { SpaceContext } from "@/components/spaces/SpaceProvider";
 import { SpacePostCard } from './SpacePostCard';
 import { spaceLinkIn } from '@/lib/spaceLinks';
 const rpc = vi.hoisted(() => vi.fn());

@@ -1,31 +1,50 @@
 import { createSpaceMusic } from './spaceMusic';
-let context: AudioContext | null = null;
+import { getAudioPlaybackContext, unlockAudioPlayback } from './audioPlayback';
 let music: Promise<AudioBuffer> | undefined;
+function loadMusic(ctx: AudioContext): Promise<AudioBuffer> {
+  music ??= createSpaceMusic()
+    .then(blob => blob.arrayBuffer())
+    .then(bytes => ctx.decodeAudioData(bytes))
+    .catch(error => { music = undefined; throw error; });
+  return music;
+}
 export function unlockIncomingRingtone() {
-  try {
-    const Constructor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Constructor) return;
-    context ??= new Constructor();
-    void context.resume().catch(() => {});
-  } catch { /* Audio can be unavailable while the visual banner remains usable. */ }
+  unlockAudioPlayback();
+  // Start synthesis during chat interaction, not when the random call arrives.
+  try { void loadMusic(getAudioPlaybackContext()).catch(() => {}); } catch { /* No audio support. */ }
 }
 /** Reuse the Spaces track and decoded buffer across incoming calls. */
 export function playIncomingRingtone(): () => void {
-  const ctx = context;
-  if (!ctx || ctx.state !== 'running') return () => {};
+  let ctx:AudioContext;
+  try { ctx=getAudioPlaybackContext(); } catch { return ()=>{}; }
   let cancelled = false;
   let source: AudioBufferSourceNode | undefined;
   const gain = ctx.createGain();
   gain.gain.value = .65;
   gain.connect(ctx.destination);
-  music ??= createSpaceMusic().then(blob => blob.arrayBuffer()).then(bytes => ctx.decodeAudioData(bytes)).catch(error => { music = undefined; throw error; });
-  void music.then(buffer => {
-    if (cancelled) return;
-    source = ctx.createBufferSource(); source.buffer = buffer; source.loop = true;
-    source.connect(gain); source.start();
-  }).catch(() => { gain.disconnect(); });
+  const ready=()=>ctx.state==='running'?Promise.resolve():ctx.resume();
+  let starting=false;
+  const start=async()=>{
+    if(cancelled||starting)return;
+    starting=true;
+    try {
+      const [buffer]=await Promise.all([loadMusic(ctx),ready()]);
+      if(cancelled||ctx.state!=='running')return;
+      if(!source){source=ctx.createBufferSource();source.buffer=buffer;source.loop=true;source.connect(gain);source.start();}
+    } catch { /* Retry in the next gesture if Safari interrupted playback. */ }
+    finally {starting=false;}
+  };
+  const restore=()=>{if(!cancelled&&document.visibilityState==='visible')void start();};
+  document.addEventListener('visibilitychange',restore);
+  window.addEventListener('touchend',restore);
+  window.addEventListener('click',restore);
+  void start();
   return () => {
+    if(cancelled)return;
     cancelled = true;
+    document.removeEventListener('visibilitychange',restore);
+    window.removeEventListener('touchend',restore);
+    window.removeEventListener('click',restore);
     if (source) { source.stop(); source.disconnect(); }
     gain.disconnect();
   };

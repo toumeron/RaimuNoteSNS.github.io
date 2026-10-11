@@ -1,0 +1,33 @@
+name: Train recommendation ranker
+on:
+  schedule:
+    # Daily 04:23 JST (19:23 UTC); avoid the busy start of the hour.
+    - cron: '23 19 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: recommendation-training
+  cancel-in-progress: false
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SUPABASE_URL: https://wrxaayteittkjoblgauk.supabase.co
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      RECOMMENDATION_TRAINING_SECRET: ${{ secrets.RECOMMENDATION_TRAINING_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: scripts/recommendations/requirements.txt
+      - name: Verify configuration
+        run: |
+          test -n "$SUPABASE_ANON_KEY"
+          test -n "$RECOMMENDATION_TRAINING_SECRET"
+      - run: pip install -r scripts/recommendations/requirements.txt
+      - name: Train from the last 30 days and publish validated model
+        run: python scripts/recommendations/train.py

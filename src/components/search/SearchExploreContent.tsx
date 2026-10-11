@@ -3,7 +3,7 @@ import { Loader2, MoreHorizontal } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import UserCard from './UserCard';
-import { useHiddenTrends } from '@/hooks/useHiddenTrends';
+import { useHiddenTrends } from "@/hooks/useTrends";
 import type { SearchExploreTab } from '@/hooks/useSearchExploreTab';
 import { latestNewsPerSource, type SearchNewsItem, type NewsSources } from '@/api/search-news';
 import type { User } from '@/types';

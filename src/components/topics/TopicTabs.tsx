@@ -1,5 +1,5 @@
 import {useSearchParams} from 'react-router-dom';
-import {SearchTabIndicator} from '@/components/search/SearchTabIndicator';
+import {SearchTabIndicator} from "@/components/search/SearchExploreTabs";
 import {useTopics} from '@/hooks/useTopics';
 export const TOPIC_TABS=[['followed','フォロー済み'],['recommended','おすすめ'],['dismissed','興味なし']] as const;
 export function TopicTabs() {

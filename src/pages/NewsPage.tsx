@@ -1,3 +1,4 @@
+import { useAutoPagination } from '@/hooks/use-mobile';
 import './news-history.css';
 import { useMemo } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
@@ -5,11 +6,11 @@ import { Link, Navigate, useLocation, useSearchParams } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { formatRelative } from '@/lib/format';
 import { getNewsHistory, getNewsRelatedPosts } from '@/api/search-news';
-import { useNewsStory } from '@/hooks/useNewsStory';
+import { useNewsStory } from "@/hooks/useSearchNews";
 import { useAuth } from '@/hooks/useAuth';
 import { PostCard } from '@/components/feed/PostCard';
 import { Button } from '@/components/ui/button';
-import { SearchTabIndicator } from '@/components/search/SearchTabIndicator';
+import { SearchTabIndicator } from "@/components/search/SearchExploreTabs";
 
 export default function NewsPage() {
   const [params, setParams] = useSearchParams();
@@ -34,6 +35,7 @@ export default function NewsPage() {
     staleTime: 60000,
     refetchOnWindowFocus: false,
   });
+ const pageEnd = useAutoPagination(history, showHistory);
   const posts = useMemo(() => [...(related.data ?? [])].sort((a, b) => tab === 'latest'
     ? Date.parse(b.createdAt) - Date.parse(a.createdAt)
     : (b.likesCount + (b.repostsCount ?? 0) + b.commentsCount) - (a.likesCount + (a.repostsCount ?? 0) + a.commentsCount) || Date.parse(b.createdAt) - Date.parse(a.createdAt)), [related.data, tab]);
@@ -52,7 +54,7 @@ export default function NewsPage() {
               <h2 className="mt-1 font-bold leading-6">{item.title}</h2>
               <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{item.content}</p>
             </Link>) : <p className="p-8 text-center text-muted-foreground">履歴はありません。</p>}
-          {history.hasNextPage && <Button variant="ghost" className="w-full" disabled={history.isFetchingNextPage} onClick={() => void history.fetchNextPage()}>さらに読み込む</Button>}
+    <div ref={pageEnd} className="h-px" aria-hidden="true" />
 
   </div>;
 

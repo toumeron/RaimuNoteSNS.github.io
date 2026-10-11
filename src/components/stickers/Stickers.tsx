@@ -1,13 +1,15 @@
-import {OfflineBookmarkContext} from './OfflineBookmarkContext';
-import {createPortal} from 'react-dom';
-import {useIsMobile} from '@/hooks/use-mobile';
-import {Button} from '@/components/ui/button';
-import {useContext,useEffect,useState} from 'react';
-import {useQuery} from '@tanstack/react-query';
-import {Sticker,X,Loader2} from 'lucide-react';
-import {supabase} from '@/lib/supabase';
-import {Popover,PopoverContent,PopoverTrigger} from '@/components/ui/popover';
-import {stickerUrl,type CustomSticker} from '@/lib/stickers';
+import { ComposerIcon } from "@/components/feed/ComposerIcon";
+import { OfflineBookmarkContext } from "@/components/stickers/OfflineBookmarkContext";
+import { createPortal } from "react-dom";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { Button } from "@/components/ui/button";
+import { useContext, useEffect, useState, Fragment, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Sticker, X, Loader2 } from "lucide-react";
+import { supabase } from "@/lib/supabase";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { stickerUrl, type CustomSticker, splitStickers, stickersAreInline, draftEmojiName } from "@/lib/stickers";
+
 function useStickers(enabled=true) {
   return useQuery({queryKey:['custom-stickers'],enabled,staleTime:60000,queryFn:async()=>{
     const {data,error}=await supabase.from('custom_emojis').select('id,name,public_id,format').order('name');
@@ -18,7 +20,7 @@ export function StickerImage({name,inline=false}:{name:string;inline?:boolean}) 
   const offline=useContext(OfflineBookmarkContext);const {data}=useStickers(!offline);const sticker=(offline?.emojis??data)?.find(s=>s.name===name);const src=sticker&&stickerUrl(sticker);
   return src?<img data-lime-sticker src={offline?.media.get(src)??src} alt={`${name}のスタンプ`} loading="lazy" data-lime-sticker-inline={inline} className={`inline-block max-w-full object-contain align-middle ${inline?'h-6 w-6':'my-1 h-36 w-36'}`}/>:<span className="text-sm text-muted-foreground">{name}のスタンプ</span>;
 }
-export function StickerPicker({onSelect,disabled=false,iconOnly=false,className=''}:{onSelect:(name:string)=>void;disabled?:boolean;iconOnly?:boolean;className?:string}) {
+export function StickerPicker({onSelect,disabled=false,iconOnly=false,simple=false,className=''}:{onSelect:(name:string)=>void;disabled?:boolean;iconOnly?:boolean;simple?:boolean;className?:string}) {
   const [open,setOpen]=useState(false),[search,setSearch]=useState('');
   const mobile=useIsMobile();
   const {data,isPending,isError,refetch}=useStickers(open);
@@ -29,11 +31,11 @@ export function StickerPicker({onSelect,disabled=false,iconOnly=false,className=
     document.addEventListener('keydown',onKey,true);
     return ()=>document.removeEventListener('keydown',onKey,true);
   },[open,mobile]);
-  const trigger=<Button type="button" disabled={disabled} variant="ghost" size="sm" data-lime-attachment-tool aria-label="スタンプを選ぶ"
+  const trigger=<Button type="button" disabled={disabled} variant="ghost" size="sm" data-lime-composer-tool={simple||undefined} data-lime-attachment-tool aria-label="スタンプを選ぶ"
     onPointerDown={event=>event.preventDefault()}
     onClick={mobile?()=>setOpen(true):undefined}
-    className={`h-9 [&_svg]:size-5 shrink-0 rounded-full text-primary hover:bg-primary/10 hover:text-primary ${iconOnly?'w-9 p-0':''} ${className}`}>
-    <Sticker className={iconOnly?'h-5 w-5':'h-5 w-5 sm:mr-1.5'}/>{!iconOnly&&<span className="hidden sm:inline">スタンプ</span>}
+    className={`h-9 [&_svg]:size-5 shrink-0 rounded-full ${simple?'text-muted-foreground hover:bg-transparent hover:text-foreground':'text-primary hover:bg-primary/10 hover:text-primary'} ${iconOnly?'w-9 p-0':''} ${className}`}>
+    <>{simple?<ComposerIcon kind="smile"/>:<Sticker className={iconOnly?'h-5 w-5':'h-5 w-5 sm:mr-1.5'}/>}</>{!iconOnly&&<span className="hidden sm:inline">スタンプ</span>}
   </Button>;
   const contents=<>
     <input aria-label="スタンプを検索" placeholder="スタンプを検索" value={search} onChange={e=>setSearch(e.target.value)} className="mb-2 w-full rounded-full border border-border bg-background px-3 py-2 text-sm"/>
@@ -50,4 +52,18 @@ export function StickerPicker({onSelect,disabled=false,iconOnly=false,className=
 }
 export function StickerDraft({name,onRemove,inline=false}:{name:string|null;onRemove:()=>void;inline?:boolean}) {
   return name?<div data-lime-sticker-draft className={inline?'mt-2 flex w-fit items-center gap-1':'relative mt-2 w-fit'}><StickerImage name={name} inline={inline}/><button type="button" aria-label="スタンプを外す" onClick={onRemove} className={`${inline?'':'absolute right-0 top-0'} rounded-full bg-background p-1 text-muted-foreground shadow`}><X className="h-4 w-4"/></button></div>:null;
+}
+
+export function renderStickerText(text:string,renderText:(text:string)=>ReactNode):ReactNode {
+  const inline=stickersAreInline(text);
+  return splitStickers(text).map((part,i)=><Fragment key={i}>{part.name?<StickerImage name={part.name} inline={inline || part.inline}/>:renderText(part.text)}</Fragment>);
+}
+
+// Each draft emoji occupies one native text character, so cursor movement,
+// selection, deletion and IME composition remain native textarea operations.
+export function DraftEmojiText({text,renderText=(value)=>value}:{text:string;renderText?:(value:string)=>ReactNode}) {
+  return text.split(/([\uE000-\uF8FF])/).map((part,index)=>{
+    const name=draftEmojiName(part);
+    return <Fragment key={index}>{name?<span data-lime-draft-emoji className="relative inline-block align-baseline"><span className="invisible">{part}</span><span className="pointer-events-none absolute inset-0 flex items-center justify-center [&_img]:!m-0 [&_img]:!h-[1em] [&_img]:!w-full"><StickerImage name={name} inline/></span></span>:renderText(part)}</Fragment>;
+  });
 }

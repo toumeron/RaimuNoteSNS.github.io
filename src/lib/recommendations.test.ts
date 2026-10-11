@@ -1,4 +1,4 @@
-import { recommendationFingerprint } from './recommendationIdentity';
+import { recommendationFingerprint } from "@/lib/recommendationSignals";
 import { beforeEach, expect, it } from 'vitest';
 import { addRecommendationInterest, rankRecommendations, recommendationTerms, recordRecommendationLike, readRecommendationLikes, recordRecommendationImpression, readRecommendationImpressions, scoreRecommendation } from './recommendations';
 import type { PostWithAuthor } from '@/types';
@@ -111,7 +111,7 @@ it('remembers liked IDs beyond the 100-post interest sample and permits confirme
   expect(rankRecommendations([post('bsky:older-like','猫')],{authors:{},terms:{}},'viewer')).toHaveLength(1);
 });
 it('remembers the same media across copied IDs and CDN resize variants on later reloads',async()=>{
- const {recommendationFingerprint}=await import('./recommendationIdentity');
+ const {recommendationFingerprint}=await import("@/lib/recommendationSignals");
  const original={...post('original',''),imageUrls:['https://cdn.example/work.png?width=800']};
  recordRecommendationImpression(original.id,'viewer',Date.now(),recommendationFingerprint(original));
  const copied={...original,id:'copied',content:'キャプションを変えた再投稿',imageUrls:['https://cdn.example/work.png?width=400']};
@@ -130,7 +130,7 @@ it('uses the viewer’s own creator history across subjects rather than treating
  expect(rankRecommendations([generic,favorite],prefs,'viewer')[0].id).toBe('favorite-work');
 });
 it('recognizes the same Bluesky media blob shared by different creators and formats',async()=>{
- const {recommendationFingerprint}=await import('./recommendationIdentity');
+ const {recommendationFingerprint}=await import("@/lib/recommendationSignals");
  const a={...post('one',''),imageUrls:['https://cdn.bsky.app/img/feed_fullsize/plain/did:plc:one/bafkreiexampleimage@jpeg']};
  const b={...post('two',''),imageUrls:['https://cdn.bsky.app/img/feed_thumbnail/plain/did:plc:two/bafkreiexampleimage@webp']};
  expect(recommendationFingerprint(a)).toBe(recommendationFingerprint(b));
@@ -314,3 +314,14 @@ it('does not replace confident visual evidence with a liked creators broader top
   expect(performance.now()-started).toBeLessThan(1000);
  }
  });
+
+it('can reuse unviewed reserved candidates on a fresh first screen while keeping actual views excluded',async()=>{
+ const {recordRecommendationDelivery,recordRecommendationImpression}=await import('./recommendations');
+ const work={...post('reserved-first-screen','猫','favorite'),imageUrls:['https://cdn.example/reserved.png']};
+ const viewer='first-screen-regression',prefs={authors:{favorite:4},terms:{猫:2}};
+ recordRecommendationDelivery([work],viewer);
+ expect(rankRecommendations([work],prefs,viewer)).toEqual([]);
+ expect(rankRecommendations([work],prefs,viewer,Date.now(),[],40,true)).toHaveLength(1);
+ recordRecommendationImpression(work.id,viewer);
+ expect(rankRecommendations([work],prefs,viewer,Date.now(),[],40,true)).toEqual([]);
+});

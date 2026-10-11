@@ -1,7 +1,7 @@
-import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
+import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 import {splitMentionText} from '@/lib/utils';
 import { openMediaViewer } from '@/components/media/openMediaViewer';
-import { renderStickerText } from '@/components/stickers/renderStickerText';
+import { renderStickerText } from "@/components/stickers/Stickers";
 import { hasStickers } from '@/lib/stickers';
 import {
   useCallback,

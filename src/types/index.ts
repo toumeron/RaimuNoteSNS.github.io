@@ -20,6 +20,7 @@ export type User = {
 };
 
 export type Post = {
+  poll?:import('@/lib/polls').Poll|null;
   mapLocation?: import('@/lib/mapLocation').MapLocation | null;
   languages?: string[];
   recommendationLanguages?: string[];

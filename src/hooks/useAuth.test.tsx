@@ -11,7 +11,7 @@ const mock = vi.hoisted(() => ({ callback: null as null | ((event: string, sessi
 vi.mock('@/lib/supabase', () => ({ supabase: {
   auth: { onAuthStateChange: mock.subscribe, signOut: mock.signOut, setSession: mock.setSession }, from: mock.from,
 } }));
-vi.mock('@/lib/privateProfile', () => ({getPrivateBotPrompt: mock.privatePrompt}));
+vi.mock("@/lib/privateProfile", () => ({getPrivateBotPrompt: mock.privatePrompt}));
 import { AuthProvider, useAuth } from './useAuth';
 import { setExternalAccountOwner, initialiseExternalAccounts } from '@/lib/externalAccounts';
 let currentAuth: ReturnType<typeof useAuth>;

@@ -1,4 +1,5 @@
-import { useSharedOfflineBookmarks } from '@/hooks/useSharedOfflineBookmarks';
+import { useAutoPagination } from '@/hooks/use-mobile';
+import { useSharedOfflineBookmarks } from "@/hooks/useSharedAccountLists";
 import { useSharedDisplay } from '@/lib/sharedAccountDisplay';
 import { useSharedBookmarks } from '@/hooks/useSharedAccountLists';
 import {useOfflineBookmarks} from '@/hooks/useOfflineBookmarks';
@@ -11,14 +12,14 @@ import { useAuth } from '@/hooks/useAuth';
 import { getBookmarkPage } from '@/api/bookmarks';
 import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
 import { PostCard } from '@/components/feed/PostCard';
-import { RepostedReplyCard } from '@/components/post/RepostedReplyCard';
+import { RepostedReplyCard } from "@/components/post/CommentList";
 
 export default function Bookmarks() {
   const { user } = useAuth();
   const sharing = useSharedDisplay();
   const navigate = useNavigate();
   const offline=useOfflineBookmarks(user?.id);
-  const local=offline.pwa && !offline.online;
+  const local=!offline.online;
   const sharedOffline=useSharedOfflineBookmarks(sharing && local);
   const localChecking=sharing?sharedOffline.checking:offline.checking;
   const localPosts=sharing?sharedOffline.posts:offline.saved?.posts??[];
@@ -30,6 +31,7 @@ export default function Bookmarks() {
   const ownQuery = useInfiniteQuery({ queryKey: ['bookmarks', 'pages', user?.id], queryFn: ({ pageParam }) => getBookmarkPage(user!.id, pageParam), initialPageParam: 0, getNextPageParam: page => page.next, enabled: !!user && !local && !sharing });
   const sharedQuery = useSharedBookmarks(sharing && !local);
   const query = sharing ? sharedQuery : ownQuery;
+ const pageEnd = useAutoPagination(query, !local);
   const onlinePosts = sharing ? sharedQuery.data?.pages.flatMap(page => page.items.map(entry => entry.post)) ?? [] : ownQuery.data?.pages.flatMap(page => page.posts) ?? [];
   // Search every saved page, including bookmarks beyond the initially loaded page.
   useEffect(() => { if (!local && searchTerm && query.hasNextPage && !query.isFetching && !query.isFetchNextPageError) void query.fetchNextPage(); }, [local, searchTerm, query.hasNextPage, query.isFetching, query.isFetchNextPageError, query.fetchNextPage]);
@@ -51,6 +53,7 @@ export default function Bookmarks() {
     {offline.busy&&<p role="status" className="px-4 py-2 text-center text-xs text-muted-foreground">{offline.progress||"オフライン保存を処理中..."}</p>}
     <OfflineBookmarkContext.Provider value={local?localContext:null}>{posts.map(post => post.replyId ? <RepostedReplyCard key={post.id} post={post} /> : <PostCard key={post.id} post={post} />)}</OfflineBookmarkContext.Provider>
     {unavailable && <p className="px-4 py-4 text-center text-xs text-muted-foreground">削除済み、または現在閲覧できない投稿は表示されません。</p>}
-    {!local && query.hasNextPage && <div className="py-5 text-center"><button type="button" disabled={query.isFetchingNextPage} className="text-sm font-bold text-primary disabled:opacity-50" onClick={() => query.fetchNextPage()}>{query.isFetchingNextPage ? '読み込み中...' : 'さらに読み込む'}</button></div>}
+    {!local && query.isFetchingNextPage && <PostCardSkeleton />}
+    <div ref={pageEnd} className="h-px" aria-hidden="true" />
   </section>;
 }

@@ -1,7 +1,7 @@
 import {supabase} from '@/lib/supabase';
 import type {PostWithAuthor} from '@/types';
 import type {RecommendationFeedback} from '@/lib/recommendations';
-import {recommendationIdentity,recommendationFingerprint} from '@/lib/recommendationIdentity';
+import {recommendationIdentity,recommendationFingerprint} from "@/lib/recommendationSignals";
 import {recommendationTopicSignals} from '@/lib/recommendationSignals';
 export function createRecommendationFeedback(post:PostWithAuthor):RecommendationFeedback {
  return {id:recommendationIdentity(post),userId:post.userId,fingerprint:recommendationFingerprint(post)??undefined,topics:post.recommendationVisual?.topics??recommendationTopicSignals(post),vector:post.recommendationVisual?.vector,imageUrls:post.imageUrls.slice(0,4),visualKind:post.recommendationVisual?.kind,createdAt:new Date().toISOString()};

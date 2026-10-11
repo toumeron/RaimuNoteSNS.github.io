@@ -1,6 +1,6 @@
-import type { PostWithAuthor } from '@/types';
-import type { BlueskyAuthorFeedPage } from '@/lib/bluesky';
-import type { FeedCursor } from '@/api/posts';
+import type { PostWithAuthor } from "@/types";
+import type { BlueskyAuthorFeedPage } from "@/lib/bluesky";
+import type { FeedCursor } from "@/api/posts";
 
 const SOURCE_PAGE_SIZE = 10;
 const TIMELINE_PAGE_SIZE = 20;
@@ -90,11 +90,20 @@ export async function loadTimelinePage(previous: TimelineCursor, sources: Timeli
     if (available.length === 0) break;
     available.sort((a, b) => newestFirst(a.posts[0], b.posts[0]));
     const post = available[0].posts.shift()!;
-    if (seen.has(post.id)) continue;
+    if (seen.has(post.id) || !isTimelinePost(post)) continue;
     seen.add(post.id);
     posts.push(post);
   }
 
   const hasMore = states.some(state => !state.done || state.posts.length > 0);
   return { posts, next: hasMore ? { lime, bluesky } : undefined };
+}
+
+/** Replies stay on reply/profile screens. Quotes remain timeline posts. */
+export function isTimelinePost(post:PostWithAuthor):boolean {
+ return !post.replyId&&!post.replyPostId&&!post.externalReplyToId&&!(post.parentId&&!post.isQuote);
+}
+/** Exhausted initial scans can still have a cursor; they must show an empty state. */
+export function showTimelineEmpty(loading:boolean,fetching:boolean,error:boolean,count:number):boolean {
+ return !loading&&!fetching&&!error&&count===0;
 }

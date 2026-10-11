@@ -1,6 +1,8 @@
+import {preparePoll,discardPollImages} from './polls';
+import {validatePollDraft,type PollDraft} from '@/lib/polls';
 import type { AccountReadContext } from '@/lib/accountReadClient';
 import { randomUUID } from '@/lib/randomUUID';
-import { collectProfilePages } from '@/lib/profilePopularity';
+import { collectProfilePages } from "@/lib/profileReplyThreads";
 import { validMapLocation, type MapLocation, type MapBounds, type MapPostPin } from '@/lib/mapLocation';
 import { uploadPostMedia } from '@/lib/uploadPostMedia';
 import { getClientName } from '@/lib/clientName';
@@ -147,7 +149,7 @@ export async function getFeed(page: number = 0, limit: number = 10, before?: Fee
 
   const postsRes = await readWithSignal(supabase
       .from('posts')
-      .select(POST_SELECT_QUERY)
+      .select(POST_SELECT_QUERY).or('parent_id.is.null,is_quote.eq.true')
       .or(before
         ? `and(or(${conditions.join(',')}),or(created_at.lt.${before.createdAt},and(created_at.eq.${before.createdAt},id.lt.${before.id})))`
         : conditions.join(','))
@@ -201,7 +203,7 @@ export async function getFollowingFeed(page: number = 0, limit: number = 10, bef
 
   const postsRes = await supabase
       .from('posts')
-      .select(POST_SELECT_QUERY)
+      .select(POST_SELECT_QUERY).or('parent_id.is.null,is_quote.eq.true')
       .or(before
         ? `and(or(${filterConditions}),or(created_at.lt.${before.createdAt},and(created_at.eq.${before.createdAt},id.lt.${before.id})))`
         : filterConditions)
@@ -400,6 +402,7 @@ export async function getPostById(id: string, context?: AccountReadContext): Pro
 }
 
 export async function createPost(input: {
+  poll?:PollDraft;
   mapLocation?: MapLocation | null;
   content: string;
   imageUrls: string[];
@@ -410,6 +413,7 @@ export async function createPost(input: {
 }): Promise<PostWithAuthor> {
   const userId = await getCurrentUserId();
   if (input.mapLocation && !validMapLocation(input.mapLocation)) throw new Error('場所が無効です');
+  if(input.poll){const message=validatePollDraft(input.poll);if(message)throw new Error(message);}
   const newId = randomUUID();
 
   const IMAGE_URL_PATTERN = /(https?:\/\/.*\.(?:png|jpg|jpeg|gif|webp|svg|avif)(?:\?.*)?)/gi;
@@ -427,6 +431,7 @@ export async function createPost(input: {
   if (privacyError) throw privacyError;
   const finalImageUrls = await uploadPostMedia(input.imageUrls, userId, newId, privacy?.is_private === true || input.visibility === 'following');
 
+  const preparedPoll=input.poll?await preparePoll(input.poll,newId):undefined;
   const MENTION_PATTERN = /@(\w+)/g;
   const mentionedUsernames = Array.from(new Set([...input.content.matchAll(MENTION_PATTERN)].map(match => match[1])));
 
@@ -434,7 +439,8 @@ export async function createPost(input: {
     id:          newId,
     user_id:     userId,
     content:     input.content,
-    image_urls:  finalImageUrls, 
+    image_urls:  finalImageUrls,
+    ...(preparedPoll?{poll:preparedPoll}:{}),
     client_name: clientSource,
     parent_id:   externalParent || replyParent ? null : input.parentId || null,
     ...(replyParent ? { quoted_reply_id: replyParent.replyId } : {}),
@@ -445,7 +451,7 @@ export async function createPost(input: {
     is_bot:      input.isBot || false // AIフラグをDBに保存
   });
 
-  if (error) throw error;
+  if(error){if(preparedPoll)await discardPollImages(preparedPoll.options.flatMap(option=>option.image?[option.image]:[]));throw error;}
 
   if (mentionedUsernames.length > 0) {
     const { data: mentionedUsers } = await supabase
@@ -628,4 +634,13 @@ export async function getPostReposters(postId:string,replyId:string|null=null,pa
  const {data,error}=await supabase.from(table).select('profiles(*)').eq(replyId?'comment_id':'post_id',replyId??postId).order('created_at',{ascending:false}).range(page*50,page*50+49);
  if(error)throw error;
  return (data??[]).filter((row:any)=>row.profiles).map((row:any)=>rowToUser(row.profiles));
+}
+
+export async function getListNativePosts(authorIds:string[],page=0,limit=10,before?:FeedCursor,signal?:AbortSignal):Promise<PostWithAuthor[]> {
+ if(!authorIds.length)return [];
+ const userId=await getCurrentUserId();
+ let query=supabase.from('posts').select(POST_SELECT_QUERY).or('parent_id.is.null,is_quote.eq.true').in('user_id',authorIds);
+ if(before)query=query.or(`created_at.lt.${before.createdAt},and(created_at.eq.${before.createdAt},id.lt.${before.id})`);
+ const {data,error}=await readWithSignal(query.order('created_at',{ascending:false}).order('id',{ascending:false}).range(before?0:page*limit,(before?0:page*limit)+limit-1),signal);
+ if(error)throw error;const rows=data??[];const {likedIds,repostedIds}=await getViewerReactions(userId,rows,signal);return rows.map(row=>rowToPost(row,likedIds,repostedIds));
 }

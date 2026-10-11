@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { spaceRpc } from '@/api/spaces';
 import { spaceLinkIn } from '@/lib/spaceLinks';
-import { useSpaces, SpaceAudioLevelContext, type LiveSpace } from './SpaceContext';
+import { useSpaces, SpaceAudioLevelContext, type LiveSpace } from "@/components/spaces/SpaceProvider";
 
 export function SpacePostCard({ content }: { content: string }) {
   const link = spaceLinkIn(content);

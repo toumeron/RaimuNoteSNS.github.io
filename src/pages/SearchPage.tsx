@@ -1,4 +1,5 @@
-import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
+import {searchProfileUser} from '@/lib/accountSearch';
+import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 import {searchMisskey,misskeyEnabled} from '@/lib/misskey';
 import { openMediaViewer } from '@/components/media/openMediaViewer';
 import { useAuth } from '@/hooks/useAuth';
@@ -9,7 +10,7 @@ import { useTrends } from '@/hooks/useTrends';
 import { useDesktopLayout } from '@/components/layout/DesktopLayoutContext';
 import { SearchExploreContent } from '@/components/search/SearchExploreContent';
 import { SearchExploreTabs } from '@/components/search/SearchExploreTabs';
-import { SearchTabIndicator } from '@/components/search/SearchTabIndicator';
+import { SearchTabIndicator } from "@/components/search/SearchExploreTabs";
 import { useSearchExploreTab } from '@/hooks/useSearchExploreTab';
 import {useSearchNews} from '@/hooks/useSearchNews';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
@@ -1607,17 +1608,7 @@ export default function SearchPage() {
           .select('id, username, display_name, avatar_url, cover_url, created_at, bio, is_official, is_private');
         if (error) throw error;
         if (cancelled) return;
-        setAllUsers((data || []).map((u: any) => ({
-          id: u.id,
-          username: u.username,
-          displayName: u.display_name || u.displayName || 'User',
-          avatarUrl: u.avatar_url || u.avatarUrl || '',
-          coverUrl: u.cover_url || '',
-          createdAt: u.created_at || '',
-          bio: u.bio || '',
-          isOfficial: !!(u.is_official || u.isOfficial),
-          isPrivate: !!(u.is_private || u.isPrivate),
-        })));
+        setAllUsers((data || []).map(searchProfileUser));
       } catch (err) { console.error(err); }
       finally { if (!cancelled) setIsUsersLoading(false); }
     }

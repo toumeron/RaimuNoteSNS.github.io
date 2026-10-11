@@ -63,6 +63,8 @@ export function useIncomingFriendCalls<T>({ account, busy, prepare }: {
     };
     const storage = (event: StorageEvent) => { if (event.key === key) schedule(); };
     window.addEventListener('pointerdown', unlockIncomingRingtone);
+    window.addEventListener('touchend', unlockIncomingRingtone);
+    window.addEventListener('click', unlockIncomingRingtone);
     window.addEventListener('keydown', unlockIncomingRingtone);
     window.addEventListener('storage', storage);
     document.addEventListener('visibilitychange', visibility);
@@ -70,6 +72,8 @@ export function useIncomingFriendCalls<T>({ account, busy, prepare }: {
     return () => {
       disposed = true; clearTimeout(timer); request?.abort();
       window.removeEventListener('pointerdown', unlockIncomingRingtone);
+      window.removeEventListener('touchend', unlockIncomingRingtone);
+      window.removeEventListener('click', unlockIncomingRingtone);
       window.removeEventListener('keydown', unlockIncomingRingtone);
       window.removeEventListener('storage', storage);
       document.removeEventListener('visibilitychange', visibility);

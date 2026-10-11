@@ -11,7 +11,7 @@ async function setup(page:Page,standalone:boolean){
   await page.route('**/src/hooks/useAuth.tsx*',route=>route.fulfill({contentType:'application/javascript',body:`export const useAuth=()=>({user:${JSON.stringify(user)},loading:false,session:null,logout:async()=>{},accounts:[${JSON.stringify({...user,needsLogin:false})},{id:'other',username:'other',displayName:'Other',avatarUrl:'',needsLogin:false}],switching:false,switchAccount:async()=>{},forgetAccount:()=>{}});export const AuthProvider=({children})=>children;`}));
   await page.route('**/src/lib/currentUser.ts*',route=>route.fulfill({contentType:'application/javascript',body:`export const getCurrentUserId=async()=> '${user.id}';`}));
   await page.route('**/src/api/posts.ts*',route=>route.fulfill({contentType:'application/javascript',body:`const posts=${JSON.stringify(posts)};
-    export const getFeed=async()=>posts,getFollowingFeed=getFeed,getPostsByUser=getFeed,getProfilePosts=getFeed,getLikedPostsByUser=getFeed,searchPosts=getFeed;
+    export const getFeed=async()=>posts,getFollowingFeed=getFeed,getPostsByUser=getFeed,getProfilePosts=getFeed,getLikedPostsByUser=getFeed,searchPosts=getFeed,getHighlightedPosts=getFeed,getListNativePosts=getFeed;
     export const getPostById=async id=>(await fetch('/__bookmark-fixture/post/'+encodeURIComponent(id))).json();export const createPost=async()=>posts[0],toggleLike=async()=>({liked:true}),toggleRepost=async()=>({reposted:true}),deletePost=async()=>{},getPostLikers=async()=>[];`}));
   await page.route('**/__bookmark-fixture/post/**',route=>{const id=decodeURIComponent(new URL(route.request().url()).pathname.split('/post/')[1]);const post=id===reply.id?reply:[...posts,...state.extraPosts].find(post=>post.id===id);return route.fulfill({contentType:'application/json',body:JSON.stringify(id==='private'&&state.denyPrivate?null:post??null)});});
   await page.route('**/*.supabase.co/**',async route=>{
@@ -191,10 +191,76 @@ test('installed iOS feed does not decode full images again just to measure post 
  await page.route('https://media.example/one.svg',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80" fill="pink"/></svg>'}));
  await page.addInitScript(()=>{const Original=window.Image;window.__sizeProbes=0;window.Image=new Proxy(Original,{construct(target,args){const image=Reflect.construct(target,args);const src=Object.getOwnPropertyDescriptor(HTMLImageElement.prototype,'src');Object.defineProperty(image,'src',{get(){return src.get.call(this);},set(value){if(value==='https://media.example/one.svg')window.__sizeProbes++;src.set.call(this,value);}});return image;}});});
  const post={...base,id:'ios-image',content:'画像サイズの確認',imageUrls:['https://media.example/one.svg']};
- await page.route('**/src/api/posts.ts*',route=>route.fulfill({contentType:'application/javascript',body:`const posts=${JSON.stringify([post])};export const getFeed=async()=>posts,getFollowingFeed=getFeed,getPostsByUser=getFeed,getProfilePosts=getFeed,getLikedPostsByUser=getFeed,searchPosts=getFeed;export const getPostById=async()=>posts[0],createPost=async()=>posts[0],toggleLike=async()=>({liked:true}),toggleRepost=async()=>({reposted:true}),deletePost=async()=>{},getPostLikers=async()=>[];`}));
+ await page.route('**/src/api/posts.ts*',route=>route.fulfill({contentType:'application/javascript',body:`const posts=${JSON.stringify([post])};export const getFeed=async()=>posts,getFollowingFeed=getFeed,getPostsByUser=getFeed,getProfilePosts=getFeed,getLikedPostsByUser=getFeed,searchPosts=getFeed,getHighlightedPosts=getFeed,getListNativePosts=getFeed;export const getPostById=async()=>posts[0],createPost=async()=>posts[0],toggleLike=async()=>({liked:true}),toggleRepost=async()=>({reposted:true}),deletePost=async()=>{},getPostLikers=async()=>[];`}));
  for(let launch=0;launch<3;launch++){
   await page.goto('./');await expect(page.getByText('画像サイズの確認',{exact:true})).toBeVisible();
   const image=page.locator('[data-lime-post-card] img').first();await expect.poll(()=>image.evaluate((img:HTMLImageElement)=>img.naturalWidth)).toBeGreaterThan(0);
   expect(await page.evaluate(()=>window.__sizeProbes)).toBe(0);
  }
+});
+
+test('loads later bookmarks by scrolling without a pagination button',async({page})=>{
+ const state=await setup(page,false);
+ state.extraPosts=Array.from({length:31},(_,i)=>({...base,id:`auto-${i}`,content:`自動読み込み保存投稿 ${i}`}));
+ state.rows=state.extraPosts.map((post,i)=>({id:`auto-saved-${i}`,user_id:user.id,post_id:post.id,created_at:new Date(Date.UTC(2026,9,3,0,0,31-i)).toISOString()}));
+ await page.goto('bookmarks');await expect(page.getByRole('heading',{name:'ブックマーク'})).toBeVisible();
+ await expect(page.getByRole('button',{name:'さらに読み込む'})).toHaveCount(0);
+ await expect(page.getByText('自動読み込み保存投稿 0',{exact:true})).toBeVisible();
+ await page.evaluate(()=>window.scrollTo(0,document.documentElement.scrollHeight));
+ await expect(page.getByText('自動読み込み保存投稿 30',{exact:true})).toBeAttached();
+});
+
+test('offline generations survive simultaneous saves and failed replacements',async({page})=>{
+ await page.goto('./');
+ const result=await page.evaluate(async()=>{
+  const api=await import('/RaimuNoteSNS.github.io/src/lib/offlineBookmarks.ts');
+  const owner='offline-atomic-regression',url='https://images.example/atomic.png';
+  const snapshot=(id:string)=>({userId:owner,savedAt:new Date().toISOString(),posts:[{id,content:id,imageUrls:[url]}] as any,emojis:[],assets:[{url,bytes:new Uint8Array([1,2,3]).buffer,type:'image/png'}]});
+  try{
+   await Promise.all([api.writeOfflineBookmarks(snapshot('one')),api.writeOfflineBookmarks(snapshot('two'))]);
+   const concurrent=await api.readOfflineBookmarks(owner);
+   await Promise.all([api.writeOfflineBookmarks(snapshot('three')),api.readOfflineBookmarks(owner)]);
+   let failed=false;try{await api.writeOfflineBookmarks({...snapshot('broken'),posts:[{id:'broken',uncloneable:()=>{}}] as any})}catch{failed=true}
+   const retained=await api.readOfflineBookmarks(owner);
+   return {concurrentId:concurrent?.posts[0].id,concurrentAssets:concurrent?.assets.length,failed,retainedId:retained?.posts[0].id,retainedAssets:retained?.assets.length};
+  }finally{await api.deleteOfflineBookmarks(owner);}
+ });
+ expect(result).toEqual({concurrentId:'two',concurrentAssets:1,failed:true,retainedId:'three',retainedAssets:1});
+});
+
+test('public own lists appear in discovery with full-column dividers and header',async({page},info)=>{
+ await setup(page,false);
+ const rows=[{id:'22222222-2222-2222-2222-222222222222',name:'公開の自分のリスト',is_private:false},{id:'33333333-3333-3333-3333-333333333333',name:'非公開の自分のリスト',is_private:true}].map(row=>({...row,owner_id:user.id,description:'',members:[],owner:{username:user.username,display_name:user.displayName,avatar_url:''}}));
+ await page.route('**/src/api/lists.ts*',route=>route.fulfill({contentType:'application/javascript',body:`const rows=${JSON.stringify(rows)};export const getLists=async()=>rows,getListCatalog=async()=>rows,getList=async id=>rows.find(row=>row.id===id),listsKey=id=>['user-lists',id],setSavedList=async()=>{},deleteList=async()=>{},searchLists=async()=>rows,saveList=async()=>rows[0],setListMember=async()=>{},searchListUsers=async()=>[],discardListCover=async()=>{};`}));
+ await page.goto('lists');
+ const discovery=page.getByRole('heading',{name:'新しいリストを見つける',exact:true}).locator('..');
+ await expect(discovery.getByText('公開の自分のリスト',{exact:true})).toBeVisible();
+ await expect(discovery.getByText('非公開の自分のリスト',{exact:true})).toHaveCount(0);
+ await expect(discovery.getByText('公開リストはまだありません。')).toHaveCount(0);
+ const bounds=(await page.locator('.lists-page').boundingBox())!,divider=(await discovery.boundingBox())!;
+ expect(Math.abs(divider.x-bounds.x)).toBeLessThan(1);expect(Math.abs(divider.width-bounds.width)).toBeLessThan(1);
+ const header=page.locator('[data-lime-header-row]').filter({visible:true});
+ const headerBounds=(await header.boundingBox())!;
+ expect(Math.abs(headerBounds.x-bounds.x)).toBeLessThan(1);expect(Math.abs(headerBounds.width-bounds.width)).toBeLessThan(1);
+});
+
+test('timeline retains the previous proportional tab layout',async({page})=>{
+ await setup(page,false);
+ await page.addInitScript(({id})=>localStorage.setItem(`lime_timeline_tabs:${id}:v1`,JSON.stringify(['all','recommended','following','trending','topic:politics','topic:ai','topic:digital-illustration','topic:pets'])),{id:user.id});
+ await page.goto('./');
+ const bar=page.locator('[data-lime-timeline-tabs]').filter({visible:true});
+ await expect(bar.getByRole('tab')).toHaveCount(8);
+ const layout=await bar.getByRole('tab').evaluateAll(items=>({
+  bases:items.map(item=>(item as HTMLElement).style.flexBasis),
+  gap:getComputedStyle(items[0].parentElement!).columnGap,
+  width:(items[0].parentElement as HTMLElement).style.width,
+  labelPadding:getComputedStyle(items[0].firstElementChild!).paddingLeft,
+ }));
+ expect(layout.bases).toEqual(Array(8).fill('12.5%'));
+ expect(layout.width).toBe('100%');
+ expect(layout.gap).toBe((page.viewportSize()?.width??0)<640?'24px':'8px');
+ expect(layout.labelPadding).toBe('0px');
+ await press(page,bar.getByRole('button',{name:'タイムラインのタブをカスタマイズ'}));
+ const style=await page.getByRole('dialog').evaluate(el=>({border:getComputedStyle(el).borderWidth,shadow:getComputedStyle(el).boxShadow}));
+ expect(style).toEqual({border:'0px',shadow:'none'});
 });

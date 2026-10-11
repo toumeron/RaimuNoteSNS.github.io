@@ -1,9 +1,13 @@
+import {ComposerIcon} from '@/components/feed/ComposerIcon';
+import {PollIcon} from "@/components/feed/ComposerIcon";
+import {PollEditor,newPollDraft} from '@/components/feed/PollEditor';
+import {validatePollDraft,type PollDraft} from '@/lib/polls';
 import { MediaLightboxRoot } from '@/components/media/MediaLightbox';
-import {DraftEmojiText} from '@/components/stickers/DraftEmojiText';
+import {DraftEmojiText} from "@/components/stickers/Stickers";
 import { StickerPicker, StickerDraft } from '@/components/stickers/Stickers';
 import { appendSticker, insertDraftEmoji, draftEmojiCharacter } from '@/lib/stickers';
 import { QuotedPost } from '@/components/feed/QuotedPost';
-import { PostOverlayContext } from '@/components/layout/PostOverlayContext';
+import { PostOverlayContext } from "@/components/layout/DesktopLayoutContext";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent } from "react";
@@ -19,6 +23,7 @@ import { useOSNotification } from "@/hooks/useOSNotification";
 const AuthPage = lazy(() => import("./pages/Auth"));
 import Feed from "./pages/Feed";
 const Bookmarks = lazy(() => import("./pages/Bookmarks"));
+const Lists = lazy(() => import('./pages/Lists'));
 const Topics = lazy(() => import("./pages/Topics"));
 const PostDetail = lazy(() => import("./pages/PostDetail"));
 const Profile = lazy(() => import("./pages/Profile"));
@@ -46,7 +51,7 @@ function RouteLoading() {
 }
 
 // PostComposer 用のインポート群
-import { ImagePlus, Loader2, Send, X, AtSign, Hash, Globe, Users, PenSquare, ArrowLeft, ChevronDown } from 'lucide-react';
+import { Loader2, X, AtSign, Hash, Globe, Users, PenSquare, ArrowLeft, ChevronDown } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -655,7 +660,7 @@ const LimeDropReceiver = () => {
                     <AvatarFallback>{senderName.slice(0, 1)}</AvatarFallback>
                   </Avatar>
                   <div className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-primary-foreground shadow">
-                    <Send className="h-2.5 w-2.5" />
+                    <ComposerIcon kind="send" className="h-2.5 w-2.5" />
                   </div>
                   <span className="absolute inset-0 rounded-full border-2 border-primary/40" style={{ animation: 'limedrop-signal-pulse 1.6s ease-out infinite' }} />
                 </div>
@@ -707,7 +712,7 @@ const LimeDropReceiver = () => {
                     <AvatarFallback>{senderName.slice(0, 1)}</AvatarFallback>
                   </Avatar>
                   <div className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-primary-foreground shadow">
-                    <Send className="h-2.5 w-2.5" />
+                    <ComposerIcon kind="send" className="h-2.5 w-2.5" />
                   </div>
                   <span className="absolute inset-0 rounded-full border-2 border-primary/35" style={{ animation: 'limedrop-signal-pulse 1.6s ease-out infinite' }} />
                 </div>
@@ -956,6 +961,10 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
   const { mutateAsync, isPending } = useCreatePost();
   
   const [content, setContent] = useState(initialContent);
+  const [poll,setPoll]=useState<PollDraft|null>(null);
+  const pollRef=useRef(poll);pollRef.current=poll;
+  const removePoll=()=>{pollRef.current?.options.forEach(option=>{if(option.image)URL.revokeObjectURL(option.image);});setPoll(null);};
+  useEffect(()=>()=>{pollRef.current?.options.forEach(option=>{if(option.image)URL.revokeObjectURL(option.image);});},[]);
   const [sticker,setSticker]=useState<string|null>(null);
   const [previews, setPreviews] = useState<string[]>([]);
   const [previewOriginals, setPreviewOriginals] = useState<string[]>([]);
@@ -1992,11 +2001,13 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
       toast.error(`本文は${MAX_LEN}文字以内で入力してください`);
       return;
     }
+    if(poll){const message=validatePollDraft(poll);if(message){toast.error(message);return;}}
     try {
       // 投稿処理を先に実行し、確実に完了を待つ (visibilityを追加)
       await mutateAsync({ 
         content: trimmed, 
         imageUrls: previews,
+        ...(poll?{poll}:{}),
         parentId: quotedPost?.id,
         isQuote: !!quotedPost,
         user_id: user.id,
@@ -2019,7 +2030,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
         });
       }
 
-      setContent(''); setSticker(null);
+      setContent(''); setSticker(null); removePoll();
       const urls = new Set([...previewsRef.current, ...previewOriginalsRef.current]);
       urls.forEach((url) => URL.revokeObjectURL(url));
       setPreviews([]);
@@ -2058,20 +2069,22 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
           type="button"
           size="sm"
           variant="ghost"
+          data-lime-composer-audience={!fullScreen || undefined} aria-label="公開範囲を選択"
           className={cn(
-            'h-9 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground',
+            'h-9 rounded-full text-muted-foreground hover:bg-transparent hover:text-foreground',
+            !fullScreen && 'w-9 p-0',
             fullScreen && 'border border-border/70 px-3 hover:bg-muted/60'
           )}
         >
           {visibility === 'public' ? (
             <>
-              <Globe className="mr-1.5 h-4 w-4" />
-              <span>全員</span>
+              <ComposerIcon kind="globe"/>
+              {fullScreen&&<span>全員</span>}
             </>
           ) : (
             <>
-              <Users className="mr-1.5 h-4 w-4 text-accent" />
-              <span className="text-accent">限定</span>
+              <ComposerIcon kind="users"/>
+              {fullScreen&&<span>限定</span>}
             </>
           )}
           {fullScreen && <ChevronDown className="ml-1 h-3.5 w-3.5" />}
@@ -2083,12 +2096,12 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
         className="z-[2147483647] rounded-xl"
         style={{ zIndex: 2147483647 }}
       >
-        <DropdownMenuItem onClick={() => setVisibility('public')}>
-          <Globe className="mr-2 h-4 w-4" />
+        <DropdownMenuItem className="gap-2 focus:bg-muted/40 focus:text-foreground" onClick={() => setVisibility('public')}>
+          <ComposerIcon kind="globe" className="mr-2 shrink-0"/>
           全員
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => setVisibility('following')}>
-          <Users className="mr-2 h-4 w-4" />
+        <DropdownMenuItem className="gap-2 focus:bg-muted/40 focus:text-foreground" onClick={() => setVisibility('following')}>
+          <ComposerIcon kind="users" className="mr-2 shrink-0"/>
           フォロー中
         </DropdownMenuItem>
       </DropdownMenuContent>
@@ -2103,7 +2116,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
           "absolute inset-0 pointer-events-none px-0 py-2 leading-relaxed text-muted-foreground z-0",
           fullScreen ? "text-[22px]" : "text-[20px]"
         )}>
-          {quotedPost ? "コメントを添えてリポスト" : "いまどうしてる？"}
+          {quotedPost ? "コメントを添えてリポスト" : poll ? "質問する" : "いまどうしてる？"}
         </div>
       )}
 
@@ -2121,6 +2134,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
 
       <Textarea
         ref={textareaRef}
+        aria-label={poll?"投票の質問":"ポスト本文"}
         value={content}
         onChange={handleContentChange}
         onPaste={handlePaste}
@@ -2384,7 +2398,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
             <Button
               type="button"
               onClick={submit}
-              disabled={isPending || overLimit || !appendSticker(content,sticker)}
+              disabled={isPending || overLimit || !appendSticker(content,sticker) || !!(poll&&validatePollDraft(poll))}
               className="rounded-full bg-gradient-primary px-5 font-bold shadow-soft transition hover:shadow-pop"
             >
               {isPending ? (
@@ -2411,6 +2425,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
             <StickerDraft inline={!!content.trim()} name={sticker} onRemove={()=>setSticker(null)} />
           {quotedBlock}
             {imagesGrid}
+            {poll&&<PollEditor value={poll} onChange={setPoll} onRemove={removePoll} disabled={isPending}/>}
           </div>
 
           {/* フッター: 返信可否の表示 + 画像添付 + 文字数 */}
@@ -2435,19 +2450,21 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
                   type="button"
                   size="sm"
                   variant="ghost"
-                  className="h-10 w-10 rounded-full p-0 text-accent hover:bg-accent-soft hover:text-accent"
-                  data-lime-attachment-tool onClick={() => fileRef.current?.click()}
+                  className="h-10 w-10 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
+                  data-lime-composer-tool data-lime-attachment-tool onClick={() => fileRef.current?.click()}
                   disabled={previews.length >= MAX_IMAGES}
                   aria-label="画像を追加"
                 >
-                  <ImagePlus className="h-5 w-5" />
+                  <ComposerIcon kind="image"/>
                 </Button>
+                <Button type="button" variant="ghost" size="sm" data-lime-composer-tool aria-label="投票を追加" aria-pressed={!!poll} disabled={isPending||!!poll} className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={()=>setPoll(newPollDraft())}><PollIcon className="h-5 w-5"/></Button>
+                <StickerPicker iconOnly simple disabled={isPending} onSelect={name=>{if(content.trim()){insertDraftEmoji(textareaRef.current,content,name,setContent);}else setSticker(name);}}/>
               </div>
               <div className="flex items-center gap-2">
                 <span className={cn('text-xs tabular-nums', overLimit ? 'font-bold text-destructive' : 'text-muted-foreground')}>
                 {remaining}
               </span>
-                <StickerPicker iconOnly className="h-10 w-10" disabled={isPending} onSelect={name=>{if(content.trim()){insertDraftEmoji(textareaRef.current,content,name,setContent);}else setSticker(name);}} />
+
               </div>
             </div>
           </div>
@@ -2493,6 +2510,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
           <StickerDraft inline={!!content.trim()} name={sticker} onRemove={()=>setSticker(null)} />
           {quotedBlock}
           {imagesGrid}
+          {poll&&<PollEditor value={poll} onChange={setPoll} onRemove={removePoll} disabled={isPending}/>}
 
           <div className={cn("flex items-center justify-between border-t border-border/60 pt-3", timelineGlass && "border-border/40")}>
             <div className="flex items-center gap-2">
@@ -2501,16 +2519,17 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
                 type="button"
                 size="sm"
                 variant="ghost"
-                className="h-9 rounded-full text-accent hover:bg-accent-soft hover:text-accent"
-                data-lime-attachment-tool onClick={() => fileRef.current?.click()}
+                aria-label="画像を追加" className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
+                data-lime-composer-tool data-lime-attachment-tool onClick={() => fileRef.current?.click()}
                 disabled={previews.length >= MAX_IMAGES}
               >
-                <ImagePlus className="sm:mr-1.5 h-5 w-5" />
-                <span className="hidden sm:inline">画像</span>
+                <ComposerIcon kind="image"/>
+
               </Button>
 
+              <Button type="button" variant="ghost" size="sm" data-lime-composer-tool aria-label="投票を追加" aria-pressed={!!poll} disabled={isPending||!!poll} className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={()=>setPoll(newPollDraft())}><PollIcon className="h-5 w-5"/></Button>
               {visibilityMenu}
-              <StickerPicker disabled={isPending} onSelect={name=>{if(content.trim()){insertDraftEmoji(textareaRef.current,content,name,setContent);}else setSticker(name);}} />
+              <StickerPicker iconOnly simple disabled={isPending} onSelect={name=>{if(content.trim()){insertDraftEmoji(textareaRef.current,content,name,setContent);}else setSticker(name);}} />
 
               <span className={cn('text-xs tabular-nums', overLimit ? 'font-bold text-destructive' : 'text-muted-foreground')}>
                 {remaining}
@@ -2519,14 +2538,14 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
             <Button
               type="button"
               onClick={submit}
-              disabled={isPending || overLimit || !appendSticker(content,sticker)}
+              disabled={isPending || overLimit || !appendSticker(content,sticker) || !!(poll&&validatePollDraft(poll))}
               className="rounded-full bg-gradient-primary px-5 font-bold shadow-soft transition hover:shadow-pop"
             >
               {isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <>
-                  <Send className="mr-1.5 h-4 w-4" />
+                  <ComposerIcon kind="send" className="mr-1.5 h-4 w-4" />
                   {quotedPost ? '引用ポスト' : 'ポスト'}
                 </>
               )}
@@ -2623,7 +2642,7 @@ export const PostOverlay = ({ isOpen, onClose, initialQuotedPost, mapLocation }:
   }
 
   return createPortal(
-    <div role="dialog" aria-modal="true" aria-label={initialQuotedPost ? "引用リポスト" : "新規ポスト"} onClick={event => event.stopPropagation()} className="fixed inset-0 z-[2147483000] flex items-start justify-center bg-black/50 p-4 pt-16 sm:items-center sm:pt-4 overflow-y-auto">
+    <div role="dialog" aria-modal="true" aria-label={initialQuotedPost ? "引用リポスト" : "新規ポスト"} onClick={event => event.stopPropagation()} className="fixed inset-0 z-[2147483000] flex items-start justify-center bg-black/20 p-4 pt-16 sm:items-center sm:pt-4 overflow-y-auto">
       <div 
         className="fixed inset-0" 
         onClick={onClose} 
@@ -2725,6 +2744,8 @@ const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage |
             <Route path="/u/:username/followers_following" element={<Suspense fallback={<RouteLoading />}><FollowersFollowingPage /></Suspense>} />
             <Route path="/settings" element={<Suspense fallback={<RouteLoading />}><Settings /></Suspense>} />
             <Route path="/bookmarks" element={<Suspense fallback={<RouteLoading />}><Bookmarks /></Suspense>} />
+            <Route path="/lists" element={<Suspense fallback={<RouteLoading />}><Lists /></Suspense>} />
+            <Route path="/lists/:id" element={<Suspense fallback={<RouteLoading />}><Lists /></Suspense>} />
             <Route path="/topics" element={<Suspense fallback={<RouteLoading />}><Topics /></Suspense>} />
             <Route path="/share" element={<Suspense fallback={<RouteLoading />}><Share /></Suspense>} />
             <Route path="/spaces/:id" element={<Suspense fallback={<RouteLoading />}><SpacePage /></Suspense>} />

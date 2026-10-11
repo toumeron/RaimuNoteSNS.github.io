@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 import { getCurrentUserId } from '@/lib/currentUser';
 import { useQueryClient } from '@tanstack/react-query';
-import { useIsPWA } from '@/hooks/useIsPWA';
+import { useIsPWA } from "@/hooks/use-mobile";
 
 interface CommentlikebuttonProps {
   commentId: string;
