@@ -1,3 +1,5 @@
+import { useSharedDisplay } from '@/lib/sharedAccountDisplay';
+import { useSharedNotifications } from '@/hooks/useSharedAccountLists';
 import { PrivateAccountBadge } from '@/components/common/PrivateAccountBadge';
 import { useEffect, useMemo } from 'react';
 import { type InfiniteData, useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
@@ -12,19 +14,22 @@ const icons = {new_post:Bell,mention:AtSign,reply:MessageCircle,like:Heart,repos
 const colors:Record<NotificationKind,string>={new_post:'text-primary',mention:'text-primary',reply:'text-primary',like:'text-pink-500',repost:'text-green-500',reaction:'text-amber-500',follow:'text-primary',dm:'text-muted-foreground',dm_request:'text-muted-foreground'};
 export default function Notifications(){
  const {user}=useAuth();const queryClient=useQueryClient();const [params]=useSearchParams();const tab=params.get('tab')==='mention'?'mention':'all';
+ const sharing=useSharedDisplay();
  const key=['notifications',user?.id];
- const query=useInfiniteQuery({queryKey:key,enabled:!!user?.id,initialPageParam:0,queryFn:({pageParam})=>getNotifications(user!.id,pageParam),getNextPageParam:(last,_,page)=>last.length===50?page+1:undefined});
- const rows=useMemo(()=>query.data?.pages.flat()??[],[query.data]);
- useEffect(()=>{if(!user?.id)return;const channel=supabase.channel(`notification-page-${user.id}`).on('postgres_changes',{event:'*',schema:'public',table:'notifications',filter:`user_id=eq.${user.id}`},()=>void queryClient.invalidateQueries({queryKey:['notifications',user.id]})).subscribe();return()=>{void supabase.removeChannel(channel);};},[user?.id,queryClient]);
- useEffect(()=>{if(!user?.id)return;const ids=rows.filter(n=>!n.is_read&&(tab==='all'||n.type==='mention')).map(n=>n.id);if(ids.length)void markNotificationsRead(user.id,ids).then(()=>{
+ const ownQuery=useInfiniteQuery({queryKey:key,enabled:!!user?.id&&!sharing,initialPageParam:0,queryFn:({pageParam})=>getNotifications(user!.id,pageParam),getNextPageParam:(last,_,page)=>last.length===50?page+1:undefined});
+ const sharedQuery=useSharedNotifications(sharing);
+ const query=sharing?sharedQuery:ownQuery;
+ const rows=useMemo(()=>sharing?sharedQuery.data?.pages.flatMap(page=>page.items)??[]:ownQuery.data?.pages.flat()??[],[sharing,sharedQuery.data,ownQuery.data]);
+ useEffect(()=>{if(!user?.id||sharing)return;const channel=supabase.channel(`notification-page-${user.id}`).on('postgres_changes',{event:'*',schema:'public',table:'notifications',filter:`user_id=eq.${user.id}`},()=>{void queryClient.invalidateQueries({queryKey:['notifications',user.id]});if(sharing)void queryClient.invalidateQueries({queryKey:['notifications','shared']});}).subscribe();return()=>{void supabase.removeChannel(channel);};},[user?.id,queryClient,sharing]);
+ useEffect(()=>{if(!user?.id||sharing)return;const ids=rows.filter(n=>!n.is_read&&(tab==='all'||n.type==='mention')).map(n=>n.id);if(ids.length)void markNotificationsRead(user.id,ids).then(()=>{
   const readIds=new Set(ids);
   queryClient.setQueryData<InfiniteData<NotificationRow[]>>(['notifications',user.id],data=>data?{...data,pages:data.pages.map(page=>page.map(row=>readIds.has(row.id)?{...row,is_read:true}:row))}:data);
   void queryClient.invalidateQueries({queryKey:['notification-unread-count',user.id],exact:true});
- }).catch(()=>{});},[rows,user?.id,tab,queryClient]);
+ }).catch(()=>{});},[rows,user?.id,tab,queryClient,sharing]);
  const groups=groupNotifications(rows.filter(n=>tab==='all'||n.type==='mention'));
  return <div className="w-full" data-lime-notifications>
   <div role="tabpanel" id="notification-list" aria-labelledby={`notification-tab-${tab}`}>
-   {query.isPending?<p className="p-8 text-center text-muted-foreground">読み込み中...</p>:query.isError?<div className="p-8 text-center"><p>通知を読み込めませんでした</p><Button variant="ghost" onClick={()=>void query.refetch()}>再試行</Button></div>:groups.length===0?<p className="p-10 text-center text-muted-foreground">{tab==='mention'?'メンションはありません':'通知はありません'}</p>:groups.map(group=>{
+   {query.isPending?<p className="p-8 text-center text-muted-foreground">読み込み中...</p>:query.isError?<div className="p-8 text-center"><p>{sharing?'共有するアカウントの通知を読み込めませんでした。ログイン状態を確認してください。':'通知を読み込めませんでした'}</p><Button variant="ghost" onClick={()=>void query.refetch()}>再試行</Button></div>:groups.length===0?<p className="p-10 text-center text-muted-foreground">{tab==='mention'?'メンションはありません':'通知はありません'}</p>:groups.map(group=>{
     const n=group.rows[0];const Icon=icons[n.type]??Bell;const actors=group.rows.filter((item,index,all)=>all.findIndex(a=>(a.actor_id??a.actor_username)===(item.actor_id??item.actor_username))===index);const href=notificationLink(n);
     return <Link to={href} key={group.key} data-notification-type={n.type} className="flex gap-3 border-b border-border px-4 py-4 transition-colors hover:bg-muted/30 sm:gap-4 sm:px-5">
      <Icon aria-hidden="true" className={`mt-1 h-7 w-7 shrink-0 ${colors[n.type]??'text-primary'} ${n.type==='like'?'fill-current':''}`}/>

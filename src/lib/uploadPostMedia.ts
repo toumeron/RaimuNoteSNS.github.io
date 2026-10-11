@@ -1,3 +1,4 @@
+import { randomUUID } from '@/lib/randomUUID';
 import { supabase } from './supabase';
 import { MEDIA_PREFIX, POST_MEDIA_BUCKET } from './privateMediaFetch';
 const extensions: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif' };
@@ -15,7 +16,7 @@ export async function uploadPostMedia(urls: string[], ownerId: string, resourceI
       if (!response.ok) throw new Error('添付画像を読み込めませんでした');
       const file = await response.blob(), ext = extensions[file.type];
       if (!ext || file.size > 10 * 1024 * 1024) throw new Error('画像はPNG・JPEG・WebP・GIF・AVIF形式、10MB以内にしてください');
-      const path = `${ownerId}/${resourceId}/${crypto.randomUUID()}.${ext}`;
+      const path = `${ownerId}/${resourceId}/${randomUUID()}.${ext}`;
       const {error} = await supabase.storage.from(POST_MEDIA_BUCKET).upload(path, file, {upsert: false, contentType: file.type, cacheControl: '0'});
       if (error) {
         const detail=error.message?.trim();

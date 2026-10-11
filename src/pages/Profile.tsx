@@ -1,3 +1,9 @@
+import { collectProfilePages } from '@/lib/profilePopularity';
+import type { PostWithAuthor } from '@/types';
+import { PostTabMenu, type PostTabFilter, type PostTabSort } from '@/components/profile/PostTabMenu';
+import { selectProfilePosts } from '@/lib/profilePostOptions';
+import { ExternalLikeButton } from '@/components/post/ExternalLikeButton';
+import { externalProfileReplyThread } from '@/lib/externalProfileReplies';
 import {useFollowStats} from '@/hooks/useProfile';
 import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
 import { accountReviewsKey } from '@/api/account-reviews';
@@ -6,7 +12,7 @@ import { useProfileHighlights } from '@/hooks/useProfileHighlights';
 import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
 import { ProfileVirtualizedListItem } from '@/components/profile/ProfileVirtualizedRow';
 import { openMediaViewer } from '@/components/media/openMediaViewer';
-import {getPostById} from '@/api/posts';
+import {getPostById, getProfilePopularityPosts} from '@/api/posts';
 import {getProfilePin,profilePinKey} from '@/api/profile-pins';
 import {PostLinkPreview} from '@/components/post/LinkPreviewCard';
 import { renderStickerText } from '@/components/stickers/renderStickerText';
@@ -23,7 +29,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
 import { useInView } from 'react-intersection-observer';
-import { Loader2, MoreHorizontal, ChartBarBig, Image as ImageIcon, X, MessageCircle, Plus, Upload, Link as LinkIcon, Send, Globe, Heart } from 'lucide-react';
+import { ChevronDown, Loader2, MoreHorizontal, ChartBarBig, Image as ImageIcon, X, MessageCircle, Plus, Upload, Link as LinkIcon, Send, Globe, Heart } from 'lucide-react';
 import { ProfileHeader } from '@/components/profile/ProfileHeader';
 import { PostCard } from '@/components/feed/PostCard';
 import { RepostButton } from '@/components/feed/RepostButton';
@@ -65,7 +71,6 @@ const profileTabs: Array<{ value: ProfileTabValue; label: string }> = [
 
 const PROFILE_REPLY_ITEM = 'profile-reply';
 const PROFILE_POST_ITEM = 'profile-post';
-const PROFILE_REPLY_LIMIT = 80;
 
 // data.pages が未取得の間 `?? []` を書くと毎レンダー新しい配列参照が
 // 生成され、それに依存する useMemo が無駄に再計算されてしまう。
@@ -161,6 +166,8 @@ interface ProfileThreadImageSelection {
 type ProfileThreadImageTarget = Omit<ProfileThreadImageSelection, 'url'>;
 
 interface ProfileReplyThreadComment {
+  externalPost?: import('@/types').PostWithAuthor;
+
   parentCommentId?: string | null;
   replyToUsername?: string;
   clientName?: string;
@@ -2199,6 +2206,7 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
   isBluesky = false,
   blueskyUrl = null,
   repostTarget,
+  externalPost,
 }: {
   targetType: 'post' | 'comment';
   targetId: string;
@@ -2213,6 +2221,7 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
   isBluesky?: boolean;
   blueskyUrl?: string | null;
   repostTarget?: any;
+  externalPost?: import('@/types').PostWithAuthor;
 }) {
   const { user } = useAuth();
   const inlineActionClass = 'inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full sm:px-2.5 sm:text-sm';
@@ -2220,21 +2229,10 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
 
   return (
     <div data-lime-post-actions className="profile-thread-actions mt-2 flex items-center gap-1 text-muted-foreground relative h-8 sm:mt-3 sm:h-9" onClick={(event) => event.stopPropagation()}>
-      {targetType === 'post' ? (
+      {externalPost ? <ExternalLikeButton post={externalPost}/> : targetType === 'post' ? (
         <div className="flex items-center h-full">
-          {isBluesky ? (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onReplyClick();
-              }}
-              className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full sm:px-2.5 sm:text-sm"
-            >
-              <Heart className="h-5 w-5" />
-              <span className="font-bold tabular-nums text-[15px] sm:text-sm">{(likesCount) > 0 ? formatDisplayCount(likesCount) : ''}</span>
-            </button>
+          {isBluesky && repostTarget ? (
+            <ExternalLikeButton post={normalizePost(repostTarget)}/>
           ) : (
             <LikeButton postId={targetId} liked={liked} count={likesCount} />
           )}
@@ -2245,7 +2243,7 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
         </div>
       )}
 
-      {repostTarget && <RepostButton post={targetType === 'post' ? normalizePost(repostTarget) : replyToPost(repostTarget)} mobilePresentation refreshState />}
+      {repostTarget && <RepostButton post={externalPost ?? (targetType === 'post' ? normalizePost(repostTarget) : replyToPost(repostTarget))} mobilePresentation refreshState />}
       <button
         type="button"
         onClick={(event) => {
@@ -2262,20 +2260,8 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
         )}
       </button>
 
-      {isBluesky ? (
-        <button
-          type="button"
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            onReplyClick();
-          }}
-          className={iconActionClass}
-          aria-label="リアクションを追加"
-        >
-          <Plus className="h-5 w-5" />
-        </button>
-      ) : (
+      {!isBluesky && !externalPost && (
+
         <ProfileReactionButton
           targetType={targetType}
           targetId={targetId}
@@ -2292,7 +2278,7 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
         className="shrink-0"
         shareUrlOverride={isBluesky ? blueskyUrl : null}
       /></div>}
-      {targetType === 'comment' && <ReplyShare currentUserId={user?.id ?? null} comment={{ id: targetId, postId: sharePostId, content: shareText, author: { id: sharePostAuthor?.id ?? '', username: sharePostAuthor?.username ?? '', displayName: sharePostAuthor?.displayName ?? sharePostAuthor?.display_name ?? sharePostAuthor?.username ?? 'ユーザー' } }} className={iconActionClass} />}
+      {targetType === 'comment' && <ReplyShare externalPost={externalPost} currentUserId={user?.id ?? null} comment={{ id: targetId, postId: sharePostId, content: shareText, author: { id: sharePostAuthor?.id ?? '', username: sharePostAuthor?.username ?? '', displayName: sharePostAuthor?.displayName ?? sharePostAuthor?.display_name ?? sharePostAuthor?.username ?? 'ユーザー' } }} className={iconActionClass} />}
     </div>
   );
 });
@@ -2320,7 +2306,7 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
 
   // 親ポストがBluesky由来の場合、PostCard/Feedと同じ判定ロジックを使い、
   // 本文・画像・埋め込みはこのままインラインで表示しつつ（＝外部リンクへ飛ばさず閲覧できる）、
-  // プロフィール遷移・返信・リアクションといった実際の操作だけBluesky側で行ってもらう。
+  // プロフィール遷移・返信表示・いいねもLimeNote内の共通処理で扱う。
   const isParentBluesky = parent ? isBlueskyPostLike(parent) : false;
   const parentBlueskyUrl = parent && isParentBluesky ? getBlueskyPostUrl(parent) : null;
   const parentBlueskyProfileUrl = isParentBluesky && parentAuthor?.username
@@ -2337,7 +2323,7 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
       if (parent?.id) navigate(getAppPostPath(parent.id));
       return;
     }
-    navigate(`/post/${primaryComment.postId}`);
+    navigate(primaryComment.externalPost ? getAppPostPath(primaryComment.externalPost.id) : `/post/${primaryComment.postId}`);
   };
 
   return (
@@ -2438,7 +2424,7 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
         return (
           <div
             key={comment.id}
-            onClick={(event) => { event.stopPropagation(); navigate(`/post/${comment.postId}?reply=${encodeURIComponent(comment.id)}`); }}
+            onClick={(event) => { event.stopPropagation(); navigate(comment.externalPost ? getAppPostPath(comment.externalPost.id) : `/post/${comment.postId}?reply=${encodeURIComponent(comment.id)}`); }}
             className={`${commentIndex > 0 ? 'mt-3' : ''} grid grid-cols-[44px_minmax(0,1fr)] gap-3 sm:grid-cols-[44px_minmax(0,1fr)]`}
           >
             <div className="relative flex justify-center">
@@ -2460,7 +2446,7 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
             <div className="min-w-0">
               <div className="flex items-center justify-between">
                 <ProfileThreadAuthorLine author={commentAuthor} createdAt={comment.createdAt} />
-                <DropdownMenu><DropdownMenuTrigger asChild><button type="button" aria-label="コメントのメニュー" onClick={event => event.stopPropagation()} className="p-1 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"><MoreHorizontal className="h-5 w-5" /></button></DropdownMenuTrigger><DropdownMenuContent align="end" className="w-44 rounded-xl border border-border bg-card p-1 shadow-lg"><DropdownMenuItem asChild className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted focus:bg-muted focus:text-foreground transition-colors"><button type="button" onClick={() => navigate(`/post/${comment.postId}/activity?reply=${encodeURIComponent(comment.id)}`)}><ChartBarBig className="h-4 w-4" />ポストアクティビティ</button></DropdownMenuItem></DropdownMenuContent></DropdownMenu>
+                {!comment.externalPost && <DropdownMenu><DropdownMenuTrigger asChild><button type="button" aria-label="コメントのメニュー" onClick={event => event.stopPropagation()} className="p-1 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"><MoreHorizontal className="h-5 w-5" /></button></DropdownMenuTrigger><DropdownMenuContent align="end" className="w-44 rounded-xl border border-border bg-card p-1 shadow-lg"><DropdownMenuItem asChild className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted focus:bg-muted focus:text-foreground transition-colors"><button type="button" onClick={() => navigate(`/post/${comment.postId}/activity?reply=${encodeURIComponent(comment.id)}`)}><ChartBarBig className="h-4 w-4" />ポストアクティビティ</button></DropdownMenuItem></DropdownMenuContent></DropdownMenu>}
               </div>
 
               {replyContent ? (
@@ -2490,6 +2476,8 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
 
               <ProfileThreadActionRow
                 targetType="comment"
+                externalPost={comment.externalPost}
+                replyCount={comment.externalPost?.commentsCount}
                 repostTarget={{...comment,replyToUsername:comment.replyToUsername ?? parentAuthor?.username}}
                 targetId={comment.id}
                 liked={comment.likedByMe}
@@ -2498,7 +2486,7 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
                 shareTitle={`${commentDisplayName}さんの返信`}
                 shareText={replyContent}
                 sharePostAuthor={commentAuthor}
-                onReplyClick={() => navigate(`/post/${comment.postId}?reply=${encodeURIComponent(comment.id)}`)}
+                onReplyClick={() => navigate(comment.externalPost ? getAppPostPath(comment.externalPost.id) : `/post/${comment.postId}?reply=${encodeURIComponent(comment.id)}`)}
               />
             </div>
           </div>
@@ -2556,6 +2544,8 @@ const ProfileVirtualizedMediaImage = memo(function ProfileVirtualizedMediaImage(
 
 const PROFILE_PAGE_STYLES = `
           @media (max-width: 639px) {
+            [data-lime-profile-page] { background: hsl(var(--background)); box-shadow: -16px 0 hsl(var(--background)), 16px 0 hsl(var(--background)); }
+            [data-lime-profile-tabs-header] { width: calc(100% + 32px); margin-left: -16px; }
             [data-lime-profile-tabs-header] { margin-top: 0 !important; background: hsl(var(--background)); height: 44px !important; top: calc(56px + var(--lime-profile-system-top, env(safe-area-inset-top))) !important; }
             [data-lime-profile-page] .profile-header-cover-avatar-gap { height: calc(150px + var(--lime-profile-system-top, env(safe-area-inset-top)) + var(--lime-profile-pull, 0px)); transition: height 280ms cubic-bezier(.22,.61,.36,1); }
             [data-lime-profile-tabs-backdrop] { display: none; }
@@ -2675,6 +2665,12 @@ export default function Profile() {
   const { username = '' } = useParams();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<ProfileTabValue>('posts');
+  const [postFilter, setPostFilter] = useState<PostTabFilter>('all');
+  const [postSort, setPostSort] = useState<PostTabSort>('latest');
+  const [popularVisibleCount, setPopularVisibleCount] = useState(20);
+  useEffect(() => { setPopularVisibleCount(20); }, [username, postSort, postFilter]);
+  const popularActive = activeTab === 'posts' && postSort === 'popular';
+  useEffect(() => { setPostFilter('all'); setPostSort('latest'); }, [username]);
 
   // メディア拡大用のステート
   const [failedThreadImageUrls, setFailedThreadImageUrls] = useState<string[]>([]);
@@ -2712,6 +2708,16 @@ export default function Profile() {
   });
   const isBlueskyProfile = !limeUser && Boolean(blueskyProfile);
   const user = limeUser ?? blueskyProfile;
+  const popularityQuery = useQuery<PostWithAuthor[]>({
+    queryKey: ['profile-popularity', user?.id, username, viewer?.id],
+    enabled: popularActive && !!user?.id,
+    queryFn: async ({ signal }) => isBlueskyProfile
+      ? (await collectProfilePages<any, string>(async cursor => fetchBlueskyAuthorFeed({ actor: username, cursor, limit: 100, filter: 'posts_with_replies', includeReposts: true, signal }), signal)).map(normalizePost)
+      : getProfilePopularityPosts(user!.id, signal),
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
   const userLoading = isLimeUserLoading || (!limeUser && isBlueskyProfileLoading);
   const userError = !userLoading && !user && (isLimeUserError || isBlueskyProfileError);
   const {
@@ -2723,12 +2729,12 @@ export default function Profile() {
     hasNextPage:hasExternalNextPage,
     isFetchingNextPage:isFetchingExternalNextPage,
   } = useInfiniteQuery({
-    queryKey: ['bluesky-profile-feed', username],
+    queryKey: ['bluesky-profile-feed', username, 'posts_with_replies', 'with-reposts'],
     initialPageParam:null as string|null,
-    queryFn: ({ signal,pageParam }) => fetchBlueskyAuthorFeed({ actor: username, cursor:pageParam,limit:20,signal }),
+    queryFn: ({ signal,pageParam }) => fetchBlueskyAuthorFeed({ actor: username, cursor:pageParam,limit:20,filter:'posts_with_replies',includeReposts:true,signal }),
     getNextPageParam:page=>page.cursor ?? undefined,
     select:data=>({posts:data.pages.flatMap(page=>page.posts),cursor:data.pages.at(-1)?.cursor ?? null}),
-    enabled: isBlueskyProfile,
+    enabled: isBlueskyProfile && !popularActive,
     staleTime: 1000 * 60,
   });
 
@@ -2778,10 +2784,10 @@ export default function Profile() {
   // 非表示タブの無限スクロール取得を開始しない。
   // フック自体は常に同じ順序で呼び出し、アクティブなタブだけ userId を渡す。
   // これにより初回表示で4タブ分のデータを同時に保持する必要をなくす。
-  const postsQuery = useUserPostsInfinite(!isBlueskyProfile && activeTab === 'posts' ? user?.id : undefined);
+  const postsQuery = useUserPostsInfinite(!isBlueskyProfile && activeTab === 'posts' && !popularActive ? user?.id : undefined);
   const pinQuery=useQuery({queryKey:profilePinKey(user?.id??''),queryFn:()=>getProfilePin(user!.id),enabled:!!user?.id&&!isBlueskyProfile&&activeTab==='posts'});
   const pinnedPostQuery=useQuery({queryKey:['profile-pinned-post',user?.id,pinQuery.data,viewer?.id],queryFn:()=>getPostById(pinQuery.data!),enabled:!!pinQuery.data&&!isBlueskyProfile&&activeTab==='posts'});
-  const pinnedPost=activeTab==='posts'&&pinnedPostQuery.data?.userId===user?.id?pinnedPostQuery.data:null;
+  const pinnedPost=postSort==='latest'&&activeTab==='posts'&&pinnedPostQuery.data?.userId===user?.id?pinnedPostQuery.data:null;
   const likesQuery = useUserLikesInfinite(!isBlueskyProfile && activeTab === 'likes' ? user?.id : undefined);
   const mediaQuery = useUserMediaInfinite(!isBlueskyProfile && activeTab === 'media' ? user?.id : undefined);
   const reactionsQuery = useUserReactionsInfinite(!isBlueskyProfile && activeTab === 'reactions' ? user?.id : undefined);
@@ -2807,19 +2813,9 @@ export default function Profile() {
     isError: isProfileContentError,
     refetch: refetchCurrentQuery,
   } = currentQuery;
-  const fetchNextPage=isBlueskyProfile ? fetchExternalNextPage:fetchNativeNextPage;
-  const hasNextPage=isBlueskyProfile ? hasExternalNextPage:hasNativeNextPage;
-  const isFetchingNextPage=isBlueskyProfile ? isFetchingExternalNextPage:isFetchingNativeNextPage;
-  const contentLoading = isBlueskyProfile ? isBlueskyFeedLoading : isProfileContentLoading;
-  const contentError = isBlueskyProfile ? isBlueskyFeedError : isProfileContentError;
-
+  const contentLoading = popularActive ? popularityQuery.isPending : isBlueskyProfile ? isBlueskyFeedLoading : isProfileContentLoading;
+  const contentError = popularActive ? popularityQuery.isError : isBlueskyProfile ? isBlueskyFeedError : isProfileContentError;
   const { ref, inView } = useInView();
-
-  useEffect(() => {
-    if (inView && hasNextPage && !isFetchingNextPage) {
-      fetchNextPage();
-    }
-  }, [inView, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   useEffect(() => {
     let lastScrolled = false;
@@ -2887,7 +2883,11 @@ export default function Profile() {
   const handleProfilePullRefresh = useCallback(async () => {
     const tasks: Array<Promise<any>> = [];
 
-    if (isBlueskyProfile) {
+    if (popularActive) {
+      tasks.push(popularityQuery.refetch());
+      setPopularVisibleCount(20);
+      if (!isBlueskyProfile) setProfileRepliesRefreshKey(value => value + 1);
+    } else if (isBlueskyProfile) {
       if (typeof refetchBlueskyFeed === 'function') {
         tasks.push(refetchBlueskyFeed());
       }
@@ -2905,7 +2905,7 @@ export default function Profile() {
     }
 
     await Promise.all(tasks);
-  }, [isBlueskyProfile, refetchBlueskyFeed, refetchCurrentQuery, activeTab, queryClient, user?.id]);
+  }, [popularActive, popularityQuery.refetch, isBlueskyProfile, refetchBlueskyFeed, refetchCurrentQuery, activeTab, queryClient, user?.id]);
 
   // モーダル表示中や初期ロード中はプルダウン更新を無効化する
   const isPullToRefreshEnabled = !userLoading;
@@ -2939,14 +2939,23 @@ export default function Profile() {
       try {
         const currentUserId = await getCachedCurrentUserId();
 
-        const { data: comments, error: commentsError } = await supabase
+        const loadReplies = async () => {
+          const comments: any[] = [];
+          const pageSize = 500;
+          for (let offset = 0; ; offset += pageSize) {
+            const { data, error } = await supabase
           .from('comments')
           .select('id, post_id, user_id, content, created_at, likes_count, image_urls, parent_comment_id, client_name')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false })
-          .limit(PROFILE_REPLY_LIMIT);
-
-        if (commentsError) throw commentsError;
+          .range(offset, offset + pageSize - 1);
+            if (error) throw error;
+            comments.push(...(data ?? []));
+            if (cancelled || (data?.length ?? 0) < pageSize) break;
+          }
+          return comments;
+        };
+        const comments = await loadReplies();
 
         const rows = comments || [];
         const postIds = uniqueStrings(rows.map((row: any) => row.post_id).filter(Boolean));
@@ -3168,14 +3177,14 @@ export default function Profile() {
   // props や state に依存しない純粋関数のため、ファイル先頭のモジュール
   // スコープへ移動済み（レンダーの度に関数を再生成しないための軽量化）。
 
-  const pages = isBlueskyProfile ? [blueskyFeed?.posts ?? EMPTY_ARRAY] : profileData?.pages ?? EMPTY_ARRAY;
+  const pages = popularActive ? [popularityQuery.data ?? EMPTY_ARRAY] : isBlueskyProfile ? [blueskyFeed?.posts ?? EMPTY_ARRAY] : profileData?.pages ?? EMPTY_ARRAY;
   const flatPageItems = useMemo(
     () => pages.flatMap((page: any) => (Array.isArray(page) ? page : [])),
     [pages]
   );
 
   // データのフラット化
-  const items: ProfileFeedItem[] = useMemo(() => {
+  const rankedItems: ProfileFeedItem[] = useMemo(() => {
     // Reviews have their own data source. During profile navigation the tab can
     // remain selected for one render before the disabled-tab effect resets it.
     if (activeTab === 'reviews') return [];
@@ -3221,24 +3230,30 @@ export default function Profile() {
 
     if (activeTab === 'highlights') return uniquePostsById(flatPageItems);
 
-    const ownPosts: ProfilePostItem[] = uniquePostsById(flatPageItems).map((post: any) => ({
+    const ownPosts: ProfilePostItem[] = uniquePostsById(flatPageItems).filter((post: any) => !isBlueskyProfile || !post.externalReplyToId || post.profileRepostedBy).map((post: any) => ({
       __profileItemType: PROFILE_POST_ITEM,
       sortAt: post.profileRepostedAt ?? post.createdAt ?? post.created_at ?? new Date().toISOString(),
       post,
     }));
 
-    const replies: ProfileReplyItem[] = profileReplies.map((reply) => ({
+    const replyThreads = isBlueskyProfile ? uniquePostsById(flatPageItems).filter((post: any) => post.externalReplyToId && !post.profileRepostedBy).map((post: any) => externalProfileReplyThread(normalizePost(post))) : profileReplies;
+    const replies: ProfileReplyItem[] = replyThreads.map((reply): ProfileReplyItem => ({
       __profileItemType: PROFILE_REPLY_ITEM,
       sortAt: reply.createdAt,
       reply,
     }));
 
-    return [...ownPosts, ...replies].sort((a, b) => {
-      const aTime = new Date(a.sortAt || 0).getTime();
-      const bTime = new Date(b.sortAt || 0).getTime();
-      return bTime - aTime;
-    });
-  }, [activeTab, flatPageItems, profileReplies]);
+    return selectProfilePosts([...ownPosts, ...replies], postFilter, postSort);
+  }, [activeTab, flatPageItems, profileReplies, isBlueskyProfile, postFilter, postSort]);
+
+  const items = popularActive ? rankedItems.slice(0, popularVisibleCount) : rankedItems;
+  const revealPopularPage = useCallback(() => { setPopularVisibleCount(count => count + 20); }, []);
+  const fetchNextPage = popularActive ? revealPopularPage : isBlueskyProfile ? fetchExternalNextPage : fetchNativeNextPage;
+  const hasNextPage = popularActive ? popularVisibleCount < rankedItems.length : isBlueskyProfile ? hasExternalNextPage : hasNativeNextPage;
+  const isFetchingNextPage = popularActive ? false : isBlueskyProfile ? isFetchingExternalNextPage : isFetchingNativeNextPage;
+  useEffect(() => {
+    if (inView && !contentLoading && !contentError && hasNextPage && !isFetchingNextPage) fetchNextPage();
+  }, [inView, contentLoading, contentError, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const handleThreadImageError = useCallback((url: string) => {
     setFailedThreadImageUrls((prev) => (prev.includes(url) ? prev : [...prev, url]));
@@ -3394,6 +3409,18 @@ export default function Profile() {
             />
 
             {visibleProfileTabs.map((tab) => (
+              tab.value === 'posts' && activeTab === 'posts' ? <PostTabMenu key={tab.value} filter={postFilter} sort={postSort} onFilterChange={setPostFilter} onSortChange={setPostSort}>
+              <TabsTrigger
+                key={tab.value}
+                value={tab.value}
+                className={`profile-tabs-trigger relative h-full min-h-15 min-w-0 rounded-none border-0 bg-transparent px-0 text-[14px] leading-none shadow-none outline-none transition-none duration-0 hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=inactive]:bg-transparent min-[390px]:text-[12px] sm:text-[14px] ${hasExtraTabs ? 'flex-1 shrink-0 min-w-max px-3' : ''}`}
+              >
+                <span data-lime-tab-label className="whitespace-nowrap">
+                  {tab.value === 'posts' ? (postFilter === 'all' ? 'すべて' : 'ポスト') : tab.label}
+                </span>
+              {tab.value === 'posts' && <ChevronDown className="ml-1 h-4 w-4 shrink-0" aria-hidden="true" />}
+              </TabsTrigger>
+              </PostTabMenu> : (
               <TabsTrigger
                 key={tab.value}
                 value={tab.value}
@@ -3403,11 +3430,22 @@ export default function Profile() {
                   {tab.label}
                 </span>
               </TabsTrigger>
+              )
             ))}
           </TabsList>
 
           <TabsList data-lime-profile-desktop-tabs style={{ gridTemplateColumns: `repeat(${visibleProfileTabs.length}, minmax(0, 1fr))` }} className="hidden w-full grid-cols-4 rounded-2xl bg-muted/50 p-1 sm:grid">
             {visibleProfileTabs.map((tab) => (
+              tab.value === 'posts' && activeTab === 'posts' ? <PostTabMenu key={tab.value} filter={postFilter} sort={postSort} onFilterChange={setPostFilter} onSortChange={setPostSort}>
+              <TabsTrigger
+                key={`desktop-${tab.value}`}
+                value={tab.value}
+                className="rounded-xl font-bold transition-all"
+              >
+                <span data-lime-tab-label>{tab.value === 'posts' ? (postFilter === 'all' ? 'すべて' : 'ポスト') : tab.label}</span>
+              {tab.value === 'posts' && <ChevronDown className="ml-1 h-4 w-4 shrink-0" aria-hidden="true" />}
+              </TabsTrigger>
+              </PostTabMenu> : (
               <TabsTrigger
                 key={`desktop-${tab.value}`}
                 value={tab.value}
@@ -3415,6 +3453,7 @@ export default function Profile() {
               >
                 {tab.label}
               </TabsTrigger>
+              )
             ))}
           </TabsList>
         </div>
@@ -3482,7 +3521,7 @@ export default function Profile() {
                     <ProfileVirtualizedListItem rowKey={rowKey} heightCache={rowHeightCacheRef}>
                       <ProfileReplyThreadCard
                         thread={item.reply}
-                        onImageClick={selection => openMediaViewer({ url: selection.url, postId: selection.targetType === 'comment' ? `reply:${selection.targetId}` : selection.postId })}
+                        onImageClick={selection => openMediaViewer({ url: selection.url, postId: selection.targetType === 'comment' ? (selection.targetId.startsWith('bsky:') || selection.targetId.startsWith('misskey:') ? selection.targetId : `reply:${selection.targetId}`) : selection.targetId })}
                         onImageError={handleThreadImageError}
                       />
                     </ProfileVirtualizedListItem>

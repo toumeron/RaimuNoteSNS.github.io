@@ -1,0 +1,16 @@
+.lime-friend-profile-overlay{position:fixed;inset:0;z-index:9000;display:grid;place-items:center;background:#0008;}
+.lime-friend-profile{position:relative;isolation:isolate;width:min(540px,100%);height:min(900px,100dvh);overflow:auto;color:white;background:linear-gradient(145deg,#a04570,#343146);border-radius:28px;display:flex;flex-direction:column;padding:24px;}
+.friend-profile-cover,.friend-profile-shade{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2;}
+.friend-profile-shade{z-index:-1;background:linear-gradient(#0002,#0001 35%,#0007);}
+.friend-profile-top{display:flex;justify-content:flex-end;gap:20px;}
+.lime-friend-profile button{color:inherit;background:transparent;border:0;cursor:pointer;}
+.friend-profile-top button{padding:6px;}.friend-profile-top svg{width:28px;height:28px;}
+.friend-profile-person{margin-top:auto;text-align:center;padding:90px 0 30px;text-shadow:0 1px 4px #0006;}
+.friend-profile-avatar{width:160px;height:160px;object-fit:cover;border-radius:50%;margin:auto;}
+.friend-profile-person h2{font-size:30px;margin:16px 0 8px;overflow-wrap:anywhere;}.friend-profile-birthday{display:flex;justify-content:center;align-items:center;gap:8px;}
+.friend-profile-description{font-size:15px;margin:12px auto;max-width:360px;}
+.friend-profile-actions{display:flex;justify-content:space-evenly;margin-top:auto;padding:36px 0 12px;}
+.friend-profile-actions button{display:flex;flex-direction:column;align-items:center;gap:16px;font-size:18px;padding:12px;}.friend-profile-actions svg{width:30px;height:30px;}
+.friend-profile-editor{padding:16px;border-radius:16px;background:#0008;display:grid;gap:12px;}.friend-profile-editor button,.friend-profile-editor label{display:flex;align-items:center;justify-content:space-between;gap:12px;}.friend-profile-editor input{color:white;color-scheme:dark;background:transparent;}
+.friend-profile-error{background:#000a;padding:12px;border-radius:12px;}.lime-friend-profile button:focus-visible{outline:2px solid white;outline-offset:3px;border-radius:8px;}
+@media(max-width:639px){.lime-friend-profile{width:100%;height:100dvh;border-radius:0;padding:calc(16px + env(safe-area-inset-top)) 20px calc(16px + env(safe-area-inset-bottom));}}

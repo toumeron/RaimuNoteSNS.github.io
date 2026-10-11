@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('./supabase', () => ({ supabase: { auth: { getSession: vi.fn() } } }));
+import { JAPANESE_MALE_VOICE_ID } from '../../supabase/functions/_shared/aiVoice';
 import { supabase } from './supabase';
 import { Speaker, splitForSpeech, synthesizeSpeech, CALM_FEMALE_VOICE_ID } from './aiSpeech';
 
@@ -44,9 +45,16 @@ describe('Fish AI speech', () => {
     expect(request.headers.Authorization).toBe('Bearer test-token');
     expect(JSON.parse(request.body)).toMatchObject({ text: 'こんにちは', rate: 1.2, referenceId: 'a'.repeat(32) });
   });
-  it('explicitly selects the calm female voice even for a male character', async () => {
+  it('selects the male voice for a male friend', async () => {
     await synthesizeSpeech('こんにちは', { ...opts, gender: 'male' }, new AbortController().signal);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).referenceId).toBe(JAPANESE_MALE_VOICE_ID);
+  });
+  it('uses female for female friends and keeps an explicitly selected voice', async () => {
+    await synthesizeSpeech('こんにちは', { ...opts, gender: 'female' }, new AbortController().signal);
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).referenceId).toBe(CALM_FEMALE_VOICE_ID);
+    fetchMock.mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3]), { headers: { 'Content-Type': 'audio/mpeg' } }));
+    await synthesizeSpeech('こんにちは', { ...opts, gender: 'male', voiceURI: 'a'.repeat(32) }, new AbortController().signal);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).referenceId).toBe('a'.repeat(32));
   });
   it('starts streaming PCM before the response finishes and preserves sample boundaries', async () => {
     let stream!: ReadableStreamDefaultController<Uint8Array>;

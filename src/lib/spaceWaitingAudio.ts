@@ -10,7 +10,7 @@ export class SpaceWaitingAudio {
 
   constructor(private onBlocked: () => void) {
     // A short synthesized silence unlocks this element in the tap. The large
-    // oscillator score is loaded only after entering a space, never at startup.
+    // keyboard score is loaded only after entering a space, never at startup.
     const silence = new ArrayBuffer(44 + 8000), header = new DataView(silence);
     const write = (offset: number, value: string) => [...value].forEach((char, index) => header.setUint8(offset + index, char.charCodeAt(0)));
     write(0, 'RIFF'); header.setUint32(4, silence.byteLength - 8, true); write(8, 'WAVE'); write(12, 'fmt ');

@@ -1,3 +1,4 @@
+import { requestModelWithFailover } from '../_shared/modelFailover.ts';
 import {boundedChatContext} from '../_shared/chatContext.ts';
 import { authenticate, quota, boundedBody } from '../_shared/security.ts';
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2"
@@ -801,14 +802,10 @@ function countChars(items: ClientContent[]) {
 }
 
 async function callGroqJson(groqApiKey: string, body: unknown): Promise<GroqChatResponse> {
-  const response = await fetch(GROQ_CHAT_URL, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${groqApiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(isRecord(body) ? {...body, reasoning_effort: body.model === ADVANCED_MODEL ? 'medium' : 'low'} : body),
-  })
+  const response = await requestModelWithFailover(groqApiKey,
+    isRecord(body) ? {...body, reasoning_effort: body.model === ADVANCED_MODEL ? 'medium' : 'low'} : {},
+    { token: Deno.env.get('CLOUDFLARE_API_TOKEN'), accountId: Deno.env.get('CLOUDFLARE_ACCOUNT_ID'), model: Deno.env.get('CLOUDFLARE_FALLBACK_MODEL') },
+  )
 
   if (!response.ok) {
     const detail = await response.text()
@@ -3202,14 +3199,10 @@ async function streamGroq(
   body: unknown,
   controller: ReadableStreamDefaultController<Uint8Array>,
 ) {
-  const response = await fetch(GROQ_CHAT_URL, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${groqApiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(isRecord(body) ? {...body, reasoning_effort: body.model === ADVANCED_MODEL ? 'medium' : 'low'} : body),
-  })
+  const response = await requestModelWithFailover(groqApiKey,
+    isRecord(body) ? {...body, reasoning_effort: body.model === ADVANCED_MODEL ? 'medium' : 'low'} : {},
+    { token: Deno.env.get('CLOUDFLARE_API_TOKEN'), accountId: Deno.env.get('CLOUDFLARE_ACCOUNT_ID'), model: Deno.env.get('CLOUDFLARE_FALLBACK_MODEL') },
+  )
 
   if (!response.ok) {
     const detail = await response.text()

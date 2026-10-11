@@ -1,0 +1,40 @@
+export const CLOUDFLARE_FALLBACK_MODEL = '@cf/qwen/qwen3-30b-a3b-fp8';
+export type CloudflareAIConfig = { token?: string; accountId?: string; model?: string };
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+/** Credentials stay on the server. Cloudflare is called only after a failed Groq response. */
+export async function requestModelWithFailover(groqKey: string, input: Record<string, unknown>, cloudflare: CloudflareAIConfig, signal?: AbortSignal): Promise<Response> {
+  const run = async (url: string, token: string, body: Record<string, unknown>) => {
+    const timeout = AbortSignal.timeout(45000);
+    const response = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+    if (!response.ok) { await response.body?.cancel(); throw new Error(`AI provider HTTP ${response.status}`); }
+    // Stage the response before publishing: a broken primary stream cannot mix with the fallback.
+    const text = await response.text();
+    if (text.length > 2 * 1024 * 1024) throw new Error('AI response exceeded limit');
+    if (body.stream) {
+      let complete = false, answered = false;
+      for (const line of text.split('\n')) {
+        if (!line.trim().startsWith('data:')) continue;
+        const data = line.trim().slice(5).trim();
+        if (data === '[DONE]') { complete = true; continue; }
+        let event; try { event = JSON.parse(data); } catch { throw new Error('Invalid AI stream'); }
+        if (event.error) throw new Error('AI stream error');
+        answered ||= Boolean(event.choices?.some((choice: {delta?: {content?: string; tool_calls?: unknown[]}}) => choice.delta?.content || choice.delta?.tool_calls?.length));
+      }
+      if (!complete || !answered) throw new Error('Incomplete AI stream');
+    } else {
+      const result = JSON.parse(text);
+      if (result.error || !result.choices?.length) throw new Error('Invalid AI completion');
+    }
+    return new Response(text, { headers: { 'Content-Type': body.stream ? 'text/event-stream' : 'application/json' } });
+  };
+  try {
+    return await run(GROQ_URL, groqKey, input);
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (!cloudflare.token || !cloudflare.accountId || !/^[a-f0-9]{32}$/i.test(cloudflare.accountId)) throw error;
+    const body: Record<string, unknown> = { ...input, model: cloudflare.model || CLOUDFLARE_FALLBACK_MODEL };
+    delete body.reasoning_effort;
+    if (body.max_completion_tokens !== undefined) { body.max_tokens = body.max_completion_tokens; delete body.max_completion_tokens; }
+    return await run(`https://api.cloudflare.com/client/v4/accounts/${cloudflare.accountId}/ai/v1/chat/completions`, cloudflare.token, body);
+  }
+}

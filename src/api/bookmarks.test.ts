@@ -43,7 +43,17 @@ it('loads saved native originals with current permissions and does not show revo
 });
 it('keeps pagination moving even when all saved originals in a page are unavailable',async()=>{
   state.rows=[{post_id:'removed'},{post_id:'restricted'},{post_id:'visible'}];state.lookup.mockResolvedValue(null);
-  expect(await getBookmarkPage('viewer',0,2)).toEqual({posts:[],unavailable:2,next:2});
+  expect(await getBookmarkPage('viewer',0,2)).toEqual({entries:[],posts:[],unavailable:2,next:2});
+});
+it('uses the bookmark owner credentials for native original reads without writing',async()=>{
+ const q:any={select:()=>q,eq:()=>q,order:()=>q,range:async()=>({data:[{id:'saved',post_id:'private',created_at:'2026-10-11'}],error:null})};
+ const client:any={from:vi.fn(()=>q)};
+ const context={client,userId:'other'};
+ const page=await getBookmarkPage('other',0,20,context);
+ expect(client.from).toHaveBeenCalledWith('bookmarks');
+ expect(state.lookup).toHaveBeenCalledWith('private',context);
+ expect(page.entries[0]).toMatchObject({savedAt:'2026-10-11',bookmarkId:'saved'});
+ expect(state.writes).toEqual([]);
 });
 it('loads bookmark state beyond the first server page',async()=>{
   state.rows=Array.from({length:1001},(_,i)=>({post_id:`post-${i}`}));expect(await getBookmarkIds('viewer')).toHaveLength(1001);

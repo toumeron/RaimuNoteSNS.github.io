@@ -548,6 +548,11 @@ export type BlueskyMappedPost = {
   commentsCount: number;
   isBot: boolean;
   is_bot?: boolean;
+  externalReplyToId?: string;
+  externalReplyToUsername?: string;
+  externalReplyParent?: import('@/types').PostWithAuthor | null;
+  profileRepostedBy?: string;
+  profileRepostedAt?: string;
   // いいねレコード作成(app.bsky.feed.like)に必須のフィールド。
   // getPostThread等から取得できない場合は空文字になる。
   cid: string;
@@ -621,7 +626,8 @@ type BlueskyEmbed = {
 };
 
 type BlueskyFeedItem = {
-  reason?: { $type?: string };
+  reply?: { parent?: BlueskyFeedItem['post'] };
+  reason?: { $type?: string; indexedAt?: string; by?: { did?: string } };
   post?: {
     uri?: string;
     cid?: string;
@@ -637,6 +643,7 @@ type BlueskyFeedItem = {
       text?: string;
       langs?: string[];
       createdAt?: string;
+      reply?: { parent?: { uri?: string }; root?: { uri?: string } };
       facets?: Array<{
         index?: { byteStart?: number; byteEnd?: number };
         features?: Array<{ $type?: string; uri?: string }>;
@@ -666,6 +673,7 @@ type BlueskyActorProfile = {
 type BlueskyThreadView = {
   post?: BlueskyFeedItem['post'];
   replies?: BlueskyThreadView[];
+  parent?: BlueskyThreadView;
 };
 
 const uniqueStrings = (values: Array<string | null | undefined>) =>
@@ -884,6 +892,11 @@ export function mapBlueskyFeedItemToPost(item: BlueskyFeedItem): BlueskyMappedPo
   }
 
   return {
+    ...(post.record?.reply?.parent?.uri ? { externalReplyToId: `bsky:${post.record.reply.parent.uri}` } : {}),
+    ...(item.reply?.parent?.uri && item.reply.parent.author ? (() => {
+      const parent = mapBlueskyFeedItemToPost({ post: item.reply!.parent });
+      return { externalReplyToId: `bsky:${item.reply!.parent!.uri}`, externalReplyToUsername: parent?.author.username, externalReplyParent: parent ? { repostsCount: 0, repostedByMe: false, ...parent, author: { coverUrl: '', ...parent.author } } : null };
+    })() : {}),
     id: `bsky:${post.uri}`,
     mapLocation: extractPostMapLocation([contentFromFacets, externalUri].filter(Boolean).join('\n')),
     userId: post.author.did,
@@ -951,7 +964,7 @@ export async function fetchBlueskyPostThread(postId: string, signal?: AbortSigna
   const uri = getBlueskyUriFromPostId(postId);
   if (!uri) return { post: null, replies: [] };
 
-  const params = new URLSearchParams({ uri, depth: '1' });
+  const params = new URLSearchParams({ uri, depth: '6' });
   const response = await fetch(
     `${BSKY_PUBLIC_API}/app.bsky.feed.getPostThread?${params.toString()}`,
     { method: 'GET', headers: { Accept: 'application/json' }, signal },
@@ -963,11 +976,22 @@ export async function fetchBlueskyPostThread(postId: string, signal?: AbortSigna
 
   const payload = (await response.json()) as { thread?: BlueskyThreadView };
   const thread = payload.thread;
+  const replies: BlueskyMappedPost[] = [];
+  const collect = (nodes: BlueskyThreadView[], parent: BlueskyThreadView['post'], depth: number) => {
+    if (depth > 6) return;
+    for (const node of nodes) {
+      // An unavailable/private ancestor must not expose its descendants.
+      if (!node.post) continue;
+      const reply = mapBlueskyFeedItemToPost({ post: node.post, reply: { parent } });
+      if (!reply) continue;
+      replies.push(reply);
+      collect(node.replies ?? [], node.post, depth + 1);
+    }
+  };
+  collect(thread?.replies ?? [], thread?.post, 1);
   return {
-    post: thread?.post ? mapBlueskyFeedItemToPost({ post: thread.post }) : null,
-    replies: (thread?.replies || [])
-      .map((reply) => reply.post ? mapBlueskyFeedItemToPost({ post: reply.post }) : null)
-      .filter((reply): reply is BlueskyMappedPost => Boolean(reply)),
+    post: thread?.post ? mapBlueskyFeedItemToPost({ post: thread.post, reply: { parent: thread.parent?.post } }) : null,
+    replies,
   };
 }
 
@@ -1139,6 +1163,7 @@ export async function fetchBlueskyAuthorFeed(options?: {
   limit?: number;
   filter?: 'posts_no_replies' | 'posts_with_replies' | 'posts_and_author_threads' | 'posts_with_media';
   signal?: AbortSignal;
+  includeReposts?: boolean;
 }): Promise<BlueskyAuthorFeedPage> {
   if (options?.actor && isMisskeyActor(options.actor)) return misskeyFeed(options);
   const actor = options?.actor || BSKY_AUTHOR_HANDLE;
@@ -1173,7 +1198,12 @@ export async function fetchBlueskyAuthorFeed(options?: {
   };
 
   const posts = (payload.feed || [])
-    .map((item) => mapBlueskyFeedItemToPost(item))
+    .map((item) => {
+      if (!options?.includeReposts || !item.reason) return mapBlueskyFeedItemToPost(item);
+      if (item.reason.$type !== 'app.bsky.feed.defs#reasonRepost') return null;
+      const post = mapBlueskyFeedItemToPost({ ...item, reason: undefined });
+      return post ? { ...post, profileRepostedBy: item.reason.by?.did ?? actor, profileRepostedAt: item.reason.indexedAt ?? post.createdAt } : null;
+    })
     .filter((post): post is BlueskyMappedPost => Boolean(post));
 
   return {

@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { CALM_FEMALE_VOICE_ID, PCM_SAMPLE_RATE } from '../../supabase/functions/_shared/aiVoice';
+import { CALM_FEMALE_VOICE_ID, PCM_SAMPLE_RATE, resolveVoiceId } from '../../supabase/functions/_shared/aiVoice';
 export { CALM_FEMALE_VOICE_ID, CALM_FEMALE_VOICE_NAME } from '../../supabase/functions/_shared/aiVoice';
 
 export type VoiceOpts = {
@@ -58,7 +58,7 @@ export async function synthesizeSpeech(text: string, opts: VoiceOpts, signal: Ab
     const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/synthesize-speech`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${session.access_token}`, apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, rate: opts.rate, referenceId: opts.voiceURI || CALM_FEMALE_VOICE_ID, format: onPcm ? 'pcm' : 'mp3' }),
+      body: JSON.stringify({ text, rate: opts.rate, referenceId: resolveVoiceId(opts), format: onPcm ? 'pcm' : 'mp3' }),
       signal: requestController.signal,
     });
     if (!response.ok) {

@@ -63,6 +63,17 @@ beforeEach(() => { db.count = 7; db.error = null; db.handlers = []; db.statuses 
 afterEach(cleanup);
 
 describe('live like counts without UI changes', () => {
+  it('mounts and subscribes when randomUUID is unavailable on LAN HTTP', async () => {
+    const randomBytes = globalThis.crypto.getRandomValues.bind(globalThis.crypto);
+    vi.stubGlobal('crypto', { getRandomValues: randomBytes });
+    try {
+      mount();
+      await expectCount(7);
+      expect(db.handlers.some(handler => handler.table === 'likes')).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
   it('fetches actual count on mount and updates feed cache', async () => {
     const { client } = mount();
     await expectCount(7);

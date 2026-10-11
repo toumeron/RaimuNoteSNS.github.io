@@ -1,3 +1,4 @@
+import { randomUUID } from '@/lib/randomUUID';
 import {useChatBackground} from '@/lib/chatBackground';
 import {ChatBackgroundDialog} from '@/components/chat/ChatBackgroundDialog';
 import {readFriendPhoto} from '../../supabase/functions/_shared/friendImages';
@@ -126,7 +127,7 @@ export default function DirectMessages(){
  const pickPeer=(chosen:DirectPeer)=>void run(async()=>{const id=await openDirectConversation(chosen.id);setDraftPeer(chosen);setNewChat(false);setPeerSearch('');setSettings(false);navigate(`/messages/${id}`);void client.invalidateQueries({queryKey:['direct-conversation',id]});});
  const attachImages=(chosen:File[])=>{if(busy||!canSend||!chosen.length)return;if(files.length+chosen.length>4){setError('画像は4枚まで添付できます');}else if(chosen.some(file=>!['image/jpeg','image/png','image/webp'].includes(file.type)||file.size>10485760)){setError('画像はJPEG・PNG・WebP形式で、1枚10MB以下にしてください');}else{setError('');setFiles(current=>[...current,...chosen]);}};
  const send=()=>{if(!peer||!canSend||busy||(!content.trim()&&!files.length))return;const recipient=peer;const currentId=conversationId;const body=content.trim();const attachments=files;void run(async()=>{
-  const id=currentId??await openDirectConversation(recipient.id);const paths=await uploadDirectMedia(id,user!.id,attachments);const messageId=crypto.randomUUID();
+  const id=currentId??await openDirectConversation(recipient.id);const paths=await uploadDirectMedia(id,user!.id,attachments);const messageId=randomUUID();
   try{if(replyTarget)await sendDirectReply(replyTarget.id,body,paths,messageId);else if(group)await sendDirectGroupMessage(id,body,paths,messageId);else await sendDirectMessage(recipient.id,body,paths);}catch(e){await discardDirectMedia(paths);throw e;}
   if(currentId===selectedConversation.current){setContent('');setFiles([]);setReplyTarget(null);}nearBottom.current=true;if(!currentId)navigate(`/messages/${id}`);
   await Promise.all([client.invalidateQueries({queryKey:directKeys.inbox}),client.invalidateQueries({queryKey:directKeys.messages(id)}),client.invalidateQueries({queryKey:['direct-conversation',id]})]);

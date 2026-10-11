@@ -1,3 +1,4 @@
+import { randomUUID } from '@/lib/randomUUID';
 import {refreshNotificationBadge} from '@/lib/notificationBadge';
 import {dismissNotificationToasts} from '@/lib/notificationToast';
 import {supabase} from '@/lib/supabase';
@@ -9,7 +10,7 @@ export async function getDirectInbox():Promise<DirectConversation[]>{const {data
 export async function getDirectPreferences():Promise<'everyone'|'none'>{const {data,error}=await supabase.rpc('get_dm_preferences');if(error)throw error;return data;}
 export async function setDirectPreferences(value:'everyone'|'none'){const {error}=await supabase.rpc('set_dm_preferences',{value});if(error)throw error;}
 export async function openDirectConversation(userId:string):Promise<string>{const {data,error}=await supabase.rpc('open_direct_conversation',{target_user:userId});if(error)throw error;return data;}
-export async function sendDirectMessage(peerId:string,content:string,attachments:string[]=[],messageId=crypto.randomUUID()):Promise<string>{const {data,error}=await supabase.rpc('send_direct_message',{target_user:peerId,body:content,media:attachments,message_id:messageId});if(error)throw error;return data;}
+export async function sendDirectMessage(peerId:string,content:string,attachments:string[]=[],messageId=randomUUID()):Promise<string>{const {data,error}=await supabase.rpc('send_direct_message',{target_user:peerId,body:content,media:attachments,message_id:messageId});if(error)throw error;return data;}
 export async function respondDirectRequest(id:string,accept:boolean){const {error}=await supabase.rpc('respond_direct_request',{target:id,accept_request:accept});if(error)throw error;}
 export async function readDirectConversation(id:string,throughTime:string){const {error}=await supabase.rpc('read_direct_conversation',{target:id,through_time:throughTime});if(error)throw error;const {data:notifications}=await supabase.from('notifications').select('id,user_id').eq('conversation_id',id).eq('is_read',true).limit(1000);if(notifications?.length){const ids=notifications.map(n=>n.id);dismissNotificationToasts(ids);await refreshNotificationBadge(notifications[0].user_id,ids).catch(()=>{});}}
 export async function getDirectMessages(id:string,before?:{created_at:string;id:string}):Promise<DirectMessage[]>{
@@ -57,7 +58,7 @@ export async function addDirectGroupMembers(id:string,people:string[]){const {er
 export async function manageDirectGroupMember(id:string,person:string,action:'approve'|'reject'|'admin'|'remove'){const {error}=await supabase.rpc('manage_group_direct_member',{target:id,person,action});if(error)throw error;}
 export async function muteDirectGroup(id:string,value:boolean){const {error}=await supabase.rpc('set_group_direct_muted',{target:id,value});if(error)throw error;}
 export async function setDirectGroupInvite(id:string,enabled:boolean):Promise<string|null>{const {data,error}=await supabase.rpc('set_group_direct_invite',{target:id,enabled});if(error)throw error;return data;}
-export async function sendDirectGroupMessage(id:string,body:string,media:string[]=[],messageId=crypto.randomUUID()){const {error}=await supabase.rpc('send_group_direct_message',{target:id,body,media,message_id:messageId});if(error)throw error;}
+export async function sendDirectGroupMessage(id:string,body:string,media:string[]=[],messageId=randomUUID()){const {error}=await supabase.rpc('send_group_direct_message',{target:id,body,media,message_id:messageId});if(error)throw error;}
 export async function getDirectGroupInvitation(token:string):Promise<{name:string;avatarUrl:string;memberCount:number}|null>{const {data,error}=await supabase.rpc('get_group_direct_invitation',{token});if(error)throw error;return data;}
 export async function requestDirectGroupJoin(token:string):Promise<string>{const {data,error}=await supabase.rpc('request_group_direct_join',{token});if(error)throw error;return data;}
 

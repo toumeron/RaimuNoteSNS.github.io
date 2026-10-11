@@ -1,3 +1,4 @@
+import type { PostWithAuthor } from '@/types';
 import '@/components/post/post-actions.css';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -11,7 +12,7 @@ interface SharedReply { id: string; postId: string; content: string; author: { i
 interface LimeDropTarget { id: string; username: string; displayName: string; avatarUrl: string }
 
 // Keep the PostCard sharing choices and recipient rules for a reply's own URL.
-export function ReplyShare({ comment, currentUserId, className = '' }: { comment: SharedReply; currentUserId: string | null; className?: string }) {
+export function ReplyShare({ comment, currentUserId, externalPost, className = '' }: { comment: SharedReply; currentUserId: string | null; className?: string; externalPost?: PostWithAuthor }) {
   const [showShareMenu, setShowShareMenu] = useState(false);
   const [shareMenuPosition, setShareMenuPosition] = useState<{ top: number; right: number } | null>(null);
   const [shareFeedback, setShareFeedback] = useState<string | null>(null);
@@ -27,7 +28,7 @@ export function ReplyShare({ comment, currentUserId, className = '' }: { comment
     const height = shareMenuRef.current.getBoundingClientRect().height;
     setShareMenuPosition(position => position && { ...position, top: Math.max(8, Math.min(position.top, window.innerHeight - height - 8)) });
   }, [showShareMenu]);
-  const getPostShareUrl = () => new URL(commentThreadUrl(comment.postId, comment.id).slice(1), new URL(import.meta.env.BASE_URL, window.location.origin)).href;
+  const getPostShareUrl = () => new URL((externalPost ? `/post/${encodeURIComponent(externalPost.id)}` : commentThreadUrl(comment.postId, comment.id)).slice(1), new URL(import.meta.env.BASE_URL, window.location.origin)).href;
   const getPostShareText = () => {
     const raw = comment.content.replace(/\s+/g, ' ').trim();
     return raw ? `${comment.author.displayName}さんの返信: ${raw.length > 120 ? `${raw.slice(0, 120)}...` : raw}` : `${comment.author.displayName}さんの返信`;
@@ -312,7 +313,7 @@ export function ReplyShare({ comment, currentUserId, className = '' }: { comment
 
 
   return <>
-    <div className="ml-auto inline-flex shrink-0 items-center"><BookmarkButton post={{id:`reply:${comment.id}`}} className={className} /><button type="button" onClick={handleShareButtonClick} aria-label="返信を共有" className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-accent ${className}`}><Upload className="h-5 w-5" /></button></div>
+    <div className="ml-auto inline-flex shrink-0 items-center"><BookmarkButton post={externalPost ?? {id:`reply:${comment.id}`}} className={className} /><button type="button" onClick={handleShareButtonClick} aria-label="返信を共有" className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-accent ${className}`}><Upload className="h-5 w-5" /></button></div>
                 {showShareMenu && typeof document !== 'undefined' && createPortal(
                   <>
                     <div

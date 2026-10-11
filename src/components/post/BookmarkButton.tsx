@@ -21,7 +21,7 @@ export function BookmarkButton({ post, className }: { post: BookmarkTarget; clas
     mutationKey,
     mutationFn: (next: boolean) => setBookmark(post, next, user!.id),
     onMutate: async next => { await client.cancelQueries({ queryKey: key }); const previous = client.getQueryData<string[]>(key)?.includes(post.id) ?? false; change(next); return { previous, key, postId: post.id }; },
-    onSuccess: (_data, next, context) => { toast.success(next ? 'ブックマークに追加しました' : 'ブックマークを解除しました'); client.invalidateQueries({ queryKey: ['bookmarks', 'pages', context?.key[2]] }); },
+    onSuccess: (_data, next, context) => { toast.success(next ? 'ブックマークに追加しました' : 'ブックマークを解除しました'); client.invalidateQueries({ queryKey: ['bookmarks', 'pages', context?.key[2]] }); client.invalidateQueries({ queryKey: ['bookmarks', 'shared'] }); },
     onError: (_error, _next, context) => { if (context) client.setQueryData<string[]>(context.key, old => context.previous ? [...new Set([...(old ?? []), context.postId])] : (old ?? []).filter(id => id !== context.postId)); toast.error('ブックマークの更新に失敗しました'); },
   });
   return <button type="button" aria-label={saved ? 'ブックマークを解除' : 'ブックマークに追加'} aria-pressed={saved} disabled={!!offline || pending || (!!user && isPending)} data-lime-bookmark-button className={cn('inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full p-1.5 text-muted-foreground transition-colors hover:text-primary disabled:opacity-50', saved && 'text-primary', className)} onClick={event => {

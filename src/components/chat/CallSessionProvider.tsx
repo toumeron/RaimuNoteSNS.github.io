@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 import { microphoneErrorMessage, requestMicrophonePermission } from '@/lib/microphone';
 
 type CallSession = {
-  start: (render: (close: () => void) => ReactNode) => void;
+  start: (render: (close: () => void) => ReactNode) => Promise<boolean>;
   isActive: () => boolean;
 };
 const CallSessionContext = createContext<CallSession | null>(null);
@@ -22,17 +22,19 @@ export function CallSessionProvider({ children }: { children: ReactNode }) {
     active.current = false;
     setCall(null);
   }, []);
-  const isActive = useCallback(() => active.current, []);
+  const isActive = useCallback(() => active.current || pending.current, []);
   const start = useCallback((render: (close: () => void) => ReactNode) => {
-    if (pending.current || active.current) return;
+    if (pending.current || active.current) return Promise.resolve(false);
     pending.current = true;
     // Call getUserMedia immediately, before any timer or asynchronous setup.
-    requestMicrophonePermission().then(() => {
-      if (!mounted.current) return;
+    return requestMicrophonePermission().then(() => {
+      if (!mounted.current) return false;
       active.current = true;
       setCall(render(close));
+      return true;
     }).catch(error => {
       if (mounted.current) toast.error(microphoneErrorMessage(error), { duration: 10000 });
+      return false;
     }).finally(() => { pending.current = false; });
   }, [close]);
   return <CallSessionContext.Provider value={{ start, isActive }}>{children}{call}</CallSessionContext.Provider>;

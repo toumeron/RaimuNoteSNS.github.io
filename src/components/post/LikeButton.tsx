@@ -1,3 +1,4 @@
+import { randomUUID } from '@/lib/randomUUID';
 import type { PostWithAuthor } from '@/types';
 import { recordRecommendationLike } from '@/lib/recommendations';
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
@@ -538,7 +539,7 @@ export function LikeButton({
     if (isBluesky || persistLike) return;
 
     const config = TABLE_CONFIG[type];
-    const channelSuffix = `${type}-${postId}-${channelIdRef.current}-${crypto.randomUUID()}`;
+    const channelSuffix = `${type}-${postId}-${channelIdRef.current}-${randomUUID()}`;
     const broadcastChannel = supabase
       .channel(`like-count-broadcast-${type}-${postId}`)
       .on(

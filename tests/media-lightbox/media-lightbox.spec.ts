@@ -419,9 +419,10 @@ test('profile header requests metadata when mounted after the profile',async({pa
  await expect(header.locator('.lime-profile-bar-title')).toContainText('Lime Note');
 });
 
-test('profile header fills the status area instead of adding top padding',async({page},info)=>{
- test.skip(!['mobile','WebKit-iPhone'].includes(info.project.name),'Phone status area');
- await setup(page,false);
+for(const standalone of [false,true])for(const dark of [false,true])test(`profile header fills the status area instead of adding top padding (${standalone?'PWA':'browser'}, ${dark?'dark':'light'})`,async({page},info)=>{
+ test.skip(!['small-mobile','mobile','WebKit-iPhone'].includes(info.project.name),'Mobile status area');
+ await setup(page,standalone);
+ await page.addInitScript(dark=>localStorage.setItem('theme',dark?'dark':'light'),dark);
  await page.route('**/*.supabase.co/rest/v1/profiles*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({id:'11111111-1111-1111-1111-111111111111',username:'lime',display_name:'Lime Note',avatar_url:'',cover_url:'https://media.example/one.svg',created_at:'2026-10-01T00:00:00Z'})}));
  await page.goto('./');
  const initialMedia=await page.evaluate(()=>Array.from(document.querySelectorAll('meta[name="theme-color"]')).map(meta=>meta.getAttribute('media')));
@@ -432,6 +433,8 @@ test('profile header fills the status area instead of adding top padding',async(
  const cover=page.locator('.profile-header-cover-avatar-gap');
  await expect(cover).toBeVisible();
  await expect(page.locator('html')).toHaveCSS('background-image','url("https://media.example/one.svg")');
+ await expect(page.locator('html')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
+ await expect(page.locator('html')).toHaveCSS('padding-top','0px');
  await expect(page.locator('body')).toHaveCSS('background-image','url("https://media.example/one.svg")');
  await expect(page.locator('body')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
  await expect(page.locator('body')).toHaveCSS('background-size','100% 194px');
@@ -442,8 +445,14 @@ test('profile header fills the status area instead of adding top padding',async(
  const background=row.locator('.lime-profile-bar-background');await expect(background).toBeVisible();
  expect((await background.boundingBox())!.y).toBe(0);expect((await background.boundingBox())!.height).toBe(100);
  await expect(row.locator('.lime-profile-bar-title')).toHaveCSS('text-shadow','rgba(0, 0, 0, 0.18) 0px 1px 2px');
+ const tabs=page.locator('[data-lime-profile-tabs-header]');
+ const tabBounds=(await tabs.boundingBox())!;
+ expect(tabBounds.x).toBeCloseTo(0,0);expect(tabBounds.width).toBeCloseTo(page.viewportSize()!.width,0);
+ expect(tabBounds.y).toBeCloseTo(100,0);
+ await expect(page.locator('[data-lime-profile-page]')).not.toHaveCSS('background-color','rgba(0, 0, 0, 0)');
  await page.screenshot({path:info.outputPath('expanded-profile-header.png')});
  await page.goto('./');await expect.poll(()=>page.evaluate(()=>Array.from(document.querySelectorAll('meta[name="theme-color"]')).map(meta=>meta.getAttribute('media')))).toEqual(initialMedia);
  await expect(page.locator('html')).toHaveCSS('background-image','none');await expect(page.locator('body')).toHaveCSS('background-image','none');
+ await expect(page.locator('html')).not.toHaveCSS('background-color','rgba(0, 0, 0, 0)');
  expect(await page.evaluate(()=>document.documentElement.style.getPropertyValue('--lime-profile-edge-cover'))).toBe('');
 });

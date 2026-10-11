@@ -1,3 +1,4 @@
+import { randomUUID } from '@/lib/randomUUID';
 import { getPrivateBotPrompt } from '@/lib/privateProfile';
 import type { User } from '@/types';
 import { supabase } from '@/lib/supabase';
@@ -81,7 +82,7 @@ export async function updateProfile(
       const blob = await response.blob();
       const fileExt = blob.type.split('/')[1] || 'png';
       // ファイル名は重複しないように UUID を使用
-      const fileName = `${id}/${crypto.randomUUID()}.${fileExt}`;
+      const fileName = `${id}/${randomUUID()}.${fileExt}`;
 
       const { error: uploadError } = await supabase.storage
         .from(bucket)

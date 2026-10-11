@@ -49,9 +49,9 @@ export async function toggleExternalRepost(id: string) {
   }
 }
 
-export async function getExternalProfileReposts(userId: string, limit: number): Promise<PostWithAuthor[]> {
+export async function getExternalProfileReposts(userId: string, limit: number, offset = 0): Promise<PostWithAuthor[]> {
   const result = await supabase.from('external_reposts').select('post_snapshot, created_at')
-    .eq('user_id', userId).order('created_at', { ascending: false }).order('post_id', { ascending: false }).range(0, limit - 1);
+    .eq('user_id', userId).order('created_at', { ascending: false }).order('post_id', { ascending: false }).range(offset, offset + limit - 1);
   if (result.error) throw result.error;
   return (result.data ?? []).map(row => ({ ...row.post_snapshot,
     profileRepostedAt: row.created_at, profileRepostedBy: userId } as PostWithAuthor));

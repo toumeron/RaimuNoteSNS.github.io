@@ -37,7 +37,7 @@ vi.mock('@/lib/supabase', () => ({
 }));
 
 import { getUserByUsername } from './users';
-import { getFeed, getFollowingFeed, getPostsByUser, getLikedPostsByUser, searchPosts, getProfilePosts, getPostById, getHighlightedPosts } from './posts';
+import { getFeed, getFollowingFeed, getPostsByUser, getLikedPostsByUser, searchPosts, getProfilePosts, getProfilePopularityPosts, getPostById, getHighlightedPosts } from './posts';
 
 const post = (id: string, parent?: string) => ({
   id, user_id: 'author', content: 'post', image_urls: ['https://example.com/image.png'],
@@ -59,6 +59,19 @@ beforeEach(() => {
     ],
     reposts: [{ user_id: 'viewer', post_id: 'two' }],
   };
+});
+
+it('collects the full native popularity input in bounded pages including later reposts', async () => {
+ db.rows.posts = Array.from({length:401},(_,i)=>({...post(`own-${i}`),likes_count:i===400?100:1}));
+ db.rows.reposts = Array.from({length:201},(_,i)=>({user_id:'author',post_id:`shared-${i}`,created_at:'2026-10-01',posts:{...post(`shared-${i}`),user_id:'stranger',visibility:i<200?'members':'public'}}));
+ db.rows.likes=[];
+ const rows=await getProfilePopularityPosts('author');
+ expect(rows.filter(row=>!row.profileRepostedBy)).toHaveLength(401);
+ expect(rows.some(row=>row.id==='own-400'&&row.likesCount===100)).toBe(true);
+ expect(rows.filter(row=>row.profileRepostedBy).map(row=>row.id)).toEqual(['shared-200']);
+ const ranges=db.calls.filter(call=>call.table==='posts').map(call=>call.filters.range);
+ expect(ranges).toEqual([[0,199],[200,399],[400,599]]);
+ expect(db.calls.some(call=>call.table==='reposts'&&String(call.filters.range)==='200,399')).toBe(true);
 });
 
 describe('bounded fresh post viewer state', () => {

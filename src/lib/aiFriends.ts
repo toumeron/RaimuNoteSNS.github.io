@@ -1,3 +1,4 @@
+import { randomUUID } from '@/lib/randomUUID';
 export type AssistantItem = {
   id: string
   slug: string | null
@@ -13,6 +14,9 @@ export type AssistantItem = {
   lang?: 'ja-JP' | 'en-US'
   pitch?: number
   rate?: number
+  coverUrl?: string
+  birthday?: string
+  favorite?: boolean
 }
 
 type Preset = {
@@ -64,6 +68,9 @@ function readList<T>(uid: string | null | undefined, name: string): T[] { const 
 function write(uid: string | null | undefined, name: string, value: unknown) { localStorage.setItem(key(uid,name),JSON.stringify(value));window.dispatchEvent(new Event(AI_FRIENDS_CHANGED)); }
 export type AssistantDraft = {
   id?: string
+  coverUrl?: string
+  birthday?: string
+  favorite?: boolean
   name: string
   description: string
   systemPrompt: string
@@ -87,7 +94,7 @@ export function saveCustomAssistant(uid: string | null | undefined, draft: Assis
     return next
   }
   const item: AssistantItem = {
-    id: `custom:${crypto.randomUUID()}`,
+    id: `custom:${randomUUID()}`,
     slug: null,
     name: draft.name,
     description: draft.description,
@@ -97,6 +104,9 @@ export function saveCustomAssistant(uid: string | null | undefined, draft: Assis
     category: 'カスタム',
     builtin: false,
     gender: draft.gender,
+    coverUrl: draft.coverUrl,
+    birthday: draft.birthday,
+    favorite: draft.favorite,
   }
   const next = [...list, item]
   write(uid, 'assistants', next)

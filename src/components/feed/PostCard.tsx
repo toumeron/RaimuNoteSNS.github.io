@@ -1,3 +1,5 @@
+import { ExternalReplyCard } from '@/components/post/ExternalReplyCard';
+import { randomUUID } from '@/lib/randomUUID';
 import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
 import { mobilePostMenuOS } from '@/components/post/mobilePostMenu';
 import { toast } from 'sonner';
@@ -1152,7 +1154,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
     fetchCustomEmojis().then(() => undefined);
 
     const channels = supabase
-      .channel(`post-reactions-${post.id}-${crypto.randomUUID()}`)
+      .channel(`post-reactions-${post.id}-${randomUUID()}`)
       .on(
         'postgres_changes',
         {
@@ -3098,5 +3100,8 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
   );
 }
 
-export const PostCard = memo(PostCardComponent);
+export const PostCard = memo(function PostCard(props: Parameters<typeof PostCardComponent>[0]) {
+  if (props.post.externalReplyToId && !props.mediaPresentation) return <ExternalReplyCard post={props.post} thread={props.thread} embedded={props.embedded} repostedByLabel={props.repostedByLabel} />;
+  return <PostCardComponent {...props} />;
+});
 PostCard.displayName = 'PostCard';

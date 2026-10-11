@@ -1,0 +1,24 @@
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
+import { afterEach, expect, it, vi } from 'vitest';
+const state=vi.hoisted(()=>({sharing:true,get:vi.fn()}));
+vi.mock('@/hooks/useAuth',()=>({useAuth:()=>({user:{id:'a'}})}));
+vi.mock('@/lib/sharedAccountDisplay',()=>({useSharedDisplay:()=>state.sharing}));
+vi.mock('@/hooks/useOfflineBookmarks',()=>({useOfflineBookmarks:()=>({pwa:false,online:true})}));
+vi.mock('@/hooks/useSharedOfflineBookmarks',()=>({useSharedOfflineBookmarks:()=>({posts:[],context:null,checking:false})}));
+vi.mock('@/hooks/useSharedAccountLists',()=>({useSharedBookmarks:()=>({data:{pages:[{items:[{post:{id:'b',content:'Other bookmark',author:{}}}]}]},isPending:false,isError:false})}));
+vi.mock('@/api/bookmarks',()=>({getBookmarkPage:state.get}));
+vi.mock('@/components/feed/PostCard',()=>({PostCard:({post}:any)=><p>{post.content}</p>}));
+vi.mock('@/components/post/RepostedReplyCard',()=>({RepostedReplyCard:()=>null}));
+import Bookmarks from './Bookmarks';
+afterEach(cleanup);
+it('switches between the combined view and the original own-account view',async()=>{
+ state.sharing=true;state.get.mockReset().mockResolvedValue({posts:[{id:'a',content:'Own bookmark',author:{}}],unavailable:0});
+ const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
+ const tree=()=> <MemoryRouter><QueryClientProvider client={client}><Bookmarks/></QueryClientProvider></MemoryRouter>;
+ const view=render(tree());expect(screen.getByText('Other bookmark')).toBeInTheDocument();expect(state.get).not.toHaveBeenCalled();
+ act(()=>{state.sharing=false;view.rerender(tree());});
+ await waitFor(()=>expect(screen.getByText('Own bookmark')).toBeInTheDocument());
+ expect(screen.queryByText('Other bookmark')).not.toBeInTheDocument();expect(state.get).toHaveBeenCalledWith('a',0);client.clear();
+});

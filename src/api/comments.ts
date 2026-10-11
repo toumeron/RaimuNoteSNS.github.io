@@ -1,3 +1,4 @@
+import { randomUUID } from '@/lib/randomUUID';
 import { getClientName } from '@/lib/clientName';
 import type { CommentWithAuthor } from '@/types';
 import type { User } from '@/types';
@@ -59,7 +60,7 @@ export async function createComment(postId: string, input: string | CommentInput
   const payload = typeof input === 'string' ? { content: input } : input;
   const content = payload.content.trim();
   if ((!content && !payload.imageUrls?.length) || content.length > 280) throw new Error('返信は280文字以内、または画像を添付してください');
-  const id = crypto.randomUUID();
+  const id = randomUUID();
   const { data: parent, error: parentError } = await supabase.from('posts').select('visibility').eq('id', postId).single();
   if (parentError || !parent) throw new Error('返信先の投稿を閲覧できません');
   const imageUrls = await uploadPostMedia(payload.imageUrls ?? [], userId, id, parent.visibility !== 'public');

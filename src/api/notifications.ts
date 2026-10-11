@@ -1,3 +1,4 @@
+import type { AccountReadContext } from '@/lib/accountReadClient';
 import {refreshNotificationBadge} from '@/lib/notificationBadge';
 import {dismissNotificationToasts} from '@/lib/notificationToast';
 import { supabase } from '@/lib/supabase';
@@ -18,13 +19,15 @@ export async function getNotificationPreferences(userId:string) {
 export async function setNotificationPreference(kind:NotificationPreference,enabled:boolean) {
  const {error}=await supabase.rpc('set_notification_preference',{kind,enabled});if(error)throw error;
 }
-export async function getNotifications(userId:string,page=0) {
- const {data,error}=await supabase.from('notifications').select('*').eq('user_id',userId).order('created_at',{ascending:false}).order('id',{ascending:false}).range(page*50,page*50+49);
+export async function getNotifications(userId:string,page=0,context?:AccountReadContext) {
+ const client=context?.client??supabase;
+ context?.signal?.throwIfAborted();
+ const {data,error}=await client.from('notifications').select('*').eq('user_id',userId).order('created_at',{ascending:false}).order('id',{ascending:false}).range(page*50,page*50+49);
  if(error)throw error;
  const rows=(data??[]) as NotificationRow[];
  const actorIds=[...new Set(rows.flatMap(row=>row.actor_id?[row.actor_id]:[]))];
  if(!actorIds.length)return rows;
- const {data:actors,error:actorsError}=await supabase.from('profiles').select('id,is_private').in('id',actorIds);
+ const {data:actors,error:actorsError}=await client.from('profiles').select('id,is_private').in('id',actorIds);
  if(actorsError)throw actorsError;
  const privateActors=new Map((actors??[]).map(actor=>[actor.id,actor.is_private===true]));
  return rows.map(row=>({...row,actor_is_private:row.actor_id?privateActors.get(row.actor_id)===true:false}));

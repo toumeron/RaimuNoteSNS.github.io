@@ -224,6 +224,29 @@
 body {
   padding: 0;
 }
+
+/* The document canvas owns the mobile cutout area, not the profile component.
+   Keep the canvas transparent so its solid light/dark fill cannot cover the
+   cover image. Insets still belong to the header controls, not the whole page. */
+@media (max-width: 639px) {
+  html[data-lime-mobile-profile-page="true"] {
+    --safe-top: 0px;
+    background-color: transparent !important;
+    padding-top: 0 !important;
+  }
+  html[data-lime-mobile-profile-page="true"] body {
+    padding-top: 0 !important;
+    background-color: transparent !important;
+  }
+  html[data-lime-mobile-profile-page="true"],
+  html[data-lime-mobile-profile-page="true"] body {
+    background-image: var(--lime-profile-edge-cover, none) !important;
+    background-repeat: no-repeat;
+    background-position: center top;
+    background-size: 100% calc(150px + var(--lime-profile-system-top, env(safe-area-inset-top)));
+    background-attachment: fixed;
+  }
+}
 /* The two attachment tools share the same glyph size across composers. */
 [data-lime-attachment-tool] svg { width:20px; height:20px; flex-shrink:0; }
 @media(prefers-reduced-motion:reduce){[data-lime-reply-composer][data-compact="true"],[data-lime-reply-composer] .reply-attachment-tools,[data-lime-reply-composer] .reply-submit{transition:none!important}}

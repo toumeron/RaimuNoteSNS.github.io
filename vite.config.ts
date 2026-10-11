@@ -1,16 +1,30 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { VitePWA } from "vite-plugin-pwa";
 
 // https://vitejs.dev/config/
-export default defineConfig(({ mode }) => ({
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), 'VITE_');
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || env.VITE_SUPABASE_URL;
+  return ({
   // GitHub Pages用のベースパス設定
   base: "/RaimuNoteSNS.github.io/",
   build: { target: ["es2020", "safari16"] },
   server: {
     host: "127.0.0.1",
     port: 8080,
+    proxy: supabaseUrl ? {
+      '^/RaimuNoteSNS\\.github\\.io/__lime-link-preview(?:\\?|$)': {
+        target: supabaseUrl,
+        changeOrigin: true,
+        rewrite: requestPath => requestPath.replace('/RaimuNoteSNS.github.io/__lime-link-preview', '/functions/v1/link-preview'),
+        configure: proxy => {
+          // This server-to-server request retains the user's authorization.
+          proxy.on('proxyReq', request => request.removeHeader('origin'));
+        },
+      },
+    } : undefined,
     hmr: {
       overlay: false,
     },
@@ -98,7 +112,7 @@ export default defineConfig(({ mode }) => ({
           "assets/terms-*", "assets/LimePro-*", "assets/NotFound-*",
         ],
         runtimeCaching: [{
-          urlPattern: ({ url }) => url.origin === self.location.origin &&
+          urlPattern: ({ url, sameOrigin }) => sameOrigin &&
             /\/RaimuNoteSNS\.github\.io\/(assets|decoders)\/.*\.(js|css|wasm)$/.test(url.pathname),
           handler: "CacheFirst",
           options: {
@@ -130,4 +144,5 @@ export default defineConfig(({ mode }) => ({
       "@tanstack/query-core",
     ],
   },
-}));
+  });
+});

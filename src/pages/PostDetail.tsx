@@ -1,3 +1,5 @@
+import { ExternalReplyDetail } from '@/components/post/ExternalReplyDetail';
+import { randomUUID } from '@/lib/randomUUID';
 import {PrivateAccountBadge} from '@/components/common/PrivateAccountBadge';
 import { mobilePostMenuOS } from '@/components/post/mobilePostMenu';
 import {ExternalLikeButton} from '@/components/post/ExternalLikeButton';
@@ -24,11 +26,12 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
 import { LikeButton } from '@/components/post/LikeButton';
 import { CommentList } from '@/components/post/CommentList';
+import { ExternalReplyList } from '@/components/post/ExternalReplyList';
 import { CommentForm } from '@/components/post/CommentForm';
 import { PostImages } from '@/components/feed/PostImages';
 import { usePost } from '@/hooks/useFeed';
 import { BookmarkButton } from '@/components/post/BookmarkButton';
-import { fetchBlueskyPostThread, getBlueskyUriFromPostId, type BlueskyMappedPost } from '@/lib/bluesky';
+import { fetchBlueskyPostThread, getBlueskyUriFromPostId } from '@/lib/bluesky';
 import { useBlueskySession } from '@/hooks/useBlueskySession';
 import { useQuery } from '@tanstack/react-query';
 import { formatDate, formatRelative } from '@/lib/format';
@@ -96,8 +99,7 @@ interface ReplicatedDot {
 
 // --- Blueskyの投稿を判定・表示するためのヘルパー（PostCard/Feedと同じロジック） ---
 // このポスト詳細ページをBluesky由来の投稿で開いた場合、外部リンクへ飛ばさずに
-// 本文・画像・埋め込みをそのまま表示しつつ、いいね・リアクション・プロフィール遷移
-// といった実際の操作だけBluesky側で行ってもらうように振り分ける。
+// 本文・画像・返信をLimeNote内で表示し、いいねは既存の外部投稿用保存処理で扱う。
 type BlueskyPostFields = {
   source?: 'lime' | 'bluesky' | 'misskey';
   blueskyUrl?: string;
@@ -125,51 +127,6 @@ const getBlueskyPostUrl = (post: Pick<BlueskyPostFields, 'blueskyUrl'> & { autho
 const openExternalUrl = (url: string) => {
   window.open(url, '_blank', 'noopener,noreferrer');
 };
-
-function BlueskyReplyList({
-  replies,
-  isLoading,
-  isError,
-  mobileFlat,
-}: {
-  replies: BlueskyMappedPost[];
-  isLoading: boolean;
-  isError: boolean;
-  mobileFlat: boolean;
-}) {
-  if (isLoading) {
-    return <PostCardSkeleton />;
-  }
-  if (isError) {
-    return <div className="rounded-3xl border border-destructive/40 bg-destructive/5 p-6 text-center"><p className="text-sm text-destructive">返信の読み込みに失敗しました。</p></div>;
-  }
-  if (replies.length === 0) {
-    return <div className={mobileFlat ? 'p-8 text-center text-muted-foreground' : 'rounded-3xl border border-border/60 bg-card p-8 text-center text-muted-foreground'}>まだ返信はありません。</div>;
-  }
-
-  return (
-    <ul className="space-y-4">
-      {replies.map((reply) => (
-        <li key={reply.id} className={mobileFlat ? 'border-b border-border/60 px-4 py-3' : 'rounded-3xl border border-border/60 bg-card p-5 shadow-soft'}>
-          <div className="flex gap-3">
-            <Link to={`/u/${encodeURIComponent(reply.author.username)}`}>
-              <Avatar userId={reply.author.id} className="h-11 w-11 shrink-0"><AvatarImage src={reply.author.avatarUrl} alt={reply.author.displayName} /><AvatarFallback>{reply.author.displayName.slice(0, 1)}</AvatarFallback></Avatar>
-            </Link>
-            <div className="min-w-0 flex-1">
-              <div className="flex min-w-0 items-center gap-1 text-sm">
-                <Link to={`/u/${encodeURIComponent(reply.author.username)}`} className="truncate font-display font-bold hover:underline">{reply.author.displayName}</Link>
-                <span className="truncate text-muted-foreground">@{reply.author.username}</span>
-                <span className="shrink-0 text-muted-foreground">· {formatRelative(reply.createdAt)}</span>
-              </div>
-              {reply.content && <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">{reply.content}</p>}
-              {reply.imageUrls.length > 0 && <PostImages urls={reply.imageUrls} />}
-            </div>
-          </div>
-        </li>
-      ))}
-    </ul>
-  );
-}
 
 // タイムラインの共通ヘッダーと同じスクロール方向ベースの開閉を、
 // ポスト詳細のモバイル専用ヘッダーにだけ適用する。
@@ -455,7 +412,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
     fetchCustomEmojis();
 
     const channels = supabase
-      .channel(`post-detail-reactions-${id}-${crypto.randomUUID()}`)
+      .channel(`post-detail-reactions-${id}-${randomUUID()}`)
       .on(
         'postgres_changes',
         {
@@ -1580,7 +1537,10 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
 
       {data && replyId && !isBlueskyPost && <ReplyDetail key={replyId} post={data as PostWithAuthor} commentId={replyId} mobileFlat={useMobileThreadLayout} />}
 
-      {data && !replyId && (
+      {data && !replyId && data.externalReplyToId && (
+        <ExternalReplyDetail key={data.id} post={{repostsCount:0,repostedByMe:false,...data,author:{coverUrl:'',...data.author}} as PostWithAuthor} mobileFlat={useMobileThreadLayout} />
+      )}
+      {data && !replyId && !data.externalReplyToId && (
         <article data-lime-post-detail-card className={useMobileThreadLayout
           ? "post-detail-mobile-article relative"
           : "rounded-3xl border border-border/60 bg-card p-6 shadow-soft relative"
@@ -2203,7 +2163,8 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
               <h2 className="mb-3 font-display text-base font-bold text-foreground">コメント</h2>
             )}
             {isBlueskyPost ? (
-              <BlueskyReplyList
+              <ExternalReplyList
+                parent={data as PostWithAuthor}
                 replies={blueskyThread?.replies ?? []}
                 isLoading={isBlueskyLoading}
                 isError={isBlueskyError}

@@ -1,0 +1,31 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import { requestModelWithFailover, CLOUDFLARE_FALLBACK_MODEL } from '../../supabase/functions/_shared/modelFailover';
+const config = { token: 'test-cf-token', accountId: 'a'.repeat(32) };
+const json = () => new Response(JSON.stringify({choices:[{message:{content:'返答'}}]}));
+const stream = (text='返答') => new Response(`data: ${JSON.stringify({choices:[{delta:{content:text}}]})}\n\ndata: [DONE]\n\n`);
+afterEach(() => vi.unstubAllGlobals());
+it('uses Groq normally without calling Cloudflare', async () => {
+  const fetcher = vi.fn().mockResolvedValue(json());vi.stubGlobal('fetch',fetcher);
+  await requestModelWithFailover('groq-key',{model:'groq-model',messages:[]},config);
+  expect(fetcher).toHaveBeenCalledOnce();expect(fetcher.mock.calls[0][0]).toContain('api.groq.com');
+});
+it('uses Qwen only after Groq errors, preserving messages and keeping server tokens separate', async () => {
+  const fetcher=vi.fn().mockResolvedValueOnce(new Response('',{status:429})).mockResolvedValueOnce(json());vi.stubGlobal('fetch',fetcher);
+  const messages=[{role:'user',content:'こんにちは'}];
+  await requestModelWithFailover('groq-key',{model:'groq-model',messages,reasoning_effort:'low',max_completion_tokens:120},config);
+  expect(fetcher).toHaveBeenCalledTimes(2);const [url,request]=fetcher.mock.calls[1];
+  expect(url).toContain(`/accounts/${config.accountId}/ai/v1/chat/completions`);expect(request.headers.Authorization).toBe('Bearer test-cf-token');
+  const body=JSON.parse(request.body);expect(body).toMatchObject({model:CLOUDFLARE_FALLBACK_MODEL,messages,max_tokens:120});expect(body).not.toHaveProperty('reasoning_effort');expect(body).not.toHaveProperty('max_completion_tokens');
+});
+it('replaces a truncated Groq stream instead of mixing it with Cloudflare output', async () => {
+  const fetcher=vi.fn().mockResolvedValueOnce(new Response('data: {"choices":[{"delta":{"content":"途中"}}]}\n\n')).mockResolvedValueOnce(stream('復旧'));vi.stubGlobal('fetch',fetcher);
+  const result=await requestModelWithFailover('groq-key',{stream:true,messages:[]},config);
+  const text=await result.text();expect(text).toContain('復旧');expect(text).not.toContain('途中');
+});
+it('does not loop or expose secrets if both providers fail, and honors cancellation', async () => {
+  const fetcher=vi.fn().mockResolvedValue(new Response('',{status:503}));vi.stubGlobal('fetch',fetcher);
+  await expect(requestModelWithFailover('groq-key',{},config)).rejects.toThrow('503');expect(fetcher).toHaveBeenCalledTimes(2);
+  fetcher.mockClear();const controller=new AbortController();controller.abort();
+  fetcher.mockRejectedValue(new DOMException('Aborted','AbortError'));
+  await expect(requestModelWithFailover('groq-key',{},config,controller.signal)).rejects.toHaveProperty('name','AbortError');expect(fetcher).toHaveBeenCalledOnce();
+});

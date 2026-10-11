@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test.use({ viewport: { width: 390, height: 844 } });
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ page }, testInfo) => {
   await page.route('https://**/rest/v1/**', route => route.fulfill({ json: [] }));
   await page.route('https://**/auth/v1/**', route => route.fulfill({ json: { user: null } }));
   await page.addInitScript(() => {
@@ -20,7 +20,7 @@ test.beforeEach(async ({ page }) => {
     }
     Object.assign(window, { SpeechRecognition: Recognition });
   });
-  await page.goto('tests/mobile-chat/index.html');
+  if (!testInfo.title.startsWith('incoming banner') && !testInfo.title.startsWith('friend profile')) await page.goto('tests/mobile-chat/index.html');
 });
 test('composer stays above a PWA nav, including after its measured height changes', async ({ page }) => {
   const root = page.locator('.vpop-root').first();
@@ -53,6 +53,46 @@ test('permission request and minimized call persist when ChatPage unmounts and r
   await page.getByRole('button', { name: '終了', exact: true }).click();
   await expect(page.locator('.lime-call')).toHaveCount(0);
 });
+
+for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }]) {
+  test(`incoming banner fits and accepts calls at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto('tests/mobile-chat/index.html?incoming-preview');
+    const banner = page.getByRole('alertdialog', { name: 'なかから着信' });
+    await expect(banner).toBeVisible();
+    const bounds = await banner.boundingBox();
+    expect(bounds!.x).toBeGreaterThanOrEqual(12);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width - 12);
+    await expect(banner.getByRole('button', { name: '着信を拒否' })).toBeVisible();
+    await page.screenshot({ path: `/private/tmp/lime-incoming-${viewport.width}.png` });
+    await banner.getByRole('button', { name: '着信に応答' }).click();
+    await expect(banner).toHaveCount(0);
+  });
+  test(`simple call controls fit and remain functional at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    if (viewport.width < 701) await page.getByRole('button', { name: 'チャットメニューを開く' }).click();
+    await page.getByRole('button', { name: 'フレンド', exact: true }).click();
+    await page.getByRole('button', { name: /と通話$/ }).first().click();
+    const call = page.getByRole('dialog', { name: /との通話$/ });
+    await expect(call).toBeVisible();
+    await expect(call.locator('.lime-call-avatar img')).toBeVisible();
+    const speaker = call.getByRole('button', { name: 'スピーカー', exact: true });
+    const initialSpeaker = await speaker.getAttribute('aria-pressed');
+    await speaker.click();
+    await expect(speaker).toHaveAttribute('aria-pressed', initialSpeaker === 'true' ? 'false' : 'true');
+    await call.getByRole('button', { name: 'ミュート', exact: true }).click();
+    await expect(call.getByRole('button', { name: 'マイクをオン' })).toHaveAttribute('aria-pressed', 'true');
+    const end = await call.getByRole('button', { name: '終了', exact: true }).boundingBox();
+    const audio = await speaker.boundingBox();
+    expect(end!.x).toBeGreaterThanOrEqual(0);
+    expect(end!.y + end!.height).toBeLessThanOrEqual(viewport.height);
+    if (viewport.width < 701) expect(Math.abs(end!.y - audio!.y)).toBeLessThan(2);
+    else expect(end!.y).toBeGreaterThan(audio!.y + audio!.height);
+    await page.screenshot({ path: `/private/tmp/lime-call-${viewport.width}.png` });
+    await call.getByRole('button', { name: '終了', exact: true }).click();
+    await expect(call).toHaveCount(0);
+  });
+}
 test('composer fits above the software keyboard and restores the nav inset on dismissal', async ({ page }) => {
   const root = page.locator('.vpop-root').first();
   await expect(root).toBeVisible();
@@ -197,4 +237,39 @@ test('installed iOS call selects recording even when SpeechRecognition is expose
   await page.getByRole('button', { name: '終了', exact: true }).click();
   expect(await page.evaluate(() => (window as any).iosCallTest.recorders.every((recorder: MediaRecorder) => recorder.state === 'inactive'))).toBe(true);
   expect(await page.evaluate(() => (window as any).iosCallTest.streams.every((stream: MediaStream) => stream.getTracks().every((track) => track.readyState === 'ended')))).toBe(true);
+});
+
+for (const width of [390,1280]) test(`friend profile fits viewport and edits birthday at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:844});
+ await page.goto('tests/mobile-chat/index.html?friend-profile-preview');
+ const dialog=page.getByRole('dialog',{name:'担々麺のプロフィール'});await expect(dialog).toBeVisible();
+ const bounds=(await dialog.boundingBox())!;expect(bounds.x).toBeGreaterThanOrEqual(0);expect(bounds.y).toBeGreaterThanOrEqual(0);expect(bounds.x+bounds.width).toBeLessThanOrEqual(width);expect(bounds.height).toBeLessThanOrEqual(844);
+ await expect(dialog.getByRole('button',{name:'トーク'})).toBeInViewport();await expect(dialog.getByRole('button',{name:'音声通話'})).toBeInViewport();
+ await dialog.getByRole('button',{name:'プロフィールを編集'}).click();await dialog.getByLabel('誕生日').fill('2000-03-15');await expect(dialog.getByText('3/15',{exact:true})).toBeVisible();
+ await dialog.locator('input[type=file]').setInputFiles({name:'cover.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP437AAiBggFAA87gh98hP41AAAAABJRU5ErkJggg==','base64')});
+ await expect(dialog.locator('.friend-profile-cover')).toHaveAttribute('src',/^data:image\/jpeg/);
+ await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('limeai:guest:assistants')??'[]')[0]?.coverUrl?.startsWith('data:image/jpeg'))).toBe(true);
+ await dialog.getByRole('button',{name:'背景画像を解除'}).click();await expect(dialog.locator('.friend-profile-cover')).toHaveCount(0);
+ await page.screenshot({path:`/private/tmp/lime-friend-profile-${width}.png`});
+});
+
+for (const width of [390,1280]) test(`group call invites friends without interrupting and fits at ${width}px`, async ({page}) => {
+ await page.setViewportSize({width,height:844});
+ if(width<701) await page.getByRole('button',{name:'チャットメニューを開く'}).click();
+ await page.getByRole('button',{name:'フレンド',exact:true}).click();
+ await page.getByRole('button',{name:/と通話$/}).first().click();
+ const call=page.locator('.lime-call'); await expect(call).toBeVisible();
+ const invite=call.getByRole('button',{name:'フレンドを通話に招待'});
+ await expect(invite).toBeDisabled();
+ await expect(invite).toBeEnabled({timeout:15000}); await invite.click();
+ const panel=call.getByRole('region',{name:'フレンドを招待'});
+ const box=(await panel.boundingBox())!;expect(box.x).toBeGreaterThanOrEqual(0);expect(box.x+box.width).toBeLessThanOrEqual(width);
+ await panel.getByRole('button',{name:'担々麺を招待'}).click();
+ await expect(call.locator('.lime-call-members > div')).toHaveCount(2);
+ await expect(call.locator('.lime-call-name')).toHaveText('グループ通話 · 3人');
+ await expect(panel).toHaveCount(0); await expect(call.getByRole('button',{name:'終了',exact:true})).toBeInViewport();
+ await invite.click();await expect(panel.getByText('招待できるフレンドは全員参加しています。')).toBeVisible();
+ await panel.getByRole('button',{name:'招待を閉じる'}).click();
+ await page.screenshot({path:`/private/tmp/lime-group-call-${width}.png`});
+ await call.getByRole('button',{name:'終了',exact:true}).click();await expect(call).toHaveCount(0);
 });

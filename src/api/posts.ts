@@ -1,3 +1,6 @@
+import type { AccountReadContext } from '@/lib/accountReadClient';
+import { randomUUID } from '@/lib/randomUUID';
+import { collectProfilePages } from '@/lib/profilePopularity';
 import { validMapLocation, type MapLocation, type MapBounds, type MapPostPin } from '@/lib/mapLocation';
 import { uploadPostMedia } from '@/lib/uploadPostMedia';
 import { getClientName } from '@/lib/clientName';
@@ -62,13 +65,13 @@ function rowToPost(row: any, likedIds: Set<string>, repostedIds: Set<string>): P
 type ViewerPostRow = { id: string; parent_post?: { id: string } | null };
 
 // Apply the same visibility rules to reposted and quoted originals.
-async function filterVisibleRows(rows: any[], userId: string | null,signal?:AbortSignal): Promise<any[]> {
+async function filterVisibleRows(rows: any[], userId: string | null,signal?:AbortSignal, client = supabase): Promise<any[]> {
   const restrictedAuthors = [...new Set(rows.filter(row => row.visibility && row.visibility !== 'public' && row.user_id !== userId).map(row => row.user_id))];
   if (!restrictedAuthors.length) return rows;
   if (!userId) return rows.filter(row => !row.visibility || row.visibility === 'public');
   const [follows, memberships] = await Promise.all([
-    readWithSignal(supabase.from('follows').select('follower_id').eq('followee_id', userId).in('follower_id', restrictedAuthors),signal),
-    readWithSignal(supabase.from('memberships').select('creator_id').eq('member_id', userId).in('creator_id', restrictedAuthors),signal),
+    readWithSignal(client.from('follows').select('follower_id').eq('followee_id', userId).in('follower_id', restrictedAuthors),signal),
+    readWithSignal(client.from('memberships').select('creator_id').eq('member_id', userId).in('creator_id', restrictedAuthors),signal),
   ]);
   const following = new Set((follows.data ?? []).map(row => row.follower_id));
   const members = new Set((memberships.data ?? []).map(row => row.creator_id));
@@ -83,17 +86,17 @@ function readWithSignal<T extends {abortSignal(signal:AbortSignal):unknown}>(que
 }
 
 // Fetch fresh viewer state only for this page and its quoted parent posts.
-async function getViewerReactions(userId: string, rows: ViewerPostRow[],signal?:AbortSignal) {
+async function getViewerReactions(userId: string, rows: ViewerPostRow[],signal?:AbortSignal, client = supabase) {
   if(signal?.aborted)throw signal.reason;
   const parents = rows.map((row: any) => row.parent_post).filter(Boolean);
-  const visibleParents = new Set((await filterVisibleRows(parents, userId,signal)).map(row => row.id));
+  const visibleParents = new Set((await filterVisibleRows(parents, userId,signal,client)).map(row => row.id));
   if(signal?.aborted)throw signal.reason;
   rows.forEach((row: any) => { if (row.parent_post && !visibleParents.has(row.parent_post.id)) row.parent_post = null; });
   const postIds = [...new Set(rows.flatMap((row) => [row.id, row.parent_post?.id]).filter(Boolean))];
   if (postIds.length === 0) return { likedIds: new Set<string>(), repostedIds: new Set<string>() };
   const [likesRes, repostsRes] = await Promise.all([
-    readWithSignal(supabase.from('likes').select('post_id').eq('user_id', userId).in('post_id', postIds),signal),
-    readWithSignal(supabase.from('reposts').select('post_id').eq('user_id', userId).in('post_id', postIds),signal),
+    readWithSignal(client.from('likes').select('post_id').eq('user_id', userId).in('post_id', postIds),signal),
+    readWithSignal(client.from('reposts').select('post_id').eq('user_id', userId).in('post_id', postIds),signal),
   ]);
   if(signal?.aborted)throw signal.reason;
   // Viewer flags are optional enrichment. A missing reactions table or failed
@@ -355,18 +358,20 @@ export async function getHighlightedPosts(userId: string, page = 0, limit = 10):
   return rows.map(row => rowToPost(row, likedIds, repostedIds));
 }
 
-export async function getPostById(id: string): Promise<PostWithAuthor | null> {
-  if (isReplyPostId(id)) return getReplyPost(id);
+export async function getPostById(id: string, context?: AccountReadContext): Promise<PostWithAuthor | null> {
+  if (isReplyPostId(id)) return getReplyPost(id, context);
   if (isExternalPostId(id)) return getExternalPost(id);
-  const userId = await getCurrentUserId();
+  const userId = context?.userId ?? await getCurrentUserId();
+  const client = context?.client ?? supabase;
+  context?.signal?.throwIfAborted();
   
-  const postRes = await supabase.from('posts').select(POST_SELECT_QUERY).eq('id', id).single();
+  const postRes = await client.from('posts').select(POST_SELECT_QUERY).eq('id', id).single();
 
   if (postRes.error || !postRes.data) return null;
 
   // visibilityが'following'の場合、投稿主があなたをフォローしているかチェックする
   if (postRes.data.visibility === 'following' && postRes.data.user_id !== userId) {
-    const { data: authorFollowsMe } = await supabase
+    const { data: authorFollowsMe } = await client
       .from('follows')
       .select('*')
       .eq('follower_id', postRes.data.user_id)
@@ -380,7 +385,7 @@ export async function getPostById(id: string): Promise<PostWithAuthor | null> {
   if (postRes.data.visibility === 'members' && postRes.data.user_id !== userId) {
     if (!userId) return null;
 
-    const { data: membershipRow } = await supabase
+    const { data: membershipRow } = await client
       .from('memberships')
       .select('id')
       .eq('creator_id', postRes.data.user_id)
@@ -390,7 +395,7 @@ export async function getPostById(id: string): Promise<PostWithAuthor | null> {
     if (!membershipRow) return null;
   }
 
-  const { likedIds, repostedIds } = await getViewerReactions(userId, [postRes.data]);
+  const { likedIds, repostedIds } = await getViewerReactions(userId, [postRes.data], context?.signal, client);
   return rowToPost(postRes.data, likedIds, repostedIds);
 }
 
@@ -405,7 +410,7 @@ export async function createPost(input: {
 }): Promise<PostWithAuthor> {
   const userId = await getCurrentUserId();
   if (input.mapLocation && !validMapLocation(input.mapLocation)) throw new Error('場所が無効です');
-  const newId = crypto.randomUUID();
+  const newId = randomUUID();
 
   const IMAGE_URL_PATTERN = /(https?:\/\/.*\.(?:png|jpg|jpeg|gif|webp|svg|avif)(?:\?.*)?)/gi;
   const detectedUrls = input.content.match(IMAGE_URL_PATTERN) || [];
@@ -557,6 +562,32 @@ export async function getProfilePosts(userId: string, page = 0, limit = 10): Pro
     const dateB = b.profileRepostedAt ?? b.createdAt;
     return dateB.localeCompare(dateA) || b.id.localeCompare(a.id);
   }).slice(page * limit, end);
+}
+
+/** Read all visible profile activity once, before popularity pagination starts. */
+export async function getProfilePopularityPosts(userId: string, signal?: AbortSignal): Promise<PostWithAuthor[]> {
+  const size = 200;
+  const viewerId = await getCurrentUserId();
+  const collect = (load: (page: number) => Promise<PostWithAuthor[]>) => collectProfilePages<PostWithAuthor, number>(async cursor => {
+    const page = cursor ?? 0;
+    const posts = await load(page);
+    return { posts, cursor: posts.length === size ? page + 1 : null };
+  }, signal);
+  const own = collect(page => getPostsByUser(userId, page, size, signal));
+  const shared = collectProfilePages<PostWithAuthor, number>(async cursor => {
+    const offset = cursor ?? 0;
+    const result = await readWithSignal(supabase.from('reposts').select(`created_at, posts!inner (${POST_SELECT_QUERY})`)
+      .eq('user_id', userId).order('created_at', { ascending: false }).order('post_id', { ascending: false }).range(offset, offset + size - 1), signal);
+    if (result.error) throw result.error;
+    const raw = result.data ?? [];
+    const rows = await filterVisibleRows(raw.map((entry: any) => ({ ...entry.posts, reposted_at: entry.created_at })), viewerId, signal);
+    const { likedIds, repostedIds } = await getViewerReactions(viewerId, rows, signal);
+    return { posts: rows.map(row => ({ ...rowToPost(row, likedIds, repostedIds), profileRepostedAt: row.reposted_at, profileRepostedBy: userId })), cursor: raw.length === size ? offset + size : null };
+  }, signal);
+  const [posts, reposts, external, replies] = await Promise.all([
+    own, shared, collect(page => getExternalProfileReposts(userId, size, page * size)), collect(page => getProfileReplyReposts(userId, size, page * size)),
+  ]);
+  return [...posts, ...reposts, ...external, ...replies];
 }
 
 

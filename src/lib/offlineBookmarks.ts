@@ -1,3 +1,4 @@
+import { randomUUID } from '@/lib/randomUUID';
 import {supabase} from './supabase';
 import type {LinkPreview} from './linkPreview';
 import type {LiveSpace} from '@/components/spaces/SpaceContext';
@@ -40,7 +41,7 @@ async function removeAssets(db:IDBDatabase,userId:string,keep?:string,only?:stri
 }
 export async function deleteOfflineBookmarks(userId:string){const db=await database();try{await mutate(db,'accounts',store=>store.delete(userId));await removeAssets(db,userId);}finally{db.close();}}
 export async function writeOfflineBookmarks(value:OfflineBookmarks){
- const db=await database(),generation=crypto.randomUUID();
+ const db=await database(),generation=randomUUID();
  try{
   // Write one binary asset per transaction. WebKit no longer has to clone the
   // entire image collection along with every post in one large IDB record.

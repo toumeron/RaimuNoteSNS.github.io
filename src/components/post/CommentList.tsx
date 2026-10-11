@@ -12,6 +12,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { MoreHorizontal, Download, Link as LinkIcon, ChartBarBig, Trash2, CalendarDays, X, Plus, MessageCircle } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
+import type { PostWithAuthor, CommentWithAuthor } from '@/types';
+import { ExternalLikeButton } from './ExternalLikeButton';
 import { ReplyShare } from '@/components/post/ReplyShare';
 import { RepostButton } from '@/components/feed/RepostButton';
 import { RepostIcon } from '@/components/feed/RepostIcon';
@@ -140,6 +142,7 @@ export function CommentCard({
   onMediaReply,
   onMediaLikeChange,
   mediaDownload,
+  externalPost,
 }: {
   comment: Comment;
   currentUserId: string | null;
@@ -154,8 +157,11 @@ export function CommentCard({
   onMediaReply?:()=>void;
   onMediaLikeChange?:(state:{liked:boolean;count:number})=>void;
   mediaDownload?:()=>void;
+  externalPost?: PostWithAuthor;
 }) {
   const navigate = useNavigate();
+  const replyUrl = externalPost ? `/post/${encodeURIComponent(externalPost.id)}` : commentThreadUrl(comment.postId, comment.id);
+  const mediaPost = externalPost ?? replyToPost({...comment, replyToUsername});
 
   const [showMenu, setShowMenu] = useState(false);
   const [deleted, setDeleted] = useState(false);
@@ -201,8 +207,7 @@ export function CommentCard({
   }, [currentUserId]);
 
   useEffect(() => {
-    fetchReactions();
-    fetchCustomEmojis();
+    if (!externalPost) { fetchReactions(); fetchCustomEmojis(); }
 
     const checkMobile = () => {
       setIsMobile(window.innerWidth < 640);
@@ -211,7 +216,7 @@ export function CommentCard({
     checkMobile();
     window.addEventListener('resize', checkMobile);
 
-    const channel = supabase
+    const channel = externalPost ? null : supabase
       .channel(`comment-reactions-${comment.id}-${getChannelSuffix()}`)
       .on(
         'postgres_changes',
@@ -234,9 +239,9 @@ export function CommentCard({
     return () => {
       clearInterval(timer);
       window.removeEventListener('resize', checkMobile);
-      supabase.removeChannel(channel);
+      if (channel) supabase.removeChannel(channel);
     };
-  }, [comment.id]);
+  }, [comment.id, !!externalPost]);
 
   useEffect(() => {
     if (!showPicker) return;
@@ -659,11 +664,11 @@ export function CommentCard({
   const handleImageClick = (e: React.MouseEvent, url: string) => {
     e.preventDefault();
     e.stopPropagation();
-    openMediaViewer({ url, post: replyToPost(comment), offline: offlineBookmark, media: (comment.imageUrls ?? [url]).map(src => ({ src })) });
+    openMediaViewer({ url, post: mediaPost, offline: offlineBookmark, media: (comment.imageUrls ?? [url]).map(src => ({ src })) });
   };
 
   const handleCardClick = () => {
-    navigate(commentThreadUrl(comment.postId, comment.id));
+    navigate(replyUrl);
   };
 
   const HoverStats = ({ userId }: { userId: string }) => {
@@ -778,9 +783,9 @@ export function CommentCard({
                         className="absolute right-0 mt-1 lime-post-options rounded-xl bg-card shadow-lg z-20 overflow-hidden animate-in fade-in zoom-in duration-100"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        {mediaPresentation && <button onClick={() => navigate(commentThreadUrl(comment.postId, comment.id))} className="flex w-full items-center rounded-lg px-3 py-2 text-sm font-bold hover:bg-muted"><LinkIcon className="h-4 w-4" />ポストに移動</button>}
+                        {mediaPresentation && <button onClick={() => navigate(replyUrl)} className="flex w-full items-center rounded-lg px-3 py-2 text-sm font-bold hover:bg-muted"><LinkIcon className="h-4 w-4" />ポストに移動</button>}
                         {mediaDownload && <button onClick={() => {setShowMenu(false);mediaDownload();}} className="flex w-full items-center rounded-lg px-3 py-2 text-sm font-bold hover:bg-muted"><Download className="h-4 w-4" />画像を保存</button>}
-                        <button onClick={(event) => { event.stopPropagation(); navigate(`/post/${comment.postId}/activity?reply=${encodeURIComponent(comment.id)}`); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"><ChartBarBig className="h-4 w-4" />ポストアクティビティ</button>
+                        {!externalPost && <button onClick={(event) => { event.stopPropagation(); navigate(`/post/${comment.postId}/activity?reply=${encodeURIComponent(comment.id)}`); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"><ChartBarBig className="h-4 w-4" />ポストアクティビティ</button>}
                         {isMyComment && (
                         <button
                           onClick={handleDelete}
@@ -856,16 +861,16 @@ export function CommentCard({
             )}</>);
   const replyActions = (<>{mediaPresentation && replyReactions}            {!embedded && <div data-lime-comment-actions className={detail ? `col-span-2 mt-3 flex items-center gap-1 text-muted-foreground relative h-9 ${mobileFlat ? 'post-detail-mobile-action-row' : 'border-t border-border/60 pt-3'}` : isMobile ? 'mt-2 flex items-center gap-1 text-muted-foreground relative h-8' : 'mt-3 flex items-center gap-1 text-muted-foreground relative h-9'}>
               <div onClick={(e) => e.stopPropagation()} className={detail && mobileFlat ? "flex items-center h-full post-detail-mobile-action-hit" : "flex items-center h-full"}>
-                <div className="inline-flex"><Commentlikebutton syncState={!!onMediaLikeChange} onChange={onMediaLikeChange}
+                <div className="inline-flex">{externalPost ? <ExternalLikeButton post={externalPost} onChange={onMediaLikeChange}/> : <Commentlikebutton syncState={!!onMediaLikeChange} onChange={onMediaLikeChange}
                   commentId={comment.id}
                   liked={comment.likedByMe}
                   count={comment.likesCount}
-                /></div>
+                />}</div>
               </div>
 
-                <RepostButton post={replyToPost({...comment,replyToUsername})} mobilePresentation={useMobilePresentation} />
+                <RepostButton post={mediaPost} mobilePresentation={useMobilePresentation} />
               <Link
-                to={commentThreadUrl(comment.postId, comment.id)}
+                to={replyUrl}
                 aria-label="この返信に返信する"
                 onClick={(e) => {e.stopPropagation();if(onMediaReply){e.preventDefault();onMediaReply();}}}
                 className={`inline-flex items-center gap-1.5 rounded-full ${useMobilePresentation && !detail ? "px-2 text-[13px]" : "px-2.5 text-sm"} py-1 transition-colors hover:text-accent h-full ${detail && mobileFlat ? 'post-detail-mobile-reply-count' : ''}`}
@@ -874,7 +879,7 @@ export function CommentCard({
                 <span className={`font-bold tabular-nums ${mobileFlat || isMobile ? "text-[15px]" : "text-sm"}`}>{(comment.commentsCount ?? 0) > 0 ? formatDisplayCount(comment.commentsCount ?? 0) : ''}</span>
               </Link>
 
-              <div className="relative inline-flex items-center h-full" onClick={(e) => e.stopPropagation()}>
+              {!externalPost && <div className="relative inline-flex items-center h-full" onClick={(e) => e.stopPropagation()}>
                 <button
                   ref={buttonRef}
                   onClick={() => setShowPicker(!showPicker)}
@@ -1051,8 +1056,8 @@ export function CommentCard({
                     )}
                   </>
                 )}
-              </div>
-              <ReplyShare comment={comment} currentUserId={currentUserId} className={detail && mobileFlat ? 'post-detail-mobile-share-button' : ''} />
+              </div>}
+              <ReplyShare externalPost={externalPost} comment={comment} currentUserId={currentUserId} className={detail && mobileFlat ? 'post-detail-mobile-share-button' : ''} />
             </div>}</>);
 
   return (
@@ -1250,7 +1255,7 @@ export function CommentCard({
               </Link>
             </HoverCardTrigger>
 
-            <ProfileHoverContent />
+            {!externalPost && <ProfileHoverContent />}
           </HoverCard>
 
           <div data-lime-post-content className={detail ? "contents" : "min-w-0 flex-1"}>
@@ -1281,7 +1286,7 @@ export function CommentCard({
                     </Link>
                   </HoverCardTrigger>
 
-                  <ProfileHoverContent />
+                  {!externalPost && <ProfileHoverContent />}
                 </HoverCard>
 
                 <span className={detail ? `w-full truncate text-xs text-muted-foreground ${mobileFlat ? 'post-detail-mobile-username' : ''}` : 'truncate text-base text-muted-foreground ml-1 opacity-80 shrink'}>
@@ -1295,7 +1300,7 @@ export function CommentCard({
                 </span>}
               </div>
 
-              {!embedded && replyMenu}
+              {!embedded && !externalPost && replyMenu}
             </div>
 
             <div data-lime-post-body data-lime-post-has-images={allImageUrls.length > 0 || undefined} className={detail ? "col-span-2 min-w-0" : undefined}>
@@ -1431,8 +1436,23 @@ export function CommentList({
     );
   }
 
-  const conversations = getAuthorReplyConversations(data ?? [], threadAuthorId, parentCommentId, expandedReplies);
+  return <CommentConversations comments={data ?? []} currentUserId={currentUserId} mobileFlat={mobileFlat}
+    threadAuthorId={threadAuthorId} parentCommentId={parentCommentId} expandedReplies={expandedReplies}
+    onExpand={id => setExpandedReplies(previous => new Set([...previous, id]))} />;
+}
 
+/** Shared conversation layout for native and external replies. */
+export function CommentConversations({ comments, currentUserId, mobileFlat, threadAuthorId, parentCommentId = null, expandedReplies, onExpand }: {
+  comments: (CommentWithAuthor & { externalPost?: PostWithAuthor })[];
+  currentUserId: string | null;
+  mobileFlat: boolean;
+  threadAuthorId?: string;
+  parentCommentId?: string | null;
+  expandedReplies: ReadonlySet<string>;
+  onExpand: (id: string) => void;
+}) {
+  const conversations = getAuthorReplyConversations(comments, threadAuthorId, parentCommentId, expandedReplies);
+  const externalPosts = new Map(comments.filter(comment => comment.externalPost).map(comment => [comment.id, comment.externalPost]));
   return (
     <ul className="m-0 space-y-0" data-lime-detail-conversations>
       {conversations.flatMap(({ root, branches, threadIds }) => branches.map(({ items, moreFor }) => (
@@ -1440,9 +1460,9 @@ export function CommentList({
           <div className="border-b border-border/60 px-4 sm:px-6">
             <ReplyChain>
               {items.map(c => <div key={c.id} data-lime-conversation-comment={c.id} data-lime-conversation-parent={c.parentCommentId ?? ''}>
-                <CommentCard flat comment={{ ...c, likesCount: Number(c.likesCount ?? c.likes_count ?? 0), likedByMe: !!c.likedByMe } as Comment} currentUserId={currentUserId} mobileFlat={mobileFlat} thread={threadIds.has(c.id)} />
+                <CommentCard flat comment={{ ...c, likesCount: Number(c.likesCount ?? c.likes_count ?? 0), likedByMe: !!c.likedByMe } as Comment} externalPost={externalPosts.get(c.id)} currentUserId={currentUserId} mobileFlat={mobileFlat} thread={threadIds.has(c.id)} />
               </div>)}
-              {moreFor && <button type="button" data-lime-thread-more={moreFor.id} onClick={() => setExpandedReplies(previous => new Set([...previous, moreFor.id]))} className="ml-14 flex min-h-12 items-center py-3 text-base text-primary hover:underline">返信を表示</button>}
+              {moreFor && <button type="button" data-lime-thread-more={moreFor.id} onClick={() => onExpand(moreFor.id)} className="ml-14 flex min-h-12 items-center py-3 text-base text-primary hover:underline">返信を表示</button>}
             </ReplyChain>
           </div>
         </li>

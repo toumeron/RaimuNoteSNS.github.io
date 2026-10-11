@@ -1,3 +1,4 @@
+import { useSharedDisplay, setSharedDisplay } from '@/lib/sharedAccountDisplay';
 import {ACCENT_COLORS,useAccentColor,setAccentColor} from '@/lib/accentTheme';
 import {AccountPrivacySettings} from '@/components/profile/AccountPrivacySettings';
 import { NotificationSettings } from '@/components/profile/NotificationSettings';
@@ -113,6 +114,7 @@ export default function Settings() {
   };
 
   const { theme, setTheme } = useTheme();
+  const sharedDisplay = useSharedDisplay();
   const accentColor=useAccentColor();
   const navigate = useNavigate();
   const desktop = useDesktopLayout();
@@ -1149,6 +1151,15 @@ export default function Settings() {
         </div>
       </div>
 
+      </section>
+      <section hidden={selectedSection?.id !== 'sharing'} aria-label="共有">
+        <div className="rounded-2xl border border-border bg-card p-4 sm:p-6">
+          <div className="flex items-center justify-between gap-4">
+            <Label htmlFor="shared-account-display" className="text-base font-bold">共有</Label>
+            <Switch id="shared-account-display" checked={sharedDisplay} onCheckedChange={setSharedDisplay} />
+          </div>
+          <p className="mt-3 text-sm leading-relaxed text-muted-foreground">ブックマーク・通知をログインしている全てのアカウントに共有します</p>
+        </div>
       </section>
       <section hidden={selectedSection?.id !== 'appearance'} aria-label={SETTINGS_SECTIONS.find(section => section.id === 'appearance')!.label}>
 

@@ -6,6 +6,12 @@ import {externalLikeSnapshot,getExternalLikeState,setExternalLike} from './exter
 const post:any={id:'bsky:at://did:plc:artist/app.bsky.feed.post/abc',userId:'bsky:did:plc:artist',visibility:'public',content:'',imageUrls:['https://example.com/art.jpg'],createdAt:'2026-10-09',likesCount:3,author:{id:'artist',username:'artist',isOfficial:true,token:'secret'},token:'secret'};
 beforeEach(()=>rpc.mockReset());
 describe('cloud external likes',()=>{
+ it('keeps a saved reply classified as a reply without storing nested account data',()=>{
+  const snapshot=externalLikeSnapshot({...post,externalReplyToId:'bsky:parent',externalReplyToUsername:'parent.bsky.social',externalReplyParent:{token:'private'}});
+  expect(snapshot.externalReplyToId).toBe('bsky:parent');
+  expect(snapshot.externalReplyToUsername).toBe('parent.bsky.social');
+  expect(snapshot).not.toHaveProperty('externalReplyParent');
+ });
  it('stores a public image-only snapshot, excluding credentials and invented badges',async()=>{
   rpc.mockResolvedValue({data:{liked:true,count:1,unmirroredCount:1},error:null});
   expect(await setExternalLike(post,true)).toEqual({liked:true,count:1,unmirroredCount:1});

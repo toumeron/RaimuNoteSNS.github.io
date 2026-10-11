@@ -64,6 +64,7 @@
     "date-fns": "^3.6.0",
     "dayjs": "^1.11.20",
     "embla-carousel-react": "^8.6.0",
+    "fflate": "^0.8.3",
     "input-otp": "^1.4.2",
     "katex": "^0.18.9",
     "leaflet": "^1.9.4",

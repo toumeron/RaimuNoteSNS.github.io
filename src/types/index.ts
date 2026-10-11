@@ -58,6 +58,9 @@ export type Post = {
   repostedByMe: boolean;
   profileRepostedAt?: string;
   profileRepostedBy?: string;
+  externalReplyToId?: string;
+  externalReplyToUsername?: string;
+  externalReplyParent?: PostWithAuthor | null;
   replyId?: string;
   replyPostId?: string;
   replyToUsername?: string;

@@ -1,3 +1,4 @@
+import { randomUUID } from '@/lib/randomUUID';
 import {Loader2} from 'lucide-react';
 import {PostCardSkeleton} from '@/components/feed/PostCardSkeleton';
 import {Skeleton} from '@/components/ui/skeleton';
@@ -44,7 +45,7 @@ export default function PostActivity(){
    finally{if(!cancelled&&request===revision)setLoading(false);}
   };
   void refresh();
-  const channel=replyId&&tab==='likes'?supabase.channel(`reply-activity-${replyId}-${crypto.randomUUID()}`)
+  const channel=replyId&&tab==='likes'?supabase.channel(`reply-activity-${replyId}-${randomUUID()}`)
    .on('postgres_changes',{event:'INSERT',schema:'public',table:'comment_likes',filter:`comment_id=eq.${replyId}`},refresh)
    .on('postgres_changes',{event:'DELETE',schema:'public',table:'comment_likes'},refresh).subscribe(status=>{if(status==='SUBSCRIBED')void refresh();}):null;
   return()=>{cancelled=true;if(channel)void supabase.removeChannel(channel);};

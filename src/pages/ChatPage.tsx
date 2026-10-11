@@ -1,3 +1,10 @@
+import { streamChatWithFallback } from '@/lib/chatModelFallback';
+import { playIncomingRingtone, unlockIncomingRingtone } from '@/lib/incomingRingtone';
+import { GROUP_CALL_INSTRUCTION, runGroupFriendTurn, type FriendCallUtterance } from '@/lib/groupFriendCall';
+import { randomUUID } from '@/lib/randomUUID';
+import { useIncomingFriendCalls } from '@/hooks/useIncomingFriendCalls';
+import { FriendProfile } from '@/components/chat/FriendProfile';
+import { IncomingFriendCall } from '@/components/chat/IncomingFriendCall';
 import {FRIEND_IMAGE_INSTRUCTION,chooseFriendImageQuery,stripImageQuery,appendFriendPhoto,readFriendPhoto,validFriendPhoto} from '../../supabase/functions/_shared/friendImages';
 import {FriendPhoto} from '@/components/chat/FriendPhoto';
 import {waitForFriendReply} from '../../supabase/functions/_shared/friendPacing';
@@ -1933,6 +1940,7 @@ function AssistantsView({
   onAvatarChange: (id: string, dataUrl: string | null) => void
 }) {
   const [items, setItems] = useState<AssistantItem[]>(() => listAssistants(uid));
+  const [profile, setProfile] = useState<AssistantItem | null>(null);
   const [cat, setCat] = useState("すべて");
   const [q, setQ] = useState("");
   const [draft, setDraft] = useState<Draft | null>(() => initialCreate ? (initialFriend ? { ...EMPTY,...initialFriend,gender:initialFriend.gender??'female' } : { ...EMPTY }) : null);
@@ -2026,6 +2034,7 @@ function AssistantsView({
 
   return (
     <div className={simple ? "dm-friends" : "h-full overflow-y-auto custom-scrollbar"}>
+      {profile && <FriendProfile friend={profile} uid={uid} avatars={avatars} onClose={() => setProfile(null)} onTalk={onUse} onCall={onCall} onChanged={load}/>}
       <input
         ref={iconInput}
         type="file"
@@ -2085,10 +2094,10 @@ function AssistantsView({
             <div
               key={a.id}
               className={simple ? "dm-conversation dm-friend-row" : "group relative flex cursor-pointer flex-col rounded-2xl border border-[#dfe3e8] dark:border-[#252b33] bg-white dark:bg-[#141920] p-4 transition hover:-translate-y-0.5 hover:border-[#a8b0ba] dark:hover:border-[#7e868f] hover:shadow-[var(--nr-shadow-m)]"}
-              onClick={() => onUse(a)}
+              onClick={() => setProfile(a)}
               role="button"
               tabIndex={0}
-              onKeyDown={(e) => e.key === "Enter" && onUse(a)}
+              onKeyDown={(e) => e.key === "Enter" && setProfile(a)}
             >
               <div className="flex items-center gap-3">
                 <AssistantAvatarPicker
@@ -2459,7 +2468,7 @@ export function VoiceMode({ onClose, onAsk }: VoiceModeProps) {
       setUploadErr("ファイルサイズが大きすぎます (120MBまで)");
       return;
     }
-    const m: StoredModel = { id: `m_${crypto.randomUUID()}`, name: file.name, blob: file, format: inferModelFormat(file.name), createdAt: Date.now() };
+    const m: StoredModel = { id: `m_${randomUUID()}`, name: file.name, blob: file, format: inferModelFormat(file.name), createdAt: Date.now() };
     try {
       await putModel(m);
     } catch {
@@ -3015,311 +3024,125 @@ type AssistantCallProps = {
   onClose: () => void
   /** ユーザーの発話をAIへ送り、返答テキスト(Markdown可)を返す。ChatPage 側でキャラクター設定つきで LimeAI へ問い合わせる */
   onAsk: (text: string, signal: AbortSignal) => Promise<string>
+  incomingOpening?: string
+  friends?: AssistantItem[]
+  userName?: string
+  onGroupAsk?: (friend: AssistantItem, history: FriendCallUtterance[], signal: AbortSignal) => Promise<string>
 }
 
 const CALL_STYLES = `
 .lime-call {
-  --call-green-top: #6fae99;
-  --call-green-mid: #347d65;
-  --call-green-bottom: #18543f;
-  --call-control: rgba(255,255,255,.15);
-  --call-control-hover: rgba(255,255,255,.22);
-  --call-border: rgba(255,255,255,.14);
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  overflow: hidden;
-  color: #fff;
-  background:
-    radial-gradient(90% 42% at 50% 0%, rgba(198,237,221,.22) 0%, rgba(198,237,221,0) 70%),
-    linear-gradient(180deg, var(--call-green-top) 0%, var(--call-green-mid) 36%, #286e58 68%, var(--call-green-bottom) 100%);
-  font-family: 'Zen Kaku Gothic New', 'Hiragino Kaku Gothic ProN', system-ui, sans-serif;
-  -webkit-user-select: none;
-  user-select: none;
-  -webkit-tap-highlight-color: transparent;
+  position: fixed; inset: 0; z-index: 9999; isolation: isolate;
+  overflow: hidden; color: #fff; background: #182733;
+  font-family: system-ui, -apple-system, sans-serif;
+  user-select: none; -webkit-tap-highlight-color: transparent;
+}
+.lime-call-backdrop {
+  position: absolute; inset: -15%; z-index: -2; width: 130%; height: 130%;
+  object-fit: cover; filter: blur(65px) saturate(.85); opacity: .65; pointer-events: none;
 }
 .lime-call::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(180deg, rgba(255,255,255,.035) 0%, rgba(255,255,255,0) 18%, rgba(0,0,0,.06) 100%);
+  content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: linear-gradient(145deg, rgba(50,16,42,.38), rgba(7,29,51,.62));
 }
 .lime-call-shell {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  width: 100%;
-  height: 100%;
-  min-height: 100dvh;
-  flex-direction: column;
-  align-items: center;
+  position: relative; display: flex; width: 100%; height: 100%; height: 100dvh;
+  flex-direction: column; align-items: center; overflow-y: auto;
+  padding: max(24px, env(safe-area-inset-top)) 24px max(28px, env(safe-area-inset-bottom));
 }
-.lime-call-topbar {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  justify-content: flex-end;
-  padding: max(18px, env(safe-area-inset-top)) 24px 0;
-}
-.lime-call-mobile-toggle {
-  display: none;
-  width: 42px;
-  height: 42px;
-  place-items: center;
-  border: 1px solid rgba(255,255,255,.13);
-  border-radius: 999px;
-  background: rgba(255,255,255,.11);
-  color: rgba(255,255,255,.92);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  box-shadow: 0 8px 24px rgba(0,0,0,.08), inset 0 1px 0 rgba(255,255,255,.05);
-}
-.lime-call-mobile-toggle:active { transform: scale(.96); }
-.lime-call-topbar-btn {
-  display: grid;
-  width: 42px;
-  height: 42px;
-  place-items: center;
-  border: 1px solid rgba(255,255,255,.13);
-  border-radius: 999px;
-  background: rgba(255,255,255,.11);
-  color: rgba(255,255,255,.92);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  box-shadow: 0 8px 24px rgba(0,0,0,.08), inset 0 1px 0 rgba(255,255,255,.05);
-}
-.lime-call-topbar-btn:active { transform: scale(.96); }
+.lime-call-invite { display:flex; align-items:center; gap:6px; padding:8px 14px; border:0; border-radius:24px; color:white; background:#ffffff20; margin-right:auto; }
+.lime-call-invite:disabled { opacity:.4; }
+.lime-call-members { display:flex; flex-wrap:wrap; justify-content:center; gap:16px; max-width:560px; margin-top:24px; }
+.lime-call-members > div { display:flex; flex-direction:column; align-items:center; gap:4px; font-size:12px; }
+.lime-call-members img { width:42px; height:42px; border-radius:50%; object-fit:cover; }
+.lime-call-members .talking img { outline:3px solid white; }
+.lime-call-members small { color:#ffffffa0; }
+.lime-call-invite-panel { position:absolute; z-index:5; top:max(64px,calc(env(safe-area-inset-top) + 56px)); width:min(360px,calc(100% - 32px)); max-height:55dvh; overflow:auto; background:#182733f5; border:1px solid #ffffff25; border-radius:20px; padding:16px; }
+.lime-call-invite-panel > div { display:flex; justify-content:space-between; margin-bottom:12px; }
+.lime-call-invite-panel button { border:0; background:transparent; color:white; }
+.lime-call-invite-panel > button { display:flex; align-items:center; width:100%; gap:12px; padding:10px 0; text-align:left; }
+.lime-call-invite-panel > button span { flex:1; }
+.lime-call-invite-panel img { width:36px; height:36px; border-radius:50%; }
+.lime-call-topbar { width: 100%; display: flex; justify-content: flex-end; flex: 0 0 32px; }
+.lime-call-mobile-toggle { display: none; }
 .lime-call-person {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding-top: 34px;
+  display: grid; grid-template-columns: 48px minmax(0, 1fr); column-gap: 14px;
+  align-items: center; width: min(100%, 310px); margin-top: clamp(12px, 10vh, 100px);
 }
 .lime-call-avatar {
-  display: grid;
-  width: 68px;
-  height: 68px;
-  place-items: center;
-  border: 0;
-  border-radius: 22px;
-  background: rgba(63,151,119,.88);
-  color: #fff;
-  font-size: 34px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 14px 30px rgba(0,0,0,.10);
+  grid-row: 1 / 3; width: 48px; height: 48px; padding: 0; border: 0;
+  border-radius: 50%; overflow: hidden; background: rgba(255,255,255,.12);
 }
-.lime-call-avatar.speaking {
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 0 0 3px rgba(255,255,255,.10), 0 14px 30px rgba(0,0,0,.10);
-}
-.lime-call-name {
-  margin-top: 9px;
-  max-width: min(70vw, 320px);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 16px;
-  font-weight: 600;
-  letter-spacing: .01em;
-}
-.lime-call-timer {
-  margin-top: 25px;
-  font-size: 29px;
-  font-weight: 400;
-  line-height: 1;
-  letter-spacing: .015em;
-  font-variant-numeric: tabular-nums;
-  text-shadow: 0 1px 10px rgba(0,0,0,.08);
-}
-.lime-call-timer.connecting {
-  font-size: 18px;
-  margin-top: 27px;
-  opacity: .9;
-}
-.lime-call-spacer {
-  flex: 1;
-  min-height: 180px;
-}
-.lime-call-error {
-  width: min(86vw, 440px);
-  margin: 0 auto 18px;
-  border: 1px solid rgba(255,255,255,.14);
-  border-radius: 18px;
-  background: rgba(0,0,0,.18);
-  padding: 10px 14px;
-  color: rgba(255,255,255,.92);
-  font-size: 13px;
-  line-height: 1.55;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-}
+.lime-call-avatar img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.lime-call-avatar.speaking { box-shadow: 0 0 0 3px rgba(255,255,255,.3); }
+.lime-call-name { font-size: 23px; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+.lime-call-timer { font-size: 14px; line-height: 1.8; color: rgba(255,255,255,.7); font-variant-numeric: tabular-nums; }
+.lime-call-spacer { flex: 0 0 clamp(30px, 8vh, 72px); }
 .lime-call-controls {
-  display: grid;
-  width: min(100%, 430px);
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  align-items: start;
-  justify-items: center;
-  gap: 12px;
-  padding: 0 22px max(34px, env(safe-area-inset-bottom));
+  display: grid; grid-template-columns: repeat(2, 88px); justify-content: center;
+  gap: 24px 32px; width: min(100%, 320px); padding-bottom: 8px;
 }
-.lime-call-control {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-}
+.lime-call-control { display: flex; flex-direction: column; align-items: center; gap: 9px; }
+.lime-call-control:first-child { grid-column: 1; grid-row: 1; }
+.lime-call-control:last-child { grid-column: 2; grid-row: 1; }
+.lime-call-control:has(.danger) { grid-column: 1 / -1; grid-row: 2; margin-top: clamp(28px, 8vh, 80px); }
 .lime-call-btn {
-  display: grid;
-  width: 78px;
-  height: 78px;
-  place-items: center;
-  border: 1px solid var(--call-border);
-  border-radius: 999px;
-  background: var(--call-control);
-  color: #fff;
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 10px 24px rgba(0,0,0,.10);
-  transition: background-color .15s ease, transform .12s ease;
+  display: grid; width: 64px; height: 64px; place-items: center; border: 0;
+  border-radius: 50%; background: rgba(255,255,255,.12); color: #fff;
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  transition: background .15s ease, transform .15s ease;
 }
-.lime-call-btn:hover { background: var(--call-control-hover); }
-.lime-call-btn:active { transform: scale(.96); }
-.lime-call-btn.danger {
-  border-color: rgba(255,97,75,.10);
-  background: #e3422d;
-  box-shadow: 0 12px 26px rgba(124,31,22,.22);
+.lime-call-btn svg { width: 26px; height: 26px; }
+.lime-call-btn:hover { background: rgba(255,255,255,.22); }
+.lime-call-btn:active { transform: scale(.95); }
+.lime-call-btn.active { background: #fff; color: #152531; }
+.lime-call-btn.danger { background: #f34242; color: #fff; }
+.lime-call-btn.danger:hover { background: #ff5555; }
+.lime-call-control-label { font-size: 12px; line-height: 1.4; text-align: center; color: rgba(255,255,255,.85); }
+.lime-call-btn:focus-visible, .lime-call-avatar:focus-visible, .lime-call-mobile-toggle:focus-visible,
+.lime-call-compact-bar:focus-visible { outline: 2px solid #fff; outline-offset: 4px; }
+.lime-call-error {
+  flex-shrink: 0; width: min(100%, 360px); margin-bottom: 20px; padding: 12px 14px;
+  border-radius: 16px; background: rgba(255,255,255,.12); font-size: 13px; line-height: 1.5;
 }
-.lime-call-btn.danger:hover { background: #ec4933; }
-.lime-call-btn.active { background: rgba(255,255,255,.24); }
-.lime-call-control-label {
-  max-width: 110px;
-  text-align: center;
-  font-size: 12px;
-  line-height: 1.25;
-  color: rgba(255,255,255,.92);
-  overflow-wrap: anywhere;
-}
-/* モバイルだけ: 通話画面を上部の通話中バーへ縮小する。PCには表示しない。 */
-.lime-call.compact {
-  inset: 0;
-  background: transparent;
-  pointer-events: none;
-}
-.lime-call.compact .lime-call-shell {
-  pointer-events: none;
-}
-.lime-call.compact .lime-call-compact-bar {
-  pointer-events: auto;
-}
+.lime-call.compact { background: transparent; pointer-events: none; }
+.lime-call.compact::before { display: none; }
 .lime-call-compact-bar {
-  position: fixed;
-  top: max(8px, env(safe-area-inset-top));
-  left: 50%;
-  z-index: 10000;
-  display: flex;
-  width: calc(100% - 16px);
-  max-width: 520px;
-  min-height: 68px;
-  transform: translateX(-50%);
-  align-items: center;
-  gap: 10px;
-  padding: 9px 10px 9px 12px;
-  border: 1px solid rgba(255,255,255,.13);
-  border-radius: 18px;
-  background: rgba(30,73,59,.96);
-  color: #fff;
-  cursor: pointer;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  position: fixed; top: max(8px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 12px; width: calc(100% - 24px); max-width: 520px;
+  padding: 10px 14px; border: 1px solid rgba(255,255,255,.16); border-radius: 22px;
+  background: rgba(25,38,47,.94); color: #fff; pointer-events: auto;
 }
-.lime-call-compact-avatar {
-  display: grid;
-  width: 42px;
-  height: 42px;
-  flex: 0 0 42px;
-  place-items: center;
-  border-radius: 14px;
-  background: rgba(255,255,255,.11);
-  font-size: 22px;
-}
-.lime-call-compact-main {
-  min-width: 0;
-  flex: 1;
-  text-align: left;
-}
-.lime-call-compact-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 14px;
-  font-weight: 600;
-}
-.lime-call-compact-status {
-  margin-top: 3px;
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  color: rgba(255,255,255,.68);
-  font-size: 12px;
-}
-.lime-call-compact-time {
-  color: rgba(255,255,255,.9);
-  font-variant-numeric: tabular-nums;
-}
-.lime-call-compact-toggle {
-  display: grid;
-  width: 38px;
-  height: 38px;
-  flex: 0 0 38px;
-  place-items: center;
-  border: 1px solid rgba(255,255,255,.13);
-  border-radius: 999px;
-  background: rgba(255,255,255,.11);
-  color: rgba(255,255,255,.92);
-}
-
+.lime-call-compact-avatar { width: 40px; height: 40px; flex-shrink: 0; border-radius: 50%; overflow: hidden; }
+.lime-call-compact-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.lime-call-compact-main { min-width: 0; flex: 1; text-align: left; }
+.lime-call-compact-name { display: block; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lime-call-compact-status { display: flex; gap: 8px; margin-top: 2px; color: rgba(255,255,255,.7); font-size: 12px; }
+.lime-call-compact-time { font-variant-numeric: tabular-nums; }
+.lime-call-compact-toggle { display: grid; place-items: center; width: 32px; height: 32px; }
 @media (max-width: 700px) {
-  .lime-call-topbar { padding-right: 16px; }
-  .lime-call-mobile-toggle { display: grid; }
-  .lime-call-person { padding-top: 26px; }
-  .lime-call-avatar { width: 62px; height: 62px; border-radius: 20px; font-size: 31px; }
-  .lime-call-timer { margin-top: 22px; font-size: 27px; }
-  .lime-call-spacer { min-height: 120px; }
-  .lime-call-controls { padding-left: 14px; padding-right: 14px; padding-bottom: max(26px, env(safe-area-inset-bottom)); }
-  .lime-call-btn { width: 74px; height: 74px; }
+  .lime-call-shell { padding: max(12px, env(safe-area-inset-top)) 20px max(24px, env(safe-area-inset-bottom)); }
+  .lime-call-mobile-toggle {
+    display: grid; place-items: center; width: 32px; height: 32px; border: 0;
+    border-radius: 50%; background: rgba(255,255,255,.1); color: #fff;
+  }
+  .lime-call-person { display: flex; flex-direction: column; gap: 8px; width: 100%; margin-top: 12px; text-align: center; }
+  .lime-call-avatar { width: 64px; height: 64px; margin-bottom: 4px; }
+  .lime-call-name { font-size: 24px; max-width: 100%; }
+  .lime-call-timer { order: -1; font-size: 14px; line-height: 1.4; }
+  .lime-call-spacer { flex: 1 0 32px; }
+  .lime-call-controls { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; width: min(100%, 330px); }
+  .lime-call-control:has(.danger) { grid-column: auto; grid-row: 1; grid-column: 2; margin-top: 0; }
+  .lime-call-control:last-child { grid-column: 3; grid-row: 1; }
+  .lime-call-btn { width: 62px; height: 62px; }
+}
+@media (max-height: 480px) and (min-width: 701px) {
+  .lime-call-person { margin-top: 0; }
+  .lime-call-spacer { flex-basis: 20px; }
+  .lime-call-control:has(.danger) { margin-top: 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .lime-call, .lime-call * { transition: none !important; animation: none !important; }
-}
-/* ---- 丸いアイコン画像 / 呼び出し中の演出 ---- */
-.lime-call-avatar {
-  width: 92px;
-  height: 92px;
-  padding: 0;
-  overflow: hidden;
-  border-radius: 999px;
-  background: rgba(255,255,255,.18);
-  box-shadow: 0 0 0 3px rgba(255,255,255,.18), 0 14px 30px rgba(0,0,0,.14);
-}
-.lime-call-avatar img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: 999px;
-}
-.lime-call-avatar.speaking {
-  box-shadow: 0 0 0 4px rgba(255,255,255,.28), 0 0 0 10px rgba(255,255,255,.10), 0 14px 30px rgba(0,0,0,.14);
-}
-.lime-call-avatar.ringing { animation: limeCallRing 1.6s ease-out infinite; }
-@keyframes limeCallRing {
-  0% { box-shadow: 0 0 0 0 rgba(255,255,255,.35), 0 14px 30px rgba(0,0,0,.14); }
-  100% { box-shadow: 0 0 0 26px rgba(255,255,255,0), 0 14px 30px rgba(0,0,0,.14); }
-}
-.lime-call-compact-avatar { overflow: hidden; padding: 0; border-radius: 999px; }
-.lime-call-compact-avatar img { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: 999px; }
-@media (max-width: 700px) {
-  .lime-call-avatar { width: 84px; height: 84px; border-radius: 999px; }
 }
 `
 
@@ -3354,104 +3177,10 @@ function CallButton({
   )
 }
 
-/** 呼び出し音(プルルル…)。日本の電話の呼び出し音に近い「400Hzを15Hzで変調、1秒鳴って2秒休む」をWeb Audioで合成 */
-class RingTone {
-  private ctx: AudioContext | null = null
-  private master: GainNode | null = null
-  private timer: number | null = null
-  private volume = 0.15
-
-  start(volume = 0.15) {
-    this.stop()
-    this.volume = volume
-    try {
-      const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-      const ctx = new Ctx()
-      ctx.resume().catch(() => {})
-      const carrier = ctx.createOscillator()
-      carrier.type = 'sine'
-      carrier.frequency.value = 400
-      const am = ctx.createGain()
-      am.gain.value = 0.5
-      const lfo = ctx.createOscillator()
-      lfo.frequency.value = 15
-      const depth = ctx.createGain()
-      depth.gain.value = 0.5
-      lfo.connect(depth)
-      depth.connect(am.gain)
-      const master = ctx.createGain()
-      master.gain.value = 0
-      carrier.connect(am)
-      am.connect(master)
-      master.connect(ctx.destination)
-      carrier.start()
-      lfo.start()
-      this.ctx = ctx
-      this.master = master
-
-      const burst = () => {
-        const t = ctx.currentTime
-        master.gain.cancelScheduledValues(t)
-        master.gain.setValueAtTime(0, t)
-        master.gain.linearRampToValueAtTime(this.volume, t + 0.04)
-        master.gain.setValueAtTime(this.volume, t + 0.96)
-        master.gain.linearRampToValueAtTime(0, t + 1.0)
-      }
-      burst()
-      this.timer = window.setInterval(burst, 3000)
-    } catch {
-      /* 音を出せない環境では無音のまま待つ */
-    }
-  }
-
-  private halt() {
-    if (this.timer !== null) {
-      window.clearInterval(this.timer)
-      this.timer = null
-    }
-    if (this.ctx && this.master) {
-      const t = this.ctx.currentTime
-      this.master.gain.cancelScheduledValues(t)
-      this.master.gain.setValueAtTime(0, t)
-    }
-  }
-
-  /** 呼び出し音を止め、受話器を取る「カチャッ」という音を鳴らす */
-  pickup() {
-    this.halt()
-    const ctx = this.ctx
-    if (!ctx) return
-    try {
-      const len = Math.floor(ctx.sampleRate * 0.06)
-      const buf = ctx.createBuffer(1, len, ctx.sampleRate)
-      const data = buf.getChannelData(0)
-      for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3)
-      const src = ctx.createBufferSource()
-      src.buffer = buf
-      const g = ctx.createGain()
-      g.gain.value = 0.25
-      src.connect(g)
-      g.connect(ctx.destination)
-      src.start()
-    } catch {
-      /* ignore */
-    }
-    window.setTimeout(() => this.stop(), 300)
-  }
-
-  stop() {
-    this.halt()
-    const ctx = this.ctx
-    this.ctx = null
-    this.master = null
-    ctx?.close().catch(() => {})
-  }
-}
-
-function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProps) {
+function AssistantCall({ assistant, avatars, onClose, onAsk, incomingOpening, friends = [], userName = "ユーザー", onGroupAsk }: AssistantCallProps) {
   const [phase, setPhase] = useState<CallPhase>('connecting')
   const phaseRef = useRef<CallPhase>('connecting')
-  const [connected, setConnected] = useState(false)
+  const [connected, setConnected] = useState(Boolean(incomingOpening))
   const [seconds, setSeconds] = useState(0)
   const [muted, setMuted] = useState(false)
   const mutedRef = useRef(false)
@@ -3472,7 +3201,14 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
     })
   }))
   const useRecordedSpeech = useRef(preferRecordedCallSpeech() || !sttSupported())
-  const ring = useRef(new RingTone())
+  const stopRing = useRef<() => void>(() => {});
+  const [participants, setParticipants] = useState<AssistantItem[]>([assistant]);
+  const participantsRef = useRef(participants); participantsRef.current = participants;
+  const [inviting, setInviting] = useState(false);
+  const [activeFriend, setActiveFriend] = useState(assistant);
+  const groupHistory = useRef<FriendCallUtterance[]>([{ name: assistant.name, content: incomingOpening || greetingOf(assistant) }]);
+  const groupAskRef = useRef(onGroupAsk); groupAskRef.current = onGroupAsk;
+  const nextSpeaker = useRef(0);
   const abortAI = useRef<AbortController | null>(null)
   const aliveRef = useRef(true)
   const startListenRef = useRef<() => void>(() => {})
@@ -3551,15 +3287,16 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
 
   /* ---------- 話す ---------- */
   const speak = useCallback(
-    (raw: string) => {
+    (raw: string, character = assistantRef.current, onDone?: (error?: string) => void) => {
       const t = stripMarkdown(raw)
       if (!t) {
-        resumeListening()
+        if (onDone) onDone(); else resumeListening();
         return
       }
       listener.current.abort()
       recorder.current.abort()
-      const a = assistantRef.current
+      const a = character
+      setActiveFriend(a)
       const lang = detectTtsLang(t)
       setPhaseBoth('speaking')
       speaker.current.speak(
@@ -3571,10 +3308,10 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
           volume: speakerRef.current ? 1 : 0.7,
         },
         {
-          onEnd: resumeListening,
+          onEnd: onDone ?? resumeListening,
           onError: (m) => {
             setError(m)
-            resumeListening()
+            if (onDone) onDone(m); else resumeListening();
           },
         },
       )
@@ -3586,7 +3323,7 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
   const handleUserText = useCallback(
     async (text: string) => {
       const s = text.trim()
-      if (!s || !aliveRef.current) return
+      if (!s || !aliveRef.current || phaseRef.current === 'thinking' || phaseRef.current === 'speaking') return
       speaker.current.cancel()
       abortAI.current?.abort()
       listener.current.abort()
@@ -3597,7 +3334,26 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
       abortAI.current = ac
       let reply = ''
       try {
-        reply = await onAskRef.current(s, ac.signal)
+        if (participantsRef.current.length > 1 && groupAskRef.current) {
+          const members = participantsRef.current;
+          const offset = nextSpeaker.current++ % members.length;
+          const ordered = [...members.slice(offset), ...members.slice(0, offset)];
+          await runGroupFriendTurn({ participants: ordered, history: groupHistory.current, userName, text: s, signal: ac.signal,
+            ask: async (friend, history, signal) => {
+              setPhaseBoth('thinking'); setActiveFriend(friend);
+              return groupAskRef.current!(friend, history, signal);
+            },
+            speak: (friend, text, signal) => new Promise<void>((resolve, reject) => {
+              const finish = () => { signal.removeEventListener('abort', finish); resolve(); };
+              signal.addEventListener('abort', finish, { once: true });
+              if (signal.aborted) { finish(); return; }
+              speak(text, friend, error => { if (error) { signal.removeEventListener('abort', finish); reject(new Error(error)); } else finish(); });
+            }),
+          });
+        } else {
+          reply = await onAskRef.current(s, ac.signal);
+          if (reply.trim()) groupHistory.current.push({ name: userName, content: s }, { name: assistantRef.current.name, content: reply });
+        }
       } catch (e) {
         if ((e as Error).name !== 'AbortError') setError(e instanceof Error ? e.message : String(e))
       } finally {
@@ -3608,7 +3364,7 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
       if (spokenReply) speak(spokenReply)
       else resumeListening()
     },
-    [speak, resumeListening],
+    [speak, resumeListening, userName],
   )
   handleUserTextRef.current = handleUserText
 
@@ -3625,22 +3381,21 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
     }
 
     // 呼び出し音を2〜3回鳴らしてから、少し間をおいて相手が電話に出る
-    const tone = ring.current
-    tone.start(speakerRef.current ? 0.16 : 0.07)
+    if (!incomingOpening) stopRing.current = playIncomingRingtone();
     const rings = 2 + Math.floor(Math.random() * 2)
     const pickupDelay = (rings - 1) * 3000 + 1300 + Math.random() * 700
     let greetTimer: ReturnType<typeof setTimeout> | null = null
 
     const connectTimer = setTimeout(() => {
       if (!aliveRef.current) return
-      tone.pickup()
+      stopRing.current()
       setConnected(true)
       // 受話器を取ってから、ひと呼吸おいて第一声
       greetTimer = setTimeout(() => {
         if (!aliveRef.current) return
-        speak(greetingOf(assistantRef.current))
+        speak(incomingOpening || greetingOf(assistantRef.current))
       }, 800 + Math.random() * 500)
-    }, pickupDelay)
+    }, incomingOpening ? 0 : pickupDelay)
 
     const sp = speaker.current
     const ls = listener.current
@@ -3649,7 +3404,7 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
       aliveRef.current = false
       clearTimeout(connectTimer)
       if (greetTimer) clearTimeout(greetTimer)
-      tone.stop()
+      stopRing.current()
       sp.cancel()
       ls.abort()
       rc.abort()
@@ -3671,7 +3426,7 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
 
   const endCall = () => {
     aliveRef.current = false
-    ring.current.stop()
+    stopRing.current()
     speaker.current.cancel()
     listener.current.abort()
     recorder.current.abort()
@@ -3718,13 +3473,14 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
     setCompactOnMobile((value) => !value)
   }
 
-  const avatarSrc = avatarOf(assistant, avatars)
+  const avatarSrc = avatarOf(activeFriend, avatars)
+  const callName = participants.length > 1 ? `グループ通話 · ${participants.length + 1}人` : assistant.name;
 
   return createPortal(
     <div
       className={`lime-call ${compactOnMobile ? 'compact' : ''}`}
       role="dialog"
-      aria-label={`${assistant.name}との通話`}
+      aria-label={`${callName}との通話`}
     >
       <style>{CALL_STYLES}</style>
 
@@ -3740,7 +3496,7 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
             <img src={avatarSrc} alt="" />
           </span>
           <span className="lime-call-compact-main">
-            <span className="lime-call-compact-name">{assistant.name}</span>
+            <span className="lime-call-compact-name">{callName}</span>
             <span className="lime-call-compact-status">
               <span>{connected ? '通話中' : '呼び出し中'}</span>
               <span className="lime-call-compact-time">{connected ? formatCallTime(seconds) : '…'}</span>
@@ -3758,8 +3514,11 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
           </span>
         </button>
       ) : (
+      <>
+      <img className="lime-call-backdrop" src={avatarSrc} alt="" aria-hidden="true" draggable={false} />
       <div className="lime-call-shell">
         <div className="lime-call-topbar">
+          {onGroupAsk && <button className="lime-call-invite" type="button" disabled={!connected} onClick={() => setInviting(!inviting)} aria-label="フレンドを通話に招待" aria-expanded={inviting}><Plus size={20}/>招待</button>}
           <button
             type="button"
             className="lime-call-mobile-toggle"
@@ -3781,12 +3540,22 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
           >
             <img src={avatarSrc} alt={assistant.name} draggable={false} />
           </button>
-          <div className="lime-call-name">{assistant.name}</div>
+          <div className="lime-call-name">{callName}</div>
           <div className={`lime-call-timer ${connected ? '' : 'connecting'}`}>
             {connected ? formatCallTime(seconds) : '呼び出し中…'}
           </div>
         </div>
 
+        {participants.length > 1 && <div className="lime-call-members" aria-label="通話の参加者">{participants.map(friend => <div key={friend.id} className={activeFriend.id === friend.id && phase === 'speaking' ? 'talking' : ''}><img src={avatarOf(friend, avatars)} alt=""/><span>{friend.name}</span><small>{activeFriend.id === friend.id && phase === 'speaking' ? '発言中' : '聞いています'}</small></div>)}</div>}
+        {inviting && <div className="lime-call-invite-panel" role="region" aria-label="フレンドを招待">
+          <div><strong>フレンドを招待</strong><button aria-label="招待を閉じる" onClick={() => setInviting(false)}><X size={20}/></button></div>
+          {friends.filter(friend => !participants.some(member => member.id === friend.id)).map(friend => <button key={friend.id} aria-label={`${friend.name}を招待`} onClick={() => {
+            if (participantsRef.current.some(member => member.id === friend.id)) return;
+            const next = [...participantsRef.current, friend]; participantsRef.current = next; setParticipants(next);
+            groupHistory.current.push({ name: friend.name, content: '通話に参加しました。まず会話を聞いています。' }); setInviting(false);
+          }}><img src={avatarOf(friend, avatars)} alt=""/><span>{friend.name}</span><Plus size={18}/></button>)}
+          {friends.every(friend => participants.some(member => member.id === friend.id)) && <p>招待できるフレンドは全員参加しています。</p>}
+        </div>}
         <div className="lime-call-spacer" aria-hidden="true" />
 
         {error && (
@@ -3812,6 +3581,7 @@ function AssistantCall({ assistant, avatars, onClose, onAsk }: AssistantCallProp
           </CallButton>
         </div>
       </div>
+      </>
       )}
     </div>,
     document.body,
@@ -4952,6 +4722,7 @@ const streamFromEdge = async (
   args: {
     contents: GeminiContent[]
     fallbackContents?: GeminiContent[]
+    retryModels?: boolean
     model: 'fast' | 'advanced'
     mode: Mode
     webSearch: boolean
@@ -4961,7 +4732,7 @@ const streamFromEdge = async (
 ) => {
   const { data: { session } } = await supabase.auth.getSession()
 
-  const request = (contents: GeminiContent[]) =>
+  const request = (contents: GeminiContent[], model: 'fast' | 'advanced') =>
     fetch(
       `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat-gemma`,
       {
@@ -4974,58 +4745,24 @@ const streamFromEdge = async (
         },
         body: JSON.stringify({
           contents: boundedChatContext(contents),
-          model: args.model,
-          thinking: args.model === 'advanced',
+          model,
+          thinking: model === 'advanced',
           mode: args.mode,
           webSearch: args.webSearch,
         }),
       }
     )
 
-  let response = await request(args.contents)
-
-  if (!response.ok && args.fallbackContents) {
-    console.warn('画像つきリクエストが失敗したため、画像なしで再試行します:', response.status)
-    response = await request(args.fallbackContents)
-  }
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    console.error('Edge Function HTTP Error:', response.status, errorText)
-    throw new Error(`Edge Function Error (${response.status})`)
-  }
-  if (!response.body) throw new Error('No response body')
-
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-
-  while (true) {
-    const { value, done } = await reader.read()
-    if (done) break
-
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-
-    buffer = lines.pop() || ''
-
-    for (const line of lines) {
-      const trimmedLine = line.trim()
-      if (!trimmedLine.startsWith('data:')) continue
-
-      const dataStr = trimmedLine.substring(5).trim()
-      if (dataStr === '[DONE]') continue
-
-      let parsed: any
-      try {
-        parsed = JSON.parse(dataStr)
-      } catch (e) {
-        if (e instanceof SyntaxError) continue // 構文エラーは無視
-        throw e
+  await streamChatWithFallback({ model: args.model, retry: Boolean(args.retryModels), signal: args.signal, onEvent,
+    request: async model => {
+      let response = await request(args.contents, model);
+      if (!response.ok && args.fallbackContents && ![401,403,429].includes(response.status)) {
+        await response.body?.cancel();
+        response = await request(args.fallbackContents, model);
       }
-      onEvent(parsed)
-    }
-  }
+      return response;
+    },
+  });
 }
 
 /** アシスタント本文のMarkdown表示。他のメッセージがストリーミング更新されても再描画されないようメモ化する */
@@ -5091,6 +4828,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
   // モードは通常のチャットのみ(コーディング/リサーチ/デザイン/エージェントは削除)
   useEffect(() => { if (view === 'assistants') setCreateFriendRequested(false) }, [view])
   const mode: Mode = 'chat'
+  const [friendProfileOpen, setFriendProfileOpen] = useState(false)
   const [assistant, setAssistant] = useState<AssistantItem | null>(() => findAssistant(uid,friendId))
   useEffect(()=>{setAssistant(findAssistant(uid,friendId));},[uid,friendId])
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([])
@@ -5335,7 +5073,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
         const existing = embedded ? formattedSessions.find(session => (meta[session.id]?.assistantId ?? null) === (friendId ?? null)) : formattedSessions[0];
         if(existing){setSessions(formattedSessions);setCurrentSessionId(existing.id);setAssistant(findAssistant(uid,friendId ?? meta[existing.id]?.assistantId));}
         else {
-          const newId=crypto.randomUUID();const now=Date.now();
+          const newId=randomUUID();const now=Date.now();
           setSessions([{id:newId,title:'新しいチャット',messages:[],updatedAt:now},...formattedSessions]);setCurrentSessionId(newId);
           if(friendId){const next={...meta,[newId]:{assistantId:friendId}};saveSessionMeta(uid,next);setSessionMeta(next);}
           await supabase.from('chat_sessions').insert({id:newId,user_id:user.id,title:'新しいチャット',messages:[],updated_at:now});
@@ -5343,7 +5081,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
       } catch (e) {
         console.error(e)
         // エラー時もフォールバックとして空のセッションを作成
-        const newId = crypto.randomUUID()
+        const newId = randomUUID()
         const now = Date.now()
         setSessions([{
           id: newId,
@@ -5500,7 +5238,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
 
   const createNewSession = async () => {
     if (!user) return
-    const newId = crypto.randomUUID()
+    const newId = randomUUID()
     const now = Date.now()
     const newSession: ChatSession = {
       id: newId,
@@ -5559,7 +5297,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
       if (filtered.length > 0) {
         setCurrentSessionId(filtered[0].id)
       } else {
-        const newId = crypto.randomUUID()
+        const newId = randomUUID()
         const now = Date.now()
         setSessions([{
           id: newId,
@@ -5615,7 +5353,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
     if (speakingMessageId === messageId) { setSpeakingMessageId(null); return }
     const plain = stripMarkdown(text)
     setSpeakingMessageId(messageId)
-    messageSpeaker.current.speak(plain, { lang: detectTtsLang(plain), rate: 1, volume: 1 }, {
+    messageSpeaker.current.speak(plain, { lang: detectTtsLang(plain), rate: assistant?.rate ?? 1, gender: assistant?.gender, volume: 1 }, {
       onEnd: () => setSpeakingMessageId(null),
       onError: (message) => { setSpeakingMessageId(null); toast.error(message) },
     })
@@ -5669,7 +5407,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
     setIsLoading(true)
     setAssistantStreamStatus('thinking')
 
-    const assistantMessageId = crypto.randomUUID()
+    const assistantMessageId = randomUUID()
 
     const patchAssistant = (patch: Partial<Message>) => {
       setSessions(prev => prev.map(s => s.id === sessionId
@@ -5918,7 +5656,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
 
     try {
       await streamFromEdge(
-        { contents: sanitizedContents, fallbackContents, model, mode, webSearch: false, signal: ac.signal },
+        { contents: sanitizedContents, fallbackContents, model, mode, webSearch: false, signal: ac.signal, retryModels: Boolean(assistant) },
         handleEvent,
       )
 
@@ -5962,6 +5700,11 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
         }
       } else {
         console.error(error)
+        if (assistant) {
+          toast.error('別のモデルでも返答を取得できませんでした。会話履歴は保持しています。もう一度お試しください。');
+          setSessions(prev => prev.map(session => session.id === sessionId ? { ...session, messages: updatedMessages } : session));
+          await persistSession(sessionId, sessionTitle, updatedMessages, Date.now());
+        } else {
         toast.error('通信エラーが発生しました。コンソールのログを確認してください。')
 
         const errorMessages = [...updatedMessages, { id: assistantMessageId, role: 'assistant' as const, content: `エラーが発生しました。詳細: ${error.message}` }]
@@ -5977,6 +5720,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
 
         // エラー出力状態もSupabaseに同期
         await persistSession(sessionId, sessionTitle, errorMessages, Date.now())
+        }
       }
     } finally {
       abortRef.current = null
@@ -6033,7 +5777,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
     if (!target || !nextText) return
 
     setEditingMessageId(null)
-    const editedMessage: Message = { ...target, id: crypto.randomUUID(), content: nextText }
+    const editedMessage: Message = { ...target, id: randomUUID(), content: nextText }
     await commitAndRun([...messages.slice(0, targetMsgIndex), editedMessage], currentSession?.title || '新しいチャット')
   }
 
@@ -6051,7 +5795,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
     }
 
     const userMessage: Message = {
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       role: 'user',
       content: trimmedInput,
       postPreview: sendingPostPreview,
@@ -6079,7 +5823,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
   /** ボイスモードから呼ばれる: 1往復分の返答テキストを返す(履歴はボイスモード内のみ) */
   const askForVoice = async (text: string, signal: AbortSignal) => {
     const history = voiceHistoryRef.current
-    history.push({ id: crypto.randomUUID(), role: 'user', content: text })
+    history.push({ id: randomUUID(), role: 'user', content: text })
 
     const contents = buildContents(history.slice(-20), {
       userLabel: user ? `${user.displayName} (@${user.username})` : '未ログインユーザー',
@@ -6095,7 +5839,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
     })
 
     let reply = ''
-    await streamFromEdge({ contents, model: 'fast', mode: 'chat', webSearch: false, signal }, (parsed) => {
+    await streamFromEdge({ contents, model: 'fast', mode: 'chat', webSearch: false, signal, retryModels: true }, (parsed) => {
       if (parsed.type === 'edge_error') {
         if (!reply.trim()) {
           reply = typeof parsed.publicMessage === 'string' && parsed.publicMessage.trim()
@@ -6108,12 +5852,13 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
       if (chunk) reply += chunk
     })
 
-    if (reply.trim()) history.push({ id: crypto.randomUUID(), role: 'assistant', content: reply })
+    if (reply.trim()) history.push({ id: randomUUID(), role: 'assistant', content: reply })
     return reply
   }
 
   const openVoiceMode = () => {
     if (callSession.isActive()) return
+    incomingCalls.dismiss()
     messageSpeaker.current.cancel()
     setSpeakingMessageId(null)
     unlockAiAudio()
@@ -6127,7 +5872,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
   /** アシスタント専用の通話モードから呼ばれる: アシスタント設定つきで1往復分の返答テキストを返す(履歴は通話中のみ) */
   /** アシスタント専用の通話モードから呼ばれる: キャラクター設定つきで1往復分の返答テキストを返す(履歴は通話中のみ) */
   const askForAssistantCall = async (character: AssistantItem, history: Message[], text: string, signal: AbortSignal) => {
-    history.push({ id: crypto.randomUUID(), role: 'user', content: text })
+    history.push({ id: randomUUID(), role: 'user', content: text })
 
     const contents = buildContents(history.slice(-20), {
       userLabel: user ? `${user.displayName} (@${user.username})` : '未ログインユーザー',
@@ -6145,7 +5890,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
     })
 
     let reply = ''
-    await streamFromEdge({ contents, model: 'fast', mode: 'chat', webSearch: false, signal }, (parsed) => {
+    await streamFromEdge({ contents, model: 'fast', mode: 'chat', webSearch: false, signal, retryModels: true }, (parsed) => {
       if (parsed.type === 'edge_error') {
         if (!reply.trim()) {
           reply = typeof parsed.publicMessage === 'string' && parsed.publicMessage.trim()
@@ -6158,26 +5903,92 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
       if (chunk) reply += chunk
     })
 
-    if (reply.trim()) history.push({ id: crypto.randomUUID(), role: 'assistant', content: reply })
+    if (reply.trim()) history.push({ id: randomUUID(), role: 'assistant', content: reply })
     return reply
   }
+
+  const askForGroupCall = async (character: AssistantItem, history: FriendCallUtterance[], signal: AbortSignal) => {
+    const transcript: Message[] = history.slice(-20).map(turn => ({ id: randomUUID(), role: 'user', content: `${turn.name}: ${turn.content.slice(0, 700)}` }));
+    const contents = buildContents(transcript, {
+      userLabel: user?.displayName ?? 'ユーザー', modelLabel: 'LimeAI 5.0 Fast',
+      character: { name: character.name, prompt: character.systemPrompt },
+      extra: buildExtraInstructions({ mode: 'chat', character: true, call: true, userName: chatSettings.userName,
+        customInstructions: chatSettings.customInstructions, memories: chatSettings.memoryEnabled ? memories.slice(0, 5).map(memory => memory.content) : [],
+      }) + GROUP_CALL_INSTRUCTION, withImages: false,
+    });
+    let reply = '';
+    await streamFromEdge({ contents, model: 'fast', mode: 'chat', webSearch: false, signal, retryModels: true }, parsed => {
+      if (parsed.type === 'edge_error') throw new Error(parsed.publicMessage || '通話の返答を取得できませんでした');
+      reply += parsed.choices?.[0]?.delta?.content || '';
+    });
+    return reply.trim();
+  };
+
+  const incomingCalls = useIncomingFriendCalls<{
+    assistant: AssistantItem; opening: string; history: Message[];
+  }>({
+    account: uid,
+    busy: () => callSession.isActive() || voiceOpen || Boolean(incomingCalls.incoming),
+    prepare: async signal => {
+      const friends = listAssistants(uid);
+      if (!friends.length) return null;
+      const character = friends[Math.floor(Math.random() * friends.length)];
+      const recent = sessions.filter(session => sessionMeta[session.id]?.assistantId === character.id)
+        .sort((a, b) => Number(new Date(b.updatedAt)) - Number(new Date(a.updatedAt)))
+        .flatMap(session => session.messages.slice(-6)).slice(0, 6)
+        .filter(message => message.content.trim()).map(message => ({ ...message, content: message.content.slice(0, 500), attachments: undefined }));
+      const contents = buildContents(recent, {
+        userLabel: user ? `${user.displayName} (@${user.username})` : 'ユーザー',
+        modelLabel: 'LimeAI 5.0 Fast',
+        character: { name: character.name, prompt: character.systemPrompt },
+        extra: buildExtraInstructions({ mode: 'chat', character: true, call: true,
+          userName: chatSettings.userName, customInstructions: chatSettings.customInstructions,
+          memories: chatSettings.memoryEnabled ? memories.slice(0, 5).map(memory => memory.content) : [],
+        }) + '\nあなたから友達に電話をかけました。自分の性格や最近の会話に合う、気軽に話したい用件を一つ自分で考えてください。相手が電話に出た直後の第一声だけを、自然な口調で1〜3文、120文字以内で返してください。用件は毎回変え、緊急事態や現実の約束を捏造しないでください。箇条書き、説明、JSONは不要です。',
+        withImages: false,
+      });
+      let opening = '';
+      await streamFromEdge({ contents, model: 'fast', mode: 'chat', webSearch: false, signal, retryModels: true }, parsed => {
+        if (parsed.type === 'edge_error') throw new Error('Incoming call preparation failed');
+        opening += parsed.choices?.[0]?.delta?.content || '';
+      });
+      opening = stripMarkdown(opening).trim().slice(0, 200);
+      if (!opening) return null;
+      return { assistant: character, opening, history: [...recent, { id: randomUUID(), role: 'assistant', content: opening }] };
+    },
+  });
+
+  const answerIncomingCall = async () => {
+    const offer = incomingCalls.incoming;
+    if (!offer || callSession.isActive() || voiceOpen) return false;
+    messageSpeaker.current.cancel();
+    setSpeakingMessageId(null);
+    unlockAiAudio(); unlockIncomingRingtone();
+    const answered = await callSession.start(close => <AssistantCall
+      assistant={offer.assistant} avatars={avatars} onClose={close} incomingOpening={offer.opening} friends={listAssistants(uid)} userName={user?.displayName ?? "ユーザー"} onGroupAsk={askForGroupCall}
+      onAsk={(text, signal) => askForAssistantCall(offer.assistant, offer.history, text, signal)}
+    />);
+    if (answered) setIsSidebarOpen(false);
+    return answered;
+  };
 
   /** アシスタントに発信する */
   const openAssistantCall = (targetAssistant?: AssistantItem | null) => {
     const nextAssistant = targetAssistant ?? assistant
     if (!nextAssistant || callSession.isActive()) return
+    incomingCalls.dismiss()
 
     messageSpeaker.current.cancel()
     setSpeakingMessageId(null)
-    unlockAiAudio()
+    unlockAiAudio(); unlockIncomingRingtone();
 
     setAssistant(nextAssistant)
     setSpeakingMessageId(null)
     // 電話に出たときの第一声を履歴の先頭に入れておき、AIも「自分は挨拶済み」だと分かるようにする
-    const history: Message[] = [{ id: crypto.randomUUID(), role: 'assistant', content: greetingOf(nextAssistant) }]
+    const history: Message[] = [{ id: randomUUID(), role: 'assistant', content: greetingOf(nextAssistant) }]
     const callAsk = (text: string, signal: AbortSignal) => askForAssistantCall(nextAssistant, history, text, signal)
     callSession.start(close => (
-      <AssistantCall assistant={nextAssistant} avatars={avatars} onClose={close} onAsk={callAsk} />
+      <AssistantCall assistant={nextAssistant} avatars={avatars} onClose={close} onAsk={callAsk} friends={listAssistants(uid)} userName={user?.displayName ?? "ユーザー"} onGroupAsk={askForGroupCall} />
     ))
     setIsSidebarOpen(false)
   }
@@ -6447,6 +6258,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
       {/* メインエリア */}
       <div className="flex flex-col flex-1 h-full bg-transparent relative min-w-0 w-full">
         
+        {friendProfileOpen && assistant && <FriendProfile friend={assistant} uid={uid} avatars={avatars} onClose={() => setFriendProfileOpen(false)} onTalk={() => setView('chat')} onCall={openAssistantCall}/>}
         {/* ヘッダーエリア */}
         {embedded && <DirectMessagePanelHeader className={`dm-thread-header ${view === 'assistants' ? 'dm-ai-friends' : ''}`} back={onBack} actions={<>
           <button type="button" className="dm-icon-button dm-round" aria-label="通話" onClick={() => openAssistantCall(assistant ?? {id:'limeai',slug:null,name:'LimeAI',description:'',systemPrompt:'あなたはLimeAIです。日本語で親しみやすく会話してください。',starter:'',greeting:'こんにちは、LimeAIです。',category:'',builtin:true})}><Phone size={23}/></button>
@@ -6460,7 +6272,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
             <DropdownMenuItem disabled={!hasLimePro} onSelect={() => setSelectedModel('advanced')}>LimeAI 5.5 Thinking {selectedModel === 'advanced' && <Check size={16}/>}</DropdownMenuItem>
             {artifacts.length > 0 && <DropdownMenuItem onSelect={() => setArtifactOpen(!artifactOpen)}>プレビューパネル</DropdownMenuItem>}
           </ChatMenuContent></DropdownMenu>
-        </>}><div className="dm-thread-peer"><Avatar className="dm-avatar"><AvatarImage src={friendId && assistant ? avatarOf(assistant,avatars) : `${import.meta.env.BASE_URL}pwa-192x192.png`}/><AvatarFallback>AI</AvatarFallback></Avatar><span className="dm-peer-name">{view === 'assistants' ? 'フレンド' : assistant?.name ?? 'LimeAI'}</span></div></DirectMessagePanelHeader>}
+        </>}><div className="dm-thread-peer" role={friendId ? "button" : undefined} tabIndex={friendId ? 0 : undefined} aria-label={friendId ? "フレンドのプロフィール" : undefined} onClick={() => { if (friendId) setFriendProfileOpen(true); }} onKeyDown={e => { if (friendId && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); setFriendProfileOpen(true); } }}><Avatar className="dm-avatar"><AvatarImage src={friendId && assistant ? avatarOf(assistant,avatars) : `${import.meta.env.BASE_URL}pwa-192x192.png`}/><AvatarFallback>AI</AvatarFallback></Avatar><span className="dm-peer-name">{view === 'assistants' ? 'フレンド' : assistant?.name ?? 'LimeAI'}</span></div></DirectMessagePanelHeader>}
         <div hidden={embedded} className={embedded ? "hidden" : "flex items-center h-12 md:h-16 px-2 md:px-5 w-full shrink-0 z-30"}>
           
           {!isSidebarOpen && (
@@ -7096,6 +6908,11 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
       )}
 
       {/* ボイスモード (3Dアバター) */}
+      {incomingCalls.incoming && <IncomingFriendCall
+        name={incomingCalls.incoming.assistant.name}
+        avatar={avatarOf(incomingCalls.incoming.assistant, avatars)}
+        onAnswer={answerIncomingCall} onDecline={incomingCalls.dismiss}
+      />}
       {voiceOpen && (
         <ChatVoiceOverlay embedded={embedded}>
           <VoiceMode onClose={() => setVoiceOpen(false)} onAsk={askForVoice} />

@@ -79,15 +79,16 @@ define(['./workbox-afac4cd2'], (function (workbox) { 'use strict';
    */
   workbox.precacheAndRoute([{
     "url": "/RaimuNoteSNS.github.io/index.html",
-    "revision": "0.t31o8mgn368"
+    "revision": "0.8ecdb8pi2g4"
   }], {});
   workbox.cleanupOutdatedCaches();
   workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("/RaimuNoteSNS.github.io/index.html"), {
     allowlist: [/^\/$/]
   }));
   workbox.registerRoute(({
-    url
-  }) => url.origin === self.location.origin && /\/RaimuNoteSNS\.github\.io\/(assets|decoders)\/.*\.(js|css|wasm)$/.test(url.pathname), new workbox.CacheFirst({
+    url,
+    sameOrigin
+  }) => sameOrigin && /\/RaimuNoteSNS\.github\.io\/(assets|decoders)\/.*\.(js|css|wasm)$/.test(url.pathname), new workbox.CacheFirst({
     "cacheName": "lime-feature-assets-v1",
     plugins: [new workbox.ExpirationPlugin({
       maxEntries: 48,

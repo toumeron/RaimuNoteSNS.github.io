@@ -1,0 +1,23 @@
+import { fireEvent, render } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
+import type { PostWithAuthor } from '@/types';
+vi.mock('@/components/feed/PostCard', () => ({ PostCard: ({ post, embedded }: any) => <div data-testid="parent" data-embedded={String(!!embedded)}>{post.content}</div> }));
+vi.mock('./ExternalReplyCard', () => ({ ExternalReplyCard: ({ post, detail }: any) => <div data-lime-reply-detail={detail}>{post.content}</div> }));
+vi.mock('./ReplyChain', () => ({ ReplyChain: ({ children }: any) => <div data-lime-reply-chain>{children}</div> }));
+import { ExternalReplyDetail } from './ExternalReplyDetail';
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+it('shows the parent with its actions and anchors the selected reply until user interaction', () => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  const scroll = vi.fn();
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scroll });
+  const post = { id: 'bsky:reply', content: 'reply', externalReplyParent: { id: 'bsky:parent', content: 'parent' } } as PostWithAuthor;
+  const view = render(<ExternalReplyDetail post={post} mobileFlat />);
+  expect(view.getByTestId('parent').getAttribute('data-embedded')).toBe('false');
+  expect(view.container.querySelector('[data-lime-selected-reply]')?.textContent).toBe('reply');
+  expect(scroll).toHaveBeenCalledWith({ block: 'center', behavior: 'auto' });
+  scroll.mockClear();
+  fireEvent.wheel(window);
+  fireEvent.load(view.getByTestId('parent'));
+  expect(scroll).not.toHaveBeenCalled();
+  view.unmount();
+});

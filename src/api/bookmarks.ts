@@ -1,3 +1,4 @@
+import type { AccountReadContext } from '@/lib/accountReadClient';
 import { supabase } from '@/lib/supabase';
 import { getCurrentUserId } from '@/lib/currentUser';
 import { getPostById } from './posts';
@@ -35,14 +36,17 @@ export async function setBookmark(target: BookmarkTarget, saved: boolean, expect
   const { error } = await supabase.from('bookmarks').insert({ user_id: userId, [column]: value, ...(snapshot ? { external_snapshot: snapshot } : {}) });
   if (error && error.code !== '23505') throw error;
 }
-export async function getBookmarkPage(userId: string, offset = 0, limit = 20): Promise<{ posts: PostWithAuthor[]; unavailable: number; next?: number }> {
-  const { data, error } = await supabase.from('bookmarks').select('id, post_id, comment_id, external_id, external_snapshot, created_at').eq('user_id', userId).order('created_at', { ascending: false }).order('id', { ascending: false }).range(offset, offset + limit - 1);
+export async function getBookmarkPage(userId: string, offset = 0, limit = 20, context?: AccountReadContext) {
+  const client = context?.client ?? supabase;
+  context?.signal?.throwIfAborted();
+  const { data, error } = await client.from('bookmarks').select('id, post_id, comment_id, external_id, external_snapshot, created_at').eq('user_id', userId).order('created_at', { ascending: false }).order('id', { ascending: false }).range(offset, offset + limit - 1);
   if (error) throw error;
   const rows = (data ?? []) as BookmarkRow[];
   const posts = await Promise.all(rows.map(async row => {
     if (row.external_id) return row.external_snapshot?.id === row.external_id && row.external_snapshot.visibility === 'public' ? row.external_snapshot : null;
     // Always fetch native originals through their current visibility rules.
-    return getPostById(sourceId(row));
+    return context ? getPostById(sourceId(row), context) : getPostById(sourceId(row));
   }));
-  return { posts: posts.filter((post): post is PostWithAuthor => !!post), unavailable: posts.filter(post => !post).length, next: rows.length === limit ? offset + limit : undefined };
+  const entries = posts.flatMap((post, index) => post ? [{ post, savedAt: rows[index].created_at, bookmarkId: rows[index].id }] : []);
+  return { entries, posts: posts.filter((post): post is PostWithAuthor => !!post), unavailable: posts.filter(post => !post).length, next: rows.length === limit ? offset + limit : undefined };
 }

@@ -1,3 +1,4 @@
+import type { AccountReadContext } from '@/lib/accountReadClient';
 import { supabase } from '@/lib/supabase';
 import { getCurrentUserId } from '@/lib/currentUser';
 import type { PostWithAuthor } from '@/types';
@@ -23,13 +24,14 @@ export function replyToPost(reply: any): PostWithAuthor {
   };
 }
 
-export async function getReplyRepostState(id: string) {
+export async function getReplyRepostState(id: string, context?: AccountReadContext) {
   const commentId = id.replace(/^reply:/,'');
-  const viewer = await getCurrentUserId();
+  const viewer = context?.userId ?? await getCurrentUserId();
+  const client = context?.client ?? supabase;
   const [shares,quotes,own] = await Promise.all([
-    supabase.from('reply_reposts').select('*',{count:'exact',head:true}).eq('comment_id',commentId),
-    supabase.from('posts').select('*',{count:'exact',head:true}).eq('quoted_reply_id',commentId),
-    viewer ? supabase.from('reply_reposts').select('comment_id').eq('comment_id',commentId).eq('user_id',viewer).maybeSingle() : Promise.resolve({data:null,error:null}),
+    client.from('reply_reposts').select('*',{count:'exact',head:true}).eq('comment_id',commentId),
+    client.from('posts').select('*',{count:'exact',head:true}).eq('quoted_reply_id',commentId),
+    viewer ? client.from('reply_reposts').select('comment_id').eq('comment_id',commentId).eq('user_id',viewer).maybeSingle() : Promise.resolve({data:null,error:null}),
   ]);
   if(shares.error) throw shares.error;
   if(quotes.error) throw quotes.error;
@@ -37,12 +39,14 @@ export async function getReplyRepostState(id: string) {
   return {repostsCount:(shares.count ?? 0)+(quotes.count ?? 0),repostedByMe:Boolean(own.data)};
 }
 
-export async function getReplyPost(id: string): Promise<PostWithAuthor | null> {
-  const result = await supabase.from('comments').select(REPLY_REPOST_SELECT).eq('id',id.replace(/^reply:/,'')).single();
+export async function getReplyPost(id: string, context?: AccountReadContext): Promise<PostWithAuthor | null> {
+  const client = context?.client ?? supabase;
+  context?.signal?.throwIfAborted();
+  const result = await client.from('comments').select(REPLY_REPOST_SELECT).eq('id',id.replace(/^reply:/,'')).single();
   if(result.error || !result.data) return null;
   const post=replyToPost(result.data);
-  const [state,viewer]=await Promise.all([getReplyRepostState(id),getCurrentUserId()]);
-  const like=viewer ? await supabase.from('comment_likes').select('user_id').eq('comment_id',post.replyId).eq('user_id',viewer).maybeSingle() : {data:null};
+  const [state,viewer]=await Promise.all([getReplyRepostState(id, context),context?.userId ?? getCurrentUserId()]);
+  const like=viewer ? await client.from('comment_likes').select('user_id').eq('comment_id',post.replyId).eq('user_id',viewer).maybeSingle() : {data:null};
   return {...post,...state,likedByMe:Boolean(like.data)};
 }
 
@@ -59,9 +63,9 @@ export async function toggleReplyRepost(id: string) {
   catch { return {reposted:!own.data}; }
 }
 
-export async function getProfileReplyReposts(userId:string,limit:number):Promise<PostWithAuthor[]> {
+export async function getProfileReplyReposts(userId:string,limit:number,offset=0):Promise<PostWithAuthor[]> {
   const result=await supabase.from('reply_reposts').select(`created_at, comments!inner(${REPLY_REPOST_SELECT})`)
-    .eq('user_id',userId).order('created_at',{ascending:false}).order('comment_id',{ascending:false}).range(0,limit-1);
+    .eq('user_id',userId).order('created_at',{ascending:false}).order('comment_id',{ascending:false}).range(offset,offset+limit-1);
   if(result.error) throw result.error;
   return (result.data ?? []).map((row:any)=>({...replyToPost(row.comments),profileRepostedBy:userId,profileRepostedAt:row.created_at}));
 }

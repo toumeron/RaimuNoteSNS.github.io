@@ -1,0 +1,22 @@
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+const state=vi.hoisted(()=>({read:vi.fn(),get:vi.fn(),sharing:false}));
+vi.mock('@/hooks/useAuth',()=>({useAuth:()=>({user:{id:'a'}})}));
+vi.mock('@/lib/sharedAccountDisplay',()=>({useSharedDisplay:()=>state.sharing}));
+vi.mock('@/lib/supabase',()=>({supabase:{channel:()=>{const c={on:()=>c,subscribe:()=>c};return c;},removeChannel:vi.fn()}}));
+vi.mock('@/hooks/useSharedAccountLists',()=>({useSharedNotifications:()=>({data:{pages:[{items:[{id:'b-event',user_id:'b',actor_name:'Other',actor_id:'actor',type:'new_post',created_at:'2026-10-11',is_read:false}]}]},isPending:false,isError:false})}));
+vi.mock('@/api/notifications',async()=>({...await vi.importActual<any>('@/api/notifications'),getNotifications:state.get,markNotificationsRead:state.read}));
+import Notifications from './Notifications';
+let client:QueryClient;
+beforeEach(()=>{state.sharing=true;state.read.mockReset().mockResolvedValue(undefined);state.get.mockReset().mockResolvedValue([{id:'a-event',user_id:'a',actor_name:'Own',actor_id:'actor',type:'new_post',created_at:'2026-10-11',is_read:false}]);client=new QueryClient({defaultOptions:{queries:{retry:false}}});});
+afterEach(()=>{cleanup();client.clear();});
+it('does not mark original notifications read in shared mode, and restores the own-account behavior when off',async()=>{
+ const tree=()=> <MemoryRouter><QueryClientProvider client={client}><Notifications/></QueryClientProvider></MemoryRouter>;
+ const view=render(tree());expect(screen.getByText('Other')).toBeInTheDocument();expect(state.read).not.toHaveBeenCalled();expect(state.get).not.toHaveBeenCalled();
+ act(()=>{state.sharing=false;view.rerender(tree());});
+ await waitFor(()=>expect(screen.getByText('Own')).toBeInTheDocument());
+ expect(screen.queryByText('Other')).not.toBeInTheDocument();
+ await waitFor(()=>expect(state.read).toHaveBeenCalledWith('a',['a-event']));
+});

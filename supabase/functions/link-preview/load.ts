@@ -4,7 +4,7 @@ import {metadata,publicUrl,type LinkPreview} from './metadata.ts';
 // Fixed-server API reader for clients whose cross-origin requests are blocked.
 // This is a public-data reader; provider credentials and writes are never accepted.
 export async function loadMisskey(endpoint:unknown, params:unknown):Promise<unknown> {
- const reads=['notes/local-timeline','notes/featured','notes/search','notes/show','notes/children','users/show','users/notes','users/search','users/following','users/followers'];
+ const reads=['notes/local-timeline','notes/featured','notes/search','notes/show','notes/children','notes/replies','users/show','users/notes','users/search','users/following','users/followers'];
  if(typeof endpoint!=='string'||!reads.includes(endpoint))throw new Error('Unsupported Misskey endpoint');
  if(!params||typeof params!=='object'||Array.isArray(params))throw new Error('Invalid Misskey parameters');
  const input=params as Record<string,unknown>,body:Record<string,unknown>={};
@@ -15,6 +15,7 @@ export async function loadMisskey(endpoint:unknown, params:unknown):Promise<unkn
   if(input[key]!==undefined){if(input[key]!==null&&(typeof input[key]!=='string'||(input[key] as string).length>200))throw new Error('Invalid Misskey search');body[key]=input[key];}
  }
  if(input.withFiles!==undefined){if(typeof input.withFiles!=='boolean')throw new Error('Invalid Misskey media filter');body.withFiles=input.withFiles;}
+ if(input.withReplies!==undefined){if(typeof input.withReplies!=='boolean')throw new Error('Invalid Misskey reply filter');body.withReplies=input.withReplies;}
  if(input.limit!==undefined)body.limit=Math.min(100,Math.max(1,Number(input.limit)||30));
  if(input.i!==undefined)throw new Error('Misskey credentials are not supported');
  const response=await fetch(`https://misskey.io/api/${endpoint}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(15000)});
