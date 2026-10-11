@@ -2,9 +2,9 @@
 
 ## 状態と確認範囲
 
-ローカルのアプリ、Supabase Edge Functions、リポジトリに存在するSQL、依存パッケージ、Git履歴を調査し、以下を修正した。UIのレイアウト・配色・アニメーションは変更していない。限定投稿の仕様は「投稿者がフォローしている相手に公開」。投稿者本人も自分の投稿を閲覧できる。投稿者をフォローしているだけの相手には公開しない。
+2026年10月8日時点のアプリ、Supabase Edge Functions、SQL、依存パッケージ、Git履歴を対象とするセキュリティ記録。限定投稿の仕様は「投稿者がフォローしている相手に公開」。投稿者本人も自分の投稿を閲覧できる。投稿者をフォローしているだけの相手には公開しない。
 
-**本番への適用は未実施。** この環境のSupabase CLIにはアクセストークンがなく、本番の基礎スキーマ・既存RPC・実際の権限・バックアップ先のIAM設定には接続できなかった。基礎テーブルの作成SQLもリポジトリに揃っていないため、DBテストは旧来の広い権限を再現した隔離PostgreSQL環境で実施している。本番の安全性や、過去に流出がなかったことを保証する結果ではない。
+DBテストは旧来の広い権限を再現した隔離PostgreSQL環境を使用する。ホストされたDBの実際の権限や、バックアップ先のIAM設定は別途確認が必要。この記録は本番の現在の配備状況を示すものではない。
 
 ## 修正内容
 
@@ -27,13 +27,13 @@
 
 ## 本番への適用
 
-1. 管理端末でSupabase CLIにログインし、正しいプロジェクトをリンクする。本番の現在のスキーマとポリシーを確認する。`supabase/tests/security_catalog.sql`は行データ・関数本体・秘密値を返さない読み取り専用の確認SQL。RLSなしのテーブル、invokerではないビュー、公開RPCの権限、バケットを調査する。今回のrestrictiveポリシーは既存の正常なpermissiveポリシーを前提とするため、正当なユーザーが操作できる設定も確認する。
-2. `supabase db push --dry-run`で未適用のSQLを確認する。この作業前から存在する未適用マイグレーションも含まれることに注意する。基礎スキーマが想定と異なる場合は先に調整する。今回のSQLは所有者カラムの相違があれば適用を中断する。
+1. 管理端末でSupabase CLIにログインし、正しいプロジェクトをリンクする。本番の現在のスキーマとポリシーを確認する。`supabase/tests/security_catalog.sql`は行データ・関数本体・秘密値を返さない読み取り専用の確認SQL。RLSなしのテーブル、invokerではないビュー、公開RPCの権限、バケットを調査する。restrictiveポリシーは既存の正常なpermissiveポリシーを前提とするため、正当なユーザーが操作できる設定も確認する。
+2. `supabase db push --dry-run`で未適用のSQLを確認する。他の未適用マイグレーションも含まれることに注意する。基礎スキーマが想定と異なる場合は先に調整する。セキュリティ強化のSQLは所有者カラムの相違があれば適用を中断する。
 3. 次のマイグレーションを順序どおりに適用する。
    - `20261008120000_security_hardening.sql`
    - `20261008121000_private_post_media.sql`
    - `20261008122000_private_bot_settings.sql`
-4. サーバーのSecretsに`NEWS_CRON_SECRET`、`BOT_CRON_SECRET`、`PUSH_WEBHOOK_SECRET`を設定する。それぞれ別の十分に長いランダムな値を使う。既存の`BACKUP_CRON_SECRET`は引き続き必要。秘密値をVITE変数・ソース・チャットに書かない。GitHub Actionsには同じ`NEWS_CRON_SECRET`をSecretsとして追加し、Botのスケジューラは`x-bot-secret`、ニュースは`x-news-secret`、Push webhookは`x-push-secret`を送信するよう設定する。
+4. サーバーのSecretsに`NEWS_CRON_SECRET`、`BOT_CRON_SECRET`、`PUSH_WEBHOOK_SECRET`を設定する。それぞれ別の十分に長いランダムな値を使う。既存の`BACKUP_CRON_SECRET`は引き続き必要。秘密値をVITE変数・ソース・ログに書かない。GitHub Actionsには同じ`NEWS_CRON_SECRET`をSecretsとして追加し、Botのスケジューラは`x-bot-secret`、ニュースは`x-news-secret`、Push webhookは`x-push-secret`を送信するよう設定する。
 5. 次のEdge Functionsをデプロイする。`config.toml`ではcron/webhookは専用秘密値で検証し、ユーザー向け機能はJWTを検証する設定にした。独自のデプロイ設定で上書きしない。
    - `agora-token`, `space-token`, `chat-gemma`
    - `transcribe-call`, `synthesize-speech`, `link-preview`
@@ -41,7 +41,7 @@
 新しい画像アップロード処理には、背景削除処理と同様にサーバーの`CLOUDINARY_CLOUD_NAME`・`CLOUDINARY_API_KEY`・`CLOUDINARY_API_SECRET`が必要。フロントの切り替え後、Cloudinary側で古いunsigned upload presetを無効化する。無効化しない限り第三者によるサービスへの無断アップロードは残る。背景とカスタム絵文字は従来どおり公開画像として保存される。
 
 6. フロントエンドをビルドして既存のGitHub Pagesへ反映する。**画像・Bot設定の新方式はDB、Functions、フロントの組み合わせが必要。** DBを先に適用し、すぐにFunctionsとフロントを切り替える保守時間を確保する。古いフロントからの限定画像の登録は安全のため拒否される。新しいSecretsが未設定のcronも安全のため停止する。
-7. 本番のAuthにも12文字以上の最小パスワード長と安全なパスワード変更を設定する。今回の`config.toml`の変更だけでは、ホスト済みAuthの設定は更新されない。既存の招待コード制限・メール確認の運用を実際の設定と照合する。
+7. 本番のAuthにも12文字以上の最小パスワード長と安全なパスワード変更を設定する。`config.toml`の変更だけでは、ホスト済みAuthの設定は更新されない。既存の招待コード制限・メール確認の運用を実際の設定と照合する。
 8. 別アカウントで、作者本人・作者がフォローしている人・作者をフォローしているだけの人・未ログインの4通りを検証する。REST直アクセスとStorage直アクセスでも同じ結果になることを確認する。チャット、通知、プロフィール設定、スペースの発言権、Bot設定の読書きも確認する。
 
 レート制限は、本人ごとに5分間でチャット30回、音声60回、通話トークン60回、リンク取得120回。音声認識と音声合成は共通の上限を使う。背景・絵文字のアップロードは20回。上限変更はサーバー側SQLで行い、ブラウザーからは変更できない。
@@ -60,17 +60,17 @@ node scripts/migrate-private-media.mjs --apply
 
 **コピー後、Cloudinary側で元オブジェクトの削除・派生画像の削除・CDN無効化が必要。** 同じ画像を公開投稿でも使っていないか確認してから対応する。このスクリプトは外部の元画像を削除しない。削除後に旧URLと派生URLが実際に取得できなくなったことを検証する。閲覧者・第三者・ブラウザーが以前に保存したコピーは回収できない。
 
-バックアップには限定投稿、チャット、Push購読などの私有データも入る。Firebase/GCSバケットのIAMで`allUsers`・`allAuthenticatedUsers`への権限がないこと、公開URLで取得できないこと、サービスアカウント権限と保管期間が適切なことを本番側で確認する。このリポジトリにはバックアップ先のIAM/Storageルールがなく、こちらでは確認できていない。
+バックアップには限定投稿、チャット、Push購読などの私有データも入る。Firebase/GCSバケットのIAMで`allUsers`・`allAuthenticatedUsers`への権限がないこと、公開URLで取得できないこと、サービスアカウント権限と保管期間が適切なことを本番側で確認する。バックアップ先のIAM/Storageルールはこのリポジトリの管理対象外。
 
 ## 依存パッケージの結果
 
 npm公式のauditを実行。開始時は58件（Critical 3、High 13、Moderate 37、Low 5）。更新後は8件（Critical 0、High 5、Moderate 3、Low 0）。数はnpmの依存ツリー上の警告件数であり、独立した攻撃方法の数ではない。
 
-Tiptap/ProseMirror、Vite、Vitest、React Router、関連パーサー・シリアライザーを更新。開発用のlovable-taggerを削除。更新後のNode.js要件は`package.json`に記載した。今回の環境はNode 24。
+Tiptap/ProseMirror、Vite、Vitest、React Router、関連パーサー・シリアライザーを更新。開発用のlovable-taggerを削除。更新後のNode.js要件は`package.json`に記載した。検証環境はNode 24。
 
 残る警告は2つの未修正版の問題に起因する。
 
-- `braces`の深いパターンによるスタック枯渇。Tailwind 3、chokidar、fast-glob、micromatchへ波及する。ビルド・開発時に使われる依存であり、アプリがHTTP入力をこのパーサーへ渡すサーバーはこのリポジトリにはない。Tailwind 4への移行は生成CSS・表示へ影響するため今回のUI変更禁止の範囲では行っていない。[公開アドバイザリ](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)
+- `braces`の深いパターンによるスタック枯渇。Tailwind 3、chokidar、fast-glob、micromatchへ波及する。ビルド・開発時に使われる依存であり、アプリがHTTP入力をこのパーサーへ渡すサーバーはこのリポジトリにはない。Tailwind 4への移行には生成CSS・表示の互換性確認が必要。[公開アドバイザリ](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)
 - `sprintf-js`の過大な精度指定によるDoS。mammoth→argparseのCLI依存に波及する。mammothでargparseを使う箇所は`bin/mammoth`で、ブラウザーのDOCXテキスト抽出からこのCLIは呼んでいない。未修正版のため依存ツリー上の警告は残る。ブラウザーのDOCX抽出全体について無制限なCPU・メモリ消費がないことまで保証してはいない。[公開アドバイザリ](https://github.com/advisories/GHSA-hp3w-g68c-fv3c)
 
 `npm audit fix --force`でCSSライブラリやDOCX処理を古い版へ変更して、見かけだけの件数削減はしていない。DependabotでnpmとGitHub Actionsの更新を継続検知する。
@@ -93,4 +93,4 @@ Tiptap/ProseMirror、Vite、Vitest、React Router、関連パーサー・シリ�
 
 通常のプロフィール反映と非公開Bot設定取得を独立させた。設定画面も非公開設定の取得失敗で通常項目の反映を止めない。Bot指示を取得できていない場合は通常の保存に`bot_prompt`を含めず、空文字で既存の指示を上書きしない。プロフィールAPIの公開読み取りからBot指示を除外し、Bot指示を明示的に更新する経路は非公開設定の保存先が利用できなければ書き込み前に失敗させる。
 
-Chromeの架空セッションとモック応答で、非公開設定404のまま投稿画面のDB表示名・プロフィールリンク、プロフィール本文、設定の表示名・自己紹介・場所・ユーザー名の表示を確認した。通常設定の保存が`bot_prompt`を含まないことと、ページの未処理例外がないことも確認した。実ユーザーの保存データはこの検証で変更していない。Bot指示の非公開保存と新しい添付画像用Storageを本番で利用するには、上述のマイグレーションの適用が引き続き必要。
+Chromeの架空セッションとモック応答で、非公開設定404のまま投稿画面のDB表示名・プロフィールリンク、プロフィール本文、設定の表示名・自己紹介・場所・ユーザー名の表示を確認した。通常設定の保存が`bot_prompt`を含まないことと、ページの未処理例外がないことも確認した。検証には本番データを使用しない。Bot指示の非公開保存と新しい添付画像用Storageを本番で利用するには、上述のマイグレーションの適用が引き続き必要。

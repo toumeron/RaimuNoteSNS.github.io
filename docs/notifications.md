@@ -1,10 +1,8 @@
 # 通知機能
 
-GitHub Pagesへの公開は明示的な指示を受けた場合のみ行う。フロントエンドの変更はローカルにあり、GitHub Pagesには公開していない。
+通知はイベントを起点に生成・配信する。通知確認と履歴削除のポーリング用Cronは使用しない。旧ジョブ `lime-external-post-notifications` と `lime-notification-expiry` は廃止している。
 
-2026年10月8日に、ユーザーの指示に従って通知用の本番DB変更とEdge Functionを適用した。その後の「定期実行はやめる」という指示に従い、この作業で登録した `lime-external-post-notifications` と `lime-notification-expiry` は解除した。今後も通知のポーリング用Cronを登録しない。
-
-外部SNSの通知方式は再検討中。`server/external-notifications.mjs` と `server/cloudflare/` は未採用・未配置の試作であり、常時接続を必須条件としない。ユーザーの指示により有料サービス・定期確認は利用しない。外部SNSの即通知は本番で稼働していない。
+外部SNSの通知方式は再検討中。`server/external-notifications.mjs` と `server/cloudflare/` は未採用・未配置の試作であり、常時接続を必須条件としない。有料サービス・定期確認は利用しない。外部SNSの即通知は本番で稼働していない。
 
 公式の通知機能として、Blueskyには認証が必要な `app.bsky.notification.putActivitySubscription` と `registerPush`、Misskeyには認証が必要な `following/update` と `sw/register` がある。Misskeyのフォロー先通知は既存のフォロー関係も必要。現在のLimeNoteの外部ユーザー用ベルは各SNSへのログインなしでクラウドに対象を保存するため、これらの公式通知登録へそのまま置き換えることはできない。公式PushをLimeNoteで受け取り、通知履歴へ反映する具体的な対応も未検証。
 
@@ -30,8 +28,6 @@ LimeNote内の操作はDBのINSERTトリガーで通知を作成する。新着�
 
 Misskeyは固定の `misskey.io` に接続する。他サーバーのユーザーはmisskey.io側のフェデレーション情報を使うため、連合元からの到着までの遅延は残る。ストリームやPush通信自体のネットワーク遅延をゼロにする保証はない。
 
-公開ストリームの読み取り検証では15秒間でBluesky 462イベント、Misskey 42イベントを受信した。これは接続の確認であり、実ユーザーへのPush配信完了を示すものではない。
-
 ## 通知ページと設定
 
 既存の `Header` に「通知」と「すべて」「メンション」のタブを統合する。設定ボタンは置かない。タブ下線の切り替えは検索ページの `SearchTabIndicator` を共有する。区切り線はコンテンツ列の全幅に表示する。同じ日・同じポストの同種の操作はまとめて表示し、50件ずつ読み込む。
@@ -40,15 +36,15 @@ Misskeyは固定の `misskey.io` に接続する。他サーバーのユーザ�
 
 ## 期限・既読・配信
 
-通知履歴は作成から30日間表示する。RLSで期限切れを表示・未読件数から除外する。新規通知INSERT時に、期限切れの履歴を期限用インデックスで削除する。定期削除はないため、新規通知がない期間には期限切れレコードが物理的に残るが、画面や未読件数には含まれない。初回適用では30日を超える履歴10件を削除した。
+通知履歴は作成から30日間表示する。RLSで期限切れを表示・未読件数から除外する。新規通知INSERT時に、期限切れの履歴を期限用インデックスで削除する。定期削除はないため、新規通知がない期間には期限切れレコードが物理的に残るが、画面や未読件数には含まれない。
 
 既読保存後はDBの実際の未読件数を取得し、アプリと端末のバッジを更新する。通知クリックでも該当通知を既読にする。アプリ内一時通知は5秒、端末通知は30秒で閉じる処理を行う。ブラウザーがService Workerを停止した場合には端末通知のタイマーを保証できないため、次のPush受信や既読連絡でも期限切れ通知を閉じる。
 
 DBのPush送信トリガーは1つに整理した。専用の秘密情報をVaultとEdge Functionで共有する。外部購読テーブルにはサーバー用のSELECTと `last_checked_at` のUPDATE権限だけを追加した。
 
-## 適用済みのバックエンド
+## バックエンドの構成
 
-以下の通知用マイグレーションのみを適用した。無関係な保留中マイグレーションの一括適用はしていない。
+通知機能は次のマイグレーションで定義する。
 
 - `20261008210000_notification_preferences_and_activity.sql`
 - `20261008213000_notification_delivery_and_expiry.sql`
@@ -59,7 +55,7 @@ DBのPush送信トリガーは1つに整理した。専用の秘密情報をVaul
 
 ## 未採用の常駐受信プロセスの参考手順
 
-この方式の配置作業は停止している。以下は試作の参考手順であり、現在の実施予定ではない。Node.js 24以降と、このリポジトリの `@supabase/supabase-js` が必要。
+この方式は未採用の試作である。Node.js 24以降と、このリポジトリの `@supabase/supabase-js` が必要。
 
 1. サーバー専用の環境変数 `SUPABASE_URL` と `SUPABASE_SERVICE_ROLE_KEY` を設定する。Service Role Keyをブラウザー・ソース・公開ファイルへ含めない。
 2. `node server/external-notifications.mjs` を1プロセス起動する。
@@ -75,4 +71,4 @@ DBのPush送信トリガーは1つに整理した。専用の秘密情報をVaul
 - `npx playwright test -c tests/profile-highlights/playwright.config.ts --workers=1`
 - `npx tsc --noEmit -p tsconfig.app.json` と `npm run build`
 
-ブラウザーテストは開発サーバーとAPI応答のフィクスチャを使う。本番への試験通知は送っていない。外部SNSの通知方式・本番稼働・実端末の配信は未確認。常時接続の配置先提供をユーザーへの必須条件としない。
+ブラウザーテストは開発サーバーとAPI応答のフィクスチャを使う。外部SNSから実端末までのPush配信は、このテストの対象に含まれない。

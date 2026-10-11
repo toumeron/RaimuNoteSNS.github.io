@@ -1,6 +1,6 @@
 # データベースの保存先一覧
 
-最初にこの資料を参照してください。公開プロフィールは `profiles`、本人専用設定は `profile_private_settings` に集約します。1アカウントに複数件あるポスト・関係・操作履歴は関連テーブルとして管理します。
+公開プロフィールは `profiles`、本人専用設定は `profile_private_settings` に集約します。1アカウントに複数件あるポスト・関係・操作履歴は関連テーブルとして管理します。
 
 ## プロフィール・アカウント
 
@@ -36,11 +36,11 @@
 | スタイルアプリ | `style_apps`, `style_app_preferences` | `20261003210000_style_apps.sql`、関連画面 |
 | ニュース | `news_summaries`, `news_generation_state` | ニュース画面・生成関数、`20261007143000_external_sources_and_news_cadence.sql` |
 | エクスポート管理 | `account_exports` | `supabase/functions/account-export/`、`src/lib/accountExport.ts` |
-| 既存・用途要確認 | `lime_drops` | 今回のクライアントコードでは直接参照を確認できていない。データ・DB側関数の調査なしに削除しない |
+| 既存・用途要確認 | `lime_drops` | クライアントコードからの直接参照は未確認。データ・DB側関数の調査なしに削除しない |
 
 `limenote_security.request_limits` はサーバー専用スキーマの利用回数管理です。プロフィール設定とは分けて管理します。Supabase管理用の `auth` / `storage` / `realtime` / `supabase_migrations` はアプリの整理対象ではありません。
 
-## 今回統合する3テーブル
+## プロフィール関連テーブルの統合
 
 | 旧テーブル | 統合先 |
 | --- | --- |
@@ -48,7 +48,7 @@
 | `account_about` | `profiles` のアカウント情報カラム |
 | `external_account_imports` | `profile_private_settings.external_accounts_imported_at` |
 
-接続先の調査時点では `public` に38個の実テーブルがあります。統合後は35個になります。過去のマイグレーションは履歴なので削除・書き換えず、`20261008190000_consolidate_profile_data.sql` で移行します。3つの旧テーブルを参照する旧版フロントエンドと、この統合後のスキーマを混在させないでください。
+過去のマイグレーションは履歴なので削除・書き換えず、`20261008190000_consolidate_profile_data.sql` で移行します。3つの旧テーブルを参照する旧版フロントエンドと、この統合後のスキーマを混在させないでください。
 
 ## 適用・検証
 
@@ -63,7 +63,7 @@
 
 ## トピック設定
 
-`20261008233000_topic_preferences.sql` は既存の `profile_private_settings` に `followed_topics` と `dismissed_topics` を追加します。新規テーブルはありません。2026年10月8日に本番DBへ適用し、適用後も `public` の実テーブル数は36個であることを確認済みです。
+`20261008233000_topic_preferences.sql` は既存の `profile_private_settings` に `followed_topics` と `dismissed_topics` を追加します。新規テーブルはありません。
 
 - 保存内容は本人限定。公開プロフィールには含めません。既存のBot指示・通知設定を保持します。
 - `update_topic_preferences(topic_ids, disposition)` はログイン中の本人を `auth.uid()` で判定し、`follow`・`dismiss`・`clear` を一行の更新で処理します。トピックの重複とフォロー／興味なしの重複を防ぎます。
@@ -96,7 +96,7 @@
 
 ### 外部フォローの統合 (20261009030000)
 
-既存の follows に external_provider / external_handle / external_profile を追加した。ネイティブUUID参照と所有者制限を維持し、外部フォローは set_external_follow RPCで保存する。旧 external_account_users の12件を検証付きで移行し、同名の互換ビューに置き換えた。本番の公開テーブルは36から35へ減った。プロフィールのフォローとLimeNote側のフォロー中一覧・タイムラインを統合し、SNS側のログインは必要ない。旧データの公開プロフィール情報は一覧表示で不足時に補完する。新規テーブル・定期実行・GitHub Pages公開は行っていない。
+既存の follows に external_provider / external_handle / external_profile を追加した。ネイティブUUID参照と所有者制限を維持し、外部フォローは set_external_follow RPCで保存する。旧 external_account_users はデータを検証して移行し、同名の互換ビューに置き換える。プロフィールのフォローとLimeNote側のフォロー中一覧・タイムラインを統合し、SNS側のログインは必要ない。旧データの公開プロフィール情報は一覧表示で不足時に補完する。新規テーブル・定期実行の追加はない。
 
 ### おすすめが参照するいいね履歴（2026年10月9日）
 
@@ -123,12 +123,12 @@
 - ニュースと引用元の作者情報をまとめて返し、検索ページではユーザー別のReact Queryキャッシュを1分間再利用する（未使用キャッシュは5分で破棄）。アイコンの遅延追加による行の高さ・文字位置の変化を避け、24pxのアイコン領域を保持する。非公開・削除済み引用元は引き続き除外する。
 - GitHub Actionsの既存 `5-hour-news-refresh` は15分間隔で起動し、既存DBの `claim_news_generation` に加え、生成関数も最終成功・最終試行から5時間経過した取得元だけを生成する。失敗後も15分ごとにAI生成を繰り返さない。具体的な一つの出来事について5件以上の根拠がない場合は生成失敗として保持し、古い根拠や別の話題を混ぜて更新しない。
 
-- 2026年10月9日に生成関数をSupabaseへ適用した。欠けていた `NEWS_CRON_SECRET` をSupabaseへ設定し、ユーザーの明示承認後、同じ値を既存GitHubリポジトリのActions Secretへ登録した。秘密値は保存先以外へ公開せず、一時ファイルは削除済み。Pagesへの公開や新規スケジュールの追加は行っていない。
+- `generate-news` とGitHub Actionsは、同じ `NEWS_CRON_SECRET` をSupabaseのSecretsとリポジトリのActions Secretsに設定する。秘密値をソースコードに保存しない。
 
 ## LimeMaps
 既存の `posts.map_latitude` / `posts.map_longitude` にユーザーが地図上で選んだ位置を保存する。端末位置・IPからの位置推定は使用しない。公開ポストのみ、表示範囲を条件に40件ずつ取得する。自分のポストの場所の変更・削除には所有者を確認する `set_post_map_location` を使用する。テーブルの追加はない。適用SQL: `20261009170000_post_map_locations.sql`。地図はLeafletを遅延読み込みし、OpenStreetMapの表示中のタイルだけを通常のブラウザーキャッシュで取得する。
 
-- 2026年10月9日、ユーザーの指示によりChromeのログイン済みSupabase SQL Editorから本番DBに適用した。既存postsへの列・制約・インデックスと所有者限定RPCのみを追加し、スキーマキャッシュを更新した。元の地図クエリーがHTTP 200、匿名RPCが401で拒否されることを確認した。authenticatedロールで既存の自分の投稿の場所保存・削除を実行するトランザクション検証も成功し、全変更をrollbackした。テスト用の公開ポストは残していない。
+- 地図の取得は公開ポストに限定する。場所の保存・削除RPCは認証済みの所有者だけが実行できる。
 
 - LimeMapsのタイル画像には `strict-origin-when-cross-origin` を個別指定し、サイト全体の `no-referrer` を維持したままOpenStreetMapの参照元要件を満たす。タイルのみ暗色変換し、実際に保存された公開ポストを黄色い点で表示する。地図ページのヘッダー・右のトレンド欄は非表示。
 

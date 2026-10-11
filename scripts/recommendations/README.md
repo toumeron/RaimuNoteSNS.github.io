@@ -8,7 +8,7 @@ DB migrations, function deployment, Secrets and the daily workflow are activated
 2. Generate a random `RECOMMENDATION_TRAINING_SECRET` and register the same value in Supabase function Secrets and GitHub Actions repository Secrets. Register the existing public `SUPABASE_ANON_KEY` in GitHub Actions Secrets. Never put service-role credentials in the frontend or repository.
 3. Deploy `recommendation-ranker` (`verify_jwt=false` is intentional: normal requests verify their user JWT inside the handler; export/upload require the dedicated training secret).
 4. Enable `VITE_RECOMMENDATION_RANKER_ENABLED=true` in the frontend build environment only after the DB/function are ready. The default is disabled to avoid requests to an undeployed service.
-5. Activate the workflow on the default branch only with explicit authorization. For backend-only activation, temporarily disable the Pages workflow and commit only the training workflow/scripts through the GitHub API with `[skip ci]`; verify no Pages run was created and restore the Pages workflow to its original state. Do not push the local application changes to main.
+5. Enable the daily training workflow on the default branch. Configure frontend deployment and model training as separate workflows.
 6. After collecting enough observations, run the workflow manually once. Then it is scheduled daily at 04:23 JST; GitHub schedules may be delayed.
 
 ## Data and model
