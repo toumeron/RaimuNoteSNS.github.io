@@ -1,4 +1,4 @@
-import { secretMatches } from '../_shared/security.ts';
+import { secretMatches, boundedBody } from '../_shared/security.ts';
 const BACKUP_TABLES = [
   "active_bot_users",
   "chat_sessions",
@@ -290,7 +290,9 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "unauthorized" }, 401);
     }
 
-    const payload = (await req.json().catch(() => ({}))) as BackupRequest;
+    let payload: BackupRequest;
+    try { payload = JSON.parse((await boundedBody(req,8192))||'{}'); }
+    catch { return jsonResponse({error:'Invalid or oversized request'},400); }
     const tables = selectTables(payload);
     const invalidTable = tables.find((table) => !allowedTables.has(table));
 

@@ -1,3 +1,4 @@
+import { notifySuspendedAction } from './accountSuspension';
 export type ChatModel = 'fast' | 'advanced';
 type Event = Record<string, any>;
 class ChatRequestError extends Error {
@@ -16,6 +17,10 @@ export async function streamChatWithFallback({ model, retry, signal, request, on
     try {
       signal?.throwIfAborted();
       const response = await request(models[attempt]);
+      if (!response.ok && response.status === 403) {
+        const body = await response.clone().json().catch(() => null);
+        if (body?.code === 'ACCOUNT_SUSPENDED') {notifySuspendedAction();throw new ChatRequestError(body.error, false);}
+      }
       if (!response.ok) throw new ChatRequestError(`会話を取得できませんでした (${response.status})`, response.status === 429 || response.status >= 500);
       if (!response.body) throw new ChatRequestError('会話の応答が空でした');
       const reader = response.body.getReader(); const decoder = new TextDecoder();

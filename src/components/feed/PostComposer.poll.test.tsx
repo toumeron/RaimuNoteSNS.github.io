@@ -30,3 +30,14 @@ it.each([false,true])('submits a poll through the overlay composer (fullScreen=%
  await waitFor(()=>expect(mocks.submit).toHaveBeenCalledWith(expect.objectContaining({content:'質問',poll:{durationMinutes:1440,options:[{label:'猫'},{label:'犬'}]}})));
  await waitFor(()=>expect(screen.queryByLabelText('投票を作成')).not.toBeInTheDocument());
 });
+
+it.each(['inline','overlay','fullscreen'])('submits an image without requiring body text (%s)',async variant=>{
+ const original=URL.createObjectURL;URL.createObjectURL=()=> 'blob:only-image';
+ try{
+  const view=render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><MemoryRouter>{variant==='inline'?<PostComposer/>:<OverlayComposer fullScreen={variant==='fullscreen'}/>}</MemoryRouter></QueryClientProvider>);
+  const submit=screen.getByRole('button',{name:variant==='fullscreen'?'ポストする':'ポスト'});expect(submit).toBeDisabled();
+  fireEvent.change(view.container.querySelector('input[type="file"][accept="image/*"]')!,{target:{files:[new File(['image'],'photo.png',{type:'image/png'})]}});
+  await waitFor(()=>expect(submit).toBeEnabled());expect(screen.getByLabelText('ポスト本文')).toHaveValue('');fireEvent.click(submit);
+  await waitFor(()=>expect(mocks.submit).toHaveBeenCalledWith(expect.objectContaining({content:'',imageUrls:['blob:only-image']})));
+ }finally{URL.createObjectURL=original;}
+});

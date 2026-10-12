@@ -1,12 +1,12 @@
 import {createClient} from 'https://esm.sh/@supabase/supabase-js@2';
-import {authenticate,boundedRequest,quota} from '../_shared/security.ts';
+import {authenticate,boundedRequest,quota,rejectSuspended} from '../_shared/security.ts';
 import {cloudinarySignature,cloudinaryDownloadUrl} from './signing.ts';
 const headers={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization, x-client-info, apikey, content-type','Access-Control-Allow-Methods':'POST, OPTIONS','Cache-Control':'no-store'};
 const uuid=/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 export async function handleDirectMedia(request:Request):Promise<Response>{
  if(request.method==='OPTIONS')return new Response(null,{headers});
  if(request.method!=='POST')return Response.json({error:'Method not allowed'},{status:405,headers});
- const actor=await authenticate(request,headers);if(actor instanceof Response)return actor;
+ const actor=await authenticate(request,headers,true);if(actor instanceof Response)return actor;
  const cloud=Deno.env.get('CLOUDINARY_CLOUD_NAME'),key=Deno.env.get('CLOUDINARY_API_KEY'),secret=Deno.env.get('CLOUDINARY_API_SECRET');
  if(!cloud||!key||!secret)return Response.json({error:'画像サービスが設定されていません'},{status:503,headers});
  const service=createClient(Deno.env.get('SUPABASE_URL')!,Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,{auth:{persistSession:false,autoRefreshToken:false}});
@@ -40,6 +40,7 @@ export async function handleDirectMedia(request:Request):Promise<Response>{
    return Response.json({urls},{headers});
   }
   if(body.action==='discard'){
+   const denied=await rejectSuspended(actor.userId,headers);if(denied)return denied;
    if(!Array.isArray(body.refs)||body.refs.length>4)return Response.json({error:'Invalid assets'},{status:400,headers});
    for(const ref of body.refs){if(typeof ref!=='string')return Response.json({error:'Invalid asset'},{status:400,headers});const match=ref.match(/^cloudinary:direct_messages\/([0-9a-f-]{36})\/([0-9a-f-]{36})\/([0-9a-f-]{36})$/i);if(!match||match[2]!==actor.userId)return Response.json({error:'Not the owner'},{status:403,headers});const {data:released,error}=await service.rpc('release_direct_media',{target:match[1],actor:actor.userId,ref});if(error)throw error;if(released)await destroy(ref);}
    return Response.json({ok:true},{headers});

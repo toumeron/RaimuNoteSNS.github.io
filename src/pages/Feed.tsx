@@ -1,3 +1,4 @@
+import { SuspensionNotice } from '@/components/account/AccountSuspension';
 import {isTimelinePost,showTimelineEmpty} from "@/lib/timelinePaging";
 import {useListFeed} from '@/hooks/useLists';
 import {useTopicFeed} from '@/hooks/useTopicFeed';
@@ -17,7 +18,7 @@ import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
 import { useRecommendedFeed } from '@/hooks/useRecommendedFeed';
 import { useTimelineFeed } from '@/hooks/useTimelineFeed';
 import { normalizeTimelineBlueskyPost } from '@/lib/timelinePaging';
-import { useIsPWA } from "@/hooks/use-mobile";
+import { useIsPWA, TIMELINE_PAGINATION_MARGIN } from "@/hooks/use-mobile";
 import { supabase } from '@/lib/supabase';
 import { getPostById } from '@/api/posts';
 import type { PostWithAuthor } from '@/types';
@@ -298,7 +299,7 @@ export default function Feed() {
     return()=>{window.removeEventListener('wheel',scrollIntent);window.removeEventListener('touchmove',scrollIntent);window.removeEventListener('keydown',scrollIntent);window.removeEventListener('pointermove',scrollIntent);};
   },[activeTab]);
   const { ref, inView } = useInView({
-    rootMargin: '300px 0px 500px 0px',
+    rootMargin: TIMELINE_PAGINATION_MARGIN,
   });
 
   const fetchedPosts = useMemo(() => data?.pages.flatMap((page) => page.posts).filter(isTimelinePost) ?? [], [data]);
@@ -1717,7 +1718,8 @@ export default function Feed() {
       </div>
 
       <div className="relative z-[1]">
-        <PostComposer homeInline timelineGlass={hasTimelineBackground} />
+        <fieldset disabled={user?.isSuspended} className={user?.isSuspended ? "opacity-50" : undefined}><PostComposer homeInline timelineGlass={hasTimelineBackground} /></fieldset>
+        {user?.isSuspended && <SuspensionNotice />}
       </div>
 
       <div

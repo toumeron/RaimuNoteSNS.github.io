@@ -1,3 +1,4 @@
+import { isAccountReadOnly } from '@/lib/accountSuspension';
 import {preparePoll,discardPollImages} from './polls';
 import {validatePollDraft,type PollDraft} from '@/lib/polls';
 import type { AccountReadContext } from '@/lib/accountReadClient';
@@ -306,6 +307,7 @@ export async function getLikedPostsByUser(targetUserId: string, page: number = 0
  * メンバー限定投稿も検索結果に含める。
  */
 export async function searchPosts(query: string, page: number = 0, limit: number = 10,signal?:AbortSignal): Promise<PostWithAuthor[]> {
+  if (isAccountReadOnly()) return [];
   const userId = await getCurrentUserId();
   
   if(signal?.aborted)throw signal.reason;

@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { boundedBody } from '../_shared/security.ts';
 type Row = Record<string, unknown>;
 const privateHeaders = { 'Cache-Control': 'no-store', 'Content-Type': 'application/json', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 const uuid = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(value);
@@ -47,9 +48,10 @@ export async function handleExport(request: Request, makeClient:typeof createCli
         return reply({ error: 'POST required' }, 405);
     let db: SupabaseClient | undefined, owner: string | undefined;
     try {
-        const body = await request.text();
-        if (body.length > 8192)
+        let body: string;
+        try { body = await boundedBody(request, 8192); } catch {
             return reply({ error: 'Request too large' }, 413);
+        }
         const input = JSON.parse(body);
         const token = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
         if (!token)

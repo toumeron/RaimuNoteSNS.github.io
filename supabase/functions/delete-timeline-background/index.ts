@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { boundedBody, quota } from '../_shared/security.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -45,6 +46,8 @@ async function destroyCloudinaryImage(publicId: string) {
   const response = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/destroy`, {
     method: 'POST',
     body: formData,
+    redirect: 'error',
+    signal: AbortSignal.timeout(30000),
   });
 
   const payload = await response.json().catch(() => null);
@@ -62,7 +65,7 @@ async function destroyCloudinaryImage(publicId: string) {
   return payload;
 }
 
-Deno.serve(async (req: Request): Promise<Response> => {
+export async function handleDeleteBackground(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
@@ -87,6 +90,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     }
 
     const userClient = createClient(supabaseUrl, anonKey, {
+      auth: {persistSession:false,autoRefreshToken:false},
       global: {
         headers: {
           Authorization: authorization,
@@ -102,9 +106,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (userError || !user) {
       return jsonResponse({ error: '認証に失敗しました' }, 401);
     }
+    const limited = await quota(user.id, 'upload', corsHeaders);
+    if (limited) return limited;
 
-    const adminClient = createClient(supabaseUrl, serviceRoleKey);
-    const body = await req.json().catch(() => ({}));
+    const adminClient = createClient(supabaseUrl, serviceRoleKey, {auth:{persistSession:false,autoRefreshToken:false}});
+    let body;
+    try { body = JSON.parse(await boundedBody(req, 4096)); }
+    catch { return jsonResponse({error:'Invalid or oversized request'}, 400); }
     const requestedPublicId = typeof body?.publicId === 'string' ? body.publicId : '';
 
     const { data: profile, error: profileError } = await adminClient
@@ -132,13 +140,16 @@ Deno.serve(async (req: Request): Promise<Response> => {
       cloudinaryResult = await destroyCloudinaryImage(publicId);
     }
 
-    const { error: updateError } = await adminClient
+    let update = adminClient
       .from('profiles')
       .update({
         timeline_background_url: null,
         timeline_background_public_id: null,
       })
       .eq('id', user.id);
+    // Do not clear a replacement uploaded while the provider deletion was pending.
+    update = storedPublicId ? update.eq('timeline_background_public_id', storedPublicId) : update.is('timeline_background_public_id', null);
+    const { error: updateError } = await update;
 
     if (updateError) throw updateError;
 
@@ -151,9 +162,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
     console.error('delete-timeline-background error:', err);
     return jsonResponse(
       {
-        error: err instanceof Error ? err.message : 'タイムライン背景の削除に失敗しました',
+        error: 'タイムライン背景の削除に失敗しました',
       },
       500,
     );
   }
-});
+}
+if (import.meta.main) Deno.serve(handleDeleteBackground);

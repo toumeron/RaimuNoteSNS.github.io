@@ -4,12 +4,13 @@ import type { User } from "@/types";
 import { supabase } from "@/lib/supabase";
 
 // Keep the fields returned by toUser; exclude unrelated profile settings.
-const USER_SELECT_COLUMNS = 'id, username, display_name, bio, location, avatar_url, cover_url, created_at, is_official, is_private, emoji_effect, bot_enabled, review';
+const USER_SELECT_COLUMNS = 'id, username, display_name, bio, location, avatar_url, cover_url, created_at, is_official, is_private, emoji_effect, bot_enabled, review, Account_suspension';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function toUser(row: any): User {
   return {
     id: row.id as string,
+    isSuspended: row.Account_suspension === true,
     review: row.review === true,
     isPrivate: row.is_private === true,
     username: row.username as string,

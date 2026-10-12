@@ -11,6 +11,7 @@ export default defineConfig(({ mode }) => {
   // GitHub Pages用のベースパス設定
   base: "/RaimuNoteSNS.github.io/",
   build: { target: ["es2020", "safari16"] },
+  worker: { format: 'es' },
   server: {
     host: "127.0.0.1",
     port: 8080,

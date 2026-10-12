@@ -238,4 +238,23 @@ await assert.rejects(call(d,`send_direct_reply('${reactionTrigger}','Not a membe
 await call(a,`delete_direct_message('${reactionTrigger}',true)`);
 await assert.rejects(call(a,`send_direct_reply('${reactionTrigger}','Deleted','{}',gen_random_uuid())`));
 console.log('Reply persistence, retry deduplication and hidden/deleted/nonmember parent protection passed');
+// Before hardening, even ordinary participants could select the invite secret.
+const privateToken=await call(b,`set_group_direct_invite('${group}',true)`);
+assert.equal((await as(c,`select invite_token from direct_conversations where id='${group}'`))[0].invite_token,privateToken);
+await db.exec(await readFile('supabase/migrations/20261012030000_private_conversation_columns.sql','utf8'));
+for(const field of ['invite_token','group_requests','group_members','media_assets','group_friends','read_low','deleted_high']) {
+ await assert.rejects(as(c,`select ${field} from direct_conversations where id='${group}'`),/permission denied/);
+}
+await assert.rejects(as(c,`select * from direct_conversations where id='${group}'`),/permission denied/);
+assert.equal((await as(c,`select id,is_group from direct_conversations where id='${group}'`)).length,1);
+assert.equal((await as(a,`select id from direct_conversations where id='${group}'`)).length,0);
+assert.equal((await call(c,`get_group_direct_conversation('${group}')`)).inviteToken,null);
+assert.equal((await call(b,`get_group_direct_conversation('${group}')`)).inviteToken,privateToken);
+assert.ok((await call(c,'get_direct_inbox()')).some(entry=>entry.id===group));
+assert.ok((await as(c,`select id from direct_messages where conversation_id='${group}'`)).length>0);
+await assert.rejects(as(b,`select hidden_by from direct_messages where conversation_id='${group}'`),/permission denied/);
+await assert.rejects(as(b,`select * from direct_messages where conversation_id='${group}'`),/permission denied/);
+assert.ok((await as(b,`select id,content,attachments,reactions from direct_messages where conversation_id='${group}'`)).length>0);
+assert.ok((await db.query("select relreplident from pg_class where relname in ('direct_messages','direct_conversations')")).rows.every(row=>row.relreplident==='d'));
+console.log('Confirmed invite-token exploit blocked; sensitive column grants denied, admin summaries and participant message RLS preserved');
 await db.close();

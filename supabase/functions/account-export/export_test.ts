@@ -24,6 +24,12 @@ Deno.test('missing JWT or password cannot start an export',async()=>{
  const noToken=await handleExport(new Request('https://api.test',{method:'POST',body:'{}'}));assert(noToken.status===401);
  const {makeClient}=fixture();const missing=await handleExport(new Request('https://api.test',{method:'POST',headers:{Authorization:'Bearer session'},body:'{"action":"collect"}'}),makeClient);assert(missing.status===400);
 });
+Deno.test('oversized streaming export requests are stopped before authentication or DB access',async()=>{
+ let reads=0,clients=0;
+ const stream=new ReadableStream<Uint8Array>({pull(controller){reads++;controller.enqueue(new Uint8Array(5000));}});
+ const response=await handleExport(new Request('https://api.test',{method:'POST',body:stream}),(()=>{clients++;throw Error('Must not access DB');}) as Parameters<typeof handleExport>[1]);
+ assert(response.status===413);assert(reads<=3);assert(clients===0);
+});
 Deno.test('all pages are collected without silently truncating at the server page size',async()=>{
  const rows=await paged(async offset=>Array.from({length:offset<1000?500:17},(_,i)=>({id:offset+i})));
  assert(rows.length===1017);assert(rows[1016].id===1016);

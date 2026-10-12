@@ -18,6 +18,7 @@ Deno.serve(async (req) => {
     .from('profiles')
     .select('id, private_settings:profile_private_settings(bot_prompt)')
     .eq('bot_enabled', true)
+    .eq('Account_suspension', false)
 
 
   if (userError) {

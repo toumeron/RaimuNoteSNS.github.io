@@ -15,7 +15,10 @@ export async function handleGroupFriends(req:Request):Promise<Response>{
   if(typeof input.conversationId!=='string'||typeof input.messageId!=='string')return Response.json({error:'Invalid request'},{status:400,headers});
   const url=Deno.env.get('SUPABASE_URL')!,anon=Deno.env.get('SUPABASE_ANON_KEY')!;
   const db=createClient(url,anon,{global:{headers:{Authorization:req.headers.get('authorization')!}},auth:{persistSession:false,autoRefreshToken:false}});
-  const {data:group,error}=await db.from('direct_conversations').select('is_group,group_members,group_friends').eq('id',input.conversationId).single();
+  // Raw membership contains invite tokens and other members' private settings.
+  // Keep it server-side; message/history reads below still use the viewer's RLS.
+  const service=createClient(url,Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,{auth:{persistSession:false,autoRefreshToken:false}});
+  const {data:group,error}=await service.from('direct_conversations').select('is_group,group_members,group_friends').eq('id',input.conversationId).single();
   if(error||!group?.is_group||group.group_members?.[actor.userId]?.status!=='accepted')return Response.json({error:'Not a participant'},{status:403,headers});
   const {data:trigger}=await db.from('direct_messages').select('id,sender_id,friend_id,system_event,created_at,content,reply_to').eq('id',input.messageId).eq('conversation_id',input.conversationId).single();
   if(!trigger||trigger.sender_id!==actor.userId||trigger.friend_id||trigger.system_event)return Response.json({error:'Invalid trigger'},{status:403,headers});
@@ -27,7 +30,6 @@ export async function handleGroupFriends(req:Request):Promise<Response>{
   const invited=invitedGroupFriends(trigger.content??messages?.[0]?.content??'',friends,trigger.id,replyFriend);
   const {data:existing}=await db.from('direct_messages').select('friend_id').eq('reply_to',trigger.id);
   const completed=new Set(existing?.map(m=>m.friend_id));
-  const service=createClient(url,Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,{auth:{persistSession:false,autoRefreshToken:false}});
   const failures:string[]=[];
   await Promise.all(friends.map(async f=>{
    const id=f.id;if(!invited.has(id)||completed.has(id))return;

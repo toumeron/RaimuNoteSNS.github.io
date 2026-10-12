@@ -1940,7 +1940,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
 
   // 検索バー・検索ページ用タブは「検索ページ('/search')のみ・モバイルのみ」で表示する。
   // サジェスト用の各種effect/memoからも参照するため、コンポーネント冒頭で確定させておく。
-  const isSearchRoute = normalizeAppPath(location.pathname) === '/search';
+  const isSearchRoute = normalizeAppPath(location.pathname) === '/search' && !user?.isSuspended;
 
   // 検索ページで実際に検索結果を表示しているか。
   // メインの検索ページ(未検索状態)だけスクロールでヘッダーを閉じ、

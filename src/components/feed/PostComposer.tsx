@@ -1,3 +1,5 @@
+import { allowAccountWrite } from '@/lib/accountSuspension';
+import {useAutoTextarea} from '@/hooks/useAutoTextarea';
 import {ComposerIcon} from '@/components/feed/ComposerIcon';
 import {PollIcon} from "@/components/feed/ComposerIcon";
 import {PollEditor,newPollDraft} from './PollEditor';
@@ -37,7 +39,6 @@ const HASHTAG_SEARCH_DEBOUNCE_MS = 180;
 const SUGGESTION_CACHE_LIMIT = 24;
 
 // テキストエリアの自動リサイズ設定
-const TEXTAREA_MIN_HEIGHT = 96; // 3行分程度の高さを最低保証
 const TEXTAREA_MAX_HEIGHT = 480; // これ以上は内部スクロールに切り替える
 
 const mentionSuggestionCache = new Map<string, any[]>();
@@ -1131,27 +1132,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
     closeImageEditor();
   }, [imageEditor, closeImageEditor, cropImageSize.height, cropImageSize.width, cropOffset.x, cropOffset.y, cropZoom, editingImageIndex, editingImageSrc, getCropBoxSize, cropAspectId, selectedCropAspect.outputHeight, selectedCropAspect.outputWidth]);
 
-  // 文字数（内容量）に応じてテキストエリアの高さを自動調整する
-  const resizeTextarea = useCallback(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-
-    el.style.height = 'auto';
-    const nextHeight = Math.min(TEXTAREA_MAX_HEIGHT, Math.max(TEXTAREA_MIN_HEIGHT, el.scrollHeight));
-    el.style.height = `${nextHeight}px`;
-    el.style.overflowY = el.scrollHeight > TEXTAREA_MAX_HEIGHT ? 'auto' : 'hidden';
-  }, []);
-
-  useEffect(() => {
-    resizeTextarea();
-  }, [content, resizeTextarea]);
-
-  useEffect(() => {
-    // 初回マウント時・ウィンドウ幅が変わったとき（折り返し行数が変わる）にも高さを合わせる
-    resizeTextarea();
-    window.addEventListener('resize', resizeTextarea);
-    return () => window.removeEventListener('resize', resizeTextarea);
-  }, [resizeTextarea]);
+  const resizeTextarea = useAutoTextarea(textareaRef,content,TEXTAREA_MAX_HEIGHT);
 
   const handleContentChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
@@ -1254,11 +1235,12 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
   }, [setSearchParams]);
 
   const submit = async () => {
+    if (!allowAccountWrite()) return;
     if (!user) return;
 
     const trimmed = appendSticker(content,sticker);
-    if (!trimmed) {
-      toast.error('本文を入力してください');
+    if (!trimmed && (previews.length===0 || !!poll)) {
+      toast.error(poll?'投票の質問を入力してください':'本文または画像を追加してください');
       return;
     }
     if (trimmed.length > MAX_LEN) {
@@ -1496,6 +1478,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
 
             <Textarea
               ref={textareaRef}
+              rows={1}
               aria-label={poll?"投票の質問":"ポスト本文"}
               value={content}
               onChange={handleContentChange}
@@ -1506,7 +1489,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
               style={{
                 color: "transparent",
                 caretColor: "hsl(var(--foreground))",
-                minHeight: `${TEXTAREA_MIN_HEIGHT}px`,
+                minHeight: 0,
                 maxHeight: `${TEXTAREA_MAX_HEIGHT}px`,
               }}
             />
@@ -1682,7 +1665,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
             <Button
               type="button"
               onClick={submit}
-              disabled={isPending || overLimit || !appendSticker(content,sticker) || !!(poll&&validatePollDraft(poll))}
+              disabled={isPending || overLimit || (!appendSticker(content,sticker) && (previews.length===0 || !!poll)) || !!(poll&&validatePollDraft(poll))}
               aria-label={quotedPost?'引用ポスト':'ポスト'}
               className={cn("shrink-0 rounded-full bg-gradient-primary font-bold shadow-soft transition hover:shadow-pop",homeInline?"h-9 w-9 p-0 sm:h-10 sm:w-auto sm:px-5":"px-5")}
             >

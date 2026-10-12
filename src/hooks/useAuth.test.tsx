@@ -175,3 +175,16 @@ it('switches the cloud external-user owner with auth and defers cloud reads outs
   act(() => mock.callback?.('SIGNED_OUT', null));
   expect(setExternalAccountOwner).toHaveBeenLastCalledWith(null);
 });
+
+it('updates read-only state when the signed-in profile is frozen and unfrozen without deleting cached account credentials',async()=>{
+  render(<QueryClientProvider client={new QueryClient()}><AuthProvider><Probe /></AuthProvider></QueryClientProvider>);
+  act(()=>mock.callback?.('INITIAL_SESSION',session));
+  await act(async()=>{await vi.advanceTimersByTimeAsync(0);});
+  mock.from.mockReturnValue({select:()=>({eq:()=>({single:async()=>({data:{username:'profile',display_name:'Profile Name',Account_suspension:true},error:null})})})});
+  await act(async()=>{window.dispatchEvent(new Event('focus'));});
+  expect(currentAuth.user?.isSuspended).toBe(true);
+  expect(getSavedAccountTokens(session.user.id)).not.toBeNull();
+  mock.from.mockReturnValue({select:()=>({eq:()=>({single:async()=>({data:{username:'profile',display_name:'Profile Name',Account_suspension:false},error:null})})})});
+  await act(async()=>{window.dispatchEvent(new Event('focus'));});
+  expect(currentAuth.user?.isSuspended).toBe(false);
+});

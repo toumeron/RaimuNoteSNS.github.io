@@ -1,3 +1,4 @@
+import { isAccountReadOnly } from '@/lib/accountSuspension';
 import {supabase} from '@/lib/supabase';
 import {getCurrentUserId} from '@/lib/currentUser';
 import {randomUUID} from '@/lib/randomUUID';
@@ -47,7 +48,7 @@ export async function setListMember(id:string,user:ListMember,included:boolean){
 export async function setSavedList(id:string,included:boolean){const {error}=await supabase.rpc('set_saved_list',{list_id:id,included});if(error)throw error;}
 export async function searchListUsers(query:string,signal?:AbortSignal):Promise<ListMember[]>{return (await searchAccounts(query,signal)).map(listMember);}
 
-export async function searchLists(query:string):Promise<UserList[]> {const {data,error}=await supabase.from('user_lists').select(select).ilike('name',`%${query.replace(/[%_]/g,'')}%`).order('created_at',{ascending:false}).limit(30);if(error)throw error;return enrich(data as UserList[]);}
+export async function searchLists(query:string):Promise<UserList[]> {if(isAccountReadOnly())return [];const {data,error}=await supabase.from('user_lists').select(select).ilike('name',`%${query.replace(/[%_]/g,'')}%`).order('created_at',{ascending:false}).limit(30);if(error)throw error;return enrich(data as UserList[]);}
 
 // The TL catalog only needs labels; avoid signing/downloading covers on every page.
 export async function getListCatalog(owner:string):Promise<{id:string;name:string}[]> {

@@ -1,4 +1,4 @@
-import { secretMatches } from '../_shared/security.ts';
+import { secretMatches, boundedBody } from '../_shared/security.ts';
 type NotificationRecord = {
   id: string;
   is_read?: boolean;
@@ -466,7 +466,9 @@ export const handlePush = async (req: Request) => {
     const appOrigin = Deno.env.get('APP_ORIGIN') || 'https://toumeron.github.io';
     const config = { supabaseUrl, serviceRoleKey };
 
-    const payload = await req.json().catch(() => ({}));
+    let payload;
+    try { payload = JSON.parse(await boundedBody(req, 16384)); }
+    catch { return jsonResponse({error:'Invalid or oversized request'}, 400); }
     const notificationId = payload.notification_id || payload.record?.id || payload.id;
 
     if (!notificationId) {

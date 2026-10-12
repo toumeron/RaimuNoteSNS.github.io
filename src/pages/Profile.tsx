@@ -1,3 +1,4 @@
+import { SuspensionNotice } from '@/components/account/AccountSuspension';
 import { collectProfilePages } from "@/lib/profileReplyThreads";
 import type { PostWithAuthor } from '@/types';
 import { PostTabMenu, type PostTabFilter, type PostTabSort } from '@/components/profile/PostTabMenu';
@@ -3309,6 +3310,8 @@ export default function Profile() {
       </div>
     );
   }
+
+  if (!isBlueskyProfile && 'isSuspended' in user && user.isSuspended) return <div><SuspensionNotice profile /></div>;
 
   return (
     <div

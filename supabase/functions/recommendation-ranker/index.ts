@@ -39,7 +39,7 @@ export async function handleRecommendationRanker(req:Request):Promise<Response> 
    }
    return Response.json({featureNames:FEATURE_NAMES,rows:rows.slice(0,50000)},{headers});
   }
-  const actor=await authenticate(req,headers);if(actor instanceof Response)return actor;
+  const actor=await authenticate(req,headers,true);if(actor instanceof Response)return actor;
   const limited=await quota(actor.userId,'preview',headers);if(limited)return limited;
   if(input.action!=='rank'||!Array.isArray(input.candidates)||input.candidates.length>80||!input.candidates.every((candidate:any)=>typeof candidate.id==='string'&&candidate.id.length<=512&&validFeatures(candidate.features)))return Response.json({error:'Invalid candidates'},{status:400,headers});
   let active:RankModel|null=null;try{active=await model();}catch{/* Keep the baseline available during storage outages. */}

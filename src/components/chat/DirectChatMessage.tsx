@@ -10,14 +10,15 @@ import {DropdownMenu,DropdownMenuTrigger,DropdownMenuItem} from '@/components/ui
 import {ChatMenuContent} from '@/components/ai/ChatMenuContent';
 import {Dialog,DialogContent,DialogTitle,DialogDescription} from '@/components/ui/dialog';
 const emojis=['👍','😢','👩‍💻','🆗','🙏','😮','😋','😭','🎉','👎','❤️','🔥','🤠','😂','🤩','🙃','💯','🧠','⭕'];
-export function DirectChatMessage({message:m,userId,group,content,enabled,onChanged,onReply,reply}:{message:DirectMessage;userId:string;group?:DirectGroup;content:ReactNode;enabled:boolean;onChanged:()=>Promise<unknown>;onReply:()=>void;reply?:DirectMessage}){
+export function DirectChatMessage({message:m,userId,group,content,enabled,onChanged,onReply,reply,cat}:{message:DirectMessage;userId:string;group?:DirectGroup;content:ReactNode;enabled:boolean;onChanged:()=>Promise<unknown>;onReply:()=>void;reply?:DirectMessage;cat?:ReactNode}){
  const own=m.sender_id===userId&&!m.friend_id;const member=group?.members.find(p=>p.id===m.sender_id);const name=m.friend_name??member?.displayName??'メンバー';const avatar=m.friend_avatar??member?.avatarUrl;
  const row=useRef<HTMLDivElement>(null);const [expanded,setExpanded]=useState(false);const [selected,setSelected]=useState(false);const [picker,setPicker]=useState(false);const [menu,setMenu]=useState(false);const [deleting,setDeleting]=useState<boolean|null>(null);const [busy,setBusy]=useState(false);const [error,setError]=useState('');const hold=useRef<ReturnType<typeof setTimeout>>();const origin=useRef({x:0,y:0});const held=useRef(false);
  useEffect(()=>()=>clearTimeout(hold.current),[]);
  useEffect(()=>{if(!selected)return;const outside=(event:PointerEvent)=>{if(event.target instanceof Node&&!row.current?.contains(event.target))setSelected(false)};document.addEventListener('pointerdown',outside);return()=>document.removeEventListener('pointerdown',outside)},[selected]);
  const action=async(fn:()=>Promise<void>)=>{setBusy(true);setError('');try{await fn();setPicker(false);setDeleting(null);await onChanged();}catch(e){setError(e instanceof Error?e.message:typeof e==='object'&&e&&'message' in e?String(e.message):'処理できませんでした。もう一度お試しください');}finally{setBusy(false)}};
  const reaction=(emoji:string)=>void action(()=>toggleDirectReaction(m.id,emoji));
- return <div ref={row} className={`dm-message dm-action-message ${own?'is-own':''} ${group?'dm-group-message':''}`} data-message-id={m.id} data-tools-active={selected||picker||menu||undefined}>
+ return <div ref={row} className={`dm-message dm-action-message ${own?'is-own':''} ${group?'dm-group-message':''}`} data-pixel-cat-message={m.id} data-message-id={m.id} data-tools-active={selected||picker||menu||undefined}>
+  {cat}
   <div className="dm-message-body">
    {group&&!own&&<div className="dm-group-sender"><span>{name}</span></div>}
    <div className="dm-message-content" onContextMenu={e=>{e.preventDefault();setMenu(true)}} onPointerDown={e=>{held.current=false;origin.current={x:e.clientX,y:e.clientY};if(e.pointerType!=='mouse')hold.current=setTimeout(()=>{held.current=true;setMenu(true)},500)}} onPointerUp={()=>clearTimeout(hold.current)} onPointerCancel={()=>clearTimeout(hold.current)} onPointerMove={e=>{if(Math.hypot(e.clientX-origin.current.x,e.clientY-origin.current.y)>10)clearTimeout(hold.current)}} onClick={()=>{if(window.matchMedia('(hover: none)').matches)setSelected(true)}} onClickCapture={e=>{if(held.current){e.preventDefault();e.stopPropagation();held.current=false}}}>

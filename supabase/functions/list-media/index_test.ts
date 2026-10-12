@@ -8,6 +8,7 @@ Deno.test('list images authenticate uploads, sign private assets, resolve only v
  globalThis.fetch=(async(input:RequestInfo|URL,init?:RequestInit)=>{
   const url=input instanceof Request?input.url:String(input);
   if(url.includes('/auth/v1/user'))return Response.json({id:owner,aud:'authenticated'});
+  if(url.includes('/rpc/is_account_suspended'))return Response.json(false);
   if(url.includes('/rpc/consume_security_quota'))return Response.json(true);
   if(url.includes('/image/upload')){const form=init?.body as FormData;assert(form.get('type')==='authenticated');assert(typeof form.get('signature')==='string');uploaded=String(form.get('public_id'));assert(uploaded.startsWith(`lists/${owner}/${listId}/`));return Response.json({public_id:uploaded,format:'png'});}
   if(url.includes('/rest/v1/user_lists'))return Response.json(url.includes('select=owner_id')?[{owner_id:owner}]:visible?[{id:listId,owner_id:owner,cover_ref:`cloudinary:${uploaded}.png`}]:[]);

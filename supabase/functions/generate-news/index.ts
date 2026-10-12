@@ -1,9 +1,9 @@
-import { secretMatches } from '../_shared/security.ts';
+import { secretMatches, boundedBody } from '../_shared/security.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { newsRefreshIsDue, loadRecentLimeNewsPosts, recentNewsWindow, selectRecentNewsPosts, selectPopularPosts, validateSummary, selectNewsTopic, topicSelectionPrompt, focusedNewsPrompt, type NewsPost, type BlueskyPost } from './sources.ts';
 
-serve(async (request:Request): Promise<Response> => {
+export async function handleGenerateNews(request:Request, makeClient:typeof createClient=createClient): Promise<Response> {
   const headers = {'Content-Type': 'application/json', 'Cache-Control': 'no-store'};
   if (request.method !== 'POST') return Response.json({error: 'Method not allowed'}, {status: 405, headers});
   if (!await secretMatches(request.headers.get('x-news-secret'), Deno.env.get('NEWS_CRON_SECRET'))) return Response.json({error: 'Unauthorized'}, {status: 401, headers});
@@ -12,11 +12,14 @@ serve(async (request:Request): Promise<Response> => {
     const url = Deno.env.get('SUPABASE_URL');
     const service = Deno.env.get('PRIVATE_SERVICE_KEY') || Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
     if (!key || !url || !service) throw new Error('Missing news configuration');
-    const db = createClient(url, service);
+    const db = makeClient(url, service, {auth:{persistSession:false,autoRefreshToken:false}});
     const newsDb = db as unknown as Parameters<typeof loadRecentLimeNewsPosts>[0];
-    const input=await request.json().catch(()=>({}));
+    let input;
+    try { input=JSON.parse((await boundedBody(request,4096))||'{}'); }
+    catch { return Response.json({error:'Invalid or oversized request'},{status:400,headers}); }
     const scheduled=input?.scheduled===true;
     const results = await Promise.allSettled(['limenote', 'bluesky'].map(async source => {
+      const minimumSources=source==='limenote'?1:5;
       if(scheduled){
         const state=await db.from('news_generation_state').select('last_completed_at,last_attempted_at').eq('source',source).maybeSingle();
         if(state.error)throw new Error(state.error.message);
@@ -40,9 +43,10 @@ serve(async (request:Request): Promise<Response> => {
           }
           throw new Error('Bluesky popular search unavailable');
         }));
+        if(batches.every(batch=>batch.status==='rejected'))throw new Error('Bluesky popular search unavailable');
         posts = selectPopularPosts(batches.flatMap(b => b.status === 'fulfilled' ? b.value : []),Date.now(),200);
       }
-      if (!posts.length) throw new Error(`${source}: no public source posts`);
+      if (!posts.length) return {source,skipped:true,reason:'insufficient_sources',sourcePostsCount:0};
       const generate = async (prompt: string) => {
         let response: Response | undefined;
         for (let attempt = 0; attempt < 3; attempt++) {
@@ -68,28 +72,28 @@ serve(async (request:Request): Promise<Response> => {
       let excludedTopic='';
       for(let topicAttempt=0;topicAttempt<2;topicAttempt++){
         posts=candidates;
-        selection = selectNewsTopic(await generate(topicSelectionPrompt(posts)+(excludedTopic?`\n「${excludedTopic}」は同じ出来事の根拠が不足したため除外し、別の具体的な出来事を選んでください。`:'')), posts,0);
+        selection = selectNewsTopic(await generate(topicSelectionPrompt(posts,undefined,minimumSources)+(excludedTopic?`\n「${excludedTopic}」は同じ出来事の根拠が不足したため除外し、別の具体的な出来事を選んでください。`:'')), posts,0);
         // The broad pool chooses the story; only relevant posts become sources.
         // Expand a sparse topic before writing, instead of publishing a one-post analysis.
         if(selection.query){
           if(source==='limenote'){
             const extra=await loadRecentLimeNewsPosts(newsDb,{query:selection.query,limit:100});
-            posts=[...new Map([...selection.posts,...extra].map(p=>[p.id,p])).values()];
+            posts=[...new Map([...candidates,...extra].map(p=>[p.id,p])).values()];
           }else{
             const params=new URLSearchParams({q:selection.query,lang:'ja',sort:'top',since:recentNewsWindow().since,limit:'100'});
             for(const host of ['public.api.bsky.app','api.bsky.app']){
               const response=await fetch(`https://${host}/xrpc/app.bsky.feed.searchPosts?${params}`,{signal:AbortSignal.timeout(15000)});
-              if(response.ok){const extra=selectPopularPosts((await response.json()).posts,Date.now(),100);posts=[...new Map([...selection.posts,...extra].map(p=>[p.id,p])).values()];break;}
+              if(response.ok){const extra=selectPopularPosts((await response.json()).posts,Date.now(),100);posts=[...new Map([...candidates,...extra].map(p=>[p.id,p])).values()];break;}
               await response.body?.cancel();
             }
           }
-          selection=selectNewsTopic(await generate(topicSelectionPrompt(posts,selection.topic)),posts,0);
+          selection=selectNewsTopic(await generate(topicSelectionPrompt(posts,selection.topic,minimumSources)),posts,0);
         }
-        if(selection.posts.length>=5)break;
+        if(selection.posts.length>=minimumSources)break;
         excludedTopic=selection.topic;
       }
-      if(!selection || selection.posts.length<5)throw new Error(`${source}: fewer than five relevant public source posts after topic search`);
-      const summary = validateSummary(await generate(focusedNewsPrompt(selection.topic, selection.posts)), selection.posts,5);
+      if(!selection || selection.posts.length<minimumSources)return {source,skipped:true,reason:'insufficient_sources',sourcePostsCount:selection?.posts.length??0};
+      const summary = validateSummary(await generate(focusedNewsPrompt(selection.topic, selection.posts,minimumSources)), selection.posts,minimumSources);
       // Generation may outlive the freshness window; recheck before saving.
       const currentSources=selectRecentNewsPosts(selection.posts);
       if(summary.related_post_ids.some(id=>!currentSources.some(post=>post.id===id)))throw new Error('Source posts are no longer recent');
@@ -110,4 +114,5 @@ serve(async (request:Request): Promise<Response> => {
     }));
     return new Response(JSON.stringify({results: results.map((r, i) => r.status === 'fulfilled' ? r.value : {source: i ? 'bluesky' : 'limenote', error: r.reason instanceof Error ? r.reason.message : 'Generation failed'})}), {status: results.every(r => r.status === 'rejected') ? 500 : 200, headers});
   } catch { return new Response(JSON.stringify({error: 'News generation failed'}), {status: 500, headers}); }
-});
+}
+if(import.meta.main)serve(request=>handleGenerateNews(request));

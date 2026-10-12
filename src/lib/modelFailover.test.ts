@@ -29,3 +29,28 @@ it('does not loop or expose secrets if both providers fail, and honors cancellat
   fetcher.mockRejectedValue(new DOMException('Aborted','AbortError'));
   await expect(requestModelWithFailover('groq-key',{},config,controller.signal)).rejects.toHaveProperty('name','AbortError');expect(fetcher).toHaveBeenCalledOnce();
 });
+
+import {parseFriendResponse} from '../../supabase/functions/_shared/friendReaction';
+const visibleAnswer={acceptText:(text:string)=>!!parseFriendResponse(text).reply.trim()};
+it('fails over a completed tag-only stream before delivering it to LimeAI',async()=>{
+ const fetcher=vi.fn().mockResolvedValueOnce(stream('<image-query>fixture noodles</image-query>')).mockResolvedValueOnce(stream('<image-query>noodles</image-query>料理についての返答です。'));vi.stubGlobal('fetch',fetcher);
+ const result=await requestModelWithFailover('groq-key',{stream:true,messages:[]},config,undefined,visibleAnswer);
+ const text=await result.text();expect(text).toContain('料理についての返答です。');expect(text).not.toContain('fixture noodles');expect(fetcher).toHaveBeenCalledTimes(2);
+});
+it('fails over tag-only JSON completions but keeps legitimate tool calls',async()=>{
+ const fetcher=vi.fn().mockResolvedValueOnce(Response.json({choices:[{message:{content:'<reaction>👍</reaction><image-query>noodles</image-query>'}}]})).mockResolvedValueOnce(json());vi.stubGlobal('fetch',fetcher);
+ expect((await (await requestModelWithFailover('groq-key',{messages:[]},config,undefined,visibleAnswer)).json()).choices[0].message.content).toBe('返答');expect(fetcher).toHaveBeenCalledTimes(2);
+ fetcher.mockReset().mockResolvedValue(Response.json({choices:[{message:{content:null,tool_calls:[{id:'call',type:'function',function:{name:'search',arguments:'{}'}}]}}]}));
+ await requestModelWithFailover('groq-key',{messages:[]},config,undefined,visibleAnswer);expect(fetcher).toHaveBeenCalledOnce();
+});
+it('rejects metadata-only replies when both providers have no visible answer',async()=>{
+ const fetcher=vi.fn().mockImplementation(()=>Promise.resolve(stream('<image-query>noodles</image-query>')));vi.stubGlobal('fetch',fetcher);
+ await expect(requestModelWithFailover('groq-key',{stream:true,messages:[]},config,undefined,visibleAnswer)).rejects.toThrow('no displayable answer');expect(fetcher).toHaveBeenCalledTimes(2);
+});
+
+it('delivers a visible LimeAI reply through the real frontend SSE parser after server failover',async()=>{
+ const {streamChatWithFallback}=await import('./chatModelFallback');
+ const fetcher=vi.fn().mockResolvedValueOnce(stream('<image-query>noodles</image-query>')).mockResolvedValueOnce(stream('<image-query>noodles</image-query>麺料理の説明です。'));vi.stubGlobal('fetch',fetcher);
+ let received='';await streamChatWithFallback({model:'fast',retry:false,request:()=>requestModelWithFailover('groq-key',{stream:true,messages:[]},config,undefined,visibleAnswer),onEvent:event=>{received+=event.choices?.[0]?.delta?.content??'';}});
+ expect(parseFriendResponse(received).reply).toBe('麺料理の説明です。');expect(fetcher).toHaveBeenCalledTimes(2);
+});

@@ -123,7 +123,8 @@
   },
   "overrides": {
     "postcss-selector-parser": "^7.1.6",
-    "katex": "$katex"
+    "katex": "$katex",
+    "sharp": "^0.35.5"
   },
   "engines": {
     "node": "^22.12.0 || ^24.0.0 || >=26.0.0"

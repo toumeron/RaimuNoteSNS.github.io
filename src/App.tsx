@@ -1,3 +1,6 @@
+import { allowAccountWrite } from '@/lib/accountSuspension';
+import { AccountSuspensionFeedback } from '@/components/account/AccountSuspension';
+import {useAutoTextarea} from '@/hooks/useAutoTextarea';
 import {ComposerIcon} from '@/components/feed/ComposerIcon';
 import {PollIcon} from "@/components/feed/ComposerIcon";
 import {PollEditor,newPollDraft} from '@/components/feed/PollEditor';
@@ -1026,6 +1029,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
   const [scrollTop, setScrollTop] = useState(0);
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useAutoTextarea(textareaRef,content);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1990,11 +1994,12 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
   }, [setSearchParams, initialQuotedPost]);
 
   const submit = async () => {
+    if (!allowAccountWrite()) return;
     if (!user) return;
 
     const trimmed = appendSticker(content,sticker);
-    if (!trimmed) {
-      toast.error('本文を入力してください');
+    if (!trimmed && (previews.length===0 || !!poll)) {
+      toast.error(poll?'投票の質問を入力してください':'本文または画像を追加してください');
       return;
     }
     if (trimmed.length > MAX_LEN) {
@@ -2139,12 +2144,12 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
         onChange={handleContentChange}
         onPaste={handlePaste}
         onScroll={handleScroll}
-        rows={fullScreen ? 6 : 3}
+        rows={1}
         spellCheck={false}
         className={cn(
           "relative z-10 resize-none border-0 bg-transparent px-0 py-2 leading-relaxed shadow-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:outline-none outline-none w-full text-transparent selection:bg-[#b4d7ff] selection:text-black dark:selection:bg-[#385474] dark:selection:text-white",
           fullScreen ? "text-[22px]" : "text-[20px]",
-          fullScreen && "min-h-[140px]"
+          "min-h-0"
         )}
         style={{ color: "transparent", caretColor: "hsl(var(--foreground))" }}
       />
@@ -2398,7 +2403,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
             <Button
               type="button"
               onClick={submit}
-              disabled={isPending || overLimit || !appendSticker(content,sticker) || !!(poll&&validatePollDraft(poll))}
+              disabled={isPending || overLimit || (!appendSticker(content,sticker) && (previews.length===0 || !!poll)) || !!(poll&&validatePollDraft(poll))}
               className="rounded-full bg-gradient-primary px-5 font-bold shadow-soft transition hover:shadow-pop"
             >
               {isPending ? (
@@ -2538,7 +2543,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
             <Button
               type="button"
               onClick={submit}
-              disabled={isPending || overLimit || !appendSticker(content,sticker) || !!(poll&&validatePollDraft(poll))}
+              disabled={isPending || overLimit || (!appendSticker(content,sticker) && (previews.length===0 || !!poll)) || !!(poll&&validatePollDraft(poll))}
               className="rounded-full bg-gradient-primary px-5 font-bold shadow-soft transition hover:shadow-pop"
             >
               {isPending ? (
@@ -2719,6 +2724,7 @@ const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage |
       
       <AuthProvider>
         <SpaceProvider>
+        <AccountSuspensionFeedback />
         <AccountOverlayReset onReset={resetAccountOverlays} />
         <NotificationWatcher />
         <MediaLightboxRoot />

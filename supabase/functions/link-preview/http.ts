@@ -25,7 +25,8 @@ export function decodeHttp(bytes:Uint8Array,truncated=false):{status:number;loca
 // Connect to the validated address, then validate TLS against the original host.
 // Supabase's Node HTTP shim does not implement custom DNS lookup callbacks.
 export async function page(url:URL,userAgent="Mozilla/5.0 (compatible; LimeNote/1.0)"):Promise<{status:number;location?:string;html:string}> {
-  const addresses=await lookup(url.hostname,{all:true});
+  let dnsTimer:ReturnType<typeof setTimeout>|undefined;
+  const addresses=await Promise.race([lookup(url.hostname,{all:true}),new Promise<never>((_,reject)=>{dnsTimer=setTimeout(()=>reject(new Error('Timeout')),10000);})]).finally(()=>clearTimeout(dnsTimer));
   if(!addresses.length||addresses.some(item=>!publicAddress(item.address)))throw new Error('Private address');
   // These domains are operated by the platforms themselves, with no user-managed DNS.
   // Use the platform HTTP stack for their HTTP/2 compatibility; redirects remain manual.
@@ -38,11 +39,16 @@ export async function page(url:URL,userAgent="Mozilla/5.0 (compatible; LimeNote/
     return {status:200,html:new TextDecoder().decode(bytes)};
   }
   let connection:Deno.Conn|undefined;
+  let finished=false;
   let timer:ReturnType<typeof setTimeout>|undefined;
   const operation=(async()=>{
     const tcp=await Deno.connect({hostname:addresses[0].address,port:Number(url.port||(url.protocol==='https:'?443:80))});
+    // A TCP connect can finish after Promise.race already timed out. Close that
+    // late socket instead of starting unbounded work without a deadline timer.
+    if(finished){tcp.close();throw new Error('Timeout');}
     connection=tcp;
     if(url.protocol==='https:')connection=await Deno.startTls(tcp,{hostname:url.hostname});
+    if(finished){connection.close();throw new Error('Timeout');}
     const message=new TextEncoder().encode(`GET ${url.pathname}${url.search} HTTP/1.1\r\nHost: ${url.host}\r\nUser-Agent: ${userAgent}\r\nAccept: text/html,application/xhtml+xml\r\nAccept-Encoding: identity\r\nAccept-Language: ja-JP,ja;q=0.9,en;q=0.5\r\nConnection: close\r\n\r\n`);
     let written=0;while(written<message.length)written+=await connection.write(message.subarray(written));
     const parts:Uint8Array[]=[];let length=0,truncated=false;
@@ -51,5 +57,5 @@ export async function page(url:URL,userAgent="Mozilla/5.0 (compatible; LimeNote/
     return decodeHttp(bytes,truncated);
   })();
   try{return await Promise.race([operation,new Promise<never>((_,reject)=>{timer=setTimeout(()=>{try{connection?.close();}catch{/* Closed */}reject(new Error('Timeout'));},10000);})]);}
-  finally{clearTimeout(timer);try{connection?.close();}catch{/* Closed */}}
+  finally{finished=true;clearTimeout(timer);try{connection?.close();}catch{/* Closed */}}
 }

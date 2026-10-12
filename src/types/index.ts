@@ -9,6 +9,7 @@ export type User = {
   avatarUrl: string;
   coverUrl: string;
   createdAt: string;
+  isSuspended?: boolean;
   review?: boolean;
   isPrivate?: boolean;
   isOfficial?: boolean; 

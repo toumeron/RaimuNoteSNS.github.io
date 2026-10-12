@@ -11,7 +11,7 @@ export default defineConfig({
     env: { BASE_URL: "/RaimuNoteSNS.github.io/" },
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
-    include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    include: ["src/**/*.{test,spec}.{ts,tsx}", "tests/security/*.test.mjs"],
   },
   resolve: {
     alias: { "@": path.resolve(__dirname, "./src") },

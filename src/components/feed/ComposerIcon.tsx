@@ -8,7 +8,7 @@ export function ComposerIcon({kind,...props}:SVGProps<SVGSVGElement>&{kind:Compo
   image:<><rect x="4" y="4" width="24" height="24" rx="5"/><circle cx="21" cy="11" r="2.2" fill="currentColor" stroke="none"/><path d="m5 21 6.5-6.5L25 28"/></>,
   poll:<><circle cx="7.5" cy="9" r="3.5"/><circle cx="7.5" cy="23" r="3.5"/><path d="M17 9h11M17 23h11"/></>,
   smile:<><circle cx="16" cy="16" r="12"/><ellipse cx="11.5" cy="12.5" rx="1.6" ry="2.1" fill="currentColor" stroke="none"/><ellipse cx="20.5" cy="12.5" rx="1.6" ry="2.1" fill="currentColor" stroke="none"/><path d="M10 20q6 6 12 0"/></>,
-  globe:<><circle cx="16" cy="16" r="12"/><path d="m8 6 3 4-2 4 5 3 1 9 4-5 1-5 5-2-5-3-1-6M5 16l4 3"/></>,
+  globe:<path fill="currentColor" stroke="none" fillRule="evenodd" d="M16 3a13 13 0 1 0 0 26 13 13 0 0 0 0-26ZM15 5.6l-5.3 1.6-2.1 4.2 4.2 1.8 3.6 2.2-2.4 3.4.5 4.7 2.4 2.9 1.6-7 2.9-2.6-3.4-3.2-3.8-1.4 1.8-6.6ZM22.4 9.1l-3.1 2.8 1.9 4.8 3.5 2.2 1.3 3.4A10.5 10.5 0 0 0 26.7 12l-4.3-2.9Z"/>,
   users:<><circle cx="12" cy="9" r="4.5"/><path d="M3 27a9 9 0 0 1 18 0ZM23 13l3 3 4-7"/></>,
   members:<><path d="m4 9 6 5 6-9 6 9 6-5-3 15H7ZM8 28h16"/><circle cx="4" cy="7" r="1" fill="currentColor" stroke="none"/><circle cx="28" cy="7" r="1" fill="currentColor" stroke="none"/></>,
   send:<><path d="m4 5 24 11L4 27l4-11ZM8 16h20"/></>,

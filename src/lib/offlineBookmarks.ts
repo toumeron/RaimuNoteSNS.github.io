@@ -1,4 +1,5 @@
 import { randomUUID } from '@/lib/randomUUID';
+import {boundedResponseBlob,ResponseTooLarge} from './boundedResponse';
 import {supabase} from './supabase';
 import type {LinkPreview} from './linkPreview';
 import type {LiveSpace} from "@/components/spaces/SpaceProvider";
@@ -84,26 +85,30 @@ async function downloadImage(url:string,signal:AbortSignal){
   const response=await fetch(url,{signal,credentials:'omit',referrerPolicy:'no-referrer'});
   if(!response.ok)throw new Error('画像を保存できませんでした。もう一度お試しください');
   if(!response.headers.get('content-type')?.startsWith('image/'))throw new Error('画像データを取得できませんでした');
-  return {bytes:await response.arrayBuffer(),type:response.headers.get('content-type')??'application/octet-stream'};
+  const blob=await boundedResponseBlob(response,16*1024*1024);
+  return {bytes:await blob.arrayBuffer(),type:blob.type};
  }catch(error){
-  if(signal.aborted)throw error;
+  if(signal.aborted||error instanceof ResponseTooLarge)throw error;
   // Browser image tags may display an asset whose host denies fetch/CORS.
   // Request only supported public media through the authenticated image reader.
   const {data,error:proxyError,response}=await supabase.functions.invoke('link-preview',{body:{url,mode:'image'},signal});
   const type=response?.headers.get('x-lime-image-type')??data?.type??'';
   if(proxyError||!(data instanceof Blob)||!type.startsWith('image/'))throw new Error(`画像を保存できませんでした（${new URL(url).hostname}）`);
+  if(data.size>16*1024*1024)throw new ResponseTooLarge();
   return {bytes:await data.arrayBuffer(),type};
  }
 }
 export async function downloadBookmarkAssets(urls:string[],onProgress:(done:number,total:number)=>void):Promise<OfflineBookmarks['assets']> {
   const assets:OfflineBookmarks['assets']=[];
-  let done=0;
+  let done=0,totalBytes=0;
+  if(urls.length>2000)throw new Error('画像が多すぎます。保存対象を減らしてください');
   // Bound simultaneous downloads on iOS. A failed asset leaves the existing
   // snapshot intact, rather than reporting an incomplete download as saved.
   for(let start=0;start<urls.length;start+=2)await Promise.all(urls.slice(start,start+2).map(async url=>{
     const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),30000);
     try{
       const {bytes,type}=await downloadImage(url,controller.signal);if(!bytes.byteLength)throw new Error('画像を保存できませんでした');
+      totalBytes+=bytes.byteLength;if(totalBytes>256*1024*1024)throw new Error('画像の合計が256MBを超えています。保存対象を減らしてください');
       assets.push({url,bytes,type});onProgress(++done,urls.length);
     }finally{clearTimeout(timer);}
   }));

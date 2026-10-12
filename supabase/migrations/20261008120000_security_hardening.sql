@@ -60,6 +60,7 @@ begin
   execute format('alter table public.%I enable row level security',spec.table_name);
   expression:=format('%I = (select auth.uid())',spec.owner_column);
   foreach command in array array['insert','update','delete'] loop
+   execute format('drop policy if exists %I on public.%I','security_owner_'||command,spec.table_name);
    execute format('create policy %I on public.%I as restrictive for %s to anon,authenticated %s',
     'security_owner_'||command,spec.table_name,command,
     case command when 'insert' then 'with check ('||expression||')'
@@ -67,6 +68,7 @@ begin
      else 'using ('||expression||')' end);
   end loop;
   if spec.private_read then
+   execute format('drop policy if exists security_private_read on public.%I',spec.table_name);
    execute format('create policy security_private_read on public.%I as restrictive for select to anon,authenticated using (%s)',spec.table_name,expression);
   end if;
  end loop;
@@ -82,19 +84,23 @@ begin
  loop
   if to_regclass('public.'||spec.table_name) is null then continue; end if;
   execute format('alter table public.%I enable row level security',spec.table_name);
+  execute format('drop policy if exists security_visible_parent on public.%I',spec.table_name);
+  execute format('drop policy if exists security_insert_visible_parent on public.%I',spec.table_name);
   execute format('create policy security_visible_parent on public.%I as restrictive for select to anon,authenticated using (exists(select 1 from public.%I p where p.id=%I.%I))',spec.table_name,spec.parent_table,spec.table_name,spec.parent_column);
   execute format('create policy security_insert_visible_parent on public.%I as restrictive for insert to anon,authenticated with check (exists(select 1 from public.%I p where p.id=%I.%I))',spec.table_name,spec.parent_table,spec.table_name,spec.parent_column);
  end loop;
 end;$$;
+drop policy if exists security_comment_parent_write on public.comments;
 create policy security_comment_parent_write on public.comments as restrictive for insert to anon,authenticated
  with check(exists(select 1 from public.posts p where p.id=post_id));
+drop policy if exists security_notification_post_read on public.notifications;
 create policy security_notification_post_read on public.notifications as restrictive for select to anon,authenticated
  using(post_id is null or exists(select 1 from public.posts p where p.id=post_id));
 -- Only trusted DB triggers/webhooks may create notifications; users mark read.
 revoke insert on public.notifications from anon,authenticated;
 
 -- Do not permit self-assignment of official/admin flags or account ownership.
-create function limenote_security.protect_profile_flags() returns trigger language plpgsql set search_path='' as $$
+create or replace function limenote_security.protect_profile_flags() returns trigger language plpgsql set search_path='' as $$
 declare field text;
 begin
  if current_user not in ('anon','authenticated') then return new; end if;
@@ -110,6 +116,7 @@ begin
  return new;
 end;$$;
 revoke all on function limenote_security.protect_profile_flags() from public,anon,authenticated;
+drop trigger if exists security_profile_flags on public.profiles;
 create trigger security_profile_flags before insert or update on public.profiles for each row execute function limenote_security.protect_profile_flags();
 
 notify pgrst,'reload schema';

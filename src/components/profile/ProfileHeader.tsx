@@ -6,7 +6,7 @@ import {cloudExternalHandles,initialiseExternalAccounts,setExternalAccountOwner}
 import { ReviewStars } from '@/components/reviews/ReviewStars';
 import { accountReviewsKey, getAccountReviews } from "@/api/users";
 import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
-import { ArrowLeft, CalendarDays, MapPin, Link2, MoreHorizontal, MessageCircle, Radio, Search, Share2, X, List } from 'lucide-react';
+import { ArrowLeft, CalendarDays, MapPin, Link2, MoreHorizontal, MessageCircle, Radio, Search, Share2, X } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import {
@@ -482,7 +482,6 @@ export function ProfileHeader({
             </Avatar>
           </button>
           <div data-lime-profile-actions data-lime-profile-dm-actions={canMessage&&!isMe&&!isBlueskyProfile || undefined} data-lime-profile-membership-actions={showSubscriptionButton || undefined} className={`mt-3 flex shrink-0 items-center ${showSubscriptionButton ? 'max-sm:[&>button]:h-9 max-sm:[&>button]:px-1.5 max-sm:[&>button]:text-[13px] min-[360px]:max-sm:[&>button]:px-3 min-[360px]:max-sm:[&>button]:text-sm max-sm:[&>button]:mr-1 max-sm:[&>button:last-child]:mr-0 max-sm:[&>button[data-profile-icon-action]]:w-9 max-sm:[&>button[data-profile-icon-action]]:p-0' : ''}`}>
-            {me&&<DropdownMenu><DropdownMenuTrigger asChild><Button type="button" variant="ghost" data-profile-icon-action aria-label="プロフィールのその他のメニュー" className="mr-2 hidden h-10 w-10 rounded-full border border-border p-0 sm:inline-flex"><MoreHorizontal className="h-5 w-5"/></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={()=>setListPickerOpen(true)}><List className="mr-2 h-4 w-4"/>リストから追加／削除</DropdownMenuItem><DropdownMenuItem onSelect={handleCopyLink}><Link2 className="mr-2 h-4 w-4"/>リンクをコピー</DropdownMenuItem><DropdownMenuItem onSelect={handleShareLink}><Share2 className="mr-2 h-4 w-4"/>プロフィールを共有</DropdownMenuItem></DropdownMenuContent></DropdownMenu>}
             {showSubscriptionButton && (
               <Button
                 type="button"

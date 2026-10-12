@@ -12,10 +12,23 @@ export function publicUrl(raw:string):URL {
   return url;
 }
 export function publicAddress(address:string):boolean {
-  if(address.includes(':'))return /^(2|3)[\da-f]{3}:/i.test(address)&&!/^2001:(db8|0):/i.test(address);
+  if(address.includes(':')){
+    // Canonicalize first so zero-padded spellings cannot bypass prefix checks.
+    // Transition networks can embed a private IPv4 destination; protocol and
+    // documentation ranges are not ordinary public web destinations either.
+    let canonical:string;
+    try{canonical=new URL(`http://[${address}]/`).hostname.slice(1,-1);}catch{return false;}
+    const parts=canonical.split(':'),first=parseInt(parts[0],16),second=parseInt(parts[1]||'0',16);
+    const halves=canonical.split('::'),left=halves[0].split(':').filter(Boolean),right=(halves[1]??'').split(':').filter(Boolean);
+    const words=(halves.length===2?[...left,...Array(8-left.length-right.length).fill('0'),...right]:left).map(word=>parseInt(word,16));
+    return first>=0x2000&&first<=0x3fff&&
+      !(first===0x2001&&(second<=0x1ff||second===0xdb8))&&
+      first!==0x2002&&!(first===0x3fff&&second<=0xfff)&&
+      !((words[4]===0||words[4]===0x200)&&words[5]===0x5efe);
+  }
   const parts=address.split('.').map(Number);if(parts.length!==4||parts.some(n=>!Number.isInteger(n)||n<0||n>255))return false;
   const [a,b]=parts;
-  return !(a===0||a===10||a===127||a>=224||(a===169&&b===254)||(a===172&&b>=16&&b<=31)||(a===192&&(b===168||b===0||b===2))||(a===100&&b>=64&&b<=127)||(a===198&&(b===18||b===19||b===51))||(a===203&&b===0));
+  return !(a===0||a===10||a===127||a>=224||(a===169&&b===254)||(a===172&&b>=16&&b<=31)||(a===192&&(b===168||b===0||b===2||(b===88&&parts[2]===99)))||(a===100&&b>=64&&b<=127)||(a===198&&(b===18||b===19||b===51))||(a===203&&b===0));
 }
 function attributes(tag:string):Record<string,string>{
  const result:Record<string,string>={};

@@ -10,7 +10,17 @@ export async function secretMatches(actual: string | null, expected: string | un
   return mismatch === 0;
 }
 
+export async function rejectSuspended(userId: string, headers: HeadersInit): Promise<Response | null> {
+  try {
+    const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, {auth:{persistSession:false,autoRefreshToken:false}});
+    const {data,error} = await db.rpc('is_account_suspended', {account_id:userId});
+    if (error || typeof data !== 'boolean') throw new Error('Suspension lookup failed');
+    return data ? Response.json({code:'ACCOUNT_SUSPENDED',error:'あなたのアカウントは停止されているため、この操作は許可されていません。'}, {status:403,headers}) : null;
+  } catch { return Response.json({error:'アカウントの利用状態を確認できません'}, {status:503,headers}); }
+}
+
 export async function quota(userId: string, scope: 'chat' | 'voice' | 'token' | 'preview' | 'upload', headers: HeadersInit): Promise<Response | null> {
+  if (scope !== 'preview') { const denied = await rejectSuspended(userId, headers); if (denied) return denied; }
   try {
     const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, {auth: {persistSession: false, autoRefreshToken: false}});
     const {data, error} = await db.rpc('consume_security_quota', {p_actor: userId, p_scope: scope});
@@ -22,13 +32,14 @@ export async function quota(userId: string, scope: 'chat' | 'voice' | 'token' | 
   }
 }
 
-export async function authenticate(request: Request, headers: HeadersInit): Promise<{userId: string} | Response> {
+export async function authenticate(request: Request, headers: HeadersInit, allowReadOnly = false): Promise<{userId: string} | Response> {
   const authorization = request.headers.get('authorization') || '';
   if (!/^Bearer\s+\S+$/i.test(authorization)) return Response.json({error: 'ログインしてください'}, {status: 401, headers});
   try {
     const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {auth: {persistSession: false, autoRefreshToken: false}});
     const {data, error} = await db.auth.getUser(authorization.replace(/^Bearer\s+/i, ''));
     if (error || !data.user) return Response.json({error: 'ログインしてください'}, {status: 401, headers});
+    if (!allowReadOnly) { const denied = await rejectSuspended(data.user.id, headers); if (denied) return denied; }
     return {userId: data.user.id};
   } catch { return Response.json({error: '認証を確認できません'}, {status: 503, headers}); }
 }

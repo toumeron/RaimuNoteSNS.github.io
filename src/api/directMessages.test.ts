@@ -20,6 +20,7 @@ describe('DM Cloudinary media',()=>{
   mocks.invoke.mockResolvedValue({data:{urls:{'cloudinary:asset':'https://cloudinary.test/signed'}}});mocks.signed.mockResolvedValue({data:[{path:'old/path',signedUrl:'https://legacy.test/signed'}]});
   expect((await getDirectMessages('conversation'))[0].mediaUrls).toEqual(['https://legacy.test/signed','https://cloudinary.test/signed']);
   expect(mocks.invoke).toHaveBeenCalledWith('direct-media',{body:{action:'read',messageIds:['message']}});expect(mocks.signed).toHaveBeenCalledWith(['old/path'],3600);
+  expect(query.select).toHaveBeenCalledWith('id,conversation_id,sender_id,content,attachments,created_at,friend_id,friend_name,friend_avatar,reply_to,system_event,reactions');
  });
  it('rejects unsupported media before calling a service',async()=>{await expect(uploadDirectMedia('c','u',[new File(['a'],'a.gif',{type:'image/gif'})])).rejects.toThrow('JPEG');expect(mocks.invoke).not.toHaveBeenCalled();});
 });

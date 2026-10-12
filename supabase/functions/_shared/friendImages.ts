@@ -1,5 +1,6 @@
+export const FRIEND_REPLY_INSTRUCTION='画像検索タグやリアクションタグは補助情報です。タグを出力する場合も、必ずその後にユーザーの質問に答える自然な文章を続けてください。タグだけを返して終了してはいけません。説明文を省略せず、実際の画像取得前に画像が見つかったと断言しないでください。';
 export type FriendPhoto={url:string;sourceUrl:string;title:string;artist:string;license:string};
-export const FRIEND_IMAGE_INSTRUCTION='具体的な食べ物・動植物・建物・観光スポット・物の説明、紹介、おすすめ、旅行や料理の話では写真を積極的に添えてください。具体物の説明・紹介に対しては、文章だけで返答せず画像検索タグを付けてください。見た目が分かると役立つ具体的な対象がある場合は毎回画像を選び、ユーザーが画像や写真を求めた場合は必ず画像検索語を出してください。リアクションタグの後・本文の前に <image-query>具体的な英語の画像検索語</image-query> を1つ出力してください（例: 担々麺の説明なら dandan noodles）。雑談・感情・抽象的な相談には画像は不要です。URLや画像Markdownは絶対に生成せず、画像が見つかったと断言しないでください。画像検索語は80文字以下にしてください。';
+export const FRIEND_IMAGE_INSTRUCTION='具体的な食べ物・動植物・建物・観光スポット・物の説明、紹介、おすすめ、旅行や料理の話では写真を積極的に添えてください。具体物の説明・紹介に対しては、文章だけで返答せず画像検索タグを付けてください。見た目が分かると役立つ具体的な対象がある場合は毎回画像を選び、ユーザーが画像や写真を求めた場合は必ず画像検索語を出してください。リアクションタグの後・本文の前に <image-query>具体的な英語の画像検索語</image-query> を1つ出力してください（例: 担々麺の説明なら dandan noodles）。雑談・感情・抽象的な相談には画像は不要です。URLや画像Markdownは絶対に生成せず、画像が見つかったと断言しないでください。画像検索語は80文字以下にしてください。'+FRIEND_REPLY_INSTRUCTION;
 export function stripImageQuery(text:string):{reply:string;imageQuery?:string}{
  const match=text.match(/<image-query>([^<\n]{1,80})<\/image-query>/);
  const start=text.lastIndexOf('<');

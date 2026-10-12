@@ -1,3 +1,4 @@
+import { isAccountReadOnly } from '@/lib/accountSuspension';
 import { extractPostMapLocation } from './mapLocation';
 import { cloudExternalHandles, saveExternalProviderHandles } from './externalAccounts';
 import {externalFetch, accountSearchScore} from './utils';
@@ -1130,6 +1131,7 @@ async function searchBlueskyUncached(query: string, options?: { includePosts?: b
 }
 
 export async function searchBluesky(query: string, options?: { includePosts?: boolean; signal?: AbortSignal }): Promise<BlueskySearchResults> {
+  if (isAccountReadOnly()) return {posts:[],users:[]};
   const q = query.trim();
   if (!q) return { posts: [], users: [] };
   if(options?.signal?.aborted)throw options.signal.reason;
@@ -1520,6 +1522,7 @@ export async function fetchTrendingJapaneseBlueskyPosts(options?:{cursor?:string
 
 // Both search surfaces publish one ranked list after the readers settle.
 export async function searchExternalUsers(query:string,options:{includeBluesky?:boolean;signal?:AbortSignal;limit?:number}={}):Promise<BlueskyProfile[]> {
+  if (isAccountReadOnly()) return [];
   const normalized=query.trim().replace(/^@+/, '');
   if(!normalized)return [];
   const results=await Promise.allSettled([

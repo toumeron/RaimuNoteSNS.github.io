@@ -22,3 +22,15 @@ select count(*) restricted_posts_with_legacy_images from public.posts
 select table_name,column_name,data_type from information_schema.columns
  where table_schema='public' and column_name ~* '(password|token|secret|api_key|email|phone|bot_prompt)'
  order by table_name,column_name;
+-- Table-level SELECT must be revoked for column restrictions to take effect.
+select c.table_name,c.column_name,
+ has_column_privilege('authenticated',format('%I.%I',c.table_schema,c.table_name),c.column_name,'SELECT') authenticated_can_read
+from information_schema.columns c
+where c.table_schema='public' and c.table_name in ('direct_conversations','direct_messages')
+order by c.table_name,c.ordinal_position;
+-- Realtime DELETE does not apply RLS; FULL identity can expose old private data.
+select c.relname table_name,c.relreplident replica_identity
+from pg_class c join pg_namespace n on n.oid=c.relnamespace
+join pg_publication_rel pr on pr.prrelid=c.oid
+join pg_publication p on p.oid=pr.prpubid
+where n.nspname='public' and p.pubname='supabase_realtime' and c.relreplident='f';

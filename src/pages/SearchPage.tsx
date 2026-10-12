@@ -1500,6 +1500,12 @@ type SuggestionRow =
   | { type: 'user'; value: string; user: User };
 
 export default function SearchPage() {
+  const {user} = useAuth();
+  if (user?.isSuspended) return <section className="px-6 py-10 sm:px-10 sm:py-12" aria-label="検索の利用制限"><h1 className="text-2xl font-bold">このサービスはお住まいの地域からはご利用になれません。</h1><p className="mt-4 leading-relaxed text-muted-foreground">VPNまたはプロキシーを使用している場合は、オフにして再試行してください。</p></section>;
+  return <SearchPageContent />;
+}
+
+function SearchPageContent() {
   const desktopLayout = useDesktopLayout();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();

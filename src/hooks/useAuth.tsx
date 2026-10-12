@@ -1,3 +1,4 @@
+import { setAccountSuspended, SUSPENSION_EVENT } from '@/lib/accountSuspension';
 import { setExternalAccountOwner, initialiseExternalAccounts, refreshExternalAccounts } from '@/lib/externalAccounts';
 import { accountAboutKey, syncAccountConnection } from '@/api/account-about';
 import { getPrivateBotPrompt } from "@/lib/privateProfile";
@@ -11,6 +12,7 @@ import type { Session, User as SupabaseUser } from '@supabase/supabase-js';
 
 // ユーザー情報の型定義（Supabaseの基本情報にプロフィール情報を統合）
 type CustomUser = SupabaseUser & {
+  isSuspended?: boolean;
   username?: string;
   displayName?: string;
   avatarUrl?: string;
@@ -126,11 +128,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const { data: profile, error } = await supabase
           .from('profiles')
           // 公開プロフィールの取得を非公開Bot設定の取得から独立させる。
-          .select('username, display_name, avatar_url, is_official, is_private, bio, location, cover_url, emoji_effect, bot_enabled')
+          .select('username, display_name, avatar_url, is_official, is_private, bio, location, cover_url, emoji_effect, bot_enabled, Account_suspension')
           .eq('id', supabaseUser.id)
           .single();
 
         if (alive && profileUserId === supabaseUser.id && !error && profile) {
+          if ((profile.Account_suspension === true) !== (profileRef.current?.isSuspended === true)) {
+            clearPrivateMedia();
+            void queryClient.invalidateQueries();
+          }
+          setAccountSuspended(profile.Account_suspension === true);
           const details = { username: profile.username ?? '', displayName: profile.display_name ?? '', avatarUrl: profile.avatar_url ?? '', isOfficial: !!profile.is_official };
           const active = sessionRef.current;
           if (active?.user.id === supabaseUser.id) saveAccountSession(active, details);
@@ -144,6 +151,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               avatarUrl: profile.avatar_url ?? current.avatarUrl,
               isOfficial: !!profile.is_official,
               isPrivate: !!profile.is_private,
+              isSuspended: profile.Account_suspension === true,
               bio: profile.bio ?? current.bio,
               location: profile.location ?? '',
               coverUrl: profile.cover_url ?? current.coverUrl,
@@ -209,9 +217,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         profileUserId = null;
         clearTimeout(profileTimer);
         profileRef.current = null;
+        setAccountSuspended(false);
         setUser(null);
         return;
       }
+      if (profileRef.current?.id !== supabaseUser.id) setAccountSuspended(false);
       const meta = supabaseUser.user_metadata;
       const savedProfile=!navigator.onLine?readSavedAccounts().find(account=>account.id===supabaseUser.id):undefined;
       const emailName = supabaseUser.email?.split('@')[0] ?? 'user';
@@ -221,7 +231,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         username: savedProfile?.username ?? meta?.username ?? emailName,
         displayName: savedProfile?.displayName ?? meta?.display_name ?? meta?.displayName ?? emailName,
         avatarUrl: savedProfile?.avatarUrl ?? meta?.avatar_url ?? meta?.avatarUrl ?? '',
-        bio: '', coverUrl: '', emojiEffect: '', bot_enabled: false, bot_prompt: '',
+        bio: '', coverUrl: '', emojiEffect: '', bot_enabled: false, bot_prompt: '', isSuspended: false,
       };
         profileRef.current = next;
         return next;
@@ -234,10 +244,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
     if(offlineSession)applySession('INITIAL_SESSION',offlineSession);
     const {data:{subscription}}=supabase.auth.onAuthStateChange(applySession);
+    const refreshProfile = () => {
+      const active = sessionRef.current?.user;
+      if (active && navigator.onLine && document.visibilityState !== 'hidden') void fetchProfile(active);
+    };
+    window.addEventListener('focus',refreshProfile);
+    window.addEventListener('online',refreshProfile);
+    window.addEventListener(SUSPENSION_EVENT,refreshProfile);
+    document.addEventListener('visibilitychange',refreshProfile);
     const reconnect=()=>{void supabase.auth.getSession().then(({data})=>{if(alive)applySession('INITIAL_SESSION',data.session);}).catch(()=>{/* The SDK's auth listener will retry when connectivity returns. */});};
     window.addEventListener('online',reconnect);
     return () => {
       window.removeEventListener('online',reconnect);
+      window.removeEventListener('focus',refreshProfile);
+      document.removeEventListener('visibilitychange',refreshProfile);
+      window.removeEventListener('online',refreshProfile);
+      window.removeEventListener(SUSPENSION_EVENT,refreshProfile);
       alive = false;
       clearTimeout(profileTimer);
       subscription.unsubscribe();
@@ -264,7 +286,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [user?.id]);
 
   useEffect(() => {
-    if (!user?.id) return;
+    if (!user?.id || user.isSuspended) return;
     const id = user.id;
     const controller = new AbortController();
     const sync = () => {
@@ -276,7 +298,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const timer = setTimeout(sync, 0);
     window.addEventListener('online', sync);
     return () => { clearTimeout(timer); controller.abort(); window.removeEventListener('online', sync); };
-  }, [user?.id, queryClient]);
+  }, [user?.id, user?.isSuspended, queryClient]);
 
   return (
     <AuthContext.Provider value={{ user, session, loading, logout, accounts, switching, switchAccount, forgetAccount }}>

@@ -17,7 +17,7 @@ describe('metadata parsing and public target validation',()=>{
   expect(metadata('<meta property="og:title" content="記事"><meta property="og:image" content="javascript:alert(1)">','https://example.com')).toMatchObject({title:'記事',image:''});
   expect(metadata('<html><body>本文だけ</body></html>','https://example.com')).toBeNull();
  });
- it('rejects local address ranges, credentials and non-web protocols',()=>{for(const ip of ['127.0.0.1','10.0.0.1','169.254.169.254','172.16.2.1','192.168.1.1','100.64.0.1','::1','::ffff:127.0.0.1','fc00::1'])expect(publicAddress(ip)).toBe(false);expect(publicAddress('1.1.1.1')).toBe(true);expect(publicAddress('2606:4700::1111')).toBe(true);for(const url of ['file:///tmp/a','http://localhost/a','https://user:pass@example.com','https://example.com:8080'])expect(()=>publicUrl(url)).toThrow();});
+ it('rejects local address ranges, credentials and non-web protocols',()=>{for(const ip of ['127.0.0.1','10.0.0.1','169.254.169.254','172.16.2.1','192.168.1.1','100.64.0.1','::1','::ffff:127.0.0.1','fc00::1','2002:7f00:1::','2001:0000:1234::','2001:0002::1','2001:0db8::1','3fff::1','192.88.99.1','2001:4860:0:0:0:5efe:7f00:1'])expect(publicAddress(ip)).toBe(false);expect(publicAddress('1.1.1.1')).toBe(true);expect(publicAddress('2606:4700::1111')).toBe(true);expect(publicAddress('2001:4860:4860::8888')).toBe(true);for(const url of ['file:///tmp/a','http://localhost/a','https://user:pass@example.com','https://example.com:8080'])expect(()=>publicUrl(url)).toThrow();});
 });
 
 describe('Bluesky external metadata',()=>{

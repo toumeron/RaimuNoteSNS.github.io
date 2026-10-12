@@ -1,3 +1,4 @@
+import { isAccountReadOnly } from '@/lib/accountSuspension';
 import { extractPostMapLocation } from './mapLocation';
 import { cloudExternalHandles, saveExternalProviderHandles } from './externalAccounts';
 import type { BlueskyMappedPost, BlueskyProfile } from './bluesky';
@@ -123,6 +124,7 @@ export async function fetchMisskeyTopicPosts(options:{query:string;cursor?:strin
  return {posts:notes.map(note=>mapMisskeyNote(note)).filter((post):post is BlueskyMappedPost=>Boolean(post)),cursor:notes.length===limit?notes.at(-1)!.id:null};
 }
 export async function searchMisskey(query:string,includePosts=true,signal?:AbortSignal) {
+  if (isAccountReadOnly()) return {posts:[],users:[]};
   const normalized=query.trim().replace(`${MISSKEY_ORIGIN}/@`,'').replace(/^@+/, '');
   if(!normalized)return {posts:[],users:[]};
   const key=`${includePosts}:${normalized.toLocaleLowerCase()}`;

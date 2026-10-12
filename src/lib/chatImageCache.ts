@@ -1,5 +1,6 @@
 import {useEffect,useState} from 'react';
 import {readChatImage,writeChatImage} from './chatImageStore';
+import {boundedResponseBlob} from './boundedResponse';
 const pending=new Map<string,Promise<Blob>>();
 const MAX_BYTES=10*1024*1024;
 const eligible=(url:string)=>{try{const u=new URL(url);return u.protocol==='https:'&&(['upload.wikimedia.org','thumb.wikimedia.org','res.cloudinary.com'].includes(u.hostname)||u.hostname.endsWith('.supabase.co'));}catch{return false}};
@@ -8,9 +9,9 @@ export async function loadChatImage(url:string,account:string):Promise<Blob>{
  const key=JSON.stringify([account,url]);const existing=pending.get(key);if(existing)return existing;
  const request=(async()=>{
   try{const saved=await readChatImage(account,url);if(saved)return saved;}catch{/* Storage can be disabled; the image still works online. */}
-  const response=await fetch(url,{credentials:'omit',referrerPolicy:'no-referrer'});
+  const response=await fetch(url,{credentials:'omit',referrerPolicy:'no-referrer',signal:AbortSignal.timeout(30000)});
   if(!response.ok||!/^image\//i.test(response.headers.get('content-type')??''))throw Error('Image unavailable');
-  const blob=await response.blob();if(blob.size>MAX_BYTES)throw Error('Image exceeds cache limit');
+  const blob=await boundedResponseBlob(response,MAX_BYTES);
   try{await writeChatImage(account,url,blob);}catch{/* A full cache must not prevent display. */}
   return blob;
  })();pending.set(key,request);try{return await request;}finally{pending.delete(key)}

@@ -1,3 +1,4 @@
+import { createSuspensionFetch } from './accountSuspension';
 // src/lib/supabase.ts
 import { createClient } from '@supabase/supabase-js';
 import { createPrivateMediaFetch } from './privateMediaFetch';
@@ -15,7 +16,7 @@ const transport = import.meta.env.DEV && typeof window !== 'undefined'
  * import して利用することが可能になります。
  */
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-  global: { fetch: createPrivateMediaFetch(supabaseUrl, transport) },
+  global: { fetch: createPrivateMediaFetch(supabaseUrl, createSuspensionFetch(supabaseUrl, transport)) },
   auth: {
     persistSession: true,
     autoRefreshToken: true,

@@ -1,4 +1,5 @@
 import { GOOGLE_TRENDS_URL, GOOGLE_TRENDING_URL, parseGoogleTrends, parseGoogleTrendingPage, type TrendItem } from './trends.ts';
+import { boundedBody } from '../_shared/security.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -28,13 +29,17 @@ async function getTrends(): Promise<TrendItem[]> {
 }
 async function isExploreRequest(req: Request): Promise<boolean> {
   if (req.method !== 'POST') return false;
-  try { return (await req.json())?.explore === true; } catch { return false; }
+  return JSON.parse(await boundedBody(req, 4096))?.explore === true;
 }
-Deno.serve(async (req: Request) => {
+export async function handleTrends(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (!['GET', 'POST'].includes(req.method)) return new Response(null, { status: 405, headers: corsHeaders });
   try {
-    return new Response(JSON.stringify((await getTrends()).slice(0, await isExploreRequest(req) ? 200 : 10)), {
+    let explore: boolean;
+    try { explore = await isExploreRequest(req); } catch {
+      return Response.json({error:'Invalid or oversized request'}, {status:400,headers:corsHeaders});
+    }
+    return new Response(JSON.stringify((await getTrends()).slice(0, explore ? 200 : 10)), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=300' },
     });
   } catch {
@@ -43,4 +48,5 @@ Deno.serve(async (req: Request) => {
       status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
     });
   }
-});
+}
+if (import.meta.main) Deno.serve(handleTrends);
