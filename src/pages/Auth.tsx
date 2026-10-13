@@ -11,6 +11,7 @@ import { Logo } from '@/components/layout/Logo';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { SavedAccountList } from '@/components/layout/AccountSwitcher';
+import { companyReturnUrl, returnToCompany } from '@/lib/companyLoginReturn';
 
 const schema = z.object({
   email: z.string().email('メールアドレスの形式が正しくありません'),
@@ -19,7 +20,7 @@ const schema = z.object({
 
 type Mode = 'login' | 'signup';
 
-function AuthForm({ mode }: { mode: Mode }) {
+function AuthForm({ mode, returnUrl }: { mode: Mode; returnUrl: string | null }) {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -50,7 +51,7 @@ function AuthForm({ mode }: { mode: Mode }) {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
         toast.success('おかえりなさい');
-        navigate('/');
+        if (returnUrl) returnToCompany(returnUrl); else navigate('/');
       } else {
         const { data, error } = await supabase.auth.signUp({
           email, password, options: { data: { invite_code: inviteCode } },
@@ -74,7 +75,7 @@ function AuthForm({ mode }: { mode: Mode }) {
         }
 
         toast.success('ようこそLimeNoteへ！');
-        navigate('/');
+        if (returnUrl && data.session) returnToCompany(returnUrl); else if (!returnUrl) navigate('/');
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '処理に失敗しました';
@@ -171,9 +172,21 @@ function AuthForm({ mode }: { mode: Mode }) {
 
 export default function AuthPage() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const { user, accounts = [] } = useAuth();
+  const { user, loading, accounts = [] } = useAuth();
   const [searchParams] = useSearchParams();
   const adding = searchParams.get('add') === '1';
+  const returnUrl = companyReturnUrl(searchParams.get('returnTo'), window.location.origin);
+  const userId = user?.id;
+  useEffect(() => {
+    if (!userId || loading || adding || !returnUrl) return;
+    let cancelled = false;
+    // Validate cached SNS identity before returning, to avoid redirect loops
+    // when a stale session is rejected by the company site's auth gate.
+    void supabase.auth.getUser().then(({ data, error }) => {
+      if (!cancelled && !error && data.user?.id === userId) returnToCompany(returnUrl);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [userId, loading, adding, returnUrl]);
 
   useEffect(() => {
     // ユーザーアクションを契機にBGM（音声）のロックを解除するハンドラー
@@ -235,10 +248,10 @@ export default function AuthPage() {
               </TabsTrigger>
             </TabsList>
             <TabsContent value="login">
-              <AuthForm mode="login" />
+              <AuthForm mode="login" returnUrl={returnUrl} />
             </TabsContent>
             <TabsContent value="signup">
-              <AuthForm mode="signup" />
+              <AuthForm mode="signup" returnUrl={returnUrl} />
             </TabsContent>
           </Tabs>
         </div>
