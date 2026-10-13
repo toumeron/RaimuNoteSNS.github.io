@@ -181,3 +181,11 @@ it('does not classify original posts as replies',()=>{
  expect(original?.externalReplyToId).toBeUndefined();
 });
 });
+
+it('keeps latest-page ties in the same descending ID order as database reads',()=>{
+ const posts=Array.from({length:40},(_,i)=>({id:String(i).padStart(2,'0'),createdAt:'2026-10-13T00:00:00Z'})).reverse();
+ const first=selectProfilePosts(posts.slice(0,20),'all','latest').slice(0,20);
+ const second=selectProfilePosts(posts,'all','latest').slice(20,40);
+ expect([...first,...second].map(post=>post.id)).toEqual(posts.map(post=>post.id));
+ expect(new Set([...first,...second].map(post=>post.id)).size).toBe(40);
+});

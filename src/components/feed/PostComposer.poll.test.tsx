@@ -41,3 +41,12 @@ it.each(['inline','overlay','fullscreen'])('submits an image without requiring b
   await waitFor(()=>expect(mocks.submit).toHaveBeenCalledWith(expect.objectContaining({content:'',imageUrls:['blob:only-image']})));
  }finally{URL.createObjectURL=original;}
 });
+
+it.each(['inline','overlay','fullscreen'])('saves a scheduled post from the %s composer',async mode=>{
+ render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><MemoryRouter>{mode==='inline'?<PostComposer/>:<OverlayComposer fullScreen={mode==='fullscreen'}/>}</MemoryRouter></QueryClientProvider>);fireEvent.change(screen.getByLabelText('ポスト本文'),{target:{value:'予約する本文'}});
+ fireEvent.click(screen.getByRole('button',{name:'予約設定'}));
+ expect(screen.getByRole('dialog')).toBeInTheDocument();expect(screen.getByText('日本標準時')).toBeInTheDocument();
+ fireEvent.click(screen.getByRole('button',{name:'確認する'}));
+ fireEvent.click(screen.getByRole('button',{name:mode==='inline'?'ポスト':'予約する'}));
+ await waitFor(()=>expect(mocks.submit).toHaveBeenCalledWith(expect.objectContaining({content:'予約する本文',scheduledAt:expect.any(String)})));
+});

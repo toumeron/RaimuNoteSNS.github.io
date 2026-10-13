@@ -53,7 +53,7 @@ export function selectProfilePosts<T>(items: T[], filter: PostTabFilter, sort: P
   const time = (item: any) => Date.parse(item.sortAt ?? postOf(item).createdAt ?? postOf(item).created_at ?? '') || 0;
   const likes = (item: any) => Number(postOf(item).likesCount ?? postOf(item).likes_count ?? 0);
   const identity = (item: any) => `${postOf(item).id ?? ''}:${postOf(item).profileRepostedBy ?? ''}:${postOf(item).profileRepostedAt ?? ''}`;
-  return selected.sort((a, b) => (sort === 'popular' ? likes(b) - likes(a) : 0) || time(b) - time(a) || identity(a).localeCompare(identity(b)));
+  return selected.sort((a, b) => (sort === 'popular' ? likes(b) - likes(a) : 0) || time(b) - time(a) || (sort === 'latest' ? identity(b).localeCompare(identity(a)) : identity(a).localeCompare(identity(b))));
 }
 
 /** A complete ranking input: never publish a partially scanned chronological feed. */

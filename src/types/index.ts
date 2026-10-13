@@ -21,6 +21,7 @@ export type User = {
 };
 
 export type Post = {
+  scheduledAt?:string;
   poll?:import('@/lib/polls').Poll|null;
   mapLocation?: import('@/lib/mapLocation').MapLocation | null;
   languages?: string[];

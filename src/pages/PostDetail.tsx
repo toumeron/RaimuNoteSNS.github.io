@@ -1,3 +1,4 @@
+import { PostPoll } from '@/components/feed/PostPoll';
 import { ExternalReplyDetail } from '@/components/post/ExternalReplyDetail';
 import { randomUUID } from '@/lib/randomUUID';
 import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
@@ -1766,6 +1767,8 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
               />
             </div>
           )}
+
+          {!isBlueskyPost && limeData?.poll && <PostPoll post={limeData} />}
 
           {(data as PostWithAuthor).isQuote && <QuotedPost post={(data as PostWithAuthor).parentPost} />}
 

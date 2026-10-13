@@ -1,3 +1,4 @@
+import {MOBILE_DRAWER_EDGE_ZONE,isMobileDrawerBlocked} from '@/lib/mobileDrawerGesture';
 import {ProfileListPicker} from '@/components/lists/ListDialogs';
 import {ListHeaderActions} from '@/components/lists/ListHeaderActions';
 import { TimelineTabBar } from '@/components/feed/TimelineTabBar';
@@ -562,7 +563,7 @@ function useMobileFeedTabSwipe(
       }
 
       const touch = event.touches[0];
-      const FEED_EDGE_ZONE = 32;
+      const FEED_EDGE_ZONE = MOBILE_DRAWER_EDGE_ZONE;
       // 画面端からのスワイプはサイドバー用に予約する。
       if (touch.clientX <= FEED_EDGE_ZONE) {
         resetGesture();
@@ -935,10 +936,8 @@ function ensureRootShiftWrappers(
 function useMobileDrawerMotion(
   isOpen: boolean,
   onOpenChange: (open: boolean) => void,
-  // 画面端以外(本文のどこか)からの右スワイプでも開いてよいか。
-  // ホームの「最新」タブ以外では、左右スワイプはタブ切り替えに使うので false にする。
-  openFromBody: boolean,
   enabled = true,
+  allowBodyOpen = false,
 ) {
   const drawerLocation = useLocation();
   const [mobileViewport, setMobileViewport] = useState(() => window.matchMedia('(max-width: 639px)').matches);
@@ -1280,9 +1279,8 @@ function useMobileDrawerMotion(
       };
     };
 
-    // 「画面端」とみなす範囲。従来の32pxは狭くて掴みにくかったため少し広げた。
-    // この範囲から始めた場合は、少しの移動量で反応する軽いジェスチャーとして扱う。
-    const EDGE_ZONE = 40;
+    // タブ切り替えと同じ左端の範囲をサイドバー用に確保する。
+    const EDGE_ZONE = MOBILE_DRAWER_EDGE_ZONE;
     // タップとみなす指のブレ許容量(px)。
     const TAP_SLOP = 10;
 
@@ -1294,7 +1292,7 @@ function useMobileDrawerMotion(
     // 開始を許可して問題ない(縦スクロール・タップ・クリックはそのまま通る)。
     // BottomNavはbody直下のportalなので、ここでtouchmoveを奪わない。
     const BLOCKED_START_SELECTOR =
-      'input, textarea, select, [role="slider"], nav[data-lime-bottom-nav-root="true"], [data-lime-account-switcher]';
+      'input, textarea, select, [role="slider"], [role="dialog"], .lime-map-wrap, .leaflet-container, video, iframe, nav[data-lime-bottom-nav-root="true"], [data-lime-account-switcher]';
 
     // 対象要素(またはその祖先)が横スクロール可能なコンテナかどうかを調べる。
     // 画像ギャラリーなど、要素自体が横スワイプを必要とするUIの内部では、
@@ -1317,7 +1315,7 @@ function useMobileDrawerMotion(
     };
 
     const handleTouchStart = (event: TouchEvent) => {
-      if (!isMobile()) return;
+      if (!isMobile() || isMobileDrawerBlocked()) { resetGesture(); return; }
 
       if (event.touches.length !== 1) {
         resetGesture();
@@ -1343,10 +1341,8 @@ function useMobileDrawerMotion(
       const width = getDrawerWidth();
       const startedAtEdge = touch.clientX <= EDGE_ZONE;
 
-      // 閉じているとき:画面端からは常に開始可。
-      // 本文の途中からは openFromBody が true のページ(ホームの「最新」タブ、
-      // およびタブスワイプを使わないページ)だけ開始可。
-      if (!isOpen && !startedAtEdge && !openFromBody) {
+      // Short gestures open from the left; body opening requires a longer deliberate swipe.
+      if (!isOpen && !startedAtEdge && !allowBodyOpen) {
         resetGesture();
         return;
       }
@@ -1367,33 +1363,22 @@ function useMobileDrawerMotion(
 
     const handleTouchMove = (event: TouchEvent) => {
       const gesture = gestureRef.current;
-      if (!gesture.active || event.touches.length === 0) return;
+      if (!gesture.active) return;
+      if (event.touches.length !== 1 || isMobileDrawerBlocked()) {
+        cancelScheduledVisualUpdate(); resetGesture(); setRootVisual(isOpen ? getDrawerWidth() : 0, false); return;
+      }
 
       const touch = event.touches[0];
       const dx = touch.clientX - gesture.startedAtX;
       const dy = touch.clientY - gesture.startedAtY;
 
       if (!gesture.horizontal) {
-        // 方向を確定させるまでの「遊び」。
-        // 画面端(またはサイドバーを閉じる操作)から始めた場合は軽い動きで反応させる。
-        // 本文から開く場合は縦スクロールとの誤判定を避けるため少しだけ厳しくするが、
-        // 以前(18px / 縦横比2.2)ほど厳しくはしない。
-        const isLenient = gesture.startedAtEdge || isOpen;
-        const DIRECTION_LOCK_THRESHOLD = isLenient ? 6 : 12;
-        const HORIZONTAL_DOMINANCE_RATIO = isLenient ? 1 : 1.6;
-
-        if (Math.abs(dx) < DIRECTION_LOCK_THRESHOLD && Math.abs(dy) < DIRECTION_LOCK_THRESHOLD) {
-          return;
+        // Wait for deliberate horizontal movement without cancelling a small initial finger wobble.
+        if (Math.abs(dy) >= 16 && Math.abs(dy) >= Math.abs(dx)) {
+          resetGesture(); return;
         }
-
-        if (Math.abs(dy) * HORIZONTAL_DOMINANCE_RATIO >= Math.abs(dx)) {
-          // 縦方向の動き(または横方向が十分優勢でない動き)だと判定。
-          // この時点ではまだroot側の見た目を一切変更していないので、
-          // 巻き戻すアニメーションは不要(通常の縦スクロールとして
-          // 素直にブラウザへ委ねる)。
-          resetGesture();
-          return;
-        }
+        const bodyOpening = !isOpen && !gesture.startedAtEdge;
+        if (Math.abs(dx) < (bodyOpening ? 24 : 8) || Math.abs(dx) < Math.abs(dy) * (bodyOpening ? 2 : 1.35)) return;
 
         // 閉じている状態での「左スワイプ」は開く操作ではない。
         // (タブ切り替えや他のUIに任せ、誤ってドロワーが反応しないようにする)
@@ -1421,6 +1406,9 @@ function useMobileDrawerMotion(
     const handleTouchEnd = (event: TouchEvent) => {
       const gesture = gestureRef.current;
       if (!gesture.active || event.changedTouches.length === 0) return;
+      if (isMobileDrawerBlocked()) {
+        cancelScheduledVisualUpdate(); resetGesture(); setRootVisual(isOpen ? getDrawerWidth() : 0, false); return;
+      }
 
       const touch = event.changedTouches[0];
       const width = getDrawerWidth();
@@ -1428,7 +1416,6 @@ function useMobileDrawerMotion(
       const deltaY = touch.clientY - gesture.startedAtY;
       const elapsed = Math.max(1, Date.now() - gesture.startedAtTime);
       const startX = gesture.startedAtX;
-      const startedAtEdge = gesture.startedAtEdge;
 
       cancelScheduledVisualUpdate();
 
@@ -1458,8 +1445,9 @@ function useMobileDrawerMotion(
         nextOpen = !(deltaX < -40 || velocity < -0.4 || currentShift < width * 0.6);
       } else {
         // 開く:一定以上引き出した、または素早く右へはじいた。
-        const openRatio = startedAtEdge ? 0.3 : 0.38;
-        nextOpen = currentShift >= width * openRatio || (deltaX > 40 && velocity > 0.45);
+        nextOpen = gesture.startedAtEdge
+          ? deltaX >= Math.abs(deltaY) * 1.35 && (currentShift >= 64 || (deltaX >= 48 && velocity > 0.45))
+          : deltaX >= 120 && deltaX >= Math.abs(deltaY) * 2;
       }
 
       resetGesture();
@@ -1485,7 +1473,7 @@ function useMobileDrawerMotion(
       document.removeEventListener('touchend', handleTouchEnd, true);
       document.removeEventListener('touchcancel', handleTouchCancel, true);
     };
-  }, [isOpen, onOpenChange, openFromBody, mobileMotion]);
+  }, [isOpen, onOpenChange, mobileMotion, allowBodyOpen]);
 }
 
 export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }: {
@@ -1509,7 +1497,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   const {data: sidebarFollowStats} = useFollowStats(isMobileSidebarOpen && !desktopLayout ? user?.id : undefined);
   useEffect(() => {
     if (desktopLayout) { setIsMobileSidebarOpen(false); return; }
-    const open = () => setIsMobileSidebarOpen(true);
+    const open = () => { if (!isMobileDrawerBlocked()) setIsMobileSidebarOpen(true); };
     window.addEventListener('lime-mobile-menu-open', open);
     return () => window.removeEventListener('lime-mobile-menu-open', open);
   }, [desktopLayout]);
@@ -1895,11 +1883,8 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   useMobileDrawerMotion(
     isMobileSidebarOpen,
     setIsMobileSidebarOpen,
-    // ホーム以外のページ、またはホームの「最新」タブ(これ以上右に戻れない)では
-    // 本文からの右スワイプでも開ける。「フォロー中/トレンド」では右スワイプは
-    // 前のタブへ戻る操作に使うので、画面端からのみ開く。
-    !isHomeTimeline || activeFeedTab === 'all',
     !desktopLayout,
+    !isHomeTimeline || activeFeedTab === 'all',
   );
   useMobileFeedTabSwipe(
     isHomeTimeline,
@@ -2537,7 +2522,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
     user ? (
       <button
         type="button"
-        onClick={() => setIsMobileSidebarOpen((open) => !open)}
+        onClick={() => { if (!isMobileDrawerBlocked()) setIsMobileSidebarOpen((open) => !open); }}
         aria-label={isMobileSidebarOpen ? "メニューを閉じる" : "メニューを開く"}
         aria-expanded={isMobileSidebarOpen}
         className="flex h-9 w-9 items-center justify-center rounded-full outline-none"

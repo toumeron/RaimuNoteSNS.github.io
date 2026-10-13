@@ -1,3 +1,4 @@
+import { PostPoll } from '@/components/feed/PostPoll';
 import { allowAccountWrite } from '@/lib/accountSuspension';
 import {TypingPixelCat,MessagePixelCat,useMessagePixelCat,LIME_AI_CAT_ICON} from '@/components/chat/PixelCat';
 import { streamChatWithFallback } from '@/lib/chatModelFallback';
@@ -40,7 +41,7 @@ import remarkMath from 'remark-math'
 import { useTheme } from 'next-themes'
 import { BUILTIN_MODELS, MODEL_ACCEPT, MODEL_FORMAT_LABEL, isSupportedModelFile, inferModelFormat, type ModelSource } from '@/lib/avatarModels'
 import { supabase } from '@/lib/supabase'
-import { createPost } from '@/api/posts'
+import { createPost, getPostById } from '@/api/posts'
 import { formatRelative } from '@/lib/format'
 import { useAuth } from "@/hooks/useAuth"
 import {
@@ -4226,6 +4227,8 @@ const MiniPostPreviewCard = ({
   onDismiss?: () => void
   compact?: boolean
 }) => {
+  const {user} = useAuth();
+  const {data: livePost} = useQuery({queryKey:['chat-post-preview',post.id,user?.id],queryFn:()=>getPostById(post.id),staleTime:60_000,retry:false});
   const {data: authorBadges} = useQuery({
     queryKey: ['author-badges', post.authorUsername],
     queryFn: async () => {
@@ -4299,6 +4302,8 @@ const MiniPostPreviewCard = ({
           </div>
         </div>
       </a>
+
+      {livePost?.poll && <div className="px-3.5 sm:px-4"><PostPoll post={livePost}/></div>}
 
       {onDismiss && (
         <button

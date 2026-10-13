@@ -2388,7 +2388,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                 {isBlueskyPost ? (
                   <ExternalLikeButton post={post} onChange={onMediaLikeChange}/>
                 ) : (
-                  <LikeButton syncState={!!onMediaLikeChange} onChange={onMediaLikeChange}
+                  <LikeButton initialLikedKnown={typeof post.likedByMe === 'boolean'} syncState={!!onMediaLikeChange} onChange={onMediaLikeChange}
                     postId={post.id}
                     preferencePost={post}
                     liked={post.likedByMe}

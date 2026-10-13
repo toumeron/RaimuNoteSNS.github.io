@@ -225,18 +225,16 @@ body {
   padding: 0;
 }
 
-/* The document canvas owns the mobile cutout area, not the profile component.
-   Keep the canvas transparent so its solid light/dark fill cannot cover the
-   cover image. Insets still belong to the header controls, not the whole page. */
+/* Keep the cover image at the cutout and the theme color beneath short profiles. */
 @media (max-width: 639px) {
   html[data-lime-mobile-profile-page="true"] {
     --safe-top: 0px;
-    background-color: transparent !important;
+    background-color: hsl(var(--background)) !important;
     padding-top: 0 !important;
   }
   html[data-lime-mobile-profile-page="true"] body {
     padding-top: 0 !important;
-    background-color: transparent !important;
+    background-color: hsl(var(--background)) !important;
   }
   html[data-lime-mobile-profile-page="true"],
   html[data-lime-mobile-profile-page="true"] body {

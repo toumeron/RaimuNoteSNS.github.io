@@ -294,6 +294,7 @@ export function LikeButton({
   bluesky,
   onChange,
   syncState = false,
+  initialLikedKnown = false,
   persistLike,
 }: {
   postId: string;
@@ -305,6 +306,7 @@ export function LikeButton({
   bluesky?: LikeButtonBlueskyTarget;
   onChange?: (state: { liked: boolean; count: number }) => void;
   syncState?: boolean;
+  initialLikedKnown?: boolean;
   persistLike?: (liked: boolean) => Promise<{ liked: boolean; count: number }>;
 }) {
   const queryClient = useQueryClient();
@@ -370,6 +372,12 @@ export function LikeButton({
   // (Lime内部投稿のみ。Bluesky投稿は別のeffectで初期状態を取得する)
   useEffect(() => {
     if (isBluesky || persistLike) return;
+    if (initialLikedKnown) {
+      if (type === 'post') void getCurrentUserId().then(userId => {
+        if (userId) recordRecommendationLike(preferencePost ?? {id: postId, content: ''} as PostWithAuthor, liked, userId);
+      });
+      return;
+    }
 
     let cancelled = false;
 
@@ -403,7 +411,7 @@ export function LikeButton({
     return () => {
       cancelled = true;
     };
-  }, [postId, type, isBluesky, persistLike]);
+  }, [postId, type, isBluesky, persistLike, initialLikedKnown]);
 
   // Bluesky投稿用: 自分のBlueskyアカウントとして現在のいいね状態(と、
   // いいね作成に必要なcid)を取得する。

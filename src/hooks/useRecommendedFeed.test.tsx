@@ -158,3 +158,12 @@ it('finishes an empty initial scan with retained source cursors and allows a vis
  expect(api.getRecommendationPage).not.toHaveBeenCalled();
  view.unmount();client.clear();
 });
+
+it('continues beyond the initial empty-scan budget when only a few posts are visible and sources remain',async()=>{
+ const api=await import('@/api/recommendations');const cursor=api.createRecommendationCursor([]);cursor.preferences={authors:{},terms:{}};
+ const pages=Array.from({length:8},(_,i)=>({posts:i===0?[{...candidate,id:'shown-one'},{...candidate,id:'shown-two'}]:[],preferences:cursor.preferences!,next:cursor,pendingAnalysis:false,automaticPaused:false,requestKey:800+i}));
+ const client=new QueryClient({defaultOptions:{queries:{retry:false}}});client.setQueryData(['feed','recommended','scoring-v27-first-screen-reservations','pixel-viewer',[]],{pages,pageParams:Array(8).fill(cursor)});
+ const view=renderHook(()=>useRecommendedFeed(true),{wrapper:({children})=><QueryClientProvider client={client}>{children}</QueryClientProvider>});
+ await waitFor(()=>expect(api.getRecommendationPage).toHaveBeenCalled());
+ await waitFor(()=>expect(view.result.current.data?.pages.length).toBeGreaterThan(8));view.unmount();client.clear();
+});

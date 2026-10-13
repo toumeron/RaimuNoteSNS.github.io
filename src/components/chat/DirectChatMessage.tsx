@@ -10,7 +10,7 @@ import {DropdownMenu,DropdownMenuTrigger,DropdownMenuItem} from '@/components/ui
 import {ChatMenuContent} from '@/components/ai/ChatMenuContent';
 import {Dialog,DialogContent,DialogTitle,DialogDescription} from '@/components/ui/dialog';
 const emojis=['👍','😢','👩‍💻','🆗','🙏','😮','😋','😭','🎉','👎','❤️','🔥','🤠','😂','🤩','🙃','💯','🧠','⭕'];
-export function DirectChatMessage({message:m,userId,group,content,enabled,onChanged,onReply,reply,cat}:{message:DirectMessage;userId:string;group?:DirectGroup;content:ReactNode;enabled:boolean;onChanged:()=>Promise<unknown>;onReply:()=>void;reply?:DirectMessage;cat?:ReactNode}){
+export function DirectChatMessage({message:m,userId,group,content,media,enabled,onChanged,onReply,reply,cat}:{message:DirectMessage;userId:string;group?:DirectGroup;content:ReactNode;media?:ReactNode;enabled:boolean;onChanged:()=>Promise<unknown>;onReply:()=>void;reply?:DirectMessage;cat?:ReactNode}){
  const own=m.sender_id===userId&&!m.friend_id;const member=group?.members.find(p=>p.id===m.sender_id);const name=m.friend_name??member?.displayName??'メンバー';const avatar=m.friend_avatar??member?.avatarUrl;
  const row=useRef<HTMLDivElement>(null);const [expanded,setExpanded]=useState(false);const [selected,setSelected]=useState(false);const [picker,setPicker]=useState(false);const [menu,setMenu]=useState(false);const [deleting,setDeleting]=useState<boolean|null>(null);const [busy,setBusy]=useState(false);const [error,setError]=useState('');const hold=useRef<ReturnType<typeof setTimeout>>();const origin=useRef({x:0,y:0});const held=useRef(false);
  useEffect(()=>()=>clearTimeout(hold.current),[]);
@@ -26,6 +26,7 @@ export function DirectChatMessage({message:m,userId,group,content,enabled,onChan
     {reply&&<div className="dm-reply-context"><span>{reply.friend_name??group?.members.find(member=>member.id===reply.sender_id)?.displayName??'メッセージ'}</span><p>{(reply.friend_id?readFriendPhoto(reply.content).text:reply.content)||'画像'}</p></div>}
     {m.friend_id&&<FriendPhoto photo={readFriendPhoto(m.content).photo} account={userId}/>}
     {!!m.mediaUrls.length&&<div className={`dm-message-media ${group&&m.mediaUrls.length>1?'dm-media-grid':''}`}>{m.mediaUrls.map((url,j)=><CachedChatImage key={url} url={url} account={userId} alt={`添付画像${j+1}`} label={`添付画像${j+1}を拡大`} media={m.mediaUrls}/>)}</div>}
+    {media}
     {content&&<div className="dm-bubble">{content}<time dateTime={m.created_at}>{new Date(m.created_at).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'})}</time></div>}
     {!content&&<time className="dm-media-time" dateTime={m.created_at}>{new Date(m.created_at).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'})}</time>}
    </div>

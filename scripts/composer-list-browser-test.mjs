@@ -21,6 +21,16 @@ try{
   await page.setViewportSize({width,height:900});
   for(const mode of ['inline','overlay','fullscreen']){
    await page.goto(`http://127.0.0.1:8189${base}/__layout?mode=${mode}`);const input=page.getByLabel('ポスト本文',{exact:true});await input.waitFor();await input.fill('あ');
+   await page.getByRole('button',{name:'予約設定',exact:true}).click();
+   const scheduleDialog=page.getByRole('dialog');await expect(scheduleDialog).toBeVisible();await expect(scheduleDialog).toHaveCSS('opacity','1');
+   if(width===390){await expect.poll(async()=>Math.abs((await scheduleDialog.boundingBox()).y)).toBeLessThan(1);const bounds=await scheduleDialog.boundingBox();assert(Math.abs(bounds.x)<1&&Math.abs(bounds.y)<1&&Math.abs(bounds.width-width)<1&&Math.abs(bounds.height-900)<1,'mobile reservation fills the viewport');}
+   await expect(page.getByRole('button',{name:'予約投稿ポスト',exact:true})).toHaveCount(0);
+   await page.screenshot({path:`/private/tmp/lime-composer-lists/schedule-${mode}-${width}.png`});
+   const fieldBackgrounds=await scheduleDialog.locator('label').evaluateAll(fields=>fields.map(field=>getComputedStyle(field).backgroundColor));assert(fieldBackgrounds.every(color=>color!=='rgba(0, 0, 0, 0)'&&color!=='transparent'),'date fields have visible backgrounds');
+   const month=page.getByRole('combobox',{name:'月',exact:true});const backgroundBefore=await month.evaluate(element=>getComputedStyle(element.parentElement).backgroundColor);await month.focus();const backgroundAfter=await month.evaluate(element=>getComputedStyle(element.parentElement).backgroundColor);assert.equal(backgroundBefore,backgroundAfter,'focus does not turn a date field pink');
+   await page.getByRole('button',{name:'確認する',exact:true}).click();
+   const scheduleNotice=await page.locator('[data-scheduled-post-notice]').boundingBox();const inputPosition=await input.boundingBox();assert(scheduleNotice.y+scheduleNotice.height<=inputPosition.y,'planned send time is above the post body');
+   await page.getByRole('button',{name:'予約設定',exact:true}).click();await page.getByRole('button',{name:'予約を解除する',exact:true}).click();
    assert((await input.boundingBox()).height<=60,`${mode} ${width}: one line is compact`);
    await input.fill('あ\nい\nう');assert((await input.boundingBox()).height>80,`${mode}: actual newlines remain`);await input.fill('あ');assert((await input.boundingBox()).height<=60,`${mode}: textarea shrinks again`);
    await page.getByRole('button',{name:'投票を追加',exact:true}).click();const poll=page.getByRole('region',{name:'投票を作成'});await poll.waitFor();const textBox=await page.getByLabel('投票の質問').boundingBox(),pollBox=await poll.boundingBox();assert(pollBox.y-textBox.y-textBox.height<=24,`${mode}: no blank rows above poll`);

@@ -1,3 +1,4 @@
+import {validSchedule} from '@/lib/postSchedule';
 import { isAccountReadOnly } from '@/lib/accountSuspension';
 import {preparePoll,discardPollImages} from './polls';
 import {validatePollDraft,type PollDraft} from '@/lib/polls';
@@ -404,6 +405,7 @@ export async function getPostById(id: string, context?: AccountReadContext): Pro
 }
 
 export async function createPost(input: {
+  scheduledAt?:string;
   poll?:PollDraft;
   mapLocation?: MapLocation | null;
   content: string;
@@ -416,6 +418,7 @@ export async function createPost(input: {
   const userId = await getCurrentUserId();
   if (input.mapLocation && !validMapLocation(input.mapLocation)) throw new Error('場所が無効です');
   if(input.poll){const message=validatePollDraft(input.poll);if(message)throw new Error(message);}
+  if(input.scheduledAt&&!validSchedule(input.scheduledAt))throw new Error('予約日時は1分後から1年以内で指定してください');
   const newId = randomUUID();
 
   const IMAGE_URL_PATTERN = /(https?:\/\/.*\.(?:png|jpg|jpeg|gif|webp|svg|avif)(?:\?.*)?)/gi;
@@ -431,13 +434,13 @@ export async function createPost(input: {
   if (!userId) throw new Error('ログインしてください');
   const { data: privacy, error: privacyError } = await supabase.from('profiles').select('is_private').eq('id', userId).single();
   if (privacyError) throw privacyError;
-  const finalImageUrls = await uploadPostMedia(input.imageUrls, userId, newId, privacy?.is_private === true || input.visibility === 'following');
+  const finalImageUrls = await uploadPostMedia(input.imageUrls, userId, newId, !!input.scheduledAt || privacy?.is_private === true || input.visibility === 'following');
 
   const preparedPoll=input.poll?await preparePoll(input.poll,newId):undefined;
   const MENTION_PATTERN = /@(\w+)/g;
   const mentionedUsernames = Array.from(new Set([...input.content.matchAll(MENTION_PATTERN)].map(match => match[1])));
 
-  const { error } = await supabase.from('posts').insert({
+  const payload = {
     id:          newId,
     user_id:     userId,
     content:     input.content,
@@ -451,9 +454,14 @@ export async function createPost(input: {
     visibility:  input.visibility || 'public',
     ...(input.mapLocation ? {map_latitude: input.mapLocation.latitude, map_longitude: input.mapLocation.longitude} : {}),
     is_bot:      input.isBot || false // AIフラグをDBに保存
-  });
+  };
+  const {error}=input.scheduledAt
+    ? await supabase.rpc('save_scheduled_post',{post_id:newId,send_at:input.scheduledAt,payload})
+    : await supabase.from('posts').insert(payload);
 
   if(error){if(preparedPoll)await discardPollImages(preparedPoll.options.flatMap(option=>option.image?[option.image]:[]));throw error;}
+
+  if(input.scheduledAt) return {...payload,poll:undefined,scheduledAt:input.scheduledAt,userId,content:input.content,imageUrls:finalImageUrls,createdAt:new Date().toISOString(),likesCount:0,commentsCount:0,repostsCount:0,likedByMe:false,repostedByMe:false,author:{id:userId,username:'',displayName:'',avatarUrl:'',bio:'',coverUrl:'',createdAt:''}};
 
   if (mentionedUsernames.length > 0) {
     const { data: mentionedUsers } = await supabase
@@ -552,16 +560,19 @@ export async function getProfilePosts(userId: string, page = 0, limit = 10): Pro
     }
     return visible.slice(0, end);
   };
-  const [postsResult, repostsResult, externalResult, repliesResult] = await Promise.allSettled([getPostsByUser(userId, 0, end), loadReposts(), getExternalProfileReposts(userId, end), getProfileReplyReposts(userId, end)]);
+  const loadShared = async () => {
+    const visibleRows = await loadReposts();
+    const {likedIds, repostedIds} = await getViewerReactions(viewerId, visibleRows);
+    return visibleRows.map(row => ({...rowToPost(row, likedIds, repostedIds),
+      profileRepostedAt: row.reposted_at, profileRepostedBy: userId}));
+  };
+  const [postsResult, repostsResult, externalResult, repliesResult] = await Promise.allSettled([getPostsByUser(userId, 0, end), loadShared(), getExternalProfileReposts(userId, end), getProfileReplyReposts(userId, end)]);
   if (postsResult.status === 'rejected') throw postsResult.reason;
   const ownPosts = postsResult.value;
   if (repostsResult.status === 'rejected') {
     console.error('Profile reposts could not be loaded:', repostsResult.reason);
   }
-  const visibleRows = repostsResult.status === 'fulfilled' ? repostsResult.value : [];
-  const { likedIds, repostedIds } = await getViewerReactions(viewerId, visibleRows);
-  const shared = visibleRows.map(row => ({ ...rowToPost(row, likedIds, repostedIds),
-    profileRepostedAt: row.reposted_at, profileRepostedBy: userId }));
+  const shared = repostsResult.status === 'fulfilled' ? repostsResult.value : [];
   const externalShares = externalResult.status === 'fulfilled' ? externalResult.value : [];
   const replyShares = repliesResult.status === 'fulfilled' ? repliesResult.value : [];
   if (shared.length === 0 && externalShares.length === 0 && replyShares.length === 0) return ownPosts.slice(page * limit, end);

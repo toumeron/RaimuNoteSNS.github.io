@@ -181,6 +181,7 @@ export const useCreatePost = () => {
   return useMutation({
     mutationFn: createPost,
     onSuccess: (post) => {
+      if(post.scheduledAt){void qc.invalidateQueries({queryKey:['scheduled-posts']});toast.success('予約投稿を保存しました');return;}
       if (post.parentId) qc.invalidateQueries({ queryKey: postKey(post.parentId) });
       if (post.parentPost?.id) qc.invalidateQueries({ queryKey: ['repost-state', post.parentPost.id] });
       // 'feed' から始まる全てのキャッシュ（最新・フォロー中両方）を無効化

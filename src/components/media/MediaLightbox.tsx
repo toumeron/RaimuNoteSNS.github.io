@@ -1,3 +1,4 @@
+import { PostPoll } from '@/components/feed/PostPoll';
 import {useCachedChatImage} from '@/lib/chatImageCache';
 import {forwardRef,type ImgHTMLAttributes} from 'react';
 import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
@@ -290,7 +291,7 @@ export function MediaLightbox({ selection, onClose }: { selection: MediaViewerSe
       </footer>
     </section>
     {!!id && <aside className="lime-media-detail" aria-hidden={!details || undefined} {...(!details ? { inert: '' } : {})}>
-      {post ? <><div className="lime-media-author-header">{author}{postControls('menu')}</div><p className="lime-media-content">{renderStickerText(post.content, text => text.split(/(https?:\/\/[^\s]+)/g).map((part, i) => /^https?:\/\//.test(part) ? <a key={i} href={part} target="_blank" rel="noopener noreferrer" className="text-primary">{part}</a> : part))}</p><p className="lime-media-date">{new Date(post.createdAt).toLocaleTimeString('ja-JP', { hour: 'numeric', minute: '2-digit', hour12: true })} · {new Date(post.createdAt).toLocaleDateString('ja-JP', {year:'numeric',month:'long',day:'numeric'})}{post.clientName && ` · ${post.clientName}`}</p>{actions()}{replies}</> : <p>{postQuery.isError ? 'ポストの取得に失敗しました' : '読み込み中…'}</p>}
+      {post ? <><div className="lime-media-author-header">{author}{postControls('menu')}</div><p className="lime-media-content">{renderStickerText(post.content, text => text.split(/(https?:\/\/[^\s]+)/g).map((part, i) => /^https?:\/\//.test(part) ? <a key={i} href={part} target="_blank" rel="noopener noreferrer" className="text-primary">{part}</a> : part))}</p>{post.poll && <PostPoll post={post}/>}<p className="lime-media-date">{new Date(post.createdAt).toLocaleTimeString('ja-JP', { hour: 'numeric', minute: '2-digit', hour12: true })} · {new Date(post.createdAt).toLocaleDateString('ja-JP', {year:'numeric',month:'long',day:'numeric'})}{post.clientName && ` · ${post.clientName}`}</p>{actions()}{replies}</> : <p>{postQuery.isError ? 'ポストの取得に失敗しました' : '読み込み中…'}</p>}
     </aside>}
   </div></PostOverlayContext.Provider>, document.body);
 }

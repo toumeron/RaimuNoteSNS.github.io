@@ -1,6 +1,7 @@
+import { PostPoll } from '@/components/feed/PostPoll';
 import { SuspensionNotice } from '@/components/account/AccountSuspension';
 import { collectProfilePages } from "@/lib/profileReplyThreads";
-import type { PostWithAuthor } from '@/types';
+import type { PostWithAuthor, User } from '@/types';
 import { PostTabMenu, type PostTabFilter, type PostTabSort } from '@/components/profile/PostTabMenu';
 import { selectProfilePosts } from "@/lib/profileReplyThreads";
 import { ExternalLikeButton } from '@/components/post/ExternalLikeButton';
@@ -13,7 +14,7 @@ import { useProfileHighlights } from '@/hooks/useProfileHighlights';
 import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
 import { ProfileVirtualizedListItem } from '@/components/profile/ProfileVirtualizedRow';
 import { openMediaViewer } from '@/components/media/openMediaViewer';
-import {getPostById, getProfilePopularityPosts} from '@/api/posts';
+import {getPostById, getProfilePosts, getProfilePopularityPosts} from '@/api/posts';
 import {getProfilePin,profilePinKey} from "@/api/profile-highlights";
 import {PostLinkPreview} from '@/components/post/LinkPreviewCard';
 import { renderStickerText } from "@/components/stickers/Stickers";
@@ -53,7 +54,6 @@ import { fetchBlueskyAuthorFeed, fetchBlueskyProfile } from '@/lib/bluesky';
 import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import {
   useProfile,
-  useUserPostsInfinite,
   useUserLikesInfinite,
   useUserMediaInfinite,
   useUserReactionsInfinite,
@@ -954,6 +954,7 @@ const ProfileThreadEmbeds = memo(function ProfileThreadEmbeds({
 
   return (
     <>
+      {item.poll && <PostPoll post={normalizePost(item)} />}
       <SpacePostCard content={content} />
       <PostLinkPreview content={content} />
       {youtubeId && (
@@ -2660,299 +2661,23 @@ const PROFILE_PAGE_STYLES = `
           }
         `;
 
-export default function Profile() {
-  const queryClient = useQueryClient();
-  const { user: viewer } = useAuth();
-  const { username = '' } = useParams();
-  const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<ProfileTabValue>('posts');
-  const [postFilter, setPostFilter] = useState<PostTabFilter>('all');
-  const [postSort, setPostSort] = useState<PostTabSort>('latest');
-  const [popularVisibleCount, setPopularVisibleCount] = useState(20);
-  useEffect(() => { setPopularVisibleCount(20); }, [username, postSort, postFilter]);
-  const popularActive = activeTab === 'posts' && postSort === 'popular';
-  useEffect(() => { setPostFilter('all'); setPostSort('latest'); }, [username]);
-
-  // メディア拡大用のステート
-  const [failedThreadImageUrls, setFailedThreadImageUrls] = useState<string[]>([]);
-  const [isScrolled, setIsScrolled] = useState(false);
-  const tabsSentinelRef = useRef<HTMLDivElement>(null);
-  const mobileTabsRef = useRef<HTMLDivElement>(null);
-  const [highlightTabCenter, setHighlightTabCenter] = useState(0);
-  // 仮想化用：カードごとに直近測定した高さを記憶しておくキャッシュ。
-  // 画面外に出て中身をアンマウントする際、このキャッシュの高さで
-  // プレースホルダーを描画するため、スクロール位置がズレない。
-  const rowHeightCacheRef = useRef<Map<string, number>>(new Map());
-
-  // 初回ペイント前にPC版のDOMが一瞬表示されるのを防ぐ。
-  // useLayoutEffect はブラウザでのペイント前に実行されるため、
-  // スマホではモバイル用CSSが適用された状態だけを最初に見せる。
-  const [isViewportReady, setIsViewportReady] = useState(false);
-
-  useLayoutEffect(() => {
-    setIsViewportReady(true);
-  }, []);
-
-  const [profileReplies, setProfileReplies] = useState<ProfileReplyThread[]>([]);
-  const [profileRepliesReady, setProfileRepliesReady] = useState(false);
-  const [profileRepliesError, setProfileRepliesError] = useState(false);
-  const [profileRepliesRefreshKey, setProfileRepliesRefreshKey] = useState(0);
-
-  const { data: limeUser, isLoading: isLimeUserLoading, isError: isLimeUserError } = useProfile(username);
-  // Lime に存在しないユーザーだけ Bluesky の公開 API で補完するため、
-  // 既存プロフィールの取得・見た目には影響しない。
-  const { data: blueskyProfile, isLoading: isBlueskyProfileLoading, isError: isBlueskyProfileError } = useQuery({
-    queryKey: ['bluesky-profile', username],
-    queryFn: ({ signal }) => fetchBlueskyProfile(username, signal),
-    enabled: Boolean(username) && !isLimeUserLoading && !limeUser,
-    staleTime: 1000 * 60,
-  });
-  const isBlueskyProfile = !limeUser && Boolean(blueskyProfile);
-  const user = limeUser ?? blueskyProfile;
-  const popularityQuery = useQuery<PostWithAuthor[]>({
-    queryKey: ['profile-popularity', user?.id, username, viewer?.id],
-    enabled: popularActive && !!user?.id,
-    queryFn: async ({ signal }) => isBlueskyProfile
-      ? (await collectProfilePages<any, string>(async cursor => fetchBlueskyAuthorFeed({ actor: username, cursor, limit: 100, filter: 'posts_with_replies', includeReposts: true, signal }), signal)).map(normalizePost)
-      : getProfilePopularityPosts(user!.id, signal),
-    staleTime: Infinity,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-  });
-  const userLoading = isLimeUserLoading || (!limeUser && isBlueskyProfileLoading);
-  const userError = !userLoading && !user && (isLimeUserError || isBlueskyProfileError);
-  const {
-    data: blueskyFeed,
-    isLoading: isBlueskyFeedLoading,
-    isError: isBlueskyFeedError,
-    refetch: refetchBlueskyFeed,
-    fetchNextPage:fetchExternalNextPage,
-    hasNextPage:hasExternalNextPage,
-    isFetchingNextPage:isFetchingExternalNextPage,
-  } = useInfiniteQuery({
-    queryKey: ['bluesky-profile-feed', username, 'posts_with_replies', 'with-reposts'],
-    initialPageParam:null as string|null,
-    queryFn: ({ signal,pageParam }) => fetchBlueskyAuthorFeed({ actor: username, cursor:pageParam,limit:20,filter:'posts_with_replies',includeReposts:true,signal }),
-    getNextPageParam:page=>page.cursor ?? undefined,
-    select:data=>({posts:data.pages.flatMap(page=>page.posts),cursor:data.pages.at(-1)?.cursor ?? null}),
-    enabled: isBlueskyProfile && !popularActive,
-    staleTime: 1000 * 60,
-  });
-
-  const highlightsQuery = useProfileHighlights(!isBlueskyProfile ? user?.id : undefined, viewer?.id);
-  const hasHighlights = !!highlightsQuery.data?.pages.some(page => page.length > 0);
-  const privacyStats = useFollowStats(!isBlueskyProfile ? user?.id : undefined);
-  const protectedProfile = !!user?.isPrivate && viewer?.id !== user?.id && privacyStats.data?.canView !== true;
-  const hasReviews = !isBlueskyProfile && !!user && 'review' in user && user.review === true;
-  const hasExtraTabs = hasHighlights || hasReviews;
-  const visibleProfileTabs = profileTabs.filter(tab => (tab.value !== 'highlights' || hasHighlights) && (tab.value !== 'reviews' || hasReviews));
-  useEffect(() => {
-    if (activeTab === 'reviews' && !hasReviews) setActiveTab('posts');
-  }, [activeTab, hasReviews]);
-  useEffect(() => {
-    if (activeTab === 'highlights' && !hasHighlights) setActiveTab('posts');
-  }, [activeTab, hasHighlights, hasReviews]);
-  useLayoutEffect(() => {
-    const tabs = mobileTabsRef.current;
-    const target = tabs?.querySelector<HTMLElement>('[role="tab"][data-state="active"]');
-    if (!hasExtraTabs || !tabs || !target || tabs.scrollWidth <= tabs.clientWidth) return;
-    const box = target.getBoundingClientRect(), list = tabs.getBoundingClientRect();
-    if (box.left < list.left) tabs.scrollLeft += box.left - list.left;
-    else if (box.right > list.right) tabs.scrollLeft += box.right - list.right;
-  }, [activeTab, hasHighlights, hasReviews]);
-  useLayoutEffect(() => {
-    const tabs = mobileTabsRef.current;
-    if (!hasExtraTabs || !tabs) return;
-    const measure = () => {
-      const selected = tabs.querySelector<HTMLElement>('[role="tab"][data-state="active"]');
-      if (!selected) return;
-      const tabBox = selected.getBoundingClientRect();
-      const listBox = tabs.getBoundingClientRect();
-      setHighlightTabCenter(tabBox.left - listBox.left + tabs.scrollLeft + tabBox.width / 2);
-      if (activeTab === 'reviews' && tabs.scrollWidth > tabs.clientWidth) {
-        if (tabBox.left < listBox.left) tabs.scrollLeft += tabBox.left - listBox.left;
-        else if (tabBox.right > listBox.right) tabs.scrollLeft += tabBox.right - listBox.right;
-      }
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(tabs);
-    tabs.querySelectorAll('[role="tab"]').forEach(tab => observer.observe(tab));
-    let cancelled = false;
-    document.fonts?.ready.then(() => { if (!cancelled) measure(); });
-    return () => { cancelled = true; observer.disconnect(); };
-  }, [activeTab, hasHighlights, hasReviews]);
-  // 非表示タブの無限スクロール取得を開始しない。
-  // フック自体は常に同じ順序で呼び出し、アクティブなタブだけ userId を渡す。
-  // これにより初回表示で4タブ分のデータを同時に保持する必要をなくす。
-  const postsQuery = useUserPostsInfinite(!isBlueskyProfile && activeTab === 'posts' && !popularActive ? user?.id : undefined);
-  const pinQuery=useQuery({queryKey:profilePinKey(user?.id??''),queryFn:()=>getProfilePin(user!.id),enabled:!!user?.id&&!isBlueskyProfile&&activeTab==='posts'});
-  const pinnedPostQuery=useQuery({queryKey:['profile-pinned-post',user?.id,pinQuery.data,viewer?.id],queryFn:()=>getPostById(pinQuery.data!),enabled:!!pinQuery.data&&!isBlueskyProfile&&activeTab==='posts'});
-  const pinnedPost=postSort==='latest'&&activeTab==='posts'&&pinnedPostQuery.data?.userId===user?.id?pinnedPostQuery.data:null;
-  const likesQuery = useUserLikesInfinite(!isBlueskyProfile && activeTab === 'likes' ? user?.id : undefined);
-  const mediaQuery = useUserMediaInfinite(!isBlueskyProfile && activeTab === 'media' ? user?.id : undefined);
-  const reactionsQuery = useUserReactionsInfinite(!isBlueskyProfile && activeTab === 'reactions' ? user?.id : undefined);
-
-  // タブに応じて使用するクエリを切り替え（Supabaseレベルでフィルタリングされた結果を取得）
-  const currentQuery =
-    activeTab === 'highlights'
-      ? highlightsQuery
-      : activeTab === 'likes'
-      ? likesQuery
-      : activeTab === 'media'
-        ? mediaQuery
-        : activeTab === 'reactions'
-          ? reactionsQuery
-          : postsQuery;
-
-  const {
-    data: profileData,
-    isLoading: isProfileContentLoading,
-    fetchNextPage:fetchNativeNextPage,
-    hasNextPage:hasNativeNextPage,
-    isFetchingNextPage:isFetchingNativeNextPage,
-    isError: isProfileContentError,
-    refetch: refetchCurrentQuery,
-  } = currentQuery;
-  const contentLoading = popularActive ? popularityQuery.isPending : isBlueskyProfile ? isBlueskyFeedLoading : isProfileContentLoading;
-  const contentError = popularActive ? popularityQuery.isError : isBlueskyProfile ? isBlueskyFeedError : isProfileContentError;
-  const { ref, inView } = useInView();
-
-  useEffect(() => {
-    let lastScrolled = false;
-    let frameId = 0;
-
-    const getNextScrolled = () => {
-      if (!tabsSentinelRef.current) return lastScrolled;
-
-      const sentinelTop = tabsSentinelRef.current.getBoundingClientRect().top;
-
-      // iOS Safari/PWA では sticky 到達直後に getBoundingClientRect().top が
-      // 0px 付近で数pxだけ戻ることがあり、背景だけ一瞬 transparent 側へ戻る。
-      // sticky 構造は変えず、既に追従中の時だけ 8px の戻り幅を許容してちらつきを止める。
-      return lastScrolled ? sentinelTop <= 8 : sentinelTop <= 0;
-    };
-
-    const updateScrolledState = () => {
-      frameId = 0;
-      const nextScrolled = getNextScrolled();
-      if (nextScrolled === lastScrolled) return;
-
-      lastScrolled = nextScrolled;
-      setIsScrolled(nextScrolled);
-    };
-
-    const handleScroll = () => {
-      if (frameId) return;
-      frameId = window.requestAnimationFrame(updateScrolledState);
-    };
-
-    lastScrolled = tabsSentinelRef.current?.getBoundingClientRect().top <= 0;
-    setIsScrolled(lastScrolled);
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    window.addEventListener('resize', handleScroll);
-    window.visualViewport?.addEventListener('scroll', handleScroll, { passive: true });
-    window.visualViewport?.addEventListener('resize', handleScroll);
-
-    return () => {
-      if (frameId) window.cancelAnimationFrame(frameId);
-      window.removeEventListener('scroll', handleScroll);
-      window.removeEventListener('resize', handleScroll);
-      window.visualViewport?.removeEventListener('scroll', handleScroll);
-      window.visualViewport?.removeEventListener('resize', handleScroll);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (activeTab !== 'posts') return;
-
-    const handleReactionChanged = () => {
-      setProfileRepliesRefreshKey((value) => value + 1);
-    };
-
-    window.addEventListener('profile-thread-reaction-changed', handleReactionChanged);
-
-    return () => {
-      window.removeEventListener('profile-thread-reaction-changed', handleReactionChanged);
-    };
-  }, [activeTab]);
-
-  // Twitterと同様、タイムライン最上部でのプルダウンで最新の投稿を再取得する。
-  // Blueskyプロフィールの場合はBluesky側のフィードを、それ以外はアクティブな
-  // タブ（ポスト/メディア/いいね/リアクション）のクエリと、posts タブでの
-  // 返信スレッド（コメント）を合わせて再取得する。
-  const handleProfilePullRefresh = useCallback(async () => {
-    const tasks: Array<Promise<any>> = [];
-
-    if (popularActive) {
-      tasks.push(popularityQuery.refetch());
-      setPopularVisibleCount(20);
-      if (!isBlueskyProfile) setProfileRepliesRefreshKey(value => value + 1);
-    } else if (isBlueskyProfile) {
-      if (typeof refetchBlueskyFeed === 'function') {
-        tasks.push(refetchBlueskyFeed());
-      }
-    } else if (activeTab === 'reviews' && user?.id) {
-      tasks.push(queryClient.invalidateQueries({ queryKey: accountReviewsKey(user.id) }));
-    } else {
-      if (typeof refetchCurrentQuery === 'function') {
-        tasks.push(refetchCurrentQuery());
-      }
-
-
-      if (activeTab === 'posts') {
-        setProfileRepliesRefreshKey((value) => value + 1);
-      }
-    }
-
-    await Promise.all(tasks);
-  }, [popularActive, popularityQuery.refetch, isBlueskyProfile, refetchBlueskyFeed, refetchCurrentQuery, activeTab, queryClient, user?.id]);
-
-  // モーダル表示中や初期ロード中はプルダウン更新を無効化する
-  const isPullToRefreshEnabled = !userLoading;
-  const { pullDistance, isRefreshing: isPullRefreshing, isPulling } = usePullToRefresh(
-    handleProfilePullRefresh,
-    isPullToRefreshEnabled
-  );
-
-  useEffect(() => {
-    setProfileReplies([]);
-    setProfileRepliesError(false);
-    setProfileRepliesReady(false);
-    rowHeightCacheRef.current = new Map();
-  }, [user?.id]);
-
-  useEffect(() => {
-    if (isBlueskyProfile) {
-      setProfileReplies([]);
-      setProfileRepliesError(false);
-      setProfileRepliesReady(true);
-      return;
-    }
-    if (!user?.id || activeTab !== 'posts') return;
-
-    let cancelled = false;
-
-    const fetchProfileReplies = async () => {
-      setProfileRepliesReady(false);
-      setProfileRepliesError(false);
-
-      try {
-        const currentUserId = await getCachedCurrentUserId();
+async function fetchNativeProfileReplies(user: User, limit?: number, signal?: AbortSignal) {
+        const currentUserId = await getCurrentUserId();
 
         const loadReplies = async () => {
           const comments: any[] = [];
-          const pageSize = 500;
+          const pageSize = Math.min(100, limit ?? 100);
           for (let offset = 0; ; offset += pageSize) {
             const { data, error } = await supabase
           .from('comments')
           .select('id, post_id, user_id, content, created_at, likes_count, image_urls, parent_comment_id, client_name')
           .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
-          .range(offset, offset + pageSize - 1);
+          .order('created_at', { ascending: false }).order('id', { ascending: false })
+          .range(offset, Math.min(offset + pageSize, limit ?? Infinity) - 1);
             if (error) throw error;
             comments.push(...(data ?? []));
-            if (cancelled || (data?.length ?? 0) < pageSize) break;
+            if (signal?.aborted) throw signal.reason;
+            if ((data?.length ?? 0) < pageSize || (limit != null && comments.length >= limit)) break;
           }
           return comments;
         };
@@ -3145,28 +2870,291 @@ export default function Profile() {
           visibleRows.map((comment: any) => toReply(comment, replyAuthor)), parentMap, parentCommentMap, parentReactionMap, commentReactionMap,
         );
 
-        if (!cancelled) {
-          setProfileReplies(nextReplies);
-        }
-      } catch (error) {
-        console.error('Fetch profile replies failed:', error);
-        if (!cancelled) {
-          setProfileReplies([]);
-          setProfileRepliesError(true);
-        }
-      } finally {
-        if (!cancelled) {
-          setProfileRepliesReady(true);
-        }
+        if (signal?.aborted) throw signal.reason;
+        return {threads: nextReplies, hasMore: limit != null && comments.length >= limit};
+}
+
+export default function Profile() {
+  const queryClient = useQueryClient();
+  const { user: viewer } = useAuth();
+  const { username = '' } = useParams();
+  const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState<ProfileTabValue>('posts');
+  const [postFilter, setPostFilter] = useState<PostTabFilter>('all');
+  const [postSort, setPostSort] = useState<PostTabSort>('latest');
+  const [popularVisibleCount, setPopularVisibleCount] = useState(20);
+  useEffect(() => { setPopularVisibleCount(20); }, [username, postSort, postFilter]);
+  const popularActive = activeTab === 'posts' && postSort === 'popular';
+  useEffect(() => { setPostFilter('all'); setPostSort('latest'); }, [username]);
+
+  // メディア拡大用のステート
+  const [failedThreadImageUrls, setFailedThreadImageUrls] = useState<string[]>([]);
+  const [isScrolled, setIsScrolled] = useState(false);
+  const tabsSentinelRef = useRef<HTMLDivElement>(null);
+  const mobileTabsRef = useRef<HTMLDivElement>(null);
+  const [highlightTabCenter, setHighlightTabCenter] = useState(0);
+  // 仮想化用：カードごとに直近測定した高さを記憶しておくキャッシュ。
+  // 画面外に出て中身をアンマウントする際、このキャッシュの高さで
+  // プレースホルダーを描画するため、スクロール位置がズレない。
+  const rowHeightCacheRef = useRef<Map<string, number>>(new Map());
+
+  // 初回ペイント前にPC版のDOMが一瞬表示されるのを防ぐ。
+  // useLayoutEffect はブラウザでのペイント前に実行されるため、
+  // スマホではモバイル用CSSが適用された状態だけを最初に見せる。
+  const [isViewportReady, setIsViewportReady] = useState(false);
+
+  useLayoutEffect(() => {
+    setIsViewportReady(true);
+  }, []);
+
+
+  const { data: limeUser, isLoading: isLimeUserLoading, isError: isLimeUserError } = useProfile(username);
+  // Lime に存在しないユーザーだけ Bluesky の公開 API で補完するため、
+  // 既存プロフィールの取得・見た目には影響しない。
+  const { data: blueskyProfile, isLoading: isBlueskyProfileLoading, isError: isBlueskyProfileError } = useQuery({
+    queryKey: ['bluesky-profile', username],
+    queryFn: ({ signal }) => fetchBlueskyProfile(username, signal),
+    enabled: Boolean(username) && !isLimeUserLoading && !limeUser,
+    staleTime: 1000 * 60,
+  });
+  const isBlueskyProfile = !limeUser && Boolean(blueskyProfile);
+  const user = limeUser ?? blueskyProfile;
+  const popularityQuery = useQuery<ProfileFeedItem[]>({
+    queryKey: ['profile-popularity', user?.id, username, viewer?.id],
+    enabled: popularActive && !!user?.id,
+    queryFn: async ({signal}) => {
+      if (isBlueskyProfile) {
+        const posts = (await collectProfilePages<any, string>(async cursor => fetchBlueskyAuthorFeed({actor: username, cursor, limit: 100, filter: 'posts_with_replies', includeReposts: true, signal}), signal)).map(normalizePost);
+        return posts.map(post => post.externalReplyToId && !post.profileRepostedBy
+          ? {__profileItemType: PROFILE_REPLY_ITEM, sortAt: post.createdAt, reply: externalProfileReplyThread(post)} as ProfileReplyItem
+          : {__profileItemType: PROFILE_POST_ITEM, sortAt: post.profileRepostedAt ?? post.createdAt, post} as ProfilePostItem);
+      }
+      const [posts, replies] = await Promise.all([getProfilePopularityPosts(user!.id, signal), fetchNativeProfileReplies(user!, undefined, signal)]);
+      return [
+        ...posts.map(post => ({__profileItemType: PROFILE_POST_ITEM, sortAt: post.profileRepostedAt ?? post.createdAt, post} as ProfilePostItem)),
+        ...replies.threads.map(reply => ({__profileItemType: PROFILE_REPLY_ITEM, sortAt: reply.createdAt, reply} as ProfileReplyItem)),
+      ];
+    },
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+  const userLoading = isLimeUserLoading || (!limeUser && isBlueskyProfileLoading);
+  const userError = !userLoading && !user && (isLimeUserError || isBlueskyProfileError);
+  const {
+    data: blueskyFeed,
+    isLoading: isBlueskyFeedLoading,
+    isError: isBlueskyFeedError,
+    refetch: refetchBlueskyFeed,
+    fetchNextPage:fetchExternalNextPage,
+    hasNextPage:hasExternalNextPage,
+    isFetchingNextPage:isFetchingExternalNextPage,
+  } = useInfiniteQuery({
+    queryKey: ['bluesky-profile-feed', username, 'posts_with_replies', 'with-reposts'],
+    initialPageParam:null as string|null,
+    queryFn: ({ signal,pageParam }) => fetchBlueskyAuthorFeed({ actor: username, cursor:pageParam,limit:20,filter:'posts_with_replies',includeReposts:true,signal }),
+    getNextPageParam:page=>page.cursor ?? undefined,
+    select:data=>({posts:data.pages.flatMap(page=>page.posts),cursor:data.pages.at(-1)?.cursor ?? null}),
+    enabled: isBlueskyProfile && !popularActive,
+    staleTime: 1000 * 60,
+  });
+
+  const highlightsQuery = useProfileHighlights(!isBlueskyProfile ? user?.id : undefined, viewer?.id);
+  const hasHighlights = !!highlightsQuery.data?.pages.some(page => page.length > 0);
+  const privacyStats = useFollowStats(!isBlueskyProfile ? user?.id : undefined);
+  const protectedProfile = !!user?.isPrivate && viewer?.id !== user?.id && privacyStats.data?.canView !== true;
+  const hasReviews = !isBlueskyProfile && !!user && 'review' in user && user.review === true;
+  const hasExtraTabs = hasHighlights || hasReviews;
+  const visibleProfileTabs = profileTabs.filter(tab => (tab.value !== 'highlights' || hasHighlights) && (tab.value !== 'reviews' || hasReviews));
+  useEffect(() => {
+    if (activeTab === 'reviews' && !hasReviews) setActiveTab('posts');
+  }, [activeTab, hasReviews]);
+  useEffect(() => {
+    if (activeTab === 'highlights' && !hasHighlights) setActiveTab('posts');
+  }, [activeTab, hasHighlights, hasReviews]);
+  useLayoutEffect(() => {
+    const tabs = mobileTabsRef.current;
+    const target = tabs?.querySelector<HTMLElement>('[role="tab"][data-state="active"]');
+    if (!hasExtraTabs || !tabs || !target || tabs.scrollWidth <= tabs.clientWidth) return;
+    const box = target.getBoundingClientRect(), list = tabs.getBoundingClientRect();
+    if (box.left < list.left) tabs.scrollLeft += box.left - list.left;
+    else if (box.right > list.right) tabs.scrollLeft += box.right - list.right;
+  }, [activeTab, hasHighlights, hasReviews]);
+  useLayoutEffect(() => {
+    const tabs = mobileTabsRef.current;
+    if (!hasExtraTabs || !tabs) return;
+    const measure = () => {
+      const selected = tabs.querySelector<HTMLElement>('[role="tab"][data-state="active"]');
+      if (!selected) return;
+      const tabBox = selected.getBoundingClientRect();
+      const listBox = tabs.getBoundingClientRect();
+      setHighlightTabCenter(tabBox.left - listBox.left + tabs.scrollLeft + tabBox.width / 2);
+      if (activeTab === 'reviews' && tabs.scrollWidth > tabs.clientWidth) {
+        if (tabBox.left < listBox.left) tabs.scrollLeft += tabBox.left - listBox.left;
+        else if (tabBox.right > listBox.right) tabs.scrollLeft += tabBox.right - listBox.right;
       }
     };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(tabs);
+    tabs.querySelectorAll('[role="tab"]').forEach(tab => observer.observe(tab));
+    let cancelled = false;
+    document.fonts?.ready.then(() => { if (!cancelled) measure(); });
+    return () => { cancelled = true; observer.disconnect(); };
+  }, [activeTab, hasHighlights, hasReviews]);
+  // 非表示タブの無限スクロール取得を開始しない。
+  // フック自体は常に同じ順序で呼び出し、アクティブなタブだけ userId を渡す。
+  // これにより初回表示で4タブ分のデータを同時に保持する必要をなくす。
+  const postsQuery = useInfiniteQuery({
+    queryKey: ['posts', 'user', user?.id ?? '', 'activity', viewer?.id],
+    enabled: !!user?.id && !isBlueskyProfile && activeTab === 'posts' && !popularActive,
+    initialPageParam: 0,
+    queryFn: async ({pageParam, signal}) => {
+      const size = 20, end = (pageParam + 1) * size;
+      const [posts, replies] = await Promise.all([
+        getProfilePosts(user!.id, 0, end), fetchNativeProfileReplies(user!, end, signal),
+      ]);
+      if (signal.aborted) throw signal.reason;
+      const all: ProfileFeedItem[] = [
+        ...posts.map(post => ({__profileItemType: PROFILE_POST_ITEM, sortAt: post.profileRepostedAt ?? post.createdAt, post} as ProfilePostItem)),
+        ...replies.threads.map(reply => ({__profileItemType: PROFILE_REPLY_ITEM, sortAt: reply.createdAt, reply} as ProfileReplyItem)),
+      ];
+      return {items: selectProfilePosts(all, 'all', 'latest').slice(pageParam * size, end), hasMore: posts.length >= end || replies.hasMore};
+    },
+    getNextPageParam: (lastPage, pages) => lastPage.hasMore ? pages.length : undefined,
+    select: data => ({...data, pages: data.pages.map(page => page.items)}),
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+  const pinQuery=useQuery({queryKey:profilePinKey(user?.id??''),queryFn:()=>getProfilePin(user!.id),enabled:!!user?.id&&!isBlueskyProfile&&activeTab==='posts'});
+  const pinnedPostQuery=useQuery({queryKey:['profile-pinned-post',user?.id,pinQuery.data,viewer?.id],queryFn:()=>getPostById(pinQuery.data!),enabled:!!pinQuery.data&&!isBlueskyProfile&&activeTab==='posts'});
+  const pinnedPost=postSort==='latest'&&activeTab==='posts'&&pinnedPostQuery.data?.userId===user?.id?pinnedPostQuery.data:null;
+  const likesQuery = useUserLikesInfinite(!isBlueskyProfile && activeTab === 'likes' ? user?.id : undefined);
+  const mediaQuery = useUserMediaInfinite(!isBlueskyProfile && activeTab === 'media' ? user?.id : undefined);
+  const reactionsQuery = useUserReactionsInfinite(!isBlueskyProfile && activeTab === 'reactions' ? user?.id : undefined);
 
-    fetchProfileReplies();
+  // タブに応じて使用するクエリを切り替え（Supabaseレベルでフィルタリングされた結果を取得）
+  const currentQuery =
+    activeTab === 'highlights'
+      ? highlightsQuery
+      : activeTab === 'likes'
+      ? likesQuery
+      : activeTab === 'media'
+        ? mediaQuery
+        : activeTab === 'reactions'
+          ? reactionsQuery
+          : postsQuery;
+
+  const {
+    data: profileData,
+    isLoading: isProfileContentLoading,
+    fetchNextPage:fetchNativeNextPage,
+    hasNextPage:hasNativeNextPage,
+    isFetchingNextPage:isFetchingNativeNextPage,
+    isError: isProfileContentError,
+    refetch: refetchCurrentQuery,
+  } = currentQuery;
+  const contentLoading = popularActive ? popularityQuery.isPending : isBlueskyProfile ? isBlueskyFeedLoading : isProfileContentLoading;
+  const contentError = popularActive ? popularityQuery.isError : isBlueskyProfile ? isBlueskyFeedError : isProfileContentError;
+  const { ref, inView } = useInView();
+
+  useEffect(() => {
+    let lastScrolled = false;
+    let frameId = 0;
+
+    const getNextScrolled = () => {
+      if (!tabsSentinelRef.current) return lastScrolled;
+
+      const sentinelTop = tabsSentinelRef.current.getBoundingClientRect().top;
+
+      // iOS Safari/PWA では sticky 到達直後に getBoundingClientRect().top が
+      // 0px 付近で数pxだけ戻ることがあり、背景だけ一瞬 transparent 側へ戻る。
+      // sticky 構造は変えず、既に追従中の時だけ 8px の戻り幅を許容してちらつきを止める。
+      return lastScrolled ? sentinelTop <= 8 : sentinelTop <= 0;
+    };
+
+    const updateScrolledState = () => {
+      frameId = 0;
+      const nextScrolled = getNextScrolled();
+      if (nextScrolled === lastScrolled) return;
+
+      lastScrolled = nextScrolled;
+      setIsScrolled(nextScrolled);
+    };
+
+    const handleScroll = () => {
+      if (frameId) return;
+      frameId = window.requestAnimationFrame(updateScrolledState);
+    };
+
+    lastScrolled = tabsSentinelRef.current?.getBoundingClientRect().top <= 0;
+    setIsScrolled(lastScrolled);
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener('resize', handleScroll);
+    window.visualViewport?.addEventListener('scroll', handleScroll, { passive: true });
+    window.visualViewport?.addEventListener('resize', handleScroll);
 
     return () => {
-      cancelled = true;
+      if (frameId) window.cancelAnimationFrame(frameId);
+      window.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('resize', handleScroll);
+      window.visualViewport?.removeEventListener('scroll', handleScroll);
+      window.visualViewport?.removeEventListener('resize', handleScroll);
     };
-  }, [user?.id, activeTab, isBlueskyProfile, profileRepliesRefreshKey]);
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'posts') return;
+
+    const handleReactionChanged = () => {
+      void queryClient.invalidateQueries({queryKey: ['posts', 'user', user?.id]});
+      void queryClient.invalidateQueries({queryKey: ['profile-popularity', user?.id]});
+    };
+
+    window.addEventListener('profile-thread-reaction-changed', handleReactionChanged);
+
+    return () => {
+      window.removeEventListener('profile-thread-reaction-changed', handleReactionChanged);
+    };
+  }, [activeTab, user?.id, queryClient]);
+
+  // Twitterと同様、タイムライン最上部でのプルダウンで最新の投稿を再取得する。
+  // Blueskyプロフィールの場合はBluesky側のフィードを、それ以外はアクティブな
+  // タブ（ポスト/メディア/いいね/リアクション）のクエリと、posts タブでの
+  // 返信スレッド（コメント）を合わせて再取得する。
+  const handleProfilePullRefresh = useCallback(async () => {
+    const tasks: Array<Promise<any>> = [];
+
+    if (popularActive) {
+      tasks.push(popularityQuery.refetch());
+      setPopularVisibleCount(20);
+    } else if (isBlueskyProfile) {
+      if (typeof refetchBlueskyFeed === 'function') {
+        tasks.push(refetchBlueskyFeed());
+      }
+    } else if (activeTab === 'reviews' && user?.id) {
+      tasks.push(queryClient.invalidateQueries({ queryKey: accountReviewsKey(user.id) }));
+    } else {
+      if (typeof refetchCurrentQuery === 'function') {
+        tasks.push(refetchCurrentQuery());
+      }
+
+    }
+
+    await Promise.all(tasks);
+  }, [popularActive, popularityQuery.refetch, isBlueskyProfile, refetchBlueskyFeed, refetchCurrentQuery, activeTab, queryClient, user?.id]);
+
+  // モーダル表示中や初期ロード中はプルダウン更新を無効化する
+  const isPullToRefreshEnabled = !userLoading;
+  const { pullDistance, isRefreshing: isPullRefreshing, isPulling } = usePullToRefresh(
+    handleProfilePullRefresh,
+    isPullToRefreshEnabled
+  );
+
+  useEffect(() => {
+    rowHeightCacheRef.current = new Map();
+  }, [user?.id]);
+
 
   // モーダル表示時にスクロールを固定
 
@@ -3231,13 +3219,15 @@ export default function Profile() {
 
     if (activeTab === 'highlights') return uniquePostsById(flatPageItems);
 
+    if (popularActive || !isBlueskyProfile) return selectProfilePosts(flatPageItems, postFilter, postSort);
+
     const ownPosts: ProfilePostItem[] = uniquePostsById(flatPageItems).filter((post: any) => !isBlueskyProfile || !post.externalReplyToId || post.profileRepostedBy).map((post: any) => ({
       __profileItemType: PROFILE_POST_ITEM,
       sortAt: post.profileRepostedAt ?? post.createdAt ?? post.created_at ?? new Date().toISOString(),
       post,
     }));
 
-    const replyThreads = isBlueskyProfile ? uniquePostsById(flatPageItems).filter((post: any) => post.externalReplyToId && !post.profileRepostedBy).map((post: any) => externalProfileReplyThread(normalizePost(post))) : profileReplies;
+    const replyThreads = isBlueskyProfile ? uniquePostsById(flatPageItems).filter((post: any) => post.externalReplyToId && !post.profileRepostedBy).map((post: any) => externalProfileReplyThread(normalizePost(post))) : EMPTY_ARRAY;
     const replies: ProfileReplyItem[] = replyThreads.map((reply): ProfileReplyItem => ({
       __profileItemType: PROFILE_REPLY_ITEM,
       sortAt: reply.createdAt,
@@ -3245,7 +3235,7 @@ export default function Profile() {
     }));
 
     return selectProfilePosts([...ownPosts, ...replies], postFilter, postSort);
-  }, [activeTab, flatPageItems, profileReplies, isBlueskyProfile, postFilter, postSort]);
+  }, [activeTab, flatPageItems, isBlueskyProfile, popularActive, postFilter, postSort]);
 
   const items = popularActive ? rankedItems.slice(0, popularVisibleCount) : rankedItems;
   const revealPopularPage = useCallback(() => { setPopularVisibleCount(count => count + 20); }, []);
@@ -3261,7 +3251,7 @@ export default function Profile() {
   }, []);
 
   const profileAuxiliaryLoading = activeTab === 'posts'
-    ? contentLoading || !profileRepliesReady || (!isBlueskyProfile && (pinQuery.isPending || (!!pinQuery.data && pinnedPostQuery.isPending)))
+    ? contentLoading || (!isBlueskyProfile && (pinQuery.isPending || (!!pinQuery.data && pinnedPostQuery.isPending)))
     : contentLoading;
   // Publish the chronologically merged list only after posts, replies and the pin resolve.
   // Otherwise the fastest request briefly shows an incomplete list and moves rows later.
@@ -3476,12 +3466,6 @@ export default function Profile() {
               {activeTab === 'likes' && 'いいねした投稿の取得に失敗しました。'}
               {activeTab === 'media' && 'メディア投稿の取得に失敗しました。'}
               {activeTab === 'reactions' && 'リアクションの取得に失敗しました。'}
-            </div>
-          )}
-
-          {!profilePostsLoading && !contentError && activeTab === 'posts' && profileRepliesError && items.length > 0 && (
-            <div className="m-4 rounded-2xl border border-dashed border-border/70 bg-card/50 p-4 text-center text-xs text-muted-foreground sm:m-0">
-              返信の一部を取得できませんでした。
             </div>
           )}
 

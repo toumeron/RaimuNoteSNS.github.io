@@ -93,10 +93,11 @@ export function useRecommendedFeed(enabled:boolean) {
   },[enabled,loading,user?.id,query.isFetching,query.data?.pages.at(-1)?.requestKey]);
   const automaticPaused=!!query.data?.pages.at(-1)?.automaticPaused;
   const count=query.data?.pages.reduce((sum,page)=>sum+page.posts.length,0)??0;
+  const scanBudget=count>0?Math.max(initialScanLimit.current,24):initialScanLimit.current;
   useEffect(()=>{
    // Fill only the first screen; scrolling owns subsequent small pages.
    // This is a bounded continuation of the open timeline, not polling.
-   if(enabled&&!loading&&!automaticPaused&&count<6&&query.hasNextPage&&!query.isFetching&&!query.isError&&!query.isFetchNextPageError&&(query.data?.pages.length??0)<initialScanLimit.current)void query.fetchNextPage({cancelRefetch:false});
+   if(enabled&&!loading&&!automaticPaused&&count<6&&query.hasNextPage&&!query.isFetching&&!query.isError&&!query.isFetchNextPageError&&(query.data?.pages.length??0)<scanBudget)void query.fetchNextPage({cancelRefetch:false});
   },[enabled,loading,automaticPaused,count,query.hasNextPage,query.isFetching,query.isError,query.isFetchNextPageError,query.data?.pages.length,historyRevision]);
   useEffect(()=>{
     if(!enabled||loading||query.isFetching||query.isError||automaticPaused)return;
@@ -130,6 +131,6 @@ export function useRecommendedFeed(enabled:boolean) {
    catch(error){await queryClient.cancelQueries({queryKey});queryClient.setQueryData(queryKey,previous);throw error;}
    void queryClient.invalidateQueries({queryKey:['recommendation-preferences',user?.id??null]});
   },[queryClient,user?.id,JSON.stringify(handles)]);
-  const isFilling=enabled&&!loading&&!automaticPaused&&count<6&&!!query.hasNextPage&&!query.isError&&!query.isFetchNextPageError&&(query.data?.pages.length??0)<initialScanLimit.current;
+  const isFilling=enabled&&!loading&&!automaticPaused&&count<6&&!!query.hasNextPage&&!query.isError&&!query.isFetchNextPageError&&(query.data?.pages.length??0)<scanBudget;
   return {...query,automaticPaused,isFilling,dismiss};
 }

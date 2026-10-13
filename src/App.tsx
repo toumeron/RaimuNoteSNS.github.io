@@ -1,3 +1,4 @@
+import {ScheduleControl,ScheduledPostNotice} from '@/components/feed/ScheduleControl';
 import { allowAccountWrite } from '@/lib/accountSuspension';
 import { AccountSuspensionFeedback } from '@/components/account/AccountSuspension';
 import {useAutoTextarea} from '@/hooks/useAutoTextarea';
@@ -964,6 +965,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
   const { mutateAsync, isPending } = useCreatePost();
   
   const [content, setContent] = useState(initialContent);
+  const [scheduledAt,setScheduledAt]=useState<string|null>(null);
   const [poll,setPoll]=useState<PollDraft|null>(null);
   const pollRef=useRef(poll);pollRef.current=poll;
   const removePoll=()=>{pollRef.current?.options.forEach(option=>{if(option.image)URL.revokeObjectURL(option.image);});setPoll(null);};
@@ -2009,10 +2011,11 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
     if(poll){const message=validatePollDraft(poll);if(message){toast.error(message);return;}}
     try {
       // 投稿処理を先に実行し、確実に完了を待つ (visibilityを追加)
-      await mutateAsync({ 
+      const savedPost = await mutateAsync({
         content: trimmed, 
         imageUrls: previews,
         ...(poll?{poll}:{}),
+        ...(scheduledAt?{scheduledAt}:{}),
         parentId: quotedPost?.id,
         isQuote: !!quotedPost,
         user_id: user.id,
@@ -2023,7 +2026,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
       // ハッシュタグの抽出と統計更新 (投稿後に非同期で実行)
       const hashtagRegex = /#([a-zA-Z0-9_\u3041-\u3094\u30a1-\u30fa\u30fc\u4e00-\u9fa5]+)/g;
       const matches = trimmed.match(hashtagRegex);
-      if (matches) {
+      if (matches && !savedPost?.scheduledAt) {
         const uniqueTags = Array.from(new Set(matches.map(tag => tag.slice(1))));
         // 各ハッシュタグの処理。エラーが起きても全体が止まらないように個別にcatch
         uniqueTags.forEach(async (tag) => {
@@ -2035,7 +2038,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
         });
       }
 
-      setContent(''); setSticker(null); removePoll();
+      setContent(''); setSticker(null); setScheduledAt(null); removePoll();
       const urls = new Set([...previewsRef.current, ...previewOriginalsRef.current]);
       urls.forEach((url) => URL.revokeObjectURL(url));
       setPreviews([]);
@@ -2409,7 +2412,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
               {isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                quotedPost ? '引用ポスト' : 'ポストする'
+                scheduledAt ? '予約する' : quotedPost ? '引用ポスト' : 'ポストする'
               )}
             </Button>
           </div>
@@ -2424,13 +2427,15 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
               {visibilityMenu}
             </div>
 
+            {scheduledAt&&<ScheduledPostNotice value={scheduledAt}/>}
             {textareaBlock}
             {mentionPopup}
             {hashtagPopup}
             <StickerDraft inline={!!content.trim()} name={sticker} onRemove={()=>setSticker(null)} />
           {quotedBlock}
             {imagesGrid}
-            {poll&&<PollEditor value={poll} onChange={setPoll} onRemove={removePoll} disabled={isPending}/>}
+
+          {poll&&<PollEditor value={poll} onChange={setPoll} onRemove={removePoll} disabled={isPending}/>}
           </div>
 
           {/* フッター: 返信可否の表示 + 画像添付 + 文字数 */}
@@ -2463,6 +2468,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
                   <ComposerIcon kind="image"/>
                 </Button>
                 <Button type="button" variant="ghost" size="sm" data-lime-composer-tool aria-label="投票を追加" aria-pressed={!!poll} disabled={isPending||!!poll} className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={()=>setPoll(newPollDraft())}><PollIcon className="h-5 w-5"/></Button>
+                <ScheduleControl value={scheduledAt} onChange={setScheduledAt} disabled={isPending}/>
                 <StickerPicker iconOnly simple disabled={isPending} onSelect={name=>{if(content.trim()){insertDraftEmoji(textareaRef.current,content,name,setContent);}else setSticker(name);}}/>
               </div>
               <div className="flex items-center gap-2">
@@ -2509,12 +2515,14 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
           <AvatarFallback>{user.displayName.slice(0, 1)}</AvatarFallback>
         </Avatar>
         <div className="flex-1 min-w-0 space-y-3 relative" ref={containerRef}>
-          {textareaBlock}
+          {scheduledAt&&<ScheduledPostNotice value={scheduledAt}/>}
+            {textareaBlock}
           {mentionPopup}
           {hashtagPopup}
           <StickerDraft inline={!!content.trim()} name={sticker} onRemove={()=>setSticker(null)} />
           {quotedBlock}
           {imagesGrid}
+
           {poll&&<PollEditor value={poll} onChange={setPoll} onRemove={removePoll} disabled={isPending}/>}
 
           <div className={cn("flex items-center justify-between border-t border-border/60 pt-3", timelineGlass && "border-border/40")}>
@@ -2533,6 +2541,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
               </Button>
 
               <Button type="button" variant="ghost" size="sm" data-lime-composer-tool aria-label="投票を追加" aria-pressed={!!poll} disabled={isPending||!!poll} className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={()=>setPoll(newPollDraft())}><PollIcon className="h-5 w-5"/></Button>
+                <ScheduleControl value={scheduledAt} onChange={setScheduledAt} disabled={isPending}/>
               {visibilityMenu}
               <StickerPicker iconOnly simple disabled={isPending} onSelect={name=>{if(content.trim()){insertDraftEmoji(textareaRef.current,content,name,setContent);}else setSticker(name);}} />
 
@@ -2551,7 +2560,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
               ) : (
                 <>
                   <ComposerIcon kind="send" className="mr-1.5 h-4 w-4" />
-                  {quotedPost ? '引用ポスト' : 'ポスト'}
+                  {scheduledAt ? '予約する' : quotedPost ? '引用ポスト' : 'ポスト'}
                 </>
               )}
             </Button>

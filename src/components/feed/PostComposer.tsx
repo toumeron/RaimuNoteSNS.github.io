@@ -1,3 +1,4 @@
+import {ScheduleControl,ScheduledPostNotice} from '@/components/feed/ScheduleControl';
 import { allowAccountWrite } from '@/lib/accountSuspension';
 import {useAutoTextarea} from '@/hooks/useAutoTextarea';
 import {ComposerIcon} from '@/components/feed/ComposerIcon';
@@ -183,6 +184,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
   const { mutateAsync, isPending } = useCreatePost();
   
   const [content, setContent] = useState(initialContent);
+  const [scheduledAt,setScheduledAt]=useState<string|null>(null);
   const [poll,setPoll]=useState<PollDraft|null>(null);
   const pollRef=useRef(poll);pollRef.current=poll;
   const removePoll=()=>{pollRef.current?.options.forEach(option=>{if(option.image)URL.revokeObjectURL(option.image);});setPoll(null);};
@@ -1250,9 +1252,10 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
     if(poll){const message=validatePollDraft(poll);if(message){toast.error(message);return;}}
     try {
       // 投稿処理を先に実行し、確実に完了を待つ (visibilityを追加)
-      await mutateAsync({ 
+      const savedPost = await mutateAsync({
         ...(mapLocation ? {mapLocation} : {}),
         ...(poll?{poll}:{}),
+        ...(scheduledAt?{scheduledAt}:{}),
         content: trimmed, 
         imageUrls: previews,
         parentId: quotedPost?.id,
@@ -1264,7 +1267,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
       // ハッシュタグの抽出と統計更新 (投稿後に非同期で実行)
       const hashtagRegex = /#([a-zA-Z0-9_\u3041-\u3094\u30a1-\u30fa\u30fc\u4e00-\u9fa5]+)/g;
       const matches = trimmed.match(hashtagRegex);
-      if (matches) {
+      if (matches && !savedPost?.scheduledAt) {
         const uniqueTags = Array.from(new Set(matches.map(tag => tag.slice(1))));
         // 各ハッシュタグの処理。エラーが起きても全体が止まらないように個別にcatch
         uniqueTags.forEach(async (tag) => {
@@ -1276,7 +1279,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
         });
       }
 
-      setContent(''); setSticker(null);
+      setContent(''); setSticker(null); setScheduledAt(null);
       const urls = new Set([...previewsRef.current, ...previewOriginalsRef.current]);
       urls.forEach((url) => URL.revokeObjectURL(url));
       setPreviews([]);
@@ -1460,6 +1463,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
         </Link>
         <div className="flex-1 min-w-0 space-y-3 relative" ref={containerRef}>
           
+          {scheduledAt&&<ScheduledPostNotice value={scheduledAt}/>}
           <div className="relative w-full overflow-hidden">
             {!content && (
               <div className="absolute inset-0 pointer-events-none px-0 py-2 text-[20px] leading-relaxed text-muted-foreground z-0">
@@ -1586,6 +1590,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
             </div>
           )}
 
+
           {poll&&<PollEditor value={poll} onChange={setPoll} onRemove={removePoll} disabled={isPending}/>}
 
           <div className="flex items-center justify-between pt-3">
@@ -1604,6 +1609,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
               </Button>
 
 <Button type="button" size="sm" variant="ghost" data-lime-composer-tool aria-label="投票を追加" aria-pressed={!!poll} disabled={isPending||!!poll} className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={()=>setPoll(newPollDraft())}><PollIcon className="h-5 w-5"/></Button>
+                <ScheduleControl value={scheduledAt} onChange={setScheduledAt} disabled={isPending}/>
 
               {/* 公開範囲選択 (追加) */}
               <DropdownMenu>
@@ -1674,7 +1680,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
               ) : (
                 <>
                   <ComposerIcon kind="send" className={cn("h-4 w-4",homeInline?"sm:mr-1.5":"mr-1.5")} />
-                  <span className={homeInline?"hidden sm:inline":undefined}>{quotedPost ? '引用ポスト' : 'ポスト'}</span>
+                  <span className={homeInline?"hidden sm:inline":undefined}>{scheduledAt ? '予約する' : quotedPost ? '引用ポスト' : 'ポスト'}</span>
                 </>
               )}
             </Button>

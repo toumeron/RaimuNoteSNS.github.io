@@ -9,6 +9,7 @@ const db = vi.hoisted(() => ({
   statuses: [] as ((status: string) => void)[],
   pending: null as Promise<{ count: number; error: null }> | null,
   removed: vi.fn(),
+  initialReads: 0,
 }));
 vi.mock('@/lib/currentUser', () => ({ getCurrentUserId: async () => 'viewer' }));
 vi.mock("@/hooks/use-mobile", () => ({ useIsPWA: () => false }));
@@ -21,6 +22,7 @@ vi.mock('@/lib/supabase', () => ({ supabase: {
       upsert: () => builder, delete: () => builder,
       then: (resolve: (value: unknown) => void) => {
         if (head && db.pending) { const pending = db.pending; db.pending = null; return pending.then(resolve); }
+        if (!head) db.initialReads++;
         return Promise.resolve(head ? { count: db.count, error: db.error } : { data: null, error: null }).then(resolve);
       },
     };
@@ -185,4 +187,14 @@ it.each(['bsky:at://did:plc:test/app.bsky.feed.post/abc','misskey:https://misske
  await act(async()=>acknowledge!({liked:true,count:3}));
  view.rerender(<QueryClientProvider client={client}><LikeButton postId={id} liked count={3} syncState persistLike={persistLike}/></QueryClientProvider>);
  expect(view.container.querySelector('.twitter-like-heart')).toHaveClass('is-animating');expect(view.container.querySelector('.twitter-like-effects')).toHaveClass('is-animating');expect(view.container.querySelector('.twitter-like-count')).toHaveClass('is-up');
+});
+
+it('reuses an already fetched viewer like flag while retaining live count updates',async()=>{
+ db.initialReads=0;
+ render(<QueryClientProvider client={new QueryClient()}><LikeButton postId="known" liked={true} count={7} initialLikedKnown/></QueryClientProvider>);
+ await expectCount(7);
+ expect(db.initialReads).toBe(0);
+ expect(screen.getByRole('button')).toHaveClass('text-pink-500');
+ const change=db.handlers.find(handler=>handler.kind==='postgres_changes'&&handler.table==='likes');
+ db.count=8;await act(async()=>change?.callback({}));await expectCount(8);
 });

@@ -310,3 +310,10 @@ describe('profile highlights feed', () => {
  const controller=new AbortController();controller.abort(new DOMException('Cancelled','AbortError'));
  await expect(getFeed(0,8,undefined,controller.signal)).rejects.toThrow('Cancelled');expect(db.calls).toEqual([]);
  });
+
+it('preserves poll definitions and counts in post detail and its quoted parent',async()=>{
+ const poll={endsAt:'2026-10-20T00:00:00Z',options:[{label:'猫',votes:2},{label:'犬',votes:1}]};
+ db.rows.posts=[{...post('original'),poll},{...post('quote','original'),parent_post:{...post('original'),poll}}];
+ expect((await getPostById('original'))?.poll).toEqual(poll);
+ expect((await getPostById('quote'))?.parentPost?.poll).toEqual(poll);
+});

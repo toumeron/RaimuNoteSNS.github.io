@@ -64,7 +64,7 @@ body:has(.lime-media-lightbox) [data-radix-popper-content-wrapper]{z-index:21474
 .lime-media-zoomed .lime-media-top button{background:#0004}.lime-media-zoomed .lime-media-bottom{background:linear-gradient(transparent,#0009)}
 .lime-media-actions [data-lime-post-actions],.lime-media-actions [data-lime-comment-actions]{height:36px;min-height:36px;gap:6px}
 .lime-media-actions [data-lime-post-actions]>:nth-child(-n+4),.lime-media-actions [data-lime-comment-actions]>:nth-child(-n+4){justify-content:center;border-radius:999px;background:rgba(0,0,0,.3);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);min-width:36px;height:36px}
-.lime-media-actions [data-lime-post-actions]>div:last-child,.lime-media-actions [data-lime-comment-actions]>div:last-child{gap:6px;margin-left:auto;background:transparent}
+.lime-media-actions [data-lime-post-actions]>div:last-child,.lime-media-actions [data-lime-comment-actions]>div:last-child{gap:6px;margin-left:auto;background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none}
 .lime-media-actions [data-lime-post-actions]>div:last-child>*,.lime-media-actions [data-lime-comment-actions]>div:last-child>*{width:36px;height:36px;border-radius:999px;background:rgba(0,0,0,.3);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);justify-content:center;padding:0}
 .lime-media-actions svg:not(.twitter-like-effects){width:20px;height:20px}.lime-media-actions button,.lime-media-actions a{font-size:13px}.lime-media-actions span.tabular-nums{font-size:13px}
 .lime-media-mobile-reply{display:block;margin-top:18px}.lime-media-dots{padding:12px}
@@ -136,11 +136,11 @@ body:has(.lime-media-lightbox) [data-radix-popper-content-wrapper] [role=menu]{b
 @media(min-width:768px){.lime-media-detail .lime-media-actions [data-lime-post-actions],.lime-media-detail .lime-media-actions [data-lime-comment-actions]{height:36px;min-height:36px}}
 
 .lime-media-top svg,.lime-media-prev svg,.lime-media-next svg,.lime-media-reply-dialog>header>button:first-child svg{width:20px;height:20px}
-/* Give direct links (reply) and button wrappers the same circular hit area. */
+/* Size the media action background around both icon and animated count. */
 @media(max-width:767px){
-.lime-media-actions [data-lime-post-actions]>:nth-child(-n+4),.lime-media-actions [data-lime-comment-actions]>:nth-child(-n+4){display:inline-flex;align-items:center;justify-content:center;flex:none;width:40px;min-width:40px!important;height:40px!important;padding:0!important;gap:4px!important}
-.lime-media-actions [data-lime-post-actions]>:nth-child(-n+4):has(.tabular-nums:not(:empty):not(:has(span)), .twitter-like-count-static:not(:empty), .repost-count:not([aria-label=""])),.lime-media-actions [data-lime-comment-actions]>:nth-child(-n+4):has(.tabular-nums:not(:empty):not(:has(span)), .twitter-like-count-static:not(:empty), .repost-count:not([aria-label=""])){width:auto;padding:0 8px!important}
-.lime-media-actions [data-lime-post-actions]>:nth-child(-n+4)>button,.lime-media-actions [data-lime-comment-actions]>:nth-child(-n+4)>button{display:inline-flex;align-items:center;justify-content:center;min-width:40px!important;height:40px!important;padding:0!important;gap:4px!important}
+.lime-media-actions [data-lime-post-actions],.lime-media-actions [data-lime-comment-actions]{flex-wrap:wrap;height:auto;min-height:40px;}
+.lime-media-actions [data-lime-post-actions]>:nth-child(-n+4),.lime-media-actions [data-lime-comment-actions]>:nth-child(-n+4){display:inline-flex;align-items:center;justify-content:center;flex:none;width:max-content;min-width:40px!important;height:40px!important;padding:0 8px!important;gap:4px!important}
+.lime-media-actions [data-lime-post-actions]>:nth-child(-n+4)>button,.lime-media-actions [data-lime-comment-actions]>:nth-child(-n+4)>button{display:inline-flex;align-items:center;justify-content:center;min-width:0!important;height:40px!important;padding:0!important;gap:4px!important}
 .lime-media-actions [data-lime-post-actions]>div:last-child>*,.lime-media-actions [data-lime-comment-actions]>div:last-child>*{width:40px;min-width:40px!important;height:40px!important;padding:0!important}
 .lime-media-actions svg:not(.twitter-like-effects){width:20px!important;height:20px!important;flex:none}
 }

@@ -1,3 +1,4 @@
+import { PostPoll } from '@/components/feed/PostPoll';
 import type {ReactNode} from 'react';
 import {Link} from 'react-router-dom';
 import {useQuery} from '@tanstack/react-query';
@@ -28,6 +29,7 @@ export function ChatPostPreview({content,fallback}:{content:string;fallback:Reac
    </Link>
    <Link to={`/post/${post.id}`} className="dm-post-preview-content">{post.content}</Link>
    {image&&<button type="button" className="dm-media-image" aria-label="投稿画像を拡大" onClick={()=>openMediaViewer({url:image,post})}><img src={image} alt={post.imageAltTexts?.[0]||'投稿画像'} loading="lazy"/></button>}
+   {post.poll && <div className="px-3"><PostPoll post={post}/></div>}
   </article>
  </>;
 }
