@@ -22,8 +22,8 @@ export function RepostButton({ post, mobilePresentation = false, refreshState = 
   const mutation = useToggleRepost();
   const {user} = useAuth();
   const [persistedState,setPersistedState]=useState<{count:number;reposted:boolean;updatedAt:number}|null>(null);
-  const externalState = useQuery({queryKey: ['repost-state', post.id],
-    queryFn: () => isReplyPostId(post.id) ? getReplyRepostState(post.id) : isExternalPostId(post.id) ? getExternalRepostState(post.id) : getNativeRepostState(post.id), enabled: refreshState || isExternalPostId(post.id) || isReplyPostId(post.id)});
+  const externalState = useQuery({queryKey: ['repost-state', post.id, user?.id ?? null],
+    queryFn: () => isReplyPostId(post.id) ? getReplyRepostState(post.id) : isExternalPostId(post.id) ? getExternalRepostState(post.id) : getNativeRepostState(post.id), enabled: refreshState || isExternalPostId(post.id) || isReplyPostId(post.id), staleTime:30_000, refetchOnWindowFocus:false});
   const usePersisted = persistedState && externalState.dataUpdatedAt <= persistedState.updatedAt;
   const reposted = usePersisted ? persistedState.reposted : externalState.data?.repostedByMe ?? post.repostedByMe;
   const count = usePersisted ? persistedState.count : externalState.data?.repostsCount ?? post.repostsCount ?? 0;

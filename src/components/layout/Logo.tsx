@@ -1,12 +1,16 @@
 import { Link } from 'react-router-dom';
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/hooks/useAuth';
+import { useQueryClient } from '@tanstack/react-query';
 
 type LimeProStatusEvent = CustomEvent<{
   hasLimePro: boolean;
 }>;
 
 export function Logo({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
+  const {user}=useAuth();
+  const queryClient=useQueryClient();
   const sizes = {
     sm: { text: 'text-lg', icon: 'h-5 w-5' },
     md: { text: 'text-2xl', icon: 'h-6 w-6' },
@@ -36,12 +40,14 @@ export function Logo({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
 
   useEffect(() => {
     mountedRef.current = true;
+    let active=true;
 
     let broadcastChannel: BroadcastChannel | null = null;
 
     const applyLimeProStatus = (nextStatus: boolean, fromLocalChange = false) => {
       if (fromLocalChange) {
         localChangeVersionRef.current += 1;
+        if(user)queryClient.setQueryData(['limepro-status',user.id],{data:nextStatus?{feature:'limepro'}:null,error:null});
       }
 
       statusRef.current = nextStatus;
@@ -63,10 +69,6 @@ export function Logo({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
     const fetchLimeProStatus = async () => {
       const versionAtStart = localChangeVersionRef.current;
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
       if (!user) {
         if (versionAtStart === localChangeVersionRef.current) {
           applyLimeProStatus(false);
@@ -74,19 +76,22 @@ export function Logo({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
         return;
       }
 
-      const { data, error } = await supabase
+      const { data, error } = await queryClient.fetchQuery({
+        queryKey:['limepro-status',user.id],staleTime:60_000,
+        queryFn:()=>supabase
         .from('user_entitlements')
         .select('feature')
         .eq('user_id', user.id)
         .eq('feature', 'limepro')
-        .maybeSingle();
+        .maybeSingle(),
+      });
 
       if (error) {
         console.error('Fetch Logo LimePro Status Error:', error);
         return;
       }
 
-      if (versionAtStart !== localChangeVersionRef.current) {
+      if (!active || versionAtStart !== localChangeVersionRef.current) {
         return;
       }
 
@@ -108,6 +113,7 @@ export function Logo({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
     };
 
     const handleFocusOrVisible = () => {
+      if(document.visibilityState==='hidden')return;
       syncFromLocalStorage();
       fetchLimeProStatus();
     };
@@ -133,14 +139,9 @@ export function Logo({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
 
     fetchLimeProStatus();
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(() => {
-      // Release the auth callback lock before making another Supabase request.
-      window.setTimeout(() => { if (mountedRef.current) void fetchLimeProStatus(); }, 0);
-    });
 
     return () => {
+      active=false;
       mountedRef.current = false;
 
       window.removeEventListener('limepro-status-changed', handleLocalLimeProChange);
@@ -150,13 +151,12 @@ export function Logo({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
 
       window.clearInterval(syncTimer);
 
-      subscription.unsubscribe();
 
       if (broadcastChannel) {
         broadcastChannel.close();
       }
     };
-  }, []);
+  }, [user?.id,queryClient]);
 
   return (
     <Link data-lime-brand-logo to="/" style={{'--gradient-primary':'linear-gradient(135deg, hsl(340 90% 70%), hsl(340 85% 58%))'} as React.CSSProperties} className="inline-flex items-center gap-2 font-display font-black">

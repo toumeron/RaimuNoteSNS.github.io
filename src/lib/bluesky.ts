@@ -733,6 +733,14 @@ async function fetchBlueskySearchEndpoint(
       break;
     }
   }
+  // Search providers may require authentication even when ordinary feed reads are public.
+  if (getStoredBlueskySession()) {
+    try {
+      const response = await authorizedBlueskyAppViewFetch(`${endpoint}?${params}`, {method:'GET', signal});
+      if (response.ok) return response;
+      lastResponse = response;
+    } catch (error) { if (signal?.aborted) throw error; }
+  }
   if (!lastResponse) throw new Error(`Bluesky ${endpoint} request did not start`);
   return lastResponse;
 }
@@ -1222,7 +1230,7 @@ export async function fetchBlueskyAuthorFeed(options?: {
 // 「もっと読み込む」のたびに各クエリのカーソルを個別に進めたいが、
 // 呼び出し側(Feed.tsx)には他のBluesky取得と同じく単一のcursor文字列として
 // 渡したいため、ここでJSON文字列にエンコード/デコードする。
-type TrendingCursorMap = Partial<Record<(typeof TRENDING_SEED_QUERIES)[number], string | null>> & {queryRound?:number};
+type TrendingCursorMap = Partial<Record<(typeof TRENDING_SEED_QUERIES)[number], string | null>> & {queryRound?:number;discover?:string};
 
 function encodeTrendingCursor(map: TrendingCursorMap): string | null {
   const hasAny = TRENDING_SEED_QUERIES.some(seed => !(seed in map) || Boolean(map[seed]));
@@ -1252,6 +1260,19 @@ function decodeTrendingCursor(cursor: string | null | undefined): TrendingCursor
  * 合算結果からいいね数でフィルタし、最後にシャッフルすることで
  * 「日本語のトレンド投稿がランダムに出てくる」体験を近似している。
  */
+const BLUESKY_DISCOVER_FEED = 'at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot';
+async function fetchPublicJapaneseDiscovery(options: {cursor?:string;limit?:number;signal?:AbortSignal}):Promise<BlueskyAuthorFeedPage> {
+  const params=new URLSearchParams({feed:BLUESKY_DISCOVER_FEED,limit:String(Math.min(100,Math.max(1,options.limit??30)))});
+  if(options.cursor)params.set('cursor',options.cursor);
+  const response=await externalFetch(`${BSKY_PUBLIC_API}/app.bsky.feed.getFeed?${params}`,{headers:{Accept:'application/json','Accept-Language':'ja'},signal:options.signal});
+  if(!response.ok)throw new Error(`Bluesky public feed unavailable: ${response.status}`);
+  const payload=await response.json() as {feed?:BlueskyFeedItem[];cursor?:string};
+  const since=Date.now()-TRENDING_MAX_AGE_DAYS*24*60*60*1000;
+  const posts=(payload.feed??[]).map(mapBlueskyFeedItemToPost).filter((post):post is BlueskyMappedPost=>!!post&&
+    (post.languages?.includes('ja')||(!post.languages?.length&&/[\u3040-\u30ff]/.test(post.content)))&&post.likesCount>=TRENDING_MIN_LIKES&&Date.parse(post.createdAt)>=since);
+  return {posts,cursor:payload.cursor?JSON.stringify({discover:payload.cursor}):null};
+}
+
 async function fetchBlueskyTrendingPosts(options?: {
   cursor?: string | null;
   limit?: number;
@@ -1260,6 +1281,7 @@ async function fetchBlueskyTrendingPosts(options?: {
 }): Promise<BlueskyAuthorFeedPage> {
   const perQueryLimit = Math.min(100, Math.max(1, options?.limit ?? 30));
   const cursorMap = decodeTrendingCursor(options?.cursor);
+  if(cursorMap.discover)return fetchPublicJapaneseDiscovery({...options,cursor:cursorMap.discover});
 
   const round=cursorMap.queryRound??0;
   const seeds=options?.queryLimit ? Array.from({length:Math.min(TRENDING_SEED_QUERIES.length,Math.max(1,options.queryLimit))},(_,i)=>TRENDING_SEED_QUERIES[(round+i)%TRENDING_SEED_QUERIES.length]) : TRENDING_SEED_QUERIES;
@@ -1294,7 +1316,7 @@ async function fetchBlueskyTrendingPosts(options?: {
       try {
         const response = await fetchBlueskySearchEndpoint('app.bsky.feed.searchPosts', params, options?.signal);
         if (!response.ok) {
-          return { seedQuery, posts: [] as BlueskyMappedPost[], cursor: null as string | null };
+          return { seedQuery, posts: [] as BlueskyMappedPost[], cursor: null as string | null, error:new Error(`Bluesky search unavailable: ${response.status}`) };
         }
 
         const payload = (await response.json()) as {
@@ -1313,12 +1335,15 @@ async function fetchBlueskyTrendingPosts(options?: {
         return { seedQuery, posts, cursor: payload.cursor || null };
       } catch (error) {
         if (options?.signal?.aborted) throw error;
-        console.error(`Bluesky trending search failed for query "${seedQuery}":`, error);
-        return { seedQuery, posts: [] as BlueskyMappedPost[], cursor: null as string | null };
+        return { seedQuery, posts: [] as BlueskyMappedPost[], cursor: null as string | null, error };
       }
     }),
   );
 
+  if(results.some(result=>'error' in result)&&results.every(result=>result.posts.length===0)) {
+    // A failed search is not an empty catalogue. Use a separate documented public feed.
+    return fetchPublicJapaneseDiscovery({limit:options?.limit,signal:options?.signal});
+  }
   const nextCursorMap: TrendingCursorMap = {...cursorMap};
   if(options?.queryLimit)nextCursorMap.queryRound=round+seeds.length;
   const seenIds = new Set<string>();
@@ -1517,6 +1542,7 @@ export async function fetchTrendingJapaneseBlueskyPosts(options?:{cursor?:string
   while(base.length || extra.length) {
     posts.push(...base.splice(0,2),...extra.splice(0,1));
   }
+  if(!posts.length&&results[0].status==='rejected')throw results[0].reason;
   return {posts,cursor:bluesky.cursor};
 }
 

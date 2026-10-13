@@ -7,7 +7,7 @@ type PositionPage = { pins: MapPostPin[]; next: ExternalMapCursor };
 export class MapRateLimitError extends Error {
     constructor(public retryAfter: number) { super('Map rate limit'); }
 }
-const cacheKey = (search:string,bounds?:MapBounds) => `lime-map-geo-v1:${search}:${JSON.stringify(bounds)}`;
+const cacheKey = (search:string,bounds?:MapBounds) => `lime-map-geo-avatar-v3:${search}:${JSON.stringify(bounds)}`;
 function readPositions(search: string,bounds?:MapBounds): PositionPage | null {
     try { const stored=JSON.parse(sessionStorage.getItem(cacheKey(search,bounds)) ?? 'null'); return stored?.expires > Date.now() && Array.isArray(stored.pins) && Array.isArray(stored.next) ? stored : null; } catch { return null; }
 }

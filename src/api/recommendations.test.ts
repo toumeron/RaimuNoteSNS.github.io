@@ -1,11 +1,11 @@
 import {recordRecommendationLike as recordCloudLikeTest} from '@/lib/recommendations';
 import { beforeEach, expect, it, vi } from 'vitest';
-const fixture=vi.hoisted(()=>({authorDelay:0,sizes:[] as number[],cloudLikes:[] as any[],feedback:[] as any[],likedId:'',limeFail:false,blueFail:false,preferencesFail:false,limeSize:2,limeCalls:0,authorCalls:[] as string[],topicCalls:[] as string[],searchCalls:[] as string[],targeted:false,followedTopics:[] as string[],dismissedTopics:[] as string[],discoveryTopics:[] as string[],topicFeedRows:{} as Record<string,any[]>,authorRows:{} as Record<string,any[]>,authorPages:{} as Record<string,any[][]>,misskeyRows:[] as any[],feedFail:false,slowTrending:false,slowFeed:false,slowHistory:false,slowTopics:false}));
-vi.mock('@/lib/misskey',()=>({fetchMisskeyTopicPosts:async()=>({posts:fixture.misskeyRows.length?fixture.misskeyRows:fixture.targeted?[source('misskey:targeted','猫の写真')]:[],cursor:null})}));
+const fixture=vi.hoisted(()=>({authorDelay:0,sizes:[] as number[],cloudLikes:[] as any[],feedback:[] as any[],likedId:'',limeFail:false,blueFail:false,preferencesFail:false,limeSize:2,limeCalls:0,authorCalls:[] as string[],topicCalls:[] as string[],searchCalls:[] as string[],targeted:false,followedTopics:[] as string[],dismissedTopics:[] as string[],discoveryTopics:[] as string[],topicFeedRows:{} as Record<string,any[]>,authorRows:{} as Record<string,any[]>,authorPages:{} as Record<string,any[][]>,misskeyRows:[] as any[],misskeyFail:false,feedFail:false,topicFeedContinues:false,slowTrending:false,slowFeed:false,slowHistory:false,slowTopics:false}));
+vi.mock('@/lib/misskey',()=>({fetchMisskeyTopicPosts:async()=>{if(fixture.misskeyFail)throw new Error('misskey unavailable');return ({posts:fixture.misskeyRows.length?fixture.misskeyRows:fixture.targeted?[source('misskey:targeted','猫の写真')]:[],cursor:null});}}));
 vi.mock('@/lib/supabase',()=>({supabase:{from:(table:string)=>{const b={select:()=>b,abortSignal:()=>b,eq:()=>b,order:()=>b,limit:()=>b,range:(start:number,end:number)=>{b.window=[start,end];return b;},window:[0,199],maybeSingle:async()=>{if(fixture.slowTopics)await new Promise(resolve=>setTimeout(resolve,2500));return ({data:{followed_topics:fixture.followedTopics,dismissed_topics:fixture.dismissedTopics,recommendation_feedback:fixture.feedback},error:fixture.preferencesFail?new Error('prefs unavailable'):null});},then:async(resolve:any)=>{if(fixture.slowHistory)await new Promise(done=>setTimeout(done,6000));return Promise.resolve({data:table==='likes'?(fixture.cloudLikes.length?fixture.cloudLikes.slice(b.window[0],b.window[1]+1):[{posts:{id:fixture.likedId,user_id:'cat-author',content:'猫の写真'}}]):[],error:fixture.preferencesFail?new Error('prefs unavailable'):null}).then(resolve);}};return b;}}}));
 const source=(id:string,content:string)=>({id,userId:id,languages:['ja'],content,createdAt:'2026-10-03T00:00:00Z',likesCount:1,commentsCount:0,likedByMe:false,repostsCount:0,repostedByMe:false,imageUrls:[],author:{id,username:id}});
 vi.mock('./posts',()=>({searchPosts:async(query:string)=>{fixture.searchCalls.push(query);return fixture.targeted?[source('targeted-lime','猫の写真')]:[];},getPostsByUser:async()=>[],getFeed:async(_page:number,limit:number)=>{fixture.sizes.push(limit);fixture.limeCalls++;if(fixture.limeFail)throw new Error('lime failed');return fixture.limeSize>2?Array.from({length:fixture.limeSize},(_,i)=>source(`lime-${i}`,'猫の写真')):[source('lime-cat','猫の写真'),source('lime-sports','サッカー速報')];}}));
-vi.mock('@/lib/bluesky',()=>({fetchBlueskyLikedPosts:async()=>[],discoverBlueskyTopicFeeds:async(topic:string)=>{fixture.discoveryTopics.push(topic);return fixture.topicFeedRows[topic]?[`feed:${topic}`,...(fixture.slowFeed?[`slow:${topic}`]:[])]:[];},fetchBlueskyTopicFeed:async({topic,feed}:any)=>{if(feed?.startsWith("slow:"))await new Promise(resolve=>setTimeout(resolve,6000));if(fixture.feedFail)throw new Error('topic feed failed');return {posts:(fixture.topicFeedRows[topic]??[]).map(post=>({...post,recommendationTopics:[topic]})),cursor:null};},fetchBlueskyAuthorFeed:async({actor,cursor,limit}:any)=>{fixture.sizes.push(limit);fixture.authorCalls.push(actor);if(fixture.authorDelay)await new Promise(resolve=>setTimeout(resolve,fixture.authorDelay));const pages=fixture.authorPages[actor];const index=Number(cursor??0);return pages?{posts:pages[index]??[],cursor:index+1<pages.length?String(index+1):null}:{posts:fixture.authorRows[actor]??[],cursor:null};},fetchBlueskyTopicPosts:async({query}:any)=>{fixture.topicCalls.push(query);return {posts:fixture.targeted?[source('bsky:targeted','猫の写真')]:[],cursor:null};},fetchTrendingJapaneseBlueskyPosts:async()=>{if(fixture.slowTrending)await new Promise(resolve=>setTimeout(resolve,6000));if(fixture.blueFail)throw new Error('blue failed');return {posts:[source('bsky:cat','猫の写真')],cursor:null};}}));
+vi.mock('@/lib/bluesky',()=>({fetchBlueskyLikedPosts:async()=>[],discoverBlueskyTopicFeeds:async(topic:string)=>{fixture.discoveryTopics.push(topic);return fixture.topicFeedRows[topic]?[`feed:${topic}`,...(fixture.slowFeed?[`slow:${topic}`]:[])]:[];},fetchBlueskyTopicFeed:async({topic,feed}:any)=>{if(feed?.startsWith("slow:"))await new Promise(resolve=>setTimeout(resolve,6000));if(fixture.feedFail)throw new Error('topic feed failed');return {posts:(fixture.topicFeedRows[topic]??[]).map(post=>({...post,recommendationTopics:[topic]})),cursor:fixture.topicFeedContinues?'next':null};},fetchBlueskyAuthorFeed:async({actor,cursor,limit}:any)=>{fixture.sizes.push(limit);fixture.authorCalls.push(actor);if(fixture.authorDelay)await new Promise(resolve=>setTimeout(resolve,fixture.authorDelay));const pages=fixture.authorPages[actor];const index=Number(cursor??0);return pages?{posts:pages[index]??[],cursor:index+1<pages.length?String(index+1):null}:{posts:fixture.authorRows[actor]??[],cursor:null};},fetchBlueskyTopicPosts:async({query}:any)=>{fixture.topicCalls.push(query);return {posts:fixture.targeted?[source('bsky:targeted','猫の写真')]:[],cursor:null};},fetchTrendingJapaneseBlueskyPosts:async()=>{if(fixture.slowTrending)await new Promise(resolve=>setTimeout(resolve,6000));if(fixture.blueFail)throw new Error('blue failed');return {posts:[source('bsky:cat','猫の写真')],cursor:null};}}));
 import { readRecommendationLikeHistory,createRecommendationCursor,getRecommendationPage,getRecommendationPreferences,refreshRecommendationVisualPage } from './recommendations';
 it('returns completed candidates at the read deadline and late reads cannot mutate the returned cursor',async()=>{
  vi.useFakeTimers();
@@ -28,7 +28,7 @@ it('retains a completed topic feed when another feed for the same topic misses t
   const snapshot=JSON.stringify(page.next);await vi.advanceTimersByTimeAsync(7000);expect(JSON.stringify(page.next)).toBe(snapshot);
  }finally{vi.useRealTimers();}
 });
-beforeEach(()=>{fixture.authorDelay=0;fixture.sizes=[];fixture.cloudLikes=[];fixture.feedback=[];fixture.likedId='';fixture.limeFail=false;fixture.blueFail=false;fixture.preferencesFail=false;fixture.limeSize=2;fixture.limeCalls=0;fixture.authorCalls=[];fixture.topicCalls=[];fixture.searchCalls=[];fixture.targeted=false;fixture.followedTopics=[];fixture.dismissedTopics=[];fixture.discoveryTopics=[];fixture.topicFeedRows={};fixture.authorRows={};fixture.authorPages={};fixture.misskeyRows=[];fixture.feedFail=false;fixture.slowTrending=false;fixture.slowFeed=false;fixture.slowHistory=false;fixture.slowTopics=false;localStorage.clear();});
+beforeEach(()=>{fixture.authorDelay=0;fixture.sizes=[];fixture.cloudLikes=[];fixture.feedback=[];fixture.likedId='';fixture.limeFail=false;fixture.blueFail=false;fixture.preferencesFail=false;fixture.limeSize=2;fixture.limeCalls=0;fixture.authorCalls=[];fixture.topicCalls=[];fixture.searchCalls=[];fixture.targeted=false;fixture.followedTopics=[];fixture.dismissedTopics=[];fixture.discoveryTopics=[];fixture.topicFeedRows={};fixture.authorRows={};fixture.authorPages={};fixture.misskeyRows=[];fixture.misskeyFail=false;fixture.feedFail=false;fixture.topicFeedContinues=false;fixture.slowTrending=false;fixture.slowFeed=false;fixture.slowHistory=false;fixture.slowTopics=false;localStorage.clear();});
 it.each(['science','sports','food','music','art'])('retrieves keyword-free posts from a %s feed and ranks them before unrelated discovery',async topic=>{
  fixture.followedTopics=[topic];fixture.topicFeedRows[topic]=[{...source('bsky:media-only',''),imageUrls:['https://images.example/media.jpg'],recommendationVisual:checked(topic)}];
  const page=await getRecommendationPage(createRecommendationCursor([]),'viewer');
@@ -137,7 +137,7 @@ it('does not use excluded English feed posts to infer a Japanese creator for fut
 });
 
 it('returns a cold digital page without awaiting pixel inference and rejects a known game screenshot',async()=>{
- fixture.followedTopics=['digital-illustration'];fixture.topicFeedRows['digital-illustration']=[{...source('bsky:cold',''),imageUrls:['https://images.example/cold.jpg']},{...source('bsky:game','ファンアート'),imageUrls:['https://images.example/game.jpg'],recommendationVisual:checked('games')}];
+ fixture.followedTopics=['digital-illustration'];fixture.topicFeedRows['digital-illustration']=[{...source('bsky:cold','キャラクターイラスト'),imageUrls:['https://images.example/cold.jpg']},{...source('bsky:game','ファンアート'),imageUrls:['https://images.example/game.jpg'],recommendationVisual:checked('games')}];
  const page=await getRecommendationPage(createRecommendationCursor([]),'viewer');
  expect(page.posts.map(post=>post.id)).toEqual(['bsky:cold']);expect(page.pendingAnalysis).toBe(false);
 });
@@ -169,7 +169,7 @@ it('bounds familiar-author reads and rotates them so related topic feeds are not
  expect(fixture.authorCalls).toHaveLength(2);expect(fixture.authorCalls).toEqual(actors.slice(0,2));
  expect(first.next).toBeDefined();
  await getRecommendationPage(first.next!,'viewer');
- expect(fixture.authorCalls).toEqual([actors[0],actors[1],actors[3],actors[4]]);
+ expect(fixture.authorCalls).toEqual([actors[0],actors[1],actors[2],actors[3]]);
  expect((await getRecommendationPage(first.next!,'viewer')).posts).toBeDefined();
 });
 
@@ -189,7 +189,7 @@ it('retrieves related image-only creators while retaining favorites and excludin
 
 it('removes a visible digital candidate when pixel analysis identifies a different kind',async()=>{
  fixture.followedTopics=['digital-illustration'];
- const candidate={...source('bsky:unclassified',''),imageUrls:['https://images.example/new.jpg']};
+ const candidate={...source('bsky:unclassified','キャラクターイラスト'),imageUrls:['https://images.example/new.jpg']};
  fixture.topicFeedRows['digital-illustration']=[candidate];
  const page=await getRecommendationPage(createRecommendationCursor([]),'viewer');
  expect(page.posts).toHaveLength(1);
@@ -245,7 +245,8 @@ it('bounds optional history hydration when a database read never settles',async(
 it('continues beyond three healthy filtered author pages and learns image-only likes creator context',async()=>{
  fixture.followedTopics=['digital-illustration'];
  const actor='did:plc:favorite';
- const works=Array.from({length:4},(_,i)=>({...source(`bsky:work-${i}`,''),userId:actor,imageUrls:[`https://images.example/work-${i}.jpg`]}));
+ const visual={...checked('digital-illustration'),vector:Array.from({length:512},(_,i)=>i===0?1:0)};
+ const works=Array.from({length:4},(_,i)=>({...source(`bsky:work-${i}`,''),userId:actor,imageUrls:[`https://images.example/work-${i}.jpg`],recommendationVisual:visual}));
  fixture.cloudLikes=works.slice(0,3).map(post=>({created_at:new Date().toISOString(),post_snapshot:{...post,recommendationAuthorTopics:['digital-illustration']}}));
  fixture.authorPages[actor]=works.map(post=>[post]);
  let cursor=createRecommendationCursor([]);
@@ -320,4 +321,90 @@ it('keeps a healthy two-second creator read alive when it is the only eligible s
    expect(page.posts.map(post=>post.id)).toEqual([`bsky:healthy-${i}`]);expect(page.automaticPaused).toBe(false);cursor=page.next!;
   }
  }finally{vi.useRealTimers();}
+});
+
+it('reaches the third creator when the first two keep returning excluded posts',async()=>{
+ const actors=['did:plc:first','did:plc:second','did:plc:third'];
+ for(const actor of actors.slice(0,2))fixture.authorPages[actor]=[0,1,2].map(i=>[{...source(`bsky:${actor}-${i}`,'Different foreign post '+i),languages:['en'],userId:actor}]);
+ fixture.authorRows[actors[2]]=[{...source('bsky:third-visible','日本語の候補'),userId:actors[2]}];
+ const cursor=createRecommendationCursor([]);cursor.lime.done=true;cursor.trending.done=true;cursor.preferences={authors:Object.fromEntries(actors.map(actor=>[actor,10])),terms:{}};
+ const first=await getRecommendationPage(cursor,'viewer');expect(first.posts).toEqual([]);
+ const second=await getRecommendationPage(first.next!,'viewer');
+ expect(second.posts.map(post=>post.id)).toContain('bsky:third-visible');
+ expect(fixture.authorCalls).toContain(actors[2]);
+});
+it('reaches the second followed topic while the first topic has endless excluded pages',async()=>{
+ fixture.followedTopics=['science','digital-illustration'];fixture.topicFeedContinues=true;
+ fixture.topicFeedRows.science=[{...source('bsky:foreign-science','Research update'),languages:['en']}];
+ fixture.topicFeedRows['digital-illustration']=[{...source('bsky:second-topic-visible','日本語のキャラクターイラスト'),imageUrls:['https://images.example/digital.jpg']}];
+ const first=await getRecommendationPage(createRecommendationCursor([]),'viewer');expect(first.posts).toEqual([]);
+ const second=await getRecommendationPage(first.next!,'viewer');
+ expect(second.posts.map(post=>post.id)).toContain('bsky:second-topic-visible');
+ expect(fixture.discoveryTopics).toEqual(['science','digital-illustration']);
+});
+
+it('keeps explicitly followed anime and illustration discovery alive after many individual work dismissals',async()=>{
+ fixture.followedTopics=['anime','digital-illustration'];
+ fixture.feedback=Array.from({length:110},(_,i)=>({id:`dismissed-${i}`,userId:`dismissed-creator-${i}`,topics:[i<4?'anime':i<65?'digital-illustration':'art'],imageUrls:[`https://images.example/dismissed-${i}.jpg`],createdAt:new Date().toISOString()}));
+ fixture.topicFeedRows.anime=[{...source('bsky:fresh-anime','アニメの話題'),imageUrls:['https://images.example/new-anime.jpg']}];
+ fixture.topicFeedRows['digital-illustration']=[{...source('bsky:fresh-illustration','キャラクターイラスト'),imageUrls:['https://images.example/new-art.jpg']}];
+ const first=await getRecommendationPage(createRecommendationCursor([]),'viewer');
+ expect(first.posts.map(post=>post.id)).toContain('bsky:fresh-anime');
+ const second=await getRecommendationPage(first.next!,'viewer');
+ expect(second.posts.map(post=>post.id)).toContain('bsky:fresh-illustration');
+ expect(fixture.discoveryTopics).toContain('anime');expect(fixture.discoveryTopics).toContain('digital-illustration');
+});
+
+it('tries the next followed topic before treating a failed supplementary service as a completely unavailable feed',async()=>{
+ fixture.followedTopics=['anime','digital-illustration'];fixture.misskeyFail=true;
+ fixture.topicFeedRows['digital-illustration']=[{...source('bsky:available-after-failure','日本語のキャラクターイラスト'),imageUrls:['https://images.example/fresh.jpg']}];
+ const first=await getRecommendationPage(createRecommendationCursor([]),'viewer');
+ const next=await getRecommendationPage(first.next!,'viewer');
+ expect(next.posts.map(post=>post.id)).toContain('bsky:available-after-failure');
+});
+
+it('does not end a feed while unshown relevant works remain from the recent creator',async()=>{
+ const cursor=createRecommendationCursor([]),actor='did:plc:science-creator';
+ cursor.preferences={authors:{[actor]:8},terms:{},followedTopics:['science']};
+ cursor.lime.done=true;cursor.trending.done=true;
+ cursor.authors={[actor]:{cursor:null,done:true}};
+ cursor.topicDiscovery={science:{feeds:[],positions:{},done:true}};
+ const {recommendationQueries}=await import('@/lib/recommendations');
+ cursor.topics=Object.fromEntries(recommendationQueries(cursor.preferences).map(term=>[term,{limePage:0,limeDone:true,blueCursor:null,blueDone:true,misskeyCursor:null,misskeyDone:true}]));
+ const works=Array.from({length:19},(_,i)=>({...source(`bsky:unshown-science-${i}`,'科学の研究'),userId:actor,imageUrls:[`https://images.example/science-${i}.jpg`],author:{id:actor,username:'creator',displayName:'Creator',bio:'',avatarUrl:'',coverUrl:'',createdAt:'2026-10-13'}}));
+ cursor.history=works.slice(0,3);cursor.seen=cursor.history.map(post=>post.id);cursor.remaining=works.slice(3);
+ const first=await getRecommendationPage(cursor,'viewer');
+ expect(first.posts).toHaveLength(8);expect(first.next).toBeDefined();
+ const second=await getRecommendationPage(first.next!,'viewer');
+ expect(second.posts).toHaveLength(8);expect(second.next).toBeUndefined();
+ expect(new Set([...first.posts,...second.posts].map(post=>post.id)).size).toBe(16);
+ expect(fixture.authorCalls).toEqual([]);expect(fixture.topicCalls).toEqual([]);
+});
+
+it('bounds an endless unrelated creator without pausing another productive creator',async()=>{
+ const actor='did:plc:unrelated',good='did:plc:related',cursor=createRecommendationCursor([]);
+ cursor.preferences={authors:{[actor]:8,[good]:8},terms:{},followedTopics:['science']};cursor.lime.done=true;cursor.trending.done=true;
+ cursor.authors={[actor]:{cursor:null,done:false},[good]:{cursor:null,done:false}};cursor.topicDiscovery={science:{feeds:[],positions:{},done:true}};
+ const {recommendationQueries}=await import('@/lib/recommendations');
+ cursor.topics=Object.fromEntries(recommendationQueries(cursor.preferences).map(term=>[term,{limePage:0,limeDone:true,blueCursor:null,blueDone:true,misskeyCursor:null,misskeyDone:true}]));
+ fixture.authorPages[actor]=Array.from({length:30},(_,i)=>[{...source(`bsky:unrelated-${i}`,'猫の写真'),userId:actor}]);
+ fixture.authorPages[good]=Array.from({length:10},(_,i)=>[{...source(`bsky:related-${i}`,'科学の研究'),userId:good}]);
+ let next:typeof cursor|undefined=cursor,delivered:string[]=[];
+ for(let i=0;i<12&&next;i++){const page=await getRecommendationPage(next,'viewer');delivered.push(...page.posts.map(post=>post.id));expect(page.automaticPaused).toBe(false);next=page.next;}
+ expect(delivered).toHaveLength(10);expect(delivered.every(id=>id.startsWith('bsky:related-'))).toBe(true);
+ expect(fixture.authorCalls.filter(id=>id===actor)).toHaveLength(8);
+ expect(fixture.authorCalls.filter(id=>id===good)).toHaveLength(10);expect(next).toBeUndefined();
+});
+
+it('retrieves an alternate creator before publishing another cached page of only the same author',async()=>{
+ const actor='did:plc:dominant',other='did:plc:alternate',cursor=createRecommendationCursor([]);
+ cursor.preferences={authors:{[actor]:8,[other]:8},terms:{},followedTopics:['science']};cursor.lime.done=false;fixture.limeSize=0;cursor.trending.done=true;
+ cursor.authors={[actor]:{cursor:null,done:false},[other]:{cursor:null,done:false}};cursor.topicDiscovery={science:{feeds:[],positions:{},done:true}};
+ const {recommendationQueries}=await import('@/lib/recommendations');cursor.topics=Object.fromEntries(recommendationQueries(cursor.preferences).map(term=>[term,{limePage:0,limeDone:true,blueCursor:null,blueDone:true,misskeyCursor:null,misskeyDone:true}]));
+ cursor.remaining=Array.from({length:16},(_,i)=>({...source(`bsky:cached-dominant-${i}`,'科学の研究'),userId:actor,author:{id:actor,username:'dominant',displayName:'Dominant',bio:'',avatarUrl:'',coverUrl:'',createdAt:'2026-10-13'}}));
+ fixture.authorDelay=300;
+ fixture.authorRows[other]=Array.from({length:8},(_,i)=>({...source(`bsky:alternate-${i}`,'科学の研究'),userId:other}));
+ const page=await getRecommendationPage(cursor,'viewer');
+ expect(fixture.authorCalls).toContain(other);expect(fixture.authorCalls).not.toContain(actor);
+ expect(new Set(page.posts.map(post=>post.userId)).size).toBe(2);
 });

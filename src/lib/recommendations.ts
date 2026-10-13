@@ -3,7 +3,7 @@ import {matchingTopics} from './topics';
 import type { PostWithAuthor } from '@/types';
 import {TOPICS,isTopicId,topicAffinity,type TopicId} from './topics';
 import {recommendationIdentity,recommendationFingerprint} from "@/lib/recommendationSignals";
-import {recommendationIsEligible} from "@/lib/recommendationSignals";
+import {recommendationIsEligible,recommendationMatchesFollowedTopics} from "@/lib/recommendationSignals";
 import {isDeclaredGeneratedArt} from "@/lib/recommendationSignals";
 import {recommendationOriginLanguages,recommendationTopicAffinity,recommendationTopicSignals,recommendationText} from './recommendationSignals';
 import {visualSimilarity as directVisualSimilarity,createVisualSimilarityComparator,readVisualCache,applyCachedRecommendationVisuals} from './recommendationVisual';
@@ -145,7 +145,10 @@ function selectRecommendationPageInternal(ranked:PostWithAuthor[],preferences:Re
   let index=0;
   if(recent.length===3&&recent.every(post=>post.userId===last)){
    index=remaining.findIndex(post=>post.userId!==last&&scoreRecommendation(post,preferences,null,scoring).total>0&&(!hasLikedPixels||!!preferences.authors[post.userId]||relatedRecommendationScore(post,preferences.likedSamples??[],preferences,feedback)>0));
-   if(index<0)break;
+   // Prefer another related creator when available. A creator run is not
+   // exhaustion: do not hide the remaining eligible works or keep fetching
+   // unrelated sources merely to break the run.
+   if(index<0)index=0;
   }
   posts.push(remaining.splice(index,1)[0]);
  }
@@ -239,12 +242,11 @@ function relatedRecommendationScore(post:PostWithAuthor,anchors:PostWithAuthor[]
  const supported=new Set(anchors.filter(anchor=>anchor.userId!==post.userId&&post.recommendationSources?.some(source=>anchor.recommendationSources?.includes(source))&&[...(anchor.recommendationTopics??[]),...(anchor.recommendationAuthorTopics??[])].some(topic=>own.has(topic))).map(anchor=>anchor.userId));
  return supported.size>=2?1:0;
 }
-/** Repeated dismissals mean a broad source/topic is insufficient evidence.
- * This applies to every topic, without guessing character gender from captions. */
+/** A whole followed topic is not a negative visual match. Require actual image evidence. */
 export function recommendationNeedsPersonalMediaEvidence(post:PostWithAuthor,preferences:RecommendationPreferences,feedback=activeRecommendationFeedback(preferences,Date.now())):boolean {
- if(!post.imageUrls?.length)return false;
- const topics=new Set([...recommendationTopicSignals(post),...(post.recommendationAuthorTopics??[])]);
- return (preferences.followedTopics??[]).some(topic=>topics.has(topic)&&new Set(feedback.filter(row=>row.topics?.includes(topic)).map(row=>row.id)).size>=3);
+ if(!post.imageUrls?.length||!post.recommendationVisual||post.recommendationVisual.kind==='unknown')return false;
+ const neighbors=feedback.filter(row=>row.vector&&visualSimilarity(row.vector,post.recommendationVisual!.vector)>=.70);
+ return new Set(neighbors.map(row=>row.id)).size>=3;
 }
 function hasPersonalMediaEvidence(post:PostWithAuthor,preferences:RecommendationPreferences):boolean {
  if((preferences.authors[post.userId]??0)>0||preferences.followedAuthors?.includes(post.userId))return true;
@@ -252,8 +254,8 @@ function hasPersonalMediaEvidence(post:PostWithAuthor,preferences:Recommendation
  return !!post.recommendationVisual&&post.recommendationVisual.kind!=='unknown'&&positive>=.8;
 }
 export function rejectedRecommendationTopics(preferences:RecommendationPreferences):TopicId[]{
- const feedback=activeRecommendationFeedback(preferences,Date.now());
- return (preferences.followedTopics??[]).filter(topic=>new Set(feedback.filter(row=>row.topics?.includes(topic)).map(row=>row.id)).size>=3);
+ // Only an explicit topic dismissal disables discovery. Work-level feedback stays work-level.
+ return [...new Set(preferences.dismissedTopics??[])];
 }
 export function isRecommendationAuthorRejected(author:string,preferences:RecommendationPreferences):boolean{
  return activeRecommendationFeedback(preferences,Date.now()).some(row=>row.userId===author);
@@ -289,17 +291,40 @@ function rankRecommendationsInternal(posts:PostWithAuthor[], preferences:Recomme
     merged.set(identity,old?{...old,recommendationVisual:old.recommendationVisual??post.recommendationVisual,recommendationVisualStatus:old.recommendationVisualStatus==='checked'||post.recommendationVisualStatus==='checked'?'checked':post.recommendationVisualStatus??old.recommendationVisualStatus,recommendationSources:[...new Set([...(old.recommendationSources??[]),...(post.recommendationSources??[])])],author:{...old.author,bio:old.author.bio||post.author.bio},languages:[...new Set([...(old.languages??[]),...(post.languages??[])])],recommendationLanguages:[...new Set([...(old.recommendationLanguages??[]),...(post.recommendationLanguages??[])])],recommendationTopics:[...new Set([...(old.recommendationTopics??[]),...(post.recommendationTopics??[])])],recommendationAuthorTopics:[...new Set([...(old.recommendationAuthorTopics??[]),...(post.recommendationAuthorTopics??[])])],imageAltTexts:[...new Set([...(old.imageAltTexts??[]),...(post.imageAltTexts??[])])],contentLabels:[...new Set([...(old.contentLabels??[]),...(post.contentLabels??[])])]}:post);
   }
   const feedback=activeRecommendationFeedback(preferences,now);
+  const artTopics:TopicId[]=(preferences.followedTopics??[]).filter(topic=>topic==='anime'||topic==='digital-illustration');
+  const alignedAuthors=preferences.authorTopics?Object.values(preferences.authorTopics).some(topics=>artTopics.some(topic=>(topics[topic]??0)>0)):Object.values(preferences.authors).some(weight=>weight>0);
+  const alignedLikes=preferences.likedSamples?.some(post=>artTopics.some(topic=>post.recommendationVisual?.topics.includes(topic)||recommendationTopicSignals(post).includes(topic)));
+  const personalArt=artTopics.length>0&&(alignedAuthors||alignedLikes||!!preferences.visualInterests?.length&&!preferences.likedSamples?.length);
+  const creatorWorks=new Map<string,Set<string>>();
+  for(const sample of preferences.likedSamples??[]){
+    const visual=sample.recommendationVisual;
+    if(!sample.imageUrls.length||sample.imageUrls.every(url=>url===sample.linkPreview?.image)||isDeclaredGeneratedArt(sample))continue;
+    const subjects=visual&&visual.kind!=='unknown'?visual.topics:[...recommendationTopicSignals(sample),...(sample.recommendationAuthorTopics??[])];
+    if(!subjects.some(topic=>artTopics.some(active=>active===topic)))continue;
+    const works=creatorWorks.get(sample.userId)??new Set<string>();
+    works.add(recommendationFingerprint(sample)??recommendationIdentity(sample));creatorWorks.set(sample.userId,works);
+  }
   const unique=[...merged.values()].filter(post=>{
     const identity=recommendationIdentity(post),fingerprint=recommendationFingerprint(post);
     if(recommendationIsDismissed(post,preferences,now,feedback))return false;
     if(feedback.some(row=>row.userId===post.userId)&&scoreRecommendation(post,preferences,viewerId,{now}).total<=0)return false;
     if(!recommendationIsEligible(post,preferences.followedTopics))return false;
-    if(preferences.followedTopics?.length){
-      const relevance=new Set([...recommendationTopicSignals(post),...(post.recommendationAuthorTopics??[]),...matchingTopics(post.author?.bio??'')]);
-      if(isDeclaredGeneratedArt(post))relevance.add('ai');
-      const knownAuthor=(preferences.authors[post.userId]??0)>0||preferences.followedAuthors?.includes(post.userId);
-      const visualMatch=post.recommendationVisual&&(preferences.visualInterests??[]).some(vector=>visualSimilarity(vector,post.recommendationVisual!.vector)>=.8);
-      if(!knownAuthor&&!visualMatch&&!preferences.followedTopics.some(topic=>relevance.has(topic)))return false;
+    if(!recommendationMatchesFollowedTopics(post,preferences.followedTopics??[]))return false;
+    // Personalized character-art discovery requires independent evidence.
+    // A caption, biography or feed label cannot prove the viewer likes this
+    // non-followed creator's work. Keep followed creators and visual neighbours;
+    // cold accounts still use their explicitly followed subjects.
+    const knownCreator=preferences.followedAuthors?.includes(post.userId);
+    if(personalArt&&!knownCreator){
+      const related=relatedRecommendationScore(post,preferences.likedSamples??[],preferences,feedback);
+      const visual=post.recommendationVisual;
+      const positive=positiveImageSimilarity(post,preferences),negative=imageFeedbackSimilarity(post,feedback);
+      const text=recommendationText(post);
+      const establishedMediaCreator=(!visual||visual.kind==='unknown')&&
+        (creatorWorks.get(post.userId)?.size??0)>=2&&post.imageUrls.length>0&&
+        post.imageUrls.some(url=>url!==post.linkPreview?.image)&&text.length<=160&&
+        (!text.trim()||matchingTopics(text).some(topic=>artTopics.includes(topic)));
+      if(related<=0&&!establishedMediaCreator&&!(visual&&visual.kind!=='unknown'&&positive>=.72&&positive>negative+.05))return false;
     }
     if((preferences.followedTopics?.includes('art')||preferences.followedTopics?.includes('digital-illustration'))&&!preferences.followedTopics.includes('ai')&&(post.imageUrls.length>0||post.parentPost?.imageUrls.length)&& (isDeclaredGeneratedArt(post)||(post.parentPost&&isDeclaredGeneratedArt(post.parentPost))))return false;
     // A genuine view suppresses this work on later fetches, including refreshes.

@@ -66,7 +66,7 @@ export function expandedMapBounds(bounds: MapBounds): MapBounds {
     };
 }
 
-export type MapPostPin = { id: string; createdAt: string; mapLocation: MapLocation; source?: 'lime' | 'bluesky' | 'misskey' | 'flickr' };
+export type MapPostPin = { id: string; createdAt: string; mapLocation: MapLocation; author?: {displayName:string;avatarUrl:string|null}; source?: 'lime' | 'bluesky' | 'misskey' | 'flickr' };
 
 export function mapAreaContains(outer:MapBounds,inner:MapBounds):boolean {
     const outerWidth=outer.west<=outer.east?outer.east-outer.west:360-outer.west+outer.east;

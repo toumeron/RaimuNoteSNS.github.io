@@ -204,3 +204,22 @@ it('keeps an external response body abortable after fetch has returned headers',
  const secondSearch=fetcher.mock.calls.slice(before).filter(([url])=>String(url).includes('searchPosts'));
  expect(secondSearch).toHaveLength(1);expect(new URL(String(secondSearch[0][0])).searchParams.get('q')).not.toBe(new URL(String(firstSearch[0][0])).searchParams.get('q'));
  });
+
+it('uses the public Discover feed when anonymous search is refused and preserves its pagination',async()=>{
+ const feedPost=(id:string,language:string,likes=200)=>({post:{uri:`at://did:plc:recovery/app.bsky.feed.post/${id}`,author:{did:'did:plc:recovery',handle:'recovery.bsky.social'},record:{text:language==='ja'?'日本語のニュース':'English news',langs:[language],createdAt:new Date().toISOString()},likeCount:likes}});
+ const fetcher=vi.fn(async(url:string)=>{
+  if(url.includes('searchPosts'))return new Response('',{status:403});
+  if(url.includes('getFeed?'))return Response.json({feed:[feedPost('ja','ja'),feedPost('en','en'),feedPost('low','ja',3)],cursor:'discover-next'});
+  return Response.json([]);
+ });vi.stubGlobal('fetch',fetcher);
+ const first=await fetchTrendingJapaneseBlueskyPosts({limit:8,queryLimit:1});
+ expect(first.posts.map(post=>post.content)).toEqual(['日本語のニュース']);
+ expect(JSON.parse(first.cursor!)).toEqual({discover:'discover-next'});
+ const before=fetcher.mock.calls.length;await fetchTrendingJapaneseBlueskyPosts({limit:8,queryLimit:1,cursor:first.cursor});
+ const follow=fetcher.mock.calls.slice(before).map(([url])=>new URL(url));
+ expect(follow).toHaveLength(1);expect(follow[0].pathname).toContain('getFeed');expect(follow[0].searchParams.get('cursor')).toBe('discover-next');
+});
+it('reports unavailable external sources instead of a successful empty feed when search and public feed both fail',async()=>{
+ vi.stubGlobal('fetch',vi.fn(async()=>new Response('',{status:403})));
+ await expect(fetchTrendingJapaneseBlueskyPosts({limit:8,queryLimit:1})).rejects.toThrow('public feed unavailable');
+});

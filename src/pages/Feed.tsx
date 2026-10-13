@@ -16,6 +16,7 @@ import { PostComposer } from '@/components/feed/PostComposer';
 import { PostCard } from '@/components/feed/PostCard';
 import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
 import { useRecommendedFeed } from '@/hooks/useRecommendedFeed';
+import { useTimelineContinuation } from '@/hooks/useTimelineContinuation';
 import { useTimelineFeed } from '@/hooks/useTimelineFeed';
 import { normalizeTimelineBlueskyPost } from '@/lib/timelinePaging';
 import { useIsPWA, TIMELINE_PAGINATION_MARGIN } from "@/hooks/use-mobile";
@@ -279,10 +280,9 @@ export default function Feed() {
   } = selectedList?listFeed:isRankedTab ? rankedFeed : timelineFeed;
 
   const [recommendationScrollIntent,setRecommendationScrollIntent]=useState(0);
-  const recommendationPageIntent=useRef(-1);
   useEffect(()=>{
     if(!isRankedTab)return;
-    recommendationPageIntent.current=-1;
+    let lastGestureEvent=0;
     const scrollIntent=(event:Event)=>{
       if(event instanceof WheelEvent&&event.deltaY<=0)return;
       if(event instanceof KeyboardEvent){
@@ -290,7 +290,12 @@ export default function Feed() {
         if(target?.matches('input,textarea,[contenteditable="true"]')||!['ArrowDown','PageDown','End',' '].includes(event.key))return;
       }
       if(event instanceof PointerEvent&&(event.buttons!==1||event.clientX<document.documentElement.clientWidth-20))return;
-      setRecommendationScrollIntent(version=>version+1);
+      // Wheel/touch momentum belongs to one gesture, not hundreds of
+      // separate permissions to retry an empty source.
+      const now=performance.now();
+      const beginsGesture=now-lastGestureEvent>250;
+      lastGestureEvent=now;
+      if(beginsGesture)setRecommendationScrollIntent(version=>version+1);
     };
     window.addEventListener('wheel',scrollIntent,{passive:true});
     window.addEventListener('touchmove',scrollIntent,{passive:true});
@@ -319,6 +324,9 @@ export default function Feed() {
     if (isRankedTab||selectedList) return fetchedPosts;
     return mergePostsByCreatedAt(limePosts).filter(isTimelinePost);
   }, [activeTab, limePosts, trendingPosts, fetchedPosts,topicPreferences]);
+  const firstAnimatedPostIds=useRef<Set<string>|null>(null);
+  if(shouldPlayInitialFloatAnimation&&allPosts.length&&!firstAnimatedPostIds.current)firstAnimatedPostIds.current=new Set(allPosts.map(post=>post.id));
+  const hasPosts=allPosts.length>0;
 
   const normalizeBlueskyPostForFeed = useCallback(normalizeTimelineBlueskyPost, []);
 
@@ -980,20 +988,8 @@ export default function Feed() {
       return;
     }
 
-    // A single request owns both sources and publishes the merged page only
-    // when its lookahead is ready. Do not launch overlapping pages/refetches.
-    const recommendationCount=rankedFeed.data?.pages.reduce((count,page)=>count+page.posts.length,0)??0;
-    // Layout/scroll anchoring can keep the bottom sentinel visible after new
-    // cards arrive. Consume one scroll intent, rather than chaining all pages.
-    const allowRecommended=!isRankedTab||(recommendationScrollIntent>0||!rankedFeed.automaticPaused&&recommendationCount>=6)&&recommendationPageIntent.current!==recommendationScrollIntent;
-    if (inView && hasNextPage && !isFetching && !isFetchNextPageError && allowRecommended) {
-      if(isRankedTab)recommendationPageIntent.current=recommendationScrollIntent;
-      void fetchNextPage({cancelRefetch:false});
-    }
-  }, [
-    activeTab, inView, hasNextPage, isFetching, isFetchNextPageError, fetchNextPage, rankedFeed.automaticPaused, recommendationScrollIntent,
-    trendingHasMore, trendingLoading, loadTrendingPosts,
-  ]);
+  }, [activeTab,inView,trendingHasMore,trendingLoading,loadTrendingPosts]);
+  useTimelineContinuation({enabled:activeTab!=='trending',inView,hasNextPage:!!hasNextPage,isFetching,isFetchNextPageError,automaticPaused:isRankedTab&&rankedFeed.automaticPaused,scrollIntent:recommendationScrollIntent,pageCount:data?.pages.length??0,fetchNextPage});
 
   useLayoutEffect(() => {
     const postContent = feedTabAnimationContentRef.current;
@@ -1162,7 +1158,7 @@ export default function Feed() {
     return () => {
       window.clearTimeout(timer);
     };
-  }, [activeTab, allPosts.length, isInitialLoading, shouldPlayInitialFloatAnimation]);
+  }, [activeTab, hasPosts, isInitialLoading, shouldPlayInitialFloatAnimation]);
 
   useEffect(() => {
     let frame: number | null = null;
@@ -1468,7 +1464,7 @@ export default function Feed() {
         key={`${activeTab}-${post.id}`}
         data-lime-recommendation-post={isRankedTab ? recommendationIdentity(post) : undefined}
         data-lime-recommendation-fingerprint={isRankedTab ? recommendationFingerprint(post) : undefined}
-        className={shouldPlayInitialFloatAnimation ? 'animate-float-up' : ''}
+        className={shouldPlayInitialFloatAnimation&&firstAnimatedPostIds.current?.has(post.id) ? 'animate-float-up' : ''}
         ref={(element) => registerPostElement(post.id, element)}
       >
         <PostCard post={post} timelineGlass={hasTimelineBackground} onNotInterested={isRankedTab?rankedFeed.dismiss:undefined} />
@@ -1763,6 +1759,10 @@ export default function Feed() {
         <div ref={ref} className="py-10 flex justify-center">
           {isBusyLoadingMore && !(isRankedTab&&isInitialLoading) ? (
             <div className="w-full"><PostCardSkeleton/></div>
+          ) : isRankedTab&&hasMoreToLoad&&(isFetchNextPageError||rankedFeed.automaticPaused) ? (
+            <p role="status" className="text-xs text-muted-foreground">
+              {isFetchNextPageError?'続きを取得できませんでした。':'取得に時間がかかっています。'}スクロールすると再試行します。
+            </p>
           ) : hasMoreToLoad ? (
             <div className="h-10" />
           ) : allPosts.length > 0 ? (

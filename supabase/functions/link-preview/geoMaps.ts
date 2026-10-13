@@ -1,5 +1,9 @@
 import {mapBoundsContain,validMapLocation,type MapBounds,type MapPostPin} from '../../../src/lib/mapLocation.ts';
 export type GeoMapJob={provider:'flickr';bounds:MapBounds;search:string;page:number;from:number;until:number};
+export function flickrAvatarUrl(owner:string,server:unknown,farm:unknown):string {
+ const iconServer=String(server??''),iconFarm=String(farm??'');
+ return /^\d+@N\d+$/.test(owner)&&/^[1-9]\d*$/.test(iconServer)&&/^\d+$/.test(iconFarm)?`https://farm${iconFarm}.staticflickr.com/${iconServer}/buddyicons/${owner}.jpg`:'https://www.flickr.com/images/buddyicon.gif';
+}
 const checkBounds=(b:MapBounds)=>b&&[b.south,b.north,b.west,b.east].every(Number.isFinite)&&b.south>=-90&&b.north<=90&&b.south<b.north&&Math.abs(b.west)<=180&&Math.abs(b.east)<=180&&b.west!==b.east;
 export function geoMapJobs(bounds:MapBounds,search=''):GeoMapJob[]{
  if(!checkBounds(bounds)||typeof search!=='string'||search.length>100)throw new Error('Invalid geo map bounds');
@@ -21,7 +25,7 @@ export async function loadGeoMapPins(input:unknown,key:string|undefined,reader:t
  const pins:MapPostPin[]=[],next:GeoMapJob[]=[];
  for(const job of jobs){
   const b=job.bounds;
-  const data=await readFlickr({method:'flickr.photos.search',bbox:`${b.west},${b.south},${b.east},${b.north}`,has_geo:'1',extras:'geo,date_upload',per_page:'250',page:String(job.page),min_upload_date:String(job.from),max_upload_date:String(job.until),sort:'date-posted-desc',safe_search:'1',...(job.search?{text:job.search}:{})},key,reader);
+  const data=await readFlickr({method:'flickr.photos.search',bbox:`${b.west},${b.south},${b.east},${b.north}`,has_geo:'1',extras:'geo,date_upload,owner_name,icon_server',per_page:'250',page:String(job.page),min_upload_date:String(job.from),max_upload_date:String(job.until),sort:'date-posted-desc',safe_search:'1',...(job.search?{text:job.search}:{})},key,reader);
   const photos=data.photos;
   // Flickr caps a search at 4,000 results. Split the actual upload-time range
   // before pagination so earlier posts aren't silently cut off.
@@ -30,7 +34,7 @@ export async function loadGeoMapPins(input:unknown,key:string|undefined,reader:t
    const mapLocation={latitude:Number(row.latitude),longitude:Number(row.longitude)};
    if(row.ispublic!==1||Number(row.accuracy)<=0||!Number.isFinite(Number(row.accuracy))||!validMapLocation(mapLocation)||!mapBoundsContain(b,mapLocation)||!/^\d+$/.test(String(row.id))||!/^\d+@N\d+$/.test(String(row.owner)))continue;
    const time=Number(row.dateupload);if(!Number.isFinite(time)||time<=0)continue;
-   pins.push({id:`flickr:${row.owner}/${row.id}`,source:'flickr',createdAt:new Date(time*1000).toISOString(),mapLocation});
+   pins.push({id:`flickr:${row.owner}/${row.id}`,source:'flickr',createdAt:new Date(time*1000).toISOString(),author:{displayName:String(row.ownername||'Flickr'),avatarUrl:flickrAvatarUrl(String(row.owner),row.iconserver,row.iconfarm)},mapLocation});
   }
   if(job.page<Math.min(16,Number(photos?.pages)||0))next.push({...job,page:job.page+1});
  }
@@ -43,5 +47,5 @@ export async function loadGeoMapDetail(id:unknown,key:string|undefined,reader:ty
  const data=await readFlickr({method:'flickr.photos.getInfo',photo_id:photoId},key,reader),photo=data.photo;
  if(photo?.visibility?.ispublic!==1||photo.owner?.nsid!==owner||String(photo.id)!==photoId)return null;
  // Plain text only; do not execute the photo's HTML description.
- return {id,originalUrl:`https://www.flickr.com/photos/${owner}/${photoId}/`,createdAt:new Date(Number(photo.dates?.posted)*1000).toISOString(),content:String(photo.title?._content??''),author:{displayName:String(photo.owner?.realname||photo.owner?.username||'Flickr'),avatarUrl:''}};
+ return {id,originalUrl:`https://www.flickr.com/photos/${owner}/${photoId}/`,createdAt:new Date(Number(photo.dates?.posted)*1000).toISOString(),content:String(photo.title?._content??''),author:{displayName:String(photo.owner?.realname||photo.owner?.username||'Flickr'),avatarUrl:flickrAvatarUrl(owner,photo.owner?.iconserver,photo.owner?.iconfarm)}};
 }

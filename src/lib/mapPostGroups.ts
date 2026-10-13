@@ -1,6 +1,6 @@
 import type {MapPostPin} from './mapLocation';
 export type MapPostGroup={key:string;posts:MapPostPin[];point:{x:number;y:number}};
-// Only visible points are projected. A dense cell is one painted circle, while
+// Only visible points are projected. A crowded cell shares one avatar pin, while
 // every original post remains selectable from its popup.
 export function groupMapPosts(posts:MapPostPin[],project:(post:MapPostPin)=>{x:number;y:number}|null,cellSize=24):MapPostGroup[]{
  const groups=new Map<string,MapPostGroup>();

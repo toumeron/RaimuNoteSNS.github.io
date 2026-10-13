@@ -97,10 +97,10 @@ export type RecommendationCursor={
   pageKey?:number;
   lime:{page:number;before?:FeedCursor;done:boolean};
   trending:{cursor:string|null;done:boolean};
-  authors:Record<string,{cursor:string|null;done:boolean;media?:boolean}>;
+  authors:Record<string,{cursor:string|null;done:boolean;media?:boolean;emptyReads?:number}>;
   topics:Record<string,{limePage:number;limeDone:boolean;blueCursor:string|null;blueDone:boolean;misskeyCursor?:string|null;misskeyDone?:boolean}>;
   nativeAuthors:Record<string,{page:number;done:boolean}>;
-  topicDiscovery?:Partial<Record<TopicId,{feedRound?:number;feeds:string[]|null;positions:Record<string,{cursor:string|null;done:boolean}>;done:boolean}>>;
+  topicDiscovery?:Partial<Record<TopicId,{feedRound?:number;feeds:string[]|null;positions:Record<string,{cursor:string|null;done:boolean;emptyReads?:number}>;done:boolean}>>;
   discoveryRound?:number;
   authorRound?:number;
   needsCreators?:boolean;
@@ -124,6 +124,15 @@ async function loadRecommendationPage(previous:RecommendationCursor,viewerId:str
   cursor.topicAuthors={...(previous.topicAuthors??{})};
   cursor.topicAuthorLanguages={...(previous.topicAuthorLanguages??{})};
   cursor.preferences=preferences;
+  const markSourceYield=(state:{done:boolean;emptyReads?:number},posts:PostWithAuthor[])=>{
+    const seen=new Set(cursor.seen);
+    const unseen=posts.filter(post=>!seen.has(recommendationIdentity(post))&&!(recommendationFingerprint(post)&&seen.has(recommendationFingerprint(post)!)));
+    const usable=rankRecommendations(unseen,preferences,viewerId,Date.now(),cursor.history,1,true).length>0;
+    state.emptyReads=usable?0:(state.emptyReads??0)+1;
+    // Drop an unproductive source for this cursor, not the whole timeline.
+    // Sources that yield related works retain ordinary unlimited pagination.
+    if(state.emptyReads>=8)state.done=true;
+  };
   const favoriteBlueskyAuthors = Object.entries(preferences.authors)
     .filter(([id,weight]) => weight>0&&(id.startsWith('did:') || id.startsWith('misskey-user:'))&&!isRecommendationAuthorRejected(id,preferences))
     .sort((a,b) => b[1]-a[1]).slice(0,12);
@@ -135,7 +144,10 @@ async function loadRecommendationPage(previous:RecommendationCursor,viewerId:str
   }
   const favoriteNativeAuthors=Object.entries(preferences.authors).filter(([id])=>/^[0-9a-f-]{36}$/i.test(id) && id!==viewerId).sort((a,b)=>b[1]-a[1]).slice(0,2);
   for (const [author] of favoriteNativeAuthors) if(!cursor.nativeAuthors[author]) cursor.nativeAuthors[author]={page:0,done:false};
-  if(cursor.remaining.length<RECOMMENDATION_PAGE_SIZE||cursor.needsCreators) {
+  const suppliedCreators=new Set(cursor.remaining.map(post=>post.userId));
+  const needsCreatorVariety=cursor.remaining.length>=RECOMMENDATION_PAGE_SIZE&&suppliedCreators.size===1&&
+    Object.entries(cursor.authors).some(([actor,state])=>!state.done&&!suppliedCreators.has(actor));
+  if(cursor.remaining.length<RECOMMENDATION_PAGE_SIZE||cursor.needsCreators||needsCreatorVariety) {
     cursor.needsCreators=false;
     const jobs:{priority?:number;load:()=>Promise<PostWithAuthor[]>}[]=[];
     if(!cursor.lime.done) jobs.push({priority:1,load:async()=>{
@@ -157,26 +169,32 @@ async function loadRecommendationPage(previous:RecommendationCursor,viewerId:str
     const authorRound=cursor.authorRound??0;
     const selectedAuthors:typeof authorSlots=[];
     let scannedAuthors=0;
-    while(selectedAuthors.length<3&&scannedAuthors<authorSlots.length){
+    while(selectedAuthors.length<2&&scannedAuthors<authorSlots.length){
       const entry=authorSlots[(authorRound+scannedAuthors++)%authorSlots.length];
-      if(!entry[1].done)selectedAuthors.push(entry);
+      const alreadySupplied=needsCreatorVariety&&suppliedCreators.has(entry[0]);
+      if(!entry[1].done&&!alreadySupplied)selectedAuthors.push(entry);
     }
     cursor.authorRound=authorRound+scannedAuthors;
     for(const [actor,state] of selectedAuthors) {
       jobs.push({priority:3,load:async()=>{
         const page=await fetchBlueskyAuthorFeed({actor,cursor:state.cursor,limit:RECOMMENDATION_SOURCE_SIZE,filter:state.media||preferences.followedTopics?.some(topic=>topic==='art'||topic==='digital-illustration')?'posts_with_media':undefined,signal});
         state.done=!page.cursor || page.cursor===state.cursor;state.cursor=page.cursor ?? null;
-        return page.posts.map(normalizeTimelineBlueskyPost).map(post=>cursor.topicAuthors![actor]?{...post,recommendationAuthorTopics:cursor.topicAuthors![actor],recommendationLanguages:cursor.topicAuthorLanguages![actor]}:post);
+        const rows=page.posts.map(normalizeTimelineBlueskyPost).map(post=>cursor.topicAuthors![actor]?{...post,recommendationAuthorTopics:cursor.topicAuthors![actor],recommendationLanguages:cursor.topicAuthorLanguages![actor]}:post);
+        markSourceYield(state,rows);return rows;
       }});
     }
     const rejectedTopics=new Set(rejectedRecommendationTopics(preferences));
     for(const topic of rejectedTopics){
       const state=cursor.topicDiscovery![topic]??={feeds:[],positions:{},done:true};state.done=true;
     }
-    const unfinished=(preferences.followedTopics??[]).filter(topic=>!rejectedTopics.has(topic)&&!cursor.topicDiscovery![topic]?.done);
+    const topicSlots=(preferences.followedTopics??[]).filter(topic=>!rejectedTopics.has(topic));
     const round=cursor.discoveryRound??0;
-    const selected=unfinished.length?Array.from({length:Math.min(2,unfinished.length)},(_,index)=>unfinished[(round+index)%unfinished.length]):[];
-    cursor.discoveryRound=round+selected.length;
+    const selected:TopicId[]=[];let scannedTopics=0;
+    while(selected.length<1&&scannedTopics<topicSlots.length){
+      const topic=topicSlots[(round+scannedTopics++)%topicSlots.length];
+      if(!cursor.topicDiscovery![topic]?.done)selected.push(topic);
+    }
+    cursor.discoveryRound=round+scannedTopics;
     for(const topic of selected)jobs.push({priority:2,load:async()=>{
       const state=cursor.topicDiscovery![topic]??={feeds:null,positions:{},done:false};
       state.feeds??=await discoverBlueskyTopicFeeds(topic,signal);
@@ -189,7 +207,7 @@ async function loadRecommendationPage(previous:RecommendationCursor,viewerId:str
         const position=state.positions[feed]??={cursor:null,done:false};if(position.done)return;
         try{const page=await fetchBlueskyTopicFeed({topic,feed,cursor:position.cursor,limit:RECOMMENDATION_SOURCE_SIZE,signal});
           position.done=!page.cursor||page.cursor===position.cursor;position.cursor=page.cursor;successes++;
-          if(!signal?.aborted)cursor.remaining.push(...page.posts.map(normalizeTimelineBlueskyPost));
+          if(!signal?.aborted){const rows=page.posts.map(normalizeTimelineBlueskyPost);markSourceYield(position,rows);cursor.remaining.push(...rows);}
         }catch(error){if(signal?.aborted)throw error;failed=error;}
       }));
       state.done=state.feeds.every(feed=>state.positions[feed]?.done);
@@ -240,7 +258,8 @@ async function loadRecommendationPage(previous:RecommendationCursor,viewerId:str
     }));
     const successful=results.filter(result=>result?.status==='fulfilled');
     const failed=results.find((result):result is PromiseRejectedResult=>result?.status==='rejected');
-    if(failed && !cursor.remaining.length && successful.every(result=>result.status==='fulfilled' && !result.value.length)) throw failed.reason;
+    const unattemptedTopics=(preferences.followedTopics??[]).some(topic=>!rejectedTopics.has(topic)&&!cursor.topicDiscovery?.[topic]);
+    if(failed && !cursor.remaining.length && !unattemptedTopics && successful.every(result=>result.status==='fulfilled' && !result.value.length)) throw failed.reason;
     // Retain failed source cursors for retry; never discard the other service.
     const consumed=new Set(cursor.seen),views=readRecommendationImpressions(viewerId);
     cursor.remaining=cursor.remaining.filter(post=>!consumed.has(recommendationIdentity(post))&&!views[recommendationIdentity(post)]&&!(recommendationFingerprint(post)&&(consumed.has(recommendationFingerprint(post)!)||views[recommendationFingerprint(post)!])));
@@ -328,6 +347,9 @@ export async function getRecommendationPage(previous:RecommendationCursor,viewer
  const abort=()=>controller.abort(signal?.reason);
  if(signal?.aborted)abort();else signal?.addEventListener('abort',abort,{once:true});
  const initial=copyRecommendationCursor(previous);
+ const initialCreators=new Set(initial.remaining.map(post=>post.userId));
+ const seekingVariety=initial.remaining.length>=RECOMMENDATION_PAGE_SIZE&&initialCreators.size===1&&
+  Object.entries(initial.authors).some(([actor,state])=>!state.done&&!initialCreators.has(actor));
  try{if(!initial.preferences)initial.preferences=await getRecommendationPreferences(viewerId,()=>{},controller.signal);}catch(error){signal?.removeEventListener('abort',abort);controller.abort();throw error;}
  let work=initial,timer:ReturnType<typeof setTimeout>,readyTimer:ReturnType<typeof setTimeout>|undefined;
  const cancelled=new Promise<never>((_,reject)=>controller.signal.addEventListener('abort',()=>{if(signal?.aborted)reject(signal.reason??new DOMException('Aborted','AbortError'));},{once:true}));
@@ -338,7 +360,9 @@ export async function getRecommendationPage(previous:RecommendationCursor,viewer
   if(readyTimer)return;
   readyTimer=setTimeout(()=>{
    const snapshot=finishRecommendationPage(copyRecommendationCursor(work),work.preferences??cursor.preferences??{authors:{},terms:{}},viewerId);
-   if(snapshot.posts.length)publishReady(snapshot);else readyTimer=undefined;
+   // Cached work from one author is already available. Do not cancel the
+   // alternate creator's read merely because an empty fast sibling completed.
+   if(snapshot.posts.length&&(!seekingVariety||new Set(snapshot.posts.map(post=>post.userId)).size>1))publishReady(snapshot);else readyTimer=undefined;
   },100);
  });
  const deadline=new Promise<Awaited<ReturnType<typeof loadRecommendationPage>>>(resolve=>{

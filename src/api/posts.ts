@@ -611,7 +611,7 @@ export async function getProfilePopularityPosts(userId: string, signal?: AbortSi
 
 
 export async function getMapPosts(bounds: MapBounds, before?: FeedCursor, signal?: AbortSignal, search = ''): Promise<MapPostPin[]> {
-  let query = supabase.from('posts').select('id,created_at,map_latitude,map_longitude').eq('visibility', 'public')
+  let query = supabase.from('posts').select('id,created_at,map_latitude,map_longitude,profiles:user_id(display_name,avatar_url)').eq('visibility', 'public')
     .not('map_latitude', 'is', null).gte('map_latitude', bounds.south).lte('map_latitude', bounds.north);
   if (bounds.west <= bounds.east) query = query.gte('map_longitude', bounds.west).lte('map_longitude', bounds.east);
   if (search.trim()) query = query.ilike('content', `%${search.trim().replace(/[\\%_]/g, '\\$&')}%`);
@@ -622,7 +622,7 @@ export async function getMapPosts(bounds: MapBounds, before?: FeedCursor, signal
   if (signal) query = query.abortSignal(signal);
   const {data, error} = await query.order('created_at', {ascending:false}).order('id', {ascending:false}).limit(200);
   if (error) throw error;
-  return (data ?? []).map(row => ({ id: row.id, createdAt: row.created_at, source: 'lime' as const, mapLocation: { latitude: row.map_latitude, longitude: row.map_longitude } }));
+  return (data ?? []).map(row => {const profile=(Array.isArray(row.profiles)?row.profiles[0]:row.profiles) as {display_name?:string;avatar_url?:string}|null;return { id: row.id, createdAt: row.created_at, source: 'lime' as const, author:{displayName:profile?.display_name||'投稿者',avatarUrl:profile?.avatar_url||null}, mapLocation: { latitude: row.map_latitude, longitude: row.map_longitude } };});
 }
 export async function setPostMapLocation(postId: string, location: MapLocation | null): Promise<void> {
   if (location && !validMapLocation(location)) throw new Error('場所が無効です');

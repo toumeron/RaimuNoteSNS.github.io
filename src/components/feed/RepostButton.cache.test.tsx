@@ -1,0 +1,21 @@
+import {act,cleanup,render,waitFor} from '@testing-library/react';
+import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
+import {afterEach,expect,it,vi} from 'vitest';
+import type {PostWithAuthor} from '@/types';
+const state=vi.hoisted(()=>({viewer:'viewer',read:vi.fn(async()=>({repostsCount:3,repostedByMe:false}))}));
+vi.mock('@/hooks/useAuth',()=>({useAuth:()=>({user:{id:state.viewer}})}));
+vi.mock('@/hooks/useFeed',()=>({useToggleRepost:()=>({mutateAsync:vi.fn(),isPending:false})}));
+vi.mock('@/components/post/PostActionSheet',()=>({useMobilePostMenu:()=>false,PostActionSheet:()=>null}));
+vi.mock('@/components/layout/DesktopLayoutContext',()=>({usePostOverlay:()=>vi.fn()}));
+vi.mock('@/api/external-posts',()=>({isExternalPostId:()=>true,getExternalRepostState:state.read}));
+vi.mock('@/api/reply-reposts',()=>({isReplyPostId:()=>false,getReplyPost:vi.fn(),getReplyRepostState:vi.fn()}));
+import {RepostButton} from './RepostButton';
+afterEach(()=>{cleanup();state.viewer='viewer';state.read.mockClear();});
+it('reuses fresh repost state after virtualized card remounts and separates accounts',async()=>{
+ const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
+ const post={id:'bsky:at://did:plc:test/app.bsky.feed.post/one',userId:'author',content:'作品',createdAt:'2026-10-13',imageUrls:[],likesCount:0,commentsCount:0,repostsCount:0,author:{id:'author',username:'author'}} as PostWithAuthor;
+ const mount=()=>render(<QueryClientProvider client={client}><RepostButton post={post}/></QueryClientProvider>);
+ const first=mount();await waitFor(()=>expect(state.read).toHaveBeenCalledTimes(1));await act(async()=>{});first.unmount();
+ const second=mount();await act(async()=>{});expect(state.read).toHaveBeenCalledTimes(1);second.unmount();
+ state.viewer='another-viewer';mount();await waitFor(()=>expect(state.read).toHaveBeenCalledTimes(2));client.clear();
+});

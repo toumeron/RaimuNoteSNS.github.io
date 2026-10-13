@@ -1,3 +1,4 @@
+import {preserveRecommendationHistory,uniqueRecommendationPosts} from '@/lib/recommendationPaging';
 import {recordRecommendationEngagement} from "@/lib/recommendationSignals";
 import { useInfiniteQuery,useQueryClient } from '@tanstack/react-query';
 import { useRecommendationImpressions } from './useRecommendationImpressions';
@@ -11,7 +12,7 @@ export function useRecommendedFeed(enabled:boolean) {
   const {user,loading}=useAuth();
   const handles=getConfiguredExternalHandles();
   const queryClient=useQueryClient();
-  const queryKey=['feed','recommended','scoring-v27-first-screen-reservations',user?.id ?? null,handles];
+  const queryKey=['feed','recommended','scoring-v36-stable-diverse-art',user?.id ?? null,handles];
   useRecommendationImpressions(enabled && !loading,user?.id ?? null);
   type Cursor=ReturnType<typeof createRecommendationCursor>;
   type Page=Awaited<ReturnType<typeof getRecommendationPage>>;
@@ -42,7 +43,12 @@ export function useRecommendedFeed(enabled:boolean) {
         // richer profile or terminate newly discovered creator sources.
         const next=loaded.next??(foundNewCreator?{...createRecommendationCursor(handles),lime:{page:0,done:true},trending:{cursor:null,done:true}}:undefined);
         const page=matches||preferences!==loaded.preferences?{...loaded,preferences,posts:loaded.posts.filter(keep),automaticPaused:foundNewCreator?false:loaded.automaticPaused,next:next?{...next,preferences,stalledPages:foundNewCreator?0:next.stalledPages,remaining:next.remaining.filter(keep)}:undefined}:loaded;
-        recordRecommendationDelivery(page.posts,user?.id??null);return page;
+        const shown=queryClient.getQueryData<{pages:Page[]}>(queryKey)?.pages.flatMap(page=>page.posts)??[];
+        const posts=pageParam.pageKey!==undefined?uniqueRecommendationPosts(page.posts,shown):uniqueRecommendationPosts(page.posts);
+        // Empty filtered pages can still advance a healthy source. The API
+        // pauses only unchanged source positions; never stop merely at page 3.
+        const result={...page,posts,next:page.next?preserveRecommendationHistory(page.next,[...shown,...posts]):undefined};
+        recordRecommendationDelivery(posts,user?.id??null);return result;
       }finally{signal.removeEventListener('abort',cancel);if(matches&&warmPage.current===warm)warmPage.current=null;}
     },
     getNextPageParam:page=>page.pendingAnalysis?undefined:page.next,
@@ -81,7 +87,7 @@ export function useRecommendedFeed(enabled:boolean) {
         if(resume&&pages.length){
           initialScanLimit.current=pages.length+8;
           const index=pages.length-1,page=pages[index];
-          const next=page.next??{...createRecommendationCursor(handles),lime:{page:0,done:true},trending:{cursor:null,done:true}};
+          const next=preserveRecommendationHistory(page.next??{...createRecommendationCursor(handles),lime:{page:0,done:true},trending:{cursor:null,done:true}},data.pages.flatMap(page=>page.posts));
           pages[index]={...page,automaticPaused:false,next:{...next,stalledPages:0,preferences:page.preferences}};
         }
         return {...data,pages};

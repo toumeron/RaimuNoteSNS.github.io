@@ -31,9 +31,10 @@ describe('LimeMaps API', () => {
         expect(filters['limit:200']).toBe(200);
         expect(Object.values(filters)).toContain(signal);
         expect(posts[0].mapLocation).toEqual({ latitude: 35, longitude: 139 });
-        expect(filters['select:id,created_at,map_latitude,map_longitude']).toBe('id,created_at,map_latitude,map_longitude');
+        expect(filters['select:id,created_at,map_latitude,map_longitude,profiles:user_id(display_name,avatar_url)']).toBe('id,created_at,map_latitude,map_longitude,profiles:user_id(display_name,avatar_url)');
         expect(posts[0]).not.toHaveProperty('content');
-        expect(posts[0]).not.toHaveProperty('author');
+        expect(posts[0].author).toEqual({displayName:'作者',avatarUrl:null});
+        expect(state.calls.filter(call=>call.table==='profiles')).toHaveLength(0);
         expect(posts[0]).not.toHaveProperty('imageUrls');
     });
     it('combines dateline bounds and timestamp/id pagination without dropping tied timestamps', async () => {

@@ -1,4 +1,4 @@
-import {geoMapJobs,loadGeoMapPins,loadGeoMapDetail} from './geoMaps.ts';
+import {geoMapJobs,loadGeoMapPins,loadGeoMapDetail,flickrAvatarUrl} from './geoMaps.ts';
 const assert=(value:unknown)=>{if(!value)throw new Error('Assertion failed');};
 const bounds={south:35,north:36,west:139,east:140};
 Deno.test('uses only provider coordinates, not place names, titles, or URLs',async()=>{
@@ -6,8 +6,8 @@ Deno.test('uses only provider coordinates, not place names, titles, or URLs',asy
  const reader=async(input:RequestInfo|URL)=>{params=new URL(String(input)).searchParams;return Response.json({stat:'ok',photos:{page:1,pages:2,total:251,photo:[{id:'1',owner:'123@N00',ispublic:1,latitude:'35.68113',longitude:'139.76706',accuracy:16,dateupload:'1700000000',title:'皇居'}, {id:'2',owner:'123@N00',ispublic:1,title:'東京駅',dateupload:'1700000000'}, {id:'3',owner:'123@N00',ispublic:0,latitude:'35.68',longitude:'139.76',accuracy:16,dateupload:'1700000000'}]}});};
  const result=await loadGeoMapPins(geoMapJobs(bounds),'test-key',reader as typeof fetch);
  assert(result.pins.length===1);assert(result.pins[0].mapLocation.longitude===139.76706);
- assert(Object.keys(result.pins[0]).sort().join(',')==='createdAt,id,mapLocation,source');
- assert(params!.get('has_geo')==='1');assert(params!.get('bbox')==='139,35,140,36');assert(params!.get('per_page')==='250');assert(params!.get('extras')==='geo,date_upload');assert(params!.get('min_upload_date')==='1');
+ assert(Object.keys(result.pins[0]).sort().join(',')==='author,createdAt,id,mapLocation,source');
+ assert(params!.get('has_geo')==='1');assert(params!.get('bbox')==='139,35,140,36');assert(params!.get('per_page')==='250');assert(params!.get('extras')==='geo,date_upload,owner_name,icon_server');assert(params!.get('min_upload_date')==='1');
  assert(result.next[0].page===2);
 });
 Deno.test('does not fall back to inferred posts without an API key',async()=>{
@@ -29,4 +29,10 @@ Deno.test('loads details separately and only for public photos',async()=>{
  assert(detail?.originalUrl==='https://www.flickr.com/photos/123@N00/456/');assert(detail?.author.displayName==='photographer');
  const privateReader=(async()=>Response.json({stat:'ok',photo:{visibility:{ispublic:0}}})) as typeof fetch;
  assert(await loadGeoMapDetail('flickr:123@N00/456','test-key',privateReader)===null);
+});
+
+Deno.test('constructs public owner icons without detail requests or unsafe URL fields',()=>{
+ assert(flickrAvatarUrl('123@N00','42',1)==='https://farm1.staticflickr.com/42/buddyicons/123@N00.jpg');
+ assert(flickrAvatarUrl('123@N00','0',0)==='https://www.flickr.com/images/buddyicon.gif');
+ assert(flickrAvatarUrl('bad/owner','42','evil.example')==='https://www.flickr.com/images/buddyicon.gif');
 });

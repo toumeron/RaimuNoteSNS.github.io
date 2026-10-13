@@ -220,14 +220,14 @@ it('does not treat legacy persisted delivery records as actual views',()=>{
  recordRecommendationImpression(work.id,viewer,Date.now(),recommendationFingerprint(work));
  expect(rankRecommendations([work],prefs,viewer)).toEqual([]);
 });
-it('limits creator runs to three across page boundaries without filling with unrelated posts',async()=>{
+it('prefers a different related creator without ending a page when only the favorite remains',async()=>{
  const {selectRecommendationPage}=await import('./recommendations');
  const works=Array.from({length:12},(_,i)=>post(`favorite-${i}`,'science','favorite'));
  const other=post('other','science','other');
  const prefs={authors:{favorite:8,other:4},terms:{}};
  const selected=selectRecommendationPage([...works,other],prefs,works.slice(0,3));
- expect(selected.posts[0].userId).toBe('other');expect(selected.posts).toHaveLength(4);
- expect(selected.blocked).toBe(true);expect(selected.remaining).toHaveLength(9);
+ expect(selected.posts[0].userId).toBe('other');expect(selected.posts).toHaveLength(13);
+ expect(selected.blocked).toBe(false);expect(selected.remaining).toHaveLength(0);
 });
 it('visual enrichment preserves the original like date instead of overriding a later dismissal',()=>{
  const old=post('old-like','','artist');
@@ -252,7 +252,7 @@ it.each(['science','music','pets','digital-illustration'] as const)('uses repeat
 it('does not fill followed topic recommendations with unrelated Japanese discovery',()=>{
  const candidates=[post('unrelated','今日は良い天気ですね','stranger'),post('related','猫の写真','pet-author'),{...post('media','', 'known-creator'),imageUrls:['art.jpg']}];
  const ranked=rankRecommendations(candidates,{authors:{'known-creator':3},terms:{},followedTopics:['pets']},'viewer');
- expect(ranked.map(row=>row.id)).toEqual(expect.arrayContaining(['related','media']));
+ expect(ranked.map(row=>row.id)).toEqual(['related']);
  expect(ranked.map(row=>row.id)).not.toContain('unrelated');
 });
 it('keeps keyword-free posts with followed source context across topics',()=>{
@@ -266,12 +266,14 @@ it('rejects an author immediately even when older likes have high weights',()=>{
  const candidate=post('different-work','', 'rejected');
  expect(rankRecommendations([candidate],{authors:{rejected:1000},terms:{},feedback:[{id:'rejected-work',userId:'rejected',createdAt:new Date().toISOString()}]},'viewer')).toEqual([]);
 });
-it.each(['digital-illustration','food','sports','music'] as const)('repeated %s dismissals cannot be filled by unverified image creators',topic=>{
+it.each(['digital-illustration','food','sports','music'] as const)('individual %s dismissals do not ban fresh image creators across the followed topic',topic=>{
  const now=new Date().toISOString();
- const unknown={...post('unknown','', 'stranger'),imageUrls:['unknown.jpg'],recommendationTopics:[topic],languages:['ja']};
+ const vector=Array(512).fill(0);vector[0]=1;
+ const visual={version:1 as const,kind:'moe',topics:[topic],confidence:.9,similarity:.5,vector};
+ const unknown={...post('unknown',topic==='digital-illustration'?'キャラクターイラスト':'', 'stranger'),imageUrls:['unknown.jpg'],recommendationTopics:[topic],languages:['ja'],recommendationVisual:visual};
  const familiar={...unknown,id:'familiar',userId:'liked-creator',imageUrls:['familiar.jpg']};
- const preferences={authors:{'liked-creator':5},terms:{},followedTopics:[topic],feedback:[1,2,3].map(i=>({id:`negative-${i}`,userId:`bad-${i}`,topics:[topic],createdAt:now}))};
- expect(rankRecommendations([unknown,familiar],preferences,'viewer').map(row=>row.id)).toEqual(['familiar']);
+ const preferences={authors:{'liked-creator':5},terms:{},followedTopics:[topic],likedSamples:[{...unknown,id:'reference',userId:'reference-artist',imageUrls:['reference.jpg']}],feedback:[1,2,3].map(i=>({id:`negative-${i}`,userId:`bad-${i}`,topics:[topic],createdAt:now}))};
+ expect(rankRecommendations([unknown,familiar],preferences,'viewer').map(row=>row.id)).toEqual(expect.arrayContaining(['familiar','unknown']));
 });
 
 it('retains older distinct authors as references instead of only the latest prolific author',async()=>{
@@ -286,7 +288,7 @@ it('retains older distinct authors as references instead of only the latest prol
 
 it('learns creator topics from a liked keyword-free image and preserves them in compact history',async()=>{
  const {selectRecommendationLikeSamples}=await import('./recommendations');
- const liked={...post('liked-image','','did:plc:favorite'),imageUrls:['https://images.example/liked.jpg'],languages:['ja'],recommendationAuthorTopics:['digital-illustration'],recommendationSources:['creator:did:plc:favorite']};
+ const liked={...post('liked-image','','did:plc:favorite'),imageUrls:['https://images.example/liked.jpg'],languages:['ja'],recommendationAuthorTopics:['digital-illustration'],recommendationSources:['creator:did:plc:favorite'],recommendationVisual:{version:1 as const,kind:'moe',topics:['digital-illustration'] as any,confidence:.9,similarity:.5,vector:Array.from({length:512},(_,i)=>i===0?1:0)}};
  const preferences:import('./recommendations').RecommendationPreferences={authors:{},terms:{},followedTopics:['digital-illustration']};
  const samples=selectRecommendationLikeSamples([liked]);
  expect(samples[0].recommendationAuthorTopics).toEqual(['digital-illustration']);
@@ -324,4 +326,59 @@ it('can reuse unviewed reserved candidates on a fresh first screen while keeping
  expect(rankRecommendations([work],prefs,viewer,Date.now(),[],40,true)).toHaveLength(1);
  recordRecommendationImpression(work.id,viewer);
  expect(rankRecommendations([work],prefs,viewer,Date.now(),[],40,true)).toEqual([]);
+});
+
+it('does not recommend real pet posts to anime followers just because the artist was liked or has an anime bio',()=>{
+ const pet={...post('pet','うちの猫と犬の写真','favorite'),imageUrls:['pet.jpg'],author:{id:'favorite',username:'favorite',bio:'アニメとファンアートを描いています'},recommendationTopics:['digital-illustration'],recommendationAuthorTopics:['digital-illustration']};
+ const art={...post('art','ファンアートのイラスト','favorite'),imageUrls:['art.jpg'],recommendationTopics:['digital-illustration']};
+ expect(rankRecommendations([pet,art] as PostWithAuthor[],{authors:{favorite:100},followedAuthors:['favorite'],terms:{'topic:pets':100},followedTopics:['anime','digital-illustration']},'viewer').map(row=>row.id)).toEqual(['art']);
+});
+it('does not use a creator biography or popularity as the topic of an unrelated post',()=>{
+ const unknown={...post('unrelated','今日のご飯です','favorite'),imageUrls:['food.jpg'],author:{id:'favorite',username:'favorite',displayName:'Favorite',avatarUrl:'',coverUrl:'',createdAt:'2026-10-13',bio:'アニメとイラストが好き'}};
+ expect(rankRecommendations([unknown],{authors:{favorite:1000},terms:{},followedTopics:['anime','digital-illustration']},'viewer')).toEqual([]);
+});
+
+it('does not label a vague daily photograph as illustration through learned author context alone',()=>{
+ const daily={...post('daily','おはようございます','favorite'),imageUrls:['daily.jpg'],recommendationAuthorTopics:['digital-illustration']};
+ expect(rankRecommendations([daily] as PostWithAuthor[],{authors:{favorite:100},terms:{},followedTopics:['anime','digital-illustration']},'viewer')).toEqual([]);
+});
+
+it('does not turn a general illustration feed label into anime or character-art evidence',()=>{
+ const car={...post('car-linework','線画','unfamiliar'),imageUrls:['car-linework.jpg'],recommendationTopics:['digital-illustration'],recommendationSources:['general-illustration-feed']};
+ const character={...post('character','キャラクターイラスト','new-artist'),imageUrls:['character.jpg'],recommendationTopics:['digital-illustration'],recommendationSources:['general-illustration-feed']};
+ expect(rankRecommendations([car,character] as PostWithAuthor[],{authors:{},terms:{},followedTopics:['anime','digital-illustration']},'viewer').map(row=>row.id)).toEqual(['character']);
+});
+
+it('does not infer character relevance from broad role words or generic art-feed tags',()=>{
+ const characters=['#人外娘','柑子色の狐耳を描きました','#OC リンカ','リン / Belle #ゼンゼロ'].map((content,i)=>({...post(`character-subject-${i}`,content,`artist-${i}`),imageUrls:[`https://images.example/character-${i}.jpg`],recommendationTopics:['digital-illustration']}));
+ const generic={...post('generic-line','線画','other'),imageUrls:['https://images.example/generic.jpg'],recommendationTopics:['digital-illustration']};
+ expect(rankRecommendations([...characters,generic] as PostWithAuthor[],{authors:{},terms:{},followedTopics:['anime','digital-illustration']},'viewer').map(row=>row.id)).toEqual([]);
+ expect(rankRecommendations([generic] as PostWithAuthor[],{authors:{},terms:{},followedTopics:['anime','digital-illustration']},'viewer')).toEqual([]);
+});
+
+it('rejects unfamiliar fairy tales and keyword matches while retaining genuinely related works and followed creators',()=>{
+ const vector=Array(512).fill(0);vector[0]=1;const unrelated=Array(512).fill(0);unrelated[1]=1;
+ const visual={version:1 as const,kind:'moe',topics:['digital-illustration'] as any,confidence:.9,similarity:.5,vector};
+ const reference={...post('liked-reference','ファンアート','liked-artist'),imageUrls:['reference.jpg'],recommendationVisual:visual};
+ const story={...post('fairy-tale','昔あるところに少女がいました。アニメの童話 #ファンアート','unknown-storyteller'),imageUrls:['storybook.jpg'],recommendationTopics:['digital-illustration'],likesCount:100000};
+ const likedCreatorStory={...story,id:'liked-creator-story',userId:'liked-artist'};
+ const wrongImage={...story,id:'different-image',imageUrls:['different.jpg'],recommendationVisual:{...visual,vector:unrelated}};
+ const neighbour={...post('related-new-artist','','new-artist'),imageUrls:['related.jpg'],recommendationVisual:visual};
+ const followed={...post('followed-new-work','','followed-artist'),imageUrls:['followed.jpg'],recommendationAuthorTopics:['digital-illustration']};
+ const prefs={authors:{'liked-artist':10},terms:{アニメ:10000,少女:10000,童話:10000},followedTopics:['anime','digital-illustration'] as any,followedAuthors:['followed-artist'],likedSamples:[reference]};
+ expect(rankRecommendations([story,likedCreatorStory,wrongImage,neighbour,followed] as PostWithAuthor[],prefs,'viewer').map(row=>row.id).sort()).toEqual(['followed-new-work','related-new-artist']);
+ const prose={...story,id:'prose-only',imageUrls:[],recommendationTopics:['anime']};
+ expect(rankRecommendations([prose] as PostWithAuthor[],prefs,'viewer')).toEqual([]);
+});
+
+it.each([true,false])('keeps several previously liked art creators with cached pixels=%s without one-off affinity or long prose',(useVisual)=>{
+ const vector=Array.from({length:512},(_,i)=>i===0?1:0);
+ const visual={version:1 as const,kind:'moe',topics:['digital-illustration'] as any,confidence:.9,similarity:.5,vector};
+ const refs=['artist-a','artist-b','artist-c'].flatMap(author=>[0,1].map(i=>({...post(`ref-${author}-${i}`,'',author),imageUrls:[`https://images.example/ref-${author}-${i}.jpg`],recommendationTopics:['digital-illustration'],recommendationVisual:useVisual?visual:undefined})));
+ const prefs:import('./recommendations').RecommendationPreferences={authors:{},terms:{},followedTopics:['anime','digital-illustration'],likedSamples:refs};
+ for(const ref of refs)addRecommendationInterest(prefs,ref,2);
+ const fresh=['artist-a','artist-b','artist-c'].map(author=>({...post(`fresh-${author}`,'',author),imageUrls:[`https://images.example/fresh-${author}.jpg`]}));
+ const prose={...fresh[0],id:'long-prose',content:'アニメの童話 #ファンアート '+ '物語の説明。'.repeat(40),imageUrls:['https://images.example/story.jpg']};
+ const unknown={...fresh[0],id:'unfamiliar',userId:'unfamiliar',content:'ファンアート',imageUrls:['https://images.example/unfamiliar.jpg']};
+ expect(rankRecommendations([...fresh,prose,unknown],prefs,'viewer').map(row=>row.id).sort()).toEqual(fresh.map(row=>row.id).sort());
 });

@@ -12,6 +12,31 @@ export function recommendationTopicSignals(post:Signals):TopicId[] {
  const parent=post.parentPost?[...(post.parentPost.recommendationTopics??[]).filter(isTopicId),...matchingTopics([post.parentPost.content,...(post.parentPost.imageAltTexts??[]),post.parentPost.linkPreview?.title,post.parentPost.linkPreview?.description].filter(Boolean).join(' '))]:[];
  return [...new Set([...own,...parent])];
 }
+/** Work content overrides broad creator biographies and retrieval-feed labels. */
+export function recommendationMatchesFollowedTopics(post:PostWithAuthor,followed:TopicId[]):boolean {
+ if(!followed.length)return true;
+ if(followed.includes('ai')&&isDeclaredGeneratedArt(post))return true;
+ const visual=post.recommendationVisual;
+ const workTopics=[...new Set([
+   ...(visual&&visual.kind!=='unknown'?visual.topics:[]),
+   ...matchingTopics(recommendationText(post).replace(/(?:no|non|not|anti)[ -]?ai(?:[ -]?(?:art|generated))?|AI(?:学習|生成)?(?:に)?(?:禁止|反対|不使用)|AI(?:生成|イラスト|画像|絵)(?:ではない|ではありません|じゃない)|生成AI(?:不使用|反対)|AIを(?:使わない|使用しない)/gi,'')),
+ ])];
+ const specificTopics=workTopics.filter(topic=>topic!=='art');
+ if(specificTopics.length)return specificTopics.some(topic=>followed.includes(topic));
+ if(workTopics.length&&followed.includes('art'))return true;
+ // Image-only work may use a curated feed or learned creator subject, never a generic author affinity.
+ const source=[...(post.recommendationTopics??[]),...(post.parentPost?.recommendationTopics??[])];
+ // General illustration feeds also contain cars, landscapes and animals.
+ // Retrieval labels alone cannot establish an anime/character-art subject.
+ if(source.some(topic=>isTopicId(topic)&&followed.includes(topic)&&topic!=='anime'&&topic!=='digital-illustration'))return true;
+ const creatorTopics=matchingTopics(post.author?.bio??'');
+ if(creatorTopics.some(topic=>followed.includes(topic)&&(topic==='anime'||topic==='digital-illustration'))&&
+   (!recommendationText(post).trim()||/イラスト|線画|お絵描き|落書き|らくがき|illustration|drawing|sketch/i.test(recommendationText(post))))return true;
+ // A daily caption does not become art because the author also draws art.
+ if(recommendationText(post).trim())return false;
+ return (post.recommendationAuthorTopics??[]).some(topic=>isTopicId(topic)&&followed.includes(topic));
+}
+
 export function recommendationTopicAffinity(post:PostWithAuthor,preferences:Partial<TopicPreferences>,learned:Partial<Record<TopicId,number>>={}):number {
  const sources=new Set([...(post.recommendationTopics??[]),...(post.parentPost?.recommendationTopics??[])]);
  const text=new Set(matchingTopics(`${post.content} ${post.parentPost?.content??''}`));

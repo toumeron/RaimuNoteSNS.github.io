@@ -12,7 +12,7 @@ describe("recommendationSignals", () => {
 const imagePost=(id:string,extra:Partial<PostWithAuthor>={}):PostWithAuthor=>({id,userId:id,content:'',imageUrls:[`https://images.example/${id}.jpg`],createdAt:new Date().toISOString(),likesCount:0,commentsCount:0,repostsCount:0,likedByMe:false,repostedByMe:false,author:{id,username:id,bio:''},...extra} as PostWithAuthor);
 beforeEach(()=>localStorage.clear());
 it.each(TOPICS.map(topic=>[topic.name,topic.id] as const))('%s: a topic feed can recommend an image-only post without a body keyword',(_name,id)=>{
- const candidate=imagePost('topic',{recommendationTopics:[id],...(id==='digital-illustration'?{recommendationVisual:{version:1 as const,kind:'moe',topics:[id],confidence:.8,similarity:.3,vector:Array(512).fill(0)}}:{})});
+ const candidate=imagePost('topic',{recommendationTopics:[id],...(id==='anime'?{imageAltTexts:['アニメのキャラクター作品']}:{}),...(id==='digital-illustration'?{recommendationVisual:{version:1 as const,kind:'moe',topics:[id],confidence:.8,similarity:.3,vector:Array(512).fill(0)}}:{})});
  expect(recommendationTopicSignals(candidate)).toContain(id);
  expect(rankRecommendations([imagePost('unrelated'),candidate],{authors:{},terms:{},followedTopics:[id]},null)[0].id).toBe('topic');
 });
@@ -55,10 +55,11 @@ it('filters declared AI art from art recommendations and preserves anti-AI decla
  expect(rankRecommendations([ai],{authors:{},terms:{},followedTopics:['ai']},null)).toHaveLength(1);
 });
 it.each(TOPICS.map(topic=>[topic.name,topic.id] as const))('%s: an image-only liked creator retains language context without body or alt text',(_name,id)=>{
- const author='did:plc:creator';const liked=imagePost('liked',{userId:author,source:'bluesky',recommendationTopics:[id],recommendationLanguages:['ja'],author:{id:author,username:'creator.bsky.social'} as any});
+ const visual={version:1 as const,kind:'moe',topics:[id],confidence:.8,similarity:.3,vector:Array.from({length:512},(_,i)=>i===0?1:0)};
+ const author='did:plc:creator';const liked=imagePost('liked',{userId:author,source:'bluesky',recommendationTopics:[id],recommendationLanguages:['ja'],recommendationVisual:visual,author:{id:author,username:'creator.bsky.social'} as any});
  recordRecommendationLike(liked,true,'viewer');const prefs:RecommendationPreferences={authors:{},terms:{},followedTopics:[id]};
  for(const sample of readRecommendationLikes('viewer'))addRecommendationInterest(prefs,sample,2);
- const next=imagePost('bsky:next',{...(id==='digital-illustration'?{recommendationVisual:{version:1 as const,kind:'moe',topics:[id],confidence:.8,similarity:.3,vector:Array(512).fill(0)}}:{}),userId:author,source:'bluesky',recommendationAuthorTopics:[id],author:{id:author,username:'creator.bsky.social'} as any});
+ const next=imagePost('bsky:next',{recommendationVisual:visual,userId:author,source:'bluesky',recommendationAuthorTopics:[id],author:{id:author,username:'creator.bsky.social'} as any});
  expect(rankRecommendations([next],prefs,'viewer').map(row=>row.id)).toEqual(['bsky:next']);
 });
 
