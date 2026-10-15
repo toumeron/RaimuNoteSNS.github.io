@@ -37,6 +37,7 @@ jobs:
           VITE_CLOUDINARY_CLOUD_NAME: ${{ vars.VITE_CLOUDINARY_CLOUD_NAME }}
           VITE_CLOUDINARY_UPLOAD_PRESET: ${{ vars.VITE_CLOUDINARY_UPLOAD_PRESET }}
           VITE_VAPID_PUBLIC_KEY: ${{ secrets.VITE_VAPID_PUBLIC_KEY }}
+          VITE_VIDEO_WORKER_URL: https://limenote-videos.megayont2.workers.dev
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
