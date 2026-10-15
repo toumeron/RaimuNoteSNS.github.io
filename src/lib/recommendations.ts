@@ -3,7 +3,7 @@ import {matchingTopics} from './topics';
 import type { PostWithAuthor } from '@/types';
 import {TOPICS,isTopicId,topicAffinity,type TopicId} from './topics';
 import {recommendationIdentity,recommendationFingerprint} from "@/lib/recommendationSignals";
-import {recommendationIsEligible,recommendationMatchesFollowedTopics} from "@/lib/recommendationSignals";
+import {recommendationIsEligible,recommendationMatchesFollowedTopics,hasCuratedArtworkSource,hasDeclaredArtworkContext} from "@/lib/recommendationSignals";
 import {isDeclaredGeneratedArt} from "@/lib/recommendationSignals";
 import {recommendationOriginLanguages,recommendationTopicAffinity,recommendationTopicSignals,recommendationText} from './recommendationSignals';
 import {visualSimilarity as directVisualSimilarity,createVisualSimilarityComparator,readVisualCache,applyCachedRecommendationVisuals} from './recommendationVisual';
@@ -311,11 +311,12 @@ function rankRecommendationsInternal(posts:PostWithAuthor[], preferences:Recomme
     if(!recommendationIsEligible(post,preferences.followedTopics))return false;
     if(!recommendationMatchesFollowedTopics(post,preferences.followedTopics??[]))return false;
     // Personalized character-art discovery requires independent evidence.
-    // A caption, biography or feed label cannot prove the viewer likes this
-    // non-followed creator's work. Keep followed creators and visual neighbours;
-    // cold accounts still use their explicitly followed subjects.
+    // Captions and biographies cannot prove an image match. Dedicated followed
+    // subject feeds remain valid discovery evidence when no vision result exists;
+    // explicit visual mismatches and negative feedback are checked above.
     const knownCreator=preferences.followedAuthors?.includes(post.userId);
-    if(personalArt&&!knownCreator){
+    const curatedArtwork=hasCuratedArtworkSource(post,artTopics)||hasDeclaredArtworkContext(post,artTopics);
+    if(personalArt&&!knownCreator&&!curatedArtwork){
       const related=relatedRecommendationScore(post,preferences.likedSamples??[],preferences,feedback);
       const visual=post.recommendationVisual;
       const positive=positiveImageSimilarity(post,preferences),negative=imageFeedbackSimilarity(post,feedback);
@@ -371,7 +372,7 @@ function rankRecommendationsInternal(posts:PostWithAuthor[], preferences:Recomme
       const similarImage=candidate.post.recommendationVisual?recent.slice(-4).reduce((count,post)=>count+(post.recommendationVisual&&visualSimilarity(post.recommendationVisual.vector,candidate.post.recommendationVisual!.vector)>.9?1:0),0):0;
       // Preserve the LimeNote / external balance when another external provider
       // is added; treating every provider as a new slot dilutes native posts.
-      const external=(post:PostWithAuthor)=>post.source==='bluesky' || post.source==='misskey' || post.id.startsWith('bsky:') || post.id.startsWith('misskey:');
+      const external=(post:PostWithAuthor)=>post.source==='bluesky' || post.source==='misskey' || post.source==='x' || post.id.startsWith('bsky:') || post.id.startsWith('misskey:') || post.id.startsWith('x:');
       const sameService=recent.slice(-2).filter(p=>external(p)===external(candidate.post)).length;
       const overlap=recent.slice(-3).reduce((max,p)=>{
         const terms=termCache.get(p.id) ?? [];

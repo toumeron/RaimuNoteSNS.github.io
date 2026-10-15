@@ -1,14 +1,16 @@
 import { cn } from '@/lib/utils';
 
-export function PostImages({ 
-  urls, 
+export function PostImages({
+  urls,
+  altTexts,
   onImageError,
   embedded = false,
-}: { 
-  urls?: string[], 
-  onImageError?: (url: string) => void 
+}: {
+  urls?: string[],
+  altTexts?: string[],
+  onImageError?: (url: string) => void
   embedded?: boolean
-}) { 
+}) {
   // urlsがnull、undefined、または空配列の場合は何も表示しない
   if (!urls || urls.length === 0) return null;
 
@@ -29,12 +31,12 @@ export function PostImages({
             urls.length === 3 && i === 0 && 'row-span-2 aspect-auto',
           )}
         >
-          <img 
-            src={src} 
-            alt="" 
+          <img
+            referrerPolicy={/^https:\/\/pbs[.]twimg[.]com\//.test(src)?'no-referrer':undefined} src={src}
+            alt={altTexts?.[i]??''}
             loading="lazy"
             decoding="async"
-            className="h-full w-full object-cover" 
+            className="h-full w-full object-cover"
             onError={(e) => {
               // 読み込みに失敗した場合、親コンポーネントに通知
               if (onImageError) {

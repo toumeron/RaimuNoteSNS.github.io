@@ -1,0 +1,1 @@
+{"name":"limenote-video-storage","private":true,"type":"module","scripts":{"test":"node --test *.test.mjs","build":"wrangler deploy --dry-run --outdir /private/tmp/lime-video-worker-build"},"dependencies":{"aws4fetch":"^1.0.20","mediabunny":"^1.44.0"},"devDependencies":{"wrangler":"4.149.0"}}

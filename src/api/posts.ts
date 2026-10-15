@@ -1,3 +1,5 @@
+import {uploadPostVideo,discardPostVideo,deleteVideoPost} from '@/lib/postVideoStorage';
+import type {PreparedVideo} from '@/lib/postVideo';
 import {validSchedule} from '@/lib/postSchedule';
 import { isAccountReadOnly } from '@/lib/accountSuspension';
 import {preparePoll,discardPollImages} from './polls';
@@ -162,6 +164,19 @@ export async function getFeed(page: number = 0, limit: number = 10, before?: Fee
   const rows = postsRes.data ?? [];
   const { likedIds, repostedIds } = await getViewerReactions(userId, rows,signal);
   return rows.map((row: any) => rowToPost(row, likedIds, repostedIds));
+}
+
+/** Only fetch video posts; raw-row cursors also advance across visibility filtering. */
+export async function getVideoFeed(before?:FeedCursor,signal?:AbortSignal):Promise<{posts:PostWithAuthor[];nextCursor:FeedCursor|null}> {
+ const userId=await getCurrentUserId();
+ let query=supabase.from('posts').select(POST_SELECT_QUERY).not('video','is',null)
+  .order('created_at',{ascending:false}).order('id',{ascending:false}).limit(8);
+ if(before)query=query.or(`created_at.lt.${before.createdAt},and(created_at.eq.${before.createdAt},id.lt.${before.id})`);
+ const {data,error}=await readWithSignal(query,signal);if(error)throw error;
+ const raw=data??[],rows=await filterVisibleRows(raw,userId,signal);
+ const {likedIds,repostedIds}=await getViewerReactions(userId,rows,signal);
+ const last=raw[raw.length-1];
+ return {posts:rows.map(row=>rowToPost(row,likedIds,repostedIds)),nextCursor:raw.length===8?{createdAt:last.created_at,id:last.id}:null};
 }
 
 /**
@@ -405,6 +420,7 @@ export async function getPostById(id: string, context?: AccountReadContext): Pro
 }
 
 export async function createPost(input: {
+  video?:PreparedVideo;
   scheduledAt?:string;
   poll?:PollDraft;
   mapLocation?: MapLocation | null;
@@ -434,8 +450,10 @@ export async function createPost(input: {
   if (!userId) throw new Error('ログインしてください');
   const { data: privacy, error: privacyError } = await supabase.from('profiles').select('is_private').eq('id', userId).single();
   if (privacyError) throw privacyError;
+  if(input.video&&(input.imageUrls.length||input.poll))throw new Error('動画は画像・投票と同時に添付できません');
   const finalImageUrls = await uploadPostMedia(input.imageUrls, userId, newId, !!input.scheduledAt || privacy?.is_private === true || input.visibility === 'following');
 
+  const savedVideo=input.video?await uploadPostVideo(input.video,newId):undefined;
   const preparedPoll=input.poll?await preparePoll(input.poll,newId):undefined;
   const MENTION_PATTERN = /@(\w+)/g;
   const mentionedUsernames = Array.from(new Set([...input.content.matchAll(MENTION_PATTERN)].map(match => match[1])));
@@ -445,6 +463,7 @@ export async function createPost(input: {
     user_id:     userId,
     content:     input.content,
     image_urls:  finalImageUrls,
+    ...(savedVideo?{video:savedVideo}:{}),
     ...(preparedPoll?{poll:preparedPoll}:{}),
     client_name: clientSource,
     parent_id:   externalParent || replyParent ? null : input.parentId || null,
@@ -459,7 +478,7 @@ export async function createPost(input: {
     ? await supabase.rpc('save_scheduled_post',{post_id:newId,send_at:input.scheduledAt,payload})
     : await supabase.from('posts').insert(payload);
 
-  if(error){if(preparedPoll)await discardPollImages(preparedPoll.options.flatMap(option=>option.image?[option.image]:[]));throw error;}
+  if(error){if(savedVideo)await discardPostVideo(savedVideo);if(preparedPoll)await discardPollImages(preparedPoll.options.flatMap(option=>option.image?[option.image]:[]));throw error;}
 
   if(input.scheduledAt) return {...payload,poll:undefined,scheduledAt:input.scheduledAt,userId,content:input.content,imageUrls:finalImageUrls,createdAt:new Date().toISOString(),likesCount:0,commentsCount:0,repostsCount:0,likedByMe:false,repostedByMe:false,author:{id:userId,username:'',displayName:'',avatarUrl:'',bio:'',coverUrl:'',createdAt:''}};
 
@@ -531,6 +550,9 @@ export async function toggleRepost(postId: string): Promise<{ reposted: boolean;
 
 export async function deletePost(postId: string): Promise<void> {
   const userId = await getCurrentUserId();
+  const {data:post,error:readError}=await supabase.from('posts').select('id,video').eq('id',postId).eq('user_id',userId).maybeSingle();
+  if(readError)throw readError;
+  if(post?.video){await deleteVideoPost(postId);return;}
   const { error } = await supabase.from('posts').delete().eq('id', postId).eq('user_id', userId);
   if (error) throw error;
 }

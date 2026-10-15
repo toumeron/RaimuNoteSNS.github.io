@@ -191,7 +191,7 @@ export const useCreatePost = () => {
       toast.success('投稿しました');
     },
     onError: (error, input) => toast.error(input.mapLocation && ['42703', 'PGRST204'].includes(String((error as {code?:string}).code))
-      ? '位置付きポストの保存設定が未適用です。' : '投稿に失敗しました。もう一度お試しください。'),
+      ? '位置付きポストの保存設定が未適用です。' : input.video ? (['42703','PGRST204'].includes(String((error as {code?:string}).code)) ? '動画投稿の保存設定が未適用です。' : (error as Error).message || '動画を投稿できませんでした') : '投稿に失敗しました。もう一度お試しください。'),
   });
 };
 

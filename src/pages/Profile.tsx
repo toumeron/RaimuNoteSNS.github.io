@@ -1,3 +1,6 @@
+import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
+import {twitterAvatarUrl} from '@/lib/twitterAvatar';
+import {PostVideoThumbnail} from '@/components/video/PostVideoThumbnail';
 import { PostPoll } from '@/components/feed/PostPoll';
 import { SuspensionNotice } from '@/components/account/AccountSuspension';
 import { collectProfilePages } from "@/lib/profileReplyThreads";
@@ -115,13 +118,13 @@ const canShowParentPostInsideProfileReplies = ({
 // 外部リンクへ飛ばさずに内容（本文・画像・埋め込み）はそのまま表示しつつ、
 // プロフィール遷移やリアクション・返信などの実操作だけBluesky側で行ってもらう。
 type BlueskyPostFields = {
-  source?: 'lime' | 'bluesky' | 'misskey';
+  source?: 'lime' | 'bluesky' | 'misskey' | 'x';
   blueskyUrl?: string;
   blueskyUri?: string;
 };
 
 const isBlueskyPostLike = (post: { id?: string; source?: string }) => (
-  post.source === 'bluesky' || (String(post.id || '').startsWith('bsky:') || String(post.id || '').startsWith('misskey:'))
+  post.source === 'bluesky' || (String(post.id || '').startsWith('bsky:') || String(post.id || '').startsWith('misskey:') || /^x:\d+$/.test(String(post.id || '')))
 );
 
 const getBlueskyPostUrl = (post: Pick<BlueskyPostFields, 'blueskyUrl'> & { author?: { username?: string }; id?: string }) => {
@@ -692,8 +695,8 @@ const normalizeAuthor = (author: any, fallbackUserId = ''): any => {
     display_name: safeDisplayName,
     displayName: safeDisplayName,
     bio: author?.bio ?? '',
-    avatar_url: author?.avatar_url ?? author?.avatarUrl ?? null,
-    avatarUrl: author?.avatarUrl ?? author?.avatar_url ?? null,
+    avatar_url: twitterAvatarUrl(author?.avatar_url ?? author?.avatarUrl) ?? null,
+    avatarUrl: twitterAvatarUrl(author?.avatarUrl ?? author?.avatar_url) ?? null,
     cover_url: author?.cover_url ?? author?.coverUrl ?? null,
     coverUrl: author?.coverUrl ?? author?.cover_url ?? null,
     created_at: author?.created_at ?? author?.createdAt ?? new Date().toISOString(),
@@ -1055,6 +1058,7 @@ const ProfileThreadAuthorLine = memo(function ProfileThreadAuthorLine({
             {displayName}
           </span>
           {!!(author?.isPrivate ?? author?.is_private) && <PrivateAccountBadge />}
+          <ProviderVerificationBadge verification={author?.providerVerification} className="h-4 w-4 shrink-0 transform translate-y-[0.5px]"/>
           {isOfficial && (
             <img
               src={`${import.meta.env.BASE_URL}verified.png`}
@@ -2370,7 +2374,7 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
             {isParentBluesky && (
               <div className="flex items-center gap-1 mt-1.5 text-muted-foreground/70">
                 <Globe className="h-3.5 w-3.5" />
-                <span className="text-[15px] font-medium">{parent?.id.startsWith('misskey:') ? 'Misskey' : 'Bluesky'}</span>
+                <span className="text-[15px] font-medium">{parent?.id.startsWith('x:') ? 'twitter' : parent?.id.startsWith('misskey:') ? 'Misskey' : 'Bluesky'}</span>
               </div>
             )}
 
@@ -2533,7 +2537,7 @@ const ProfileVirtualizedMediaImage = memo(function ProfileVirtualizedMediaImage(
     <div ref={ref} className="h-full w-full">
       {inView ? (
         <img
-          src={src}
+          referrerPolicy={/^https:\/\/pbs[.]twimg[.]com\//.test(src)?'no-referrer':undefined} src={src}
           alt=""
           className="h-full w-full object-cover"
           loading="lazy"
@@ -3028,7 +3032,7 @@ export default function Profile() {
   });
   const pinQuery=useQuery({queryKey:profilePinKey(user?.id??''),queryFn:()=>getProfilePin(user!.id),enabled:!!user?.id&&!isBlueskyProfile&&activeTab==='posts'});
   const pinnedPostQuery=useQuery({queryKey:['profile-pinned-post',user?.id,pinQuery.data,viewer?.id],queryFn:()=>getPostById(pinQuery.data!),enabled:!!pinQuery.data&&!isBlueskyProfile&&activeTab==='posts'});
-  const pinnedPost=postSort==='latest'&&activeTab==='posts'&&pinnedPostQuery.data?.userId===user?.id?pinnedPostQuery.data:null;
+  const pinnedPost=postSort==='latest'&&activeTab==='posts' ? (isBlueskyProfile ? normalizePost(blueskyFeed?.posts.find(post=>post.externalPinned&&post.userId===user?.id&&!post.profileRepostedBy)) : pinnedPostQuery.data?.userId===user?.id?pinnedPostQuery.data:null) : null;
   const likesQuery = useUserLikesInfinite(!isBlueskyProfile && activeTab === 'likes' ? user?.id : undefined);
   const mediaQuery = useUserMediaInfinite(!isBlueskyProfile && activeTab === 'media' ? user?.id : undefined);
   const reactionsQuery = useUserReactionsInfinite(!isBlueskyProfile && activeTab === 'reactions' ? user?.id : undefined);
@@ -3204,6 +3208,7 @@ export default function Profile() {
         const extractedImages = typeof p.content === 'string' ? p.content.match(imageRegex) || [] : [];
         const allUrls = Array.from(new Set([...dbImages, ...extractedImages]));
 
+        if(p.video || p.externalVideo)return [{post:p,displayImageUrl:'',displayImageKey:`${p.id}-video`,isMulti:false,isVideo:true}];
         if (allUrls.length === 0) return [];
 
         // 画像1枚ごとに投稿本体を複製すると、画像の多い投稿ほどメモリを消費する。
@@ -3481,14 +3486,14 @@ export default function Profile() {
 
           {!profilePostsLoading && pinnedPost && <div className="animate-float-up"><PostCard post={pinnedPost} pinned/></div>}
           {!profilePostsLoading && (activeTab === 'media' ? (
-            <div className="grid grid-cols-3 gap-1 px-0 md:gap-2">
+            <div data-lime-profile-media-grid className="grid grid-cols-3 gap-1 px-0 sm:px-4 md:gap-2">
               {items.map((p: any, idx: number) => (
                 <div
                   key={`media-${p.displayImageKey ?? `${p.post?.id ?? p.id}-${idx}`}`}
                   className="relative aspect-square cursor-pointer overflow-hidden rounded-md bg-muted animate-float-up md:rounded-xl"
-                  onClick={() => openMediaViewer({ url: p.displayImageUrl, post: p.post })}
+                  onClick={() => p.isVideo ? openMediaViewer({url:`video:${p.post.id}`,post:p.post,postId:p.post.id,video:{postId:p.post.id,video:(p.post.video || p.post.externalVideo)!,externalVideo:p.post.externalVideo}}) : openMediaViewer({ url: p.displayImageUrl, post: p.post })}
                 >
-                  <ProfileVirtualizedMediaImage src={p.displayImageUrl} />
+                  {p.isVideo?<PostVideoThumbnail postId={p.post.id} duration={(p.post.video || p.post.externalVideo)!.duration} thumbnail={p.post.externalVideo?.thumbnail} external={!!p.post.externalVideo}/>:<ProfileVirtualizedMediaImage src={p.displayImageUrl} />}
 
                   {p.isMulti && (
                     <div className="absolute right-1.5 top-1.5 rounded-md bg-black/40 p-1 backdrop-blur-sm">
@@ -3508,7 +3513,7 @@ export default function Profile() {
                     <ProfileVirtualizedListItem rowKey={rowKey} heightCache={rowHeightCacheRef}>
                       <ProfileReplyThreadCard
                         thread={item.reply}
-                        onImageClick={selection => openMediaViewer({ url: selection.url, postId: selection.targetType === 'comment' ? (selection.targetId.startsWith('bsky:') || selection.targetId.startsWith('misskey:') ? selection.targetId : `reply:${selection.targetId}`) : selection.targetId })}
+                        onImageClick={selection => openMediaViewer({ url: selection.url, postId: selection.targetType === 'comment' ? (selection.targetId.startsWith('bsky:') || selection.targetId.startsWith('misskey:') || /^x:\d+$/.test(selection.targetId) ? selection.targetId : `reply:${selection.targetId}`) : selection.targetId })}
                         onImageError={handleThreadImageError}
                       />
                     </ProfileVirtualizedListItem>

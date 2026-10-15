@@ -1,3 +1,7 @@
+import {PostVideoThumbnail} from '@/components/video/PostVideoThumbnail';
+import {twitterSearchQuery} from '@/lib/twitterSearch';
+import {normalizeTimelineBlueskyPost} from '@/lib/timelinePaging';
+import {searchX,searchXPage,xPostId} from '@/lib/fxTwitter';
 import {searchProfileUser} from '@/lib/accountSearch';
 import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 import {searchMisskey,misskeyEnabled} from '@/lib/misskey';
@@ -81,7 +85,7 @@ export const normalizeText = (s: string): string => {
 // パース結果
 // ---------------------------------------------------------------------------
 export type MediaFilter = 'any' | 'image' | 'video';
-export type SearchSource = 'all' | 'lime' | 'bluesky' | 'misskey';
+export type SearchSource = 'all' | 'lime' | 'bluesky' | 'misskey' | 'x';
 
 export interface SearchChip {
   label: string;
@@ -96,6 +100,7 @@ export interface ParsedSearch {
   excludes: string[];
   from: string[];
   notFrom: string[];
+  to: string[];
   bareHandle: string | null; // クエリ全体が "@handle" だけのとき
   since: Date | null;
   until: Date | null;
@@ -183,6 +188,7 @@ const createEmptyParsed = (raw: string): ParsedSearch => ({
   excludes: [],
   from: [],
   notFrom: [],
+  to: [],
   bareHandle: null,
   since: null,
   until: null,
@@ -211,6 +217,7 @@ function applyOperator(p: ParsedSearch, key: string, value: string, neg: boolean
   const warn = (msg: string) => p.warnings.push(`${token} ${msg}`);
 
   switch (key) {
+    case 'to': { if(!neg){p.to.push(value.replace(/^@+/, '').toLowerCase());p.chips.push(chip);}return; }
     case 'from': {
       const name = value.replace(/^@+/, '').toLowerCase();
       if (!name) return;
@@ -267,8 +274,9 @@ function applyOperator(p: ParsedSearch, key: string, value: string, neg: boolean
       if (neg) return warn('は否定できません');
       if (v === 'lime' || v === 'local' || v === 'limenote') p.source = 'lime';
       else if (v === 'bluesky' || v === 'bsky') p.source = 'bluesky';
+      else if (v === 'x' || v === 'twitter') p.source = 'x';
       else if (v === 'misskey') p.source = 'misskey';
-      else return warn('は未対応です(lime / bluesky / misskey)');
+      else return warn('は未対応です(lime / bluesky / misskey / twitter)');
       p.chips.push(chip);
       return;
     }
@@ -322,7 +330,7 @@ export function parseSearchQuery(raw: string): ParsedSearch {
         const name = value.replace(/^@+/, '');
         if (!name) continue;
         if (neg) p.excludes.push(`@${name}`);
-        else items.push({ value: `@${name}`, phrase: false, token, orWithPrev: false });
+        else {p.to.push(name.toLowerCase());items.push({ value: `@${name}`, phrase: false, token, orWithPrev: false });}
         p.chips.push({ label: token, tokens: [token] });
         continue;
       }
@@ -448,7 +456,7 @@ export function getPostMedia(post: {
   // Bluesky投稿にYouTubeリンクが含まれると、Bluesky側の外部リンクカードの
   // サムネイルが imageUrls に入ってくる。PostCard と同様に、その場合は画像として数えず
   // YouTube 埋め込みだけを対象にする。
-  const isBlueskyPost = /^(bsky:|misskey:)/.test(String(post.id || ''));
+  const isBlueskyPost = /^(bsky:|misskey:|x:)/.test(String(post.id || ''));
   if (isBlueskyPost && youtubeIds.length > 0) {
     return { images: [], youtubeIds };
   }
@@ -494,10 +502,11 @@ export function postMatchesSearch(post: PostWithAuthor, p: ParsedSearch, opts: M
   }
 
   if (!opts.skipFrom) {
-    if (p.from.length > 0 && !p.from.includes(username)) return false;
-    if (p.notFrom.includes(username)) return false;
+    if (p.from.length > 0 && !p.from.includes(username) && !(post.source==='x'&&p.from.some(name=>name.replace(/@(?:x|twitter)\.com$/,'')===username.replace(/@(?:x|twitter)\.com$/,'')))) return false;
+    if (p.notFrom.includes(username) || post.source==='x'&&p.notFrom.some(name=>name.replace(/@(?:x|twitter)\.com$/,'')===username.replace(/@(?:x|twitter)\.com$/,''))) return false;
   }
 
+  if(!opts.trustServerTerms&&p.to.length&&!p.to.some(name=>content.includes(`@${name}`)))return false;
   const time = new Date(post.createdAt).getTime();
   if (p.since && time < p.since.getTime()) return false;
   const untilISO = getUntilExclusiveISO(p);
@@ -506,11 +515,11 @@ export function postMatchesSearch(post: PostWithAuthor, p: ParsedSearch, opts: M
   const likes = post.likesCount || 0;
   if (p.minLikes !== null && likes < p.minLikes) return false;
   if (p.maxLikes !== null && likes > p.maxLikes) return false;
-  if (p.minReposts !== null && (post.repostsCount || 0) < p.minReposts) return false;
+  if (p.minReposts !== null && (post.source==='x'?post.externalDetails?.reposts??0:post.repostsCount||0) < p.minReposts) return false;
 
   const { images, youtubeIds } = getPostMedia(post as any);
   const hasImage = images.length > 0;
-  const hasVideo = youtubeIds.length > 0;
+  const hasVideo = youtubeIds.length > 0 || !!post.video || !!post.externalVideo;
   if (p.media === 'any' && !hasImage && !hasVideo) return false;
   if (p.media === 'image' && !hasImage) return false;
   if (p.media === 'video' && !hasVideo) return false;
@@ -541,7 +550,7 @@ export interface AdvancedForm {
   minLikes: string;
   maxLikes: string;
   minReposts: string;
-  source: '' | 'lime' | 'bluesky' | 'misskey';
+  source: '' | 'lime' | 'bluesky' | 'misskey' | 'x';
 }
 
 export const EMPTY_FORM: AdvancedForm = {
@@ -662,7 +671,7 @@ export function SearchAdvancedPanel({
 // ===========================================================================
 type MediaTile = {
   key: string;
-  type: 'image' | 'youtube';
+  type: 'image' | 'youtube' | 'video';
   src: string; // 画像URL or サムネイルURL
   youtubeId?: string;
   indexInPost: number;
@@ -686,7 +695,8 @@ function SearchMediaGrid({ posts }: SearchMediaGridProps) {
 
     for (const post of posts) {
       const { images, youtubeIds } = getPostMedia(post as any);
-      const total = images.length + youtubeIds.length;
+      const total = images.length + youtubeIds.length + (post.video || post.externalVideo ? 1 : 0);
+      if(post.video || post.externalVideo)result.push({key:`${post.id}:video`,type:'video',src:post.externalVideo?.thumbnail??'',indexInPost:0,totalInPost:total,post});
       let index = 0;
 
       for (const src of images) {
@@ -713,16 +723,16 @@ function SearchMediaGrid({ posts }: SearchMediaGridProps) {
           <button
             key={tile.key}
             type="button"
-            onClick={() => openMediaViewer({ url: tiles[index].src, post: tiles[index].post, media: tiles.filter(tile => tile.post.id === tiles[index].post.id).map(tile => ({ src: tile.src, type: tile.type, youtubeId: tile.youtubeId })) })}
+            onClick={() => tile.type==='video' ? openMediaViewer({url:`video:${tile.post.id}`,post:tile.post,postId:tile.post.id,video:{postId:tile.post.id,video:(tile.post.video||tile.post.externalVideo)!,externalVideo:tile.post.externalVideo}}) : openMediaViewer({ url: tiles[index].src, post: tiles[index].post, media: tiles.filter(tile => tile.post.id === tiles[index].post.id).map(tile => ({ src: tile.src, type: tile.type, youtubeId: tile.youtubeId })) })}
             className="group relative aspect-square overflow-hidden bg-black/5 dark:bg-white/10"
-            aria-label={tile.type === 'youtube' ? '動画を開く' : '画像を開く'}
+            aria-label={tile.type !== 'image' ? '動画を開く' : '画像を開く'}
           >
-            <img
-              src={tile.src}
+            {tile.type==='video'?<PostVideoThumbnail postId={tile.post.id} duration={(tile.post.video||tile.post.externalVideo)!.duration} external={!!tile.post.externalVideo} thumbnail={tile.post.externalVideo?.thumbnail}/>:<img
+              referrerPolicy={/^https:\/\/pbs[.]twimg[.]com\//.test(tile.src)?'no-referrer':undefined} src={tile.src}
               alt=""
               loading="lazy"
               className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
-            />
+            />}
             {tile.type === 'youtube' && (
               <span className="absolute inset-0 flex items-center justify-center bg-black/20">
                 <span className="flex h-10 w-10 items-center justify-center rounded-full bg-black/65 text-white">
@@ -768,6 +778,9 @@ interface FeedState {
   items: PostWithAuthor[];
   remaining:PostWithAuthor[];
   localHasMore:boolean;
+  twitterCursor?:string|null;
+  twitterDone?:boolean;
+  twitterError?:string;
   page: number;
   hasMore: boolean;
   loading: boolean;
@@ -816,6 +829,7 @@ const toUser = (u: any): User => ({
   createdAt: u.createdAt,
   bio: u.bio,
   isOfficial: false,
+  providerVerification: u.providerVerification,
 });
 
 type BlueskyResult = { posts: any[]; users: any[] };
@@ -903,11 +917,13 @@ function SearchResults({
 
     const query=text.trim().replace(/^@+/, '');
     const jobs:Promise<BlueskyResult>[]=[];
-    if (parsed.source!=='misskey' && !(includePosts && excludeBlueskyPosts)) jobs.push(searchBluesky(query,{includePosts,signal:searchControllerRef.current.signal}) as unknown as Promise<BlueskyResult>);
-    if (parsed.source!=='bluesky' && misskeyEnabled()) jobs.push(searchMisskey(query,includePosts,searchControllerRef.current.signal) as unknown as Promise<BlueskyResult>);
+    if (parsed.source!=='x' && parsed.source!=='misskey' && !(includePosts && excludeBlueskyPosts)) jobs.push(searchBluesky(query,{includePosts,signal:searchControllerRef.current.signal}) as unknown as Promise<BlueskyResult>);
+    if (parsed.source!=='x' && parsed.source!=='bluesky' && misskeyEnabled()) jobs.push(searchMisskey(query,includePosts,searchControllerRef.current.signal) as unknown as Promise<BlueskyResult>);
+    if (!includePosts && parsed.source!=='bluesky' && parsed.source!=='misskey') jobs.push(searchX(query,includePosts,searchControllerRef.current.signal) as unknown as Promise<BlueskyResult>);
     const signal=searchControllerRef.current.signal;
     const promise=Promise.allSettled(jobs).then(results=>{
       if(signal.aborted){blueskyCacheRef.current.delete(key);throw signal.reason;}
+      if(parsed.source==='x'&&results.length&&results.every(result=>result.status==='rejected')){blueskyCacheRef.current.delete(key);throw (results[0] as PromiseRejectedResult).reason;}
       return results.reduce<BlueskyResult>((merged,result)=>{
       if (result.status==='fulfilled') { merged.posts.push(...result.value.posts);merged.users.push(...result.value.users); }
       else {blueskyCacheRef.current.delete(key);console.warn('External search failed',result.reason);}
@@ -952,7 +968,7 @@ function SearchResults({
   const fetchLocalPosts = useCallback(
     async (p: ParsedSearch, page: number, mode: FeedMode): Promise<{ items: PostWithAuthor[]; hasMore: boolean }> => {
       const empty = { items: [] as PostWithAuthor[], hasMore: false };
-      if (p.source === 'bluesky' || p.source === 'misskey') return empty;
+      if (p.source === 'bluesky' || p.source === 'misskey' || p.source === 'x') return empty;
 
       const resolveIds = (names: string[]) =>
         names.map((n) => usersByUsername.get(n.toLowerCase())?.id).filter((id): id is string => !!id);
@@ -972,7 +988,7 @@ function SearchResults({
 
       let q: any = supabase
         .from('posts')
-        .select('id, content, image_urls, created_at, user_id, likes_count, reposts_count, visibility');
+        .select('id, content, image_urls, video, created_at, user_id, likes_count, reposts_count, visibility');
 
       const clauses: string[][] = [];
 
@@ -1056,6 +1072,7 @@ function SearchResults({
           content: row.content ?? '',
           imageUrl: row.image_urls?.[0] || null,
           imageUrls: row.image_urls || [],
+          video: row.video,
           createdAt: row.created_at,
           likesCount: row.likes_count || 0,
           repostsCount: row.reposts_count || 0,
@@ -1095,7 +1112,7 @@ function SearchResults({
       const normalize=(result:BlueskyResult)=>{
         const posts=result.posts.map((post)=>({...post,repostsCount:0,repostedByMe:false,author:{...post.author,coverUrl:''}})) as PostWithAuthor[];
         posts.forEach(post=>blueskyIdsRef.current.add(post.id));
-        return posts.filter(post=>postMatchesSearch(post,p,{trustServerTerms:post.source!=='misskey'}));
+        return posts.filter(post=>post.source==='x'&&xPostId(text)===post.id || postMatchesSearch(post,p,{trustServerTerms:post.source!=='misskey'}));
       };
       const result=await getBluesky(text,true);
       return normalize(result);
@@ -1115,6 +1132,11 @@ function SearchResults({
         // 次のページを読み進める。以前は0件のまま「見つかりません」を表示し、
         // 無限スクロール用の要素も出なくなるため、続きが永久に読み込まれなかった
         // (メディアタブでBlueskyを除外すると、LimeNoteの画像投稿があっても何も出ない原因)。
+        const previousTwitter=feedsRef.current[mode];
+        const twitterQuery=twitterSearchQuery(effective);
+        const twitterRequest=(effective.source==='all'||effective.source==='x')&&twitterQuery&&(page===0||!previousTwitter.twitterDone)
+          ? searchXPage(twitterQuery,{cursor:page===0?null:previousTwitter.twitterCursor,feed:mode,signal:searchControllerRef.current.signal}).then(result=>({...result,error:null as unknown}),error=>({posts:[],cursor:null,error}))
+          : Promise.resolve({posts:[],cursor:null,error:null as unknown});
         const extraRequest=(page===0 ? fetchBlueskyPosts(effective):Promise.resolve([] as PostWithAuthor[])).catch(error=>{if(!searchControllerRef.current.signal.aborted)console.warn('External search failed',error);return [] as PostWithAuthor[];});
         let currentPage = page;
         let local = page===0 || feedsRef.current[mode].localHasMore ? await fetchLocalPosts(effective,currentPage,mode):{items:[] as PostWithAuthor[],hasMore:false};
@@ -1126,18 +1148,20 @@ function SearchResults({
           local = await fetchLocalPosts(effective, currentPage, mode);
         }
 
-        const extra = await extraRequest;
+        const [extra,twitter]=await Promise.all([extraRequest,twitterRequest]);
+        if(twitter.error&&effective.source==='x')throw twitter.error;
+        const twitterPosts=twitter.posts.map(normalizeTimelineBlueskyPost).filter(post=>postMatchesSearch(post,effective,{trustServerTerms:true}));
         if (token !== tokenRef.current[mode]) return;
 
         setFeeds(prev=>{
           const previous=prev[mode];
           const shown=new Set(page===0 ? []:previous.items.map(post=>post.id));
-          const candidates=sortPosts([...(page===0 ? []:previous.remaining),...local.items,...extra],mode).filter(post=>!shown.has(post.id));
+          const candidates=sortPosts([...(page===0 ? []:previous.remaining),...local.items,...extra,...twitterPosts],mode).filter(post=>!shown.has(post.id));
           const batch=candidates.slice(0,PAGE_SIZE),remaining=candidates.slice(PAGE_SIZE);
           return {...prev,[mode]:{
             items:page===0 ? batch:[...previous.items,...batch],
-            remaining,localHasMore:local.hasMore,
-            page:currentPage,hasMore:local.hasMore || remaining.length>0,
+            remaining,localHasMore:local.hasMore,twitterCursor:twitter.cursor,twitterDone:!twitter.cursor,twitterError:twitter.error?(twitter.error instanceof Error?twitter.error.message:'twitterの検索結果を取得できませんでした'):undefined,
+            page:currentPage,hasMore:local.hasMore || remaining.length>0 || !!twitter.cursor,
             loading:false,loaded:true,error:null,
           }};
         });
@@ -1222,7 +1246,7 @@ function SearchResults({
 
   const searchableUsers = useMemo(() => {
     const byId = new Map<string, User>();
-    const list = (parsed.source === 'bluesky' || parsed.source === 'misskey') ? blueskyUsers : [...allUsers, ...blueskyUsers];
+    const list = (parsed.source === 'bluesky' || parsed.source === 'misskey' || parsed.source === 'x') ? blueskyUsers : [...allUsers, ...blueskyUsers];
     list.forEach((u) => byId.set(u.id, u));
     return Array.from(byId.values());
   }, [allUsers, blueskyUsers, parsed.source]);
@@ -1320,6 +1344,7 @@ function SearchResults({
         <div className="flex flex-col items-center gap-3 px-8 pb-8 pt-16 text-center">
           <AlertTriangle className="h-8 w-8 text-amber-500" />
           <p className="text-[15px] text-[rgb(83,100,113)] dark:text-gray-400">{currentFeed.error}</p>
+          {parsed.source==='x'&&<a className="text-sm text-primary hover:underline" target="_blank" rel="noopener noreferrer" href={`https://twitter.com/search?${new URLSearchParams({q:twitterSearchQuery(parsed),f:m==='top'?'top':'live'})}`}>twitterで検索する</a>}
           <button type="button" onClick={() => retry(m)} className="rounded-full bg-primary px-5 py-2 text-[14px] font-bold text-white hover:opacity-90">
             もう一度試す
           </button>
@@ -1348,6 +1373,7 @@ function SearchResults({
         {m === 'top' && (
           <div className="px-4 pb-1 text-[12px] text-[rgb(83,100,113)] dark:text-gray-400"></div>
         )}
+        {currentFeed?.twitterError&&<p role="status" className="px-4 py-2 text-sm text-muted-foreground">{currentFeed.twitterError}</p>}
         {currentFeed!.items.map((post) => (
           <div key={post.id} className="bg-transparent sm:overflow-hidden sm:rounded-xl sm:transition-colors sm:hover:bg-black/[0.01] sm:dark:hover:bg-white/[0.02]">
             <PostCard post={post} />

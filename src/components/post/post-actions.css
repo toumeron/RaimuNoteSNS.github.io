@@ -146,3 +146,9 @@
 }
 @keyframes lime-post-sheet-enter { from { translate: 0 100%; } to { translate: 0 0; } }
 @media (prefers-reduced-motion: reduce) { .lime-post-action-sheet { animation: none; } }
+
+/* All action counts follow the existing like count typography. */
+:is([data-lime-post-actions], [data-lime-comment-actions]) .tabular-nums { font-size:14px; font-weight:700; }
+@media(max-width:639px) {
+  :is([data-lime-post-actions], [data-lime-comment-actions]) .tabular-nums { font-size:15px; }
+}

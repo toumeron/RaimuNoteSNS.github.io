@@ -3,7 +3,7 @@ import { getCurrentUserId } from '@/lib/currentUser';
 import { fetchBlueskyPost } from '@/lib/bluesky';
 import type { PostWithAuthor } from '@/types';
 
-export const isExternalPostId = (id: string) => id.startsWith('bsky:at://') || /^misskey:https:\/\/misskey[.]io\/notes\/[A-Za-z0-9]+$/.test(id);
+export const isExternalPostId = (id: string) => id.startsWith('bsky:at://') || /^x:\d{2,20}$/.test(id) || /^misskey:https:\/\/misskey[.]io\/notes\/[A-Za-z0-9]+$/.test(id);
 
 export async function getExternalRepostState(postId: string) {
   const userId = await getCurrentUserId();

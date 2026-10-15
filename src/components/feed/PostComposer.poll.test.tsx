@@ -2,7 +2,9 @@ import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
 import {render,screen,fireEvent,waitFor,cleanup} from '@testing-library/react';
 import {MemoryRouter} from 'react-router-dom';
 import {beforeEach,afterEach,it,expect,vi} from 'vitest';
-const mocks=vi.hoisted(()=>({submit:vi.fn()}));
+const mocks=vi.hoisted(()=>({submit:vi.fn(),prepare:vi.fn()}));
+vi.mock('@/lib/postVideo',()=>({preparePostVideo:(...args:unknown[])=>mocks.prepare(...args)}));
+vi.mock('@/components/video/PostVideoPlayer',()=>({PostVideoPlayer:()=> <div aria-label="動画プレビュー"/>}));
 vi.mock('@/hooks/useAuth',()=>({AuthProvider:()=>null,useAuth:()=>({user:{id:'viewer',username:'viewer',displayName:'Viewer'}})}));
 vi.mock('@/hooks/useFeed',()=>({useCreatePost:()=>({mutateAsync:mocks.submit,isPending:false})}));
 vi.mock('@/pages/Feed',()=>({default:()=>null}));
@@ -36,7 +38,7 @@ it.each(['inline','overlay','fullscreen'])('submits an image without requiring b
  try{
   const view=render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><MemoryRouter>{variant==='inline'?<PostComposer/>:<OverlayComposer fullScreen={variant==='fullscreen'}/>}</MemoryRouter></QueryClientProvider>);
   const submit=screen.getByRole('button',{name:variant==='fullscreen'?'ポストする':'ポスト'});expect(submit).toBeDisabled();
-  fireEvent.change(view.container.querySelector('input[type="file"][accept="image/*"]')!,{target:{files:[new File(['image'],'photo.png',{type:'image/png'})]}});
+  fireEvent.change(view.container.querySelector('input[type="file"][accept^="image/*"]')!,{target:{files:[new File(['image'],'photo.png',{type:'image/png'})]}});
   await waitFor(()=>expect(submit).toBeEnabled());expect(screen.getByLabelText('ポスト本文')).toHaveValue('');fireEvent.click(submit);
   await waitFor(()=>expect(mocks.submit).toHaveBeenCalledWith(expect.objectContaining({content:'',imageUrls:['blob:only-image']})));
  }finally{URL.createObjectURL=original;}
@@ -49,4 +51,37 @@ it.each(['inline','overlay','fullscreen'])('saves a scheduled post from the %s c
  fireEvent.click(screen.getByRole('button',{name:'確認する'}));
  fireEvent.click(screen.getByRole('button',{name:mode==='inline'?'ポスト':'予約する'}));
  await waitFor(()=>expect(mocks.submit).toHaveBeenCalledWith(expect.objectContaining({content:'予約する本文',scheduledAt:expect.any(String)})));
+});
+
+it.each(['inline','overlay','fullscreen'])('submits a video without body text through the image button (%s)',async variant=>{
+ const video={file:new File(['encoded'],'video.mp4',{type:'video/mp4'}),url:'blob:prepared-video',duration:8,width:1280,height:720};mocks.prepare.mockResolvedValue(video);
+ const view=render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><MemoryRouter>{variant==='inline'?<PostComposer/>:<OverlayComposer fullScreen={variant==='fullscreen'}/>}</MemoryRouter></QueryClientProvider>);
+ const input=view.container.querySelector('input[type="file"][accept^="image/*"]')!;expect(input.getAttribute('accept')).toContain('video/mp4');
+ fireEvent.change(input,{target:{files:[new File(['source'],'clip.mov',{type:'video/quicktime'})]}});
+ await waitFor(()=>expect(screen.getByLabelText('動画プレビュー')).toBeInTheDocument());expect(screen.getByRole('button',{name:'投票を追加'})).toBeDisabled();
+ const submit=screen.getByRole('button',{name:variant==='fullscreen'?'ポストする':'ポスト'});expect(submit).toBeEnabled();fireEvent.click(submit);
+ await waitFor(()=>expect(mocks.submit).toHaveBeenCalledWith(expect.objectContaining({content:'',imageUrls:[],video})));
+ await waitFor(()=>expect(screen.queryByLabelText('動画プレビュー')).not.toBeInTheDocument());
+});
+it('rejects a mixed image/video selection before conversion',async()=>{
+ const view=render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><PostComposer/></MemoryRouter></QueryClientProvider>);
+ fireEvent.change(view.container.querySelector('input[type="file"][accept^="image/*"]')!,{target:{files:[new File(['v'],'v.mp4',{type:'video/mp4'}),new File(['i'],'i.png',{type:'image/png'})]}});
+ expect(mocks.prepare).not.toHaveBeenCalled();expect(mocks.submit).not.toHaveBeenCalled();
+});
+it.each(['inline','overlay','fullscreen'])('accepts a dropped video with missing MIME type through the same conversion (%s)',async variant=>{
+ const file=new File(['source'],'clip.MOV'),video={file:new File(['encoded'],'video.mp4',{type:'video/mp4'}),url:'blob:dropped-video',duration:16,width:1280,height:720};mocks.prepare.mockResolvedValue(video);
+ const view=render(<QueryClientProvider client={new QueryClient()}><MemoryRouter>{variant==='inline'?<PostComposer/>:<OverlayComposer fullScreen={variant==='fullscreen'}/>}</MemoryRouter></QueryClientProvider>);
+ const zone=view.container.querySelector('[data-lime-media-dropzone]')!;expect(zone).toContainElement(screen.getByLabelText('ポスト本文'));
+ const transfer={files:[file],types:['Files'],items:[{kind:'file'}],dropEffect:'none'};
+ expect(fireEvent.dragOver(zone,{dataTransfer:transfer})).toBe(false);expect(transfer.dropEffect).toBe('copy');
+ expect(fireEvent.drop(screen.getByLabelText('ポスト本文'),{dataTransfer:transfer})).toBe(false);
+ await waitFor(()=>expect(screen.getByLabelText('動画プレビュー')).toBeInTheDocument());expect(mocks.prepare).toHaveBeenCalledWith(file,expect.any(Function),expect.any(AbortSignal));
+ fireEvent.click(screen.getByRole('button',{name:variant==='fullscreen'?'ポストする':'ポスト'}));await waitFor(()=>expect(mocks.submit).toHaveBeenCalledWith(expect.objectContaining({video,content:''})));
+});
+it('prevents another dropped file while conversion is in progress',async()=>{
+ let finish!:(value:unknown)=>void;mocks.prepare.mockImplementation(()=>new Promise(resolve=>{finish=resolve;}));
+ const view=render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><PostComposer/></MemoryRouter></QueryClientProvider>);
+ const drop=()=>fireEvent.drop(view.container.querySelector('[data-lime-media-dropzone]')!,{dataTransfer:{files:[new File(['v'],'clip.mp4',{type:'video/mp4'})],types:['Files']}});
+ drop();await waitFor(()=>expect(screen.getByRole('status')).toBeInTheDocument());drop();expect(mocks.prepare).toHaveBeenCalledTimes(1);
+ finish({file:new File(['v'],'compressed.mp4'),url:'blob:pending',duration:16,width:1280,height:720});await waitFor(()=>expect(screen.getByLabelText('動画プレビュー')).toBeInTheDocument());
 });

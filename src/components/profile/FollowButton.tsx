@@ -225,12 +225,12 @@ function LimeFollowButton({ userId }: { userId: string }) {
 function ExternalLimeFollowButton({profile}:{profile:User}){
  const {user}=useAuth();
  useEffect(()=>{if(!user)return;setExternalAccountOwner(user.id);void initialiseExternalAccounts().catch(()=>{});},[user?.id]);
- const provider=profile.id.startsWith('misskey-user:')?'misskey':'bluesky';
- const handle=profile.username.replace(/^@+/,'').toLowerCase();
+ const provider=profile.id.startsWith('x-user:')?'x':profile.id.startsWith('misskey-user:')?'misskey':'bluesky';
+ const handle=profile.username.replace(/^@+/,'').replace(/@(?:x|twitter)\.com$/i,'').toLowerCase();
  const [followed,setFollowed]=useState(()=>cloudExternalHandles(provider)?.includes(handle)??false);
  const [busy,setBusy]=useState(false);const qc=useQueryClient();
  useEffect(()=>{const update=()=>setFollowed(cloudExternalHandles(provider)?.includes(handle)??false);update();window.addEventListener('lime-bluesky-handles-changed',update);window.addEventListener('lime-misskey-changed',update);return()=>{window.removeEventListener('lime-bluesky-handles-changed',update);window.removeEventListener('lime-misskey-changed',update);};},[provider,handle]);
- return <Button type="button" className={followButtonClassName(followed)} disabled={busy} aria-busy={busy} onClick={async()=>{if(busy)return;setBusy(true);try{await setExternalAccountAdded(provider,handle,!followed,{id:profile.id,username:profile.username,displayName:profile.displayName,avatarUrl:profile.avatarUrl,bio:profile.bio});await qc.invalidateQueries({queryKey:['follow-stats']});await qc.invalidateQueries({queryKey:['feed','following']});await qc.invalidateQueries({queryKey:['follow-list']});}catch{toast.error('フォロー操作に失敗しました');}finally{setBusy(false);}}}><FollowButtonLabel followed={followed} isPending={busy}/></Button>;
+ return <Button type="button" className={followButtonClassName(followed)} disabled={busy} aria-busy={busy} onClick={async()=>{if(busy)return;setBusy(true);try{await setExternalAccountAdded(provider,handle,!followed,{id:profile.id,username:profile.username,displayName:profile.displayName,avatarUrl:profile.avatarUrl,bio:profile.bio,providerVerification:profile.providerVerification});await qc.invalidateQueries({queryKey:['follow-stats']});await qc.invalidateQueries({queryKey:['feed','following']});await qc.invalidateQueries({queryKey:['follow-list']});}catch{toast.error('フォロー操作に失敗しました');}finally{setBusy(false);}}}><FollowButtonLabel followed={followed} isPending={busy}/></Button>;
 }
 export function FollowButton({ userId,externalProfile }: { userId: string;externalProfile?:User }) {
  if(externalProfile&&isBlueskyProfileId(userId))return <ExternalLimeFollowButton profile={externalProfile}/>;

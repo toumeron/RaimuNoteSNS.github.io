@@ -1,3 +1,4 @@
+import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
 import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 import { Link } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -52,7 +53,7 @@ export default function UserCard({ user, explore = false }: UserCardProps) {
               {user.displayName}
             </span>
 
-            {user.isPrivate && <PrivateAccountBadge/>}{user.isOfficial && (
+            {user.isPrivate && <PrivateAccountBadge/>}<ProviderVerificationBadge verification={user.providerVerification} className="h-[18px] w-[18px] shrink-0 object-contain"/>{user.isOfficial && (
               <img
                 src="/RaimuNoteSNS.github.io/verified.png"
                 alt="認証済み"

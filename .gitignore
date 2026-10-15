@@ -41,3 +41,8 @@ tests/avatar/local-models/
 !.env.example
 *.pem
 *.key
+
+# Local Worker credentials and build cache
+.dev.vars
+.dev.vars.*
+.wrangler/

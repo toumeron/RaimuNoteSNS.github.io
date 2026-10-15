@@ -24,11 +24,13 @@ export function ExternalReplyDetail({ post, mobileFlat }: { post: PostWithAuthor
       interactions.forEach(event => window.removeEventListener(event, stop));
     };
   }, [post.id]);
+  const parents:PostWithAuthor[]=[],seen=new Set([post.id]);let parent=post.externalReplyParent;
+  while(parent&&!seen.has(parent.id)&&parents.length<20){seen.add(parent.id);parents.unshift(parent);parent=parent.externalReplyParent;}
   return <div style={{ '--reply-frame-padding': mobileFlat ? '16px' : '24px' } as CSSProperties}
     className={mobileFlat ? 'post-detail-mobile-article' : 'rounded-3xl border border-border/60 bg-card p-6 shadow-soft'}>
     <style>{`[data-lime-reply-chain] [data-lime-reply-detail] { padding-bottom: 0 !important; }`}</style>
     <ReplyChain>
-      {post.externalReplyParent && <PostCard post={post.externalReplyParent} thread />}
+      {parents.map(parent=><PostCard key={parent.id} post={parent} thread />)}
       <div ref={selected} data-lime-selected-reply>
         <ExternalReplyCard post={post} detail thread mobileFlat={mobileFlat} />
       </div>

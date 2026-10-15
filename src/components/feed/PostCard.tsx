@@ -1,3 +1,6 @@
+import {ExternalPostDetails} from '@/components/feed/ExternalPostDetails';
+import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
+import {PostVideoPlayer} from '@/components/video/PostVideoPlayer';
 import {PostPoll} from './PostPoll';
 import { ExternalReplyCard } from "@/components/post/CommentList";
 import { randomUUID } from '@/lib/randomUUID';
@@ -119,13 +122,13 @@ const formatDisplayCount = (count: number) => {
 };
 
 type BlueskyPostFields = {
-  source?: 'lime' | 'bluesky' | 'misskey';
+  source?: 'lime' | 'bluesky' | 'misskey' | 'x';
   blueskyUrl?: string;
   blueskyUri?: string;
 };
 
 const isBlueskyPostLike = (post: { id?: string; source?: string }) => (
-  post.source === 'bluesky' || (String(post.id || '').startsWith('bsky:') || String(post.id || '').startsWith('misskey:'))
+  post.source === 'bluesky' || (String(post.id || '').startsWith('bsky:') || String(post.id || '').startsWith('misskey:') || /^x:\d+$/.test(String(post.id || '')))
 );
 
 const getBlueskyPostUrl = (post: Pick<BlueskyPostFields, 'blueskyUrl'> & { author?: { username?: string }; id?: string }) => {
@@ -242,6 +245,7 @@ const pumpImageSizePreloadQueue = () => {
     activeImageSizePreloads += 1;
 
     const image = new Image();
+    if(/^https:\/\/pbs[.]twimg[.]com\//.test(task.url))image.referrerPolicy='no-referrer';
     let settled = false;
     let pollTimer: number | null = null;
     let timeoutTimer: number | null = null;
@@ -907,7 +911,7 @@ function getIsMobileViewport() {
   return typeof window !== 'undefined' && window.innerWidth < 640;
 }
 
-function PostCardComponent({ post, timelineGlass = false, thread = false, embedded = false, repostedByLabel, pinned = false, mediaPresentation, onMediaReply, onMediaLikeChange, mediaDownload,onNotInterested }: { post: PostWithAuthor; timelineGlass?: boolean; thread?: boolean; embedded?: boolean; repostedByLabel?: string; pinned?:boolean; mediaPresentation?: 'actions' | 'menu'; onMediaReply?: () => void; onMediaLikeChange?: (state:{liked:boolean;count:number})=>void; mediaDownload?:()=>void;onNotInterested?:(post:PostWithAuthor)=>Promise<void> }) {
+function PostCardComponent({ post, timelineGlass = false, thread = false, embedded = false, repostedByLabel = post.externalRepostedBy?.displayName, pinned = false, mediaPresentation, onMediaReply, onMediaLikeChange, mediaDownload,onNotInterested }: { post: PostWithAuthor; timelineGlass?: boolean; thread?: boolean; embedded?: boolean; repostedByLabel?: string; pinned?:boolean; mediaPresentation?: 'actions' | 'menu'; onMediaReply?: () => void; onMediaLikeChange?: (state:{liked:boolean;count:number})=>void; mediaDownload?:()=>void;onNotInterested?:(post:PostWithAuthor)=>Promise<void> }) {
   const [editLocationOpen,setEditLocationOpen] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [moreMenuPosition, setMoreMenuPosition] = useState<{ top: number; right: number } | null>(null);
@@ -926,7 +930,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
   const isBlueskyPost = isBlueskyPostLike(post);
   const blueskyPostUrl = getBlueskyPostUrl(post as { blueskyUrl?: string; author?: { username?: string }; id?: string });
   const blueskyProfileUrl = isBlueskyPost
-    ? post.id.startsWith('misskey:') ? `https://misskey.io/@${post.author.username.replace(/@misskey\.io$/, '')}` : `https://bsky.app/profile/${post.author.username}`
+    ? post.id.startsWith('x:') ? `https://x.com/${post.author.username.replace(/@(?:x|twitter)\.com$/, '')}` : post.id.startsWith('misskey:') ? `https://misskey.io/@${post.author.username.replace(/@misskey\.io$/, '')}` : `https://bsky.app/profile/${post.author.username}`
     : null;
   const blueskySession = useBlueskySession(post.id);
   const blueskyPostUri = isBlueskyPost ? getBlueskyUriFromPostId(post.id) : null;
@@ -2154,7 +2158,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
     >
       <div className="flex justify-between items-start mb-3">
         <Avatar userId={post.author.id} className="h-14 w-14 border border-primary/5">
-          <AvatarImage src={post.author.avatarUrl} alt={post.author.displayName} />
+          <AvatarImage referrerPolicy={post.source==='x'?'no-referrer':undefined} src={post.author.avatarUrl} alt={post.author.displayName} />
           <AvatarFallback>{post.author.displayName.slice(0, 1)}</AvatarFallback>
         </Avatar>
 
@@ -2173,7 +2177,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
             {post.author.displayName}
           </span>
           {post.author.isPrivate && <PrivateAccountBadge />}
-          {post.author.isOfficial && (
+          <ProviderVerificationBadge verification={post.author.providerVerification} className="h-[1.1em] w-[1.1em] shrink-0 transform translate-y-[1px]"/>{post.author.isOfficial && (
             <img
               src={`${import.meta.env.BASE_URL}verified.png`}
               alt="Official"
@@ -2273,7 +2277,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                           className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
                         >
                           <ChartBarBig className="h-4 w-4" />
-                          {isBlueskyPost ? (post.id.startsWith('misskey:') ? 'Misskeyで見る' : 'Blueskyで見る') : 'ポストアクティビティー'}
+                          {isBlueskyPost ? (post.id.startsWith('x:') ? 'twitterで見る' : post.id.startsWith('misskey:') ? 'Misskeyで見る' : 'Blueskyで見る') : 'ポストアクティビティー'}
                         </button>
 
                         {onNotInterested&&<button onClick={async event=>{event.stopPropagation();try{await onNotInterested(post);setShowMenu(false);}catch{toast.error('興味なしを保存できませんでした');}}} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold hover:bg-muted"><EyeOff className="h-4 w-4" />興味なし</button>}
@@ -2772,7 +2776,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                 onClick={handleAuthorNavigate}
               >
                 <Avatar userId={post.author.id} className="h-11 w-11 translate-y-1">
-                  <AvatarImage src={post.author.avatarUrl} alt={post.author.displayName} />
+                  <AvatarImage referrerPolicy={post.source==='x'?'no-referrer':undefined} src={post.author.avatarUrl} alt={post.author.displayName} />
                   <AvatarFallback>{post.author.displayName.slice(0, 1)}</AvatarFallback>
                 </Avatar>
               </Link>
@@ -2799,7 +2803,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                           {post.author.displayName}
                         </span>
                         {post.author.isPrivate && <PrivateAccountBadge />}
-          {post.author.isOfficial && (
+          <ProviderVerificationBadge verification={post.author.providerVerification} className="h-4 w-4 shrink-0 transform translate-y-[0.5px]"/>{post.author.isOfficial && (
                           <img
                             src={`${import.meta.env.BASE_URL}verified.png`}
                             alt="Official"
@@ -2839,7 +2843,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
               </div>
             </div>
 
-            <div data-lime-post-body data-lime-post-has-images={allImageUrls.length > 0 || undefined}>
+            <div data-lime-post-body data-lime-post-has-images={allImageUrls.length > 0 || !!post.video || !!post.externalVideo || undefined}>
               <div
                 onClick={(e) => {
                   e.stopPropagation();
@@ -2907,9 +2911,9 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
               )}
 
               {isBlueskyPost && (
-                <div className="flex items-center gap-1 mt-1.5 text-muted-foreground/70">
+                <div data-lime-post-provider className="flex items-center gap-1 mt-1.5 text-muted-foreground/70">
                   <Globe className="h-3.5 w-3.5" />
-                  <span className={useMobilePresentation ? "text-[13px] font-medium" : "text-[15px] font-medium"}>{post.id.startsWith('misskey:') ? 'Misskey' : 'Bluesky'}</span>
+                  <span className={useMobilePresentation ? "text-[13px] font-medium" : "text-[15px] font-medium"}>{post.id.startsWith('x:') ? 'twitter' : post.id.startsWith('misskey:') ? 'Misskey' : 'Bluesky'}</span>
                 </div>
               )}
 
@@ -2939,8 +2943,8 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                     aria-label="画像を拡大表示"
                   >
                     <img
-                      src={singleImageUrl}
-                      alt="投稿画像"
+                      referrerPolicy={post.source==='x'?'no-referrer':undefined} src={singleImageUrl}
+                      alt={post.imageAltTexts?.[0]||"投稿画像"}
                       className="block select-none"
                       style={SINGLE_IMAGE_DISPLAY_STYLE}
                       draggable={false}
@@ -2978,6 +2982,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                   }}
                 >
                   <PostImages
+                    altTexts={post.imageAltTexts}
                     urls={allImageUrls}
                     embedded={embedded}
                     onImageError={(url) => {
@@ -2990,7 +2995,9 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
               ))}
             </div>
 
+            {(post.video || post.externalVideo) && <PostVideoPlayer postId={post.id} video={(post.video || post.externalVideo)!} externalVideo={post.externalVideo} post={post}/>}
             {post.poll && <PostPoll post={post}/>}
+            <ExternalPostDetails post={post}/>
 
             {post.isQuote && <QuotedPost post={post.parentPost} timelineGlass={timelineGlass} />}
 
@@ -3104,7 +3111,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
 }
 
 export const PostCard = memo(function PostCard(props: Parameters<typeof PostCardComponent>[0]) {
-  if (props.post.externalReplyToId && !props.mediaPresentation) return <ExternalReplyCard post={props.post} thread={props.thread} embedded={props.embedded} repostedByLabel={props.repostedByLabel} />;
+  if (props.post.externalReplyToId && !props.mediaPresentation) return <ExternalReplyCard post={props.post} thread={props.thread} embedded={props.embedded} repostedByLabel={props.repostedByLabel??props.post.externalRepostedBy?.displayName} />;
   return <PostCardComponent {...props} />;
 });
 PostCard.displayName = 'PostCard';

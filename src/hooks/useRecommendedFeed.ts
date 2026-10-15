@@ -12,7 +12,7 @@ export function useRecommendedFeed(enabled:boolean) {
   const {user,loading}=useAuth();
   const handles=getConfiguredExternalHandles();
   const queryClient=useQueryClient();
-  const queryKey=['feed','recommended','scoring-v36-stable-diverse-art',user?.id ?? null,handles];
+  const queryKey=['feed','recommended','scoring-v38-curated-discovery',user?.id ?? null,handles];
   useRecommendationImpressions(enabled && !loading,user?.id ?? null);
   type Cursor=ReturnType<typeof createRecommendationCursor>;
   type Page=Awaited<ReturnType<typeof getRecommendationPage>>;
@@ -44,7 +44,7 @@ export function useRecommendedFeed(enabled:boolean) {
         const next=loaded.next??(foundNewCreator?{...createRecommendationCursor(handles),lime:{page:0,done:true},trending:{cursor:null,done:true}}:undefined);
         const page=matches||preferences!==loaded.preferences?{...loaded,preferences,posts:loaded.posts.filter(keep),automaticPaused:foundNewCreator?false:loaded.automaticPaused,next:next?{...next,preferences,stalledPages:foundNewCreator?0:next.stalledPages,remaining:next.remaining.filter(keep)}:undefined}:loaded;
         const shown=queryClient.getQueryData<{pages:Page[]}>(queryKey)?.pages.flatMap(page=>page.posts)??[];
-        const posts=pageParam.pageKey!==undefined?uniqueRecommendationPosts(page.posts,shown):uniqueRecommendationPosts(page.posts);
+        const posts=(pageParam.pageKey!==undefined||pageParam.seen.length>0||pageParam.history.length>0)?uniqueRecommendationPosts(page.posts,shown):uniqueRecommendationPosts(page.posts);
         // Empty filtered pages can still advance a healthy source. The API
         // pauses only unchanged source positions; never stop merely at page 3.
         const result={...page,posts,next:page.next?preserveRecommendationHistory(page.next,[...shown,...posts]):undefined};

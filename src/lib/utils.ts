@@ -26,7 +26,9 @@ export function splitMentionText(text:string,hashtags=false):string[] {
 
 export function mentionProfileHandle(mention:string,author?:{id?:string;username?:string}):string {
   const handle=mention.replace(/^@/,'');
-  if(handle.includes('@') || !author?.id?.startsWith('misskey-user:'))return handle;
+  if(handle.includes('@'))return handle;
+  if(author?.id?.startsWith('x-user:'))return `${handle}@twitter.com`;
+  if(!author?.id?.startsWith('misskey-user:'))return handle;
   return `${handle}@${author.username?.split('@')[1] || 'misskey.io'}`;
 }
 

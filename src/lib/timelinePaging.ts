@@ -34,7 +34,7 @@ export function normalizeTimelineBlueskyPost(post: BlueskyAuthorFeedPage['posts'
     repostsCount: 0, repostedByMe: false,
     author: {
       id: post.author.id, username: post.author.username, displayName: post.author.displayName,
-      avatarUrl: post.author.avatarUrl, coverUrl: '', isOfficial: false,
+      avatarUrl: post.author.avatarUrl, coverUrl: '', isOfficial: false, providerVerification: post.author.providerVerification,
       bio: post.author.bio, createdAt: post.author.createdAt,
     },
   };

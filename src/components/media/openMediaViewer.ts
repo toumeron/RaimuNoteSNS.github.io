@@ -1,9 +1,11 @@
+import type { PostVideo } from '@/lib/postVideo';
 import type { ContextType } from 'react';
 import type { OfflineBookmarkContext } from '@/components/stickers/OfflineBookmarkContext';
 import type { PostWithAuthor } from '@/types';
 
 export type ViewerMedia = { src: string; type?: 'image' | 'youtube' | 'video'; youtubeId?: string };
 export type MediaViewerSelection = {
+  video?: { video: Pick<PostVideo,'duration'|'width'|'height'>; postId?: string; previewUrl?: string; externalVideo?: import('@/types').ExternalVideo };
   offline?: ContextType<typeof OfflineBookmarkContext>;
   url: string;
   post?: PostWithAuthor;

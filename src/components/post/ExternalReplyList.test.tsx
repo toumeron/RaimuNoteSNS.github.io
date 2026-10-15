@@ -49,3 +49,9 @@ it('reports failed reads separately from an empty reply list', () => {
  expect(screen.getByText('返信の読み込みに失敗しました。')).toBeVisible();
  expect(screen.queryByText('まだ返信はありません。')).toBeNull();
 });
+it('shows replies whose parents are absent from the loaded external page',()=>{
+ vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}});
+ const reply:any={id:'x:2110770275558281467',externalReplyToId:'x:missing-parent',userId:author.id,content:'親が未取得でも表示される返信',imageUrls:[],createdAt:'2026-10-16',likesCount:0,commentsCount:0,author};
+ const view=render(<MemoryRouter><ExternalReplyList parent={parent} replies={[reply]} isLoading={false} isError={false} mobileFlat/></MemoryRouter>);
+ expect(screen.getByText(reply.content)).toBeVisible();expect(view.container.querySelector('[data-lime-conversation-comment]')).toHaveAttribute('data-lime-conversation-parent','');
+});

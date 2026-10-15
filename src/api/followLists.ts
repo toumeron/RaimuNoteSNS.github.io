@@ -3,7 +3,7 @@ import {fetchBlueskyFollowers,fetchBlueskyFollows,isBlueskyProfileId} from '@/li
 import type {User} from '@/types';
 export type FollowListTab='known'|'followers'|'following';
 export type FollowListPage={users:User[];cursor:string|null};
-const mapProfile=(p:any):User=>({id:p.id,username:p.username,displayName:p.display_name||p.displayName||p.username,avatarUrl:p.avatar_url||p.avatarUrl||'',bio:p.bio||'',coverUrl:p.cover_url||'',createdAt:p.created_at||'',isOfficial:p.is_official??false,isPrivate:p.is_private??false});
+const mapProfile=(p:any):User=>({id:p.id,username:p.username,displayName:p.display_name||p.displayName||p.username,avatarUrl:p.avatar_url||p.avatarUrl||'',bio:p.bio||'',coverUrl:p.cover_url||'',createdAt:p.created_at||'',isOfficial:p.is_official??false,providerVerification:p.providerVerification,isPrivate:p.is_private??false});
 export async function fetchFollowListPage(target:User,tab:FollowListTab,viewerId:string,cursor:string|null,signal?:AbortSignal):Promise<FollowListPage>{
  const known=tab==='known',following=tab==='following';
  let knownIds=new Set<string>(),knownHandles=new Set<string>();

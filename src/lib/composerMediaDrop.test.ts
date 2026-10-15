@@ -1,0 +1,4 @@
+import {expect,it,vi} from 'vitest';
+import {composerMediaDrop,isVideoAttachment} from './composerMediaDrop';
+it('recognizes video files supplied without MIME metadata',()=>{expect(isVideoAttachment(new File(['x'],'clip.MOV'))).toBe(true);expect(isVideoAttachment(new File(['x'],'clip.bin',{type:'video/mp4'}))).toBe(true);expect(isVideoAttachment(new File(['x'],'photo.png',{type:'image/png'}))).toBe(false);});
+it('leaves text/link dragging alone and consumes file drops even when busy',()=>{const attach=vi.fn(),preventDefault=vi.fn(),stopPropagation=vi.fn();const event={preventDefault,stopPropagation,dataTransfer:{types:['text/plain'],items:[],files:[]}};composerMediaDrop(attach,false).onDragOver(event as any);expect(preventDefault).not.toHaveBeenCalled();composerMediaDrop(attach,true).onDrop({...event,dataTransfer:{files:[new File(['x'],'v.mp4')]}} as any);expect(preventDefault).toHaveBeenCalled();expect(attach).not.toHaveBeenCalled();});

@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
 
-export type ExternalProvider = 'bluesky' | 'misskey';
+export type ExternalProvider = 'bluesky' | 'misskey' | 'x';
 type ExternalAccount = { provider: ExternalProvider; handle: string };
 let owner: string | null = null;
 let accounts: ExternalAccount[] = [];
@@ -72,7 +72,7 @@ export async function refreshExternalAccounts() {
   await initialiseExternalAccounts();
   if (owner) await refresh(owner, generation);
 }
-export async function setExternalAccountAdded(provider: ExternalProvider, handle: string, added: boolean, profile?: {id:string;username:string;displayName?:string;avatarUrl?:string;bio?:string}) {
+export async function setExternalAccountAdded(provider: ExternalProvider, handle: string, added: boolean, profile?: {id:string;username:string;displayName?:string;avatarUrl?:string;bio?:string;providerVerification?:import('@/types').User['providerVerification']}) {
   const id = owner, version = generation;
   if (!id) throw new Error('ログインしてください');
   await initialiseExternalAccounts();

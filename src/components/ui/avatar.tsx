@@ -2,6 +2,7 @@ import * as React from "react";
 import * as AvatarPrimitive from "@radix-ui/react-avatar";
 
 import { cn } from "@/lib/utils";
+import { twitterAvatarUrl } from '@/lib/twitterAvatar';
 import { SpaceIcon } from "@/components/spaces/SpaceProvider";
 import { useSpaces } from "@/components/spaces/SpaceProvider";
 
@@ -29,7 +30,7 @@ const AvatarImage = React.forwardRef<
   React.ElementRef<typeof AvatarPrimitive.Image>,
   React.ComponentPropsWithoutRef<typeof AvatarPrimitive.Image>
 >(({ className, ...props }, ref) => (
-  <AvatarPrimitive.Image ref={ref} className={cn("aspect-square h-full w-full", className)} {...props} />
+  <AvatarPrimitive.Image ref={ref} className={cn("aspect-square h-full w-full", className)} {...props} src={twitterAvatarUrl(props.src)} referrerPolicy={props.referrerPolicy??(/^https:\/\/pbs[.]twimg[.]com\//.test(props.src??'')?'no-referrer':undefined)} />
 ));
 AvatarImage.displayName = AvatarPrimitive.Image.displayName;
 

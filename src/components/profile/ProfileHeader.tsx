@@ -1,3 +1,5 @@
+import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
+import {twitterAvatarUrl} from '@/lib/twitterAvatar';
 import {ProfileListPicker} from '@/components/lists/ListDialogs';
 import {canDirectMessage,openDirectConversation} from '@/api/directMessages';
 import { getKnownFollowers } from '@/api/follows';
@@ -121,7 +123,7 @@ export function ProfileHeader({
   const [externalFollowing,setExternalFollowing]=useState(false);
   useEffect(()=>{
     if(!isBlueskyProfile){setExternalFollowing(false);return;}
-    const update=()=>setExternalFollowing(!!me?.id&&(cloudExternalHandles(user.id.startsWith('misskey-user:')?'misskey':'bluesky')??[]).includes(user.username.trim().replace(/^@+/, '').toLowerCase()));
+    const update=()=>setExternalFollowing(!!me?.id&&(cloudExternalHandles(user.id.startsWith('x-user:')?'x':user.id.startsWith('misskey-user:')?'misskey':'bluesky')??[]).includes(user.username.trim().replace(/^@+/, '').replace(/@(?:x|twitter)\.com$/i,'').toLowerCase()));
     setExternalAccountOwner(me?.id??null);update();
     if(me?.id)void initialiseExternalAccounts().then(update).catch(()=>{});
     window.addEventListener('lime-bluesky-handles-changed',update);
@@ -147,7 +149,7 @@ export function ProfileHeader({
   const joinMembership = useJoinMembership(user.id);
   const leaveMembership = useLeaveMembership(user.id);
   // 「新しい投稿を通知する」ベルボタン（LimeNoteはフォロー中、外部ユーザーはプロフィールで設定）
-  const showPostNotificationButton = !isMe && isFollowing;
+  const showPostNotificationButton = !isMe && isFollowing && !user.id.startsWith('x-user:');
   const {
     enabled: isPostNotificationEnabled,
     isPending: isPostNotificationPending,
@@ -397,7 +399,7 @@ export function ProfileHeader({
         >
           {user.coverUrl ? (
             <img
-              src={user.coverUrl}
+              referrerPolicy={user.id.startsWith('x-user:')?'no-referrer':undefined} src={user.coverUrl}
               alt=""
               className="block h-full w-full object-cover object-center"
             />
@@ -542,7 +544,7 @@ export function ProfileHeader({
                 {user.displayName}
               </h1>
               {user.isPrivate && <PrivateAccountBadge className="h-5 w-5" />}
-              {user.isOfficial && (
+              <ProviderVerificationBadge verification={user.providerVerification} className="h-[1.25em] w-[1.25em] shrink-0 translate-y-[1px]"/>{user.isOfficial && (
                 <img
                   src={`${import.meta.env.BASE_URL}verified.png`}
                   alt="Official"
@@ -649,7 +651,7 @@ export function ProfileHeader({
             >
               {user.coverUrl ? (
                 <img
-                  src={user.coverUrl}
+                  referrerPolicy={user.id.startsWith('x-user:')?'no-referrer':undefined} src={user.coverUrl}
                   alt={user.displayName}
                   className="block max-h-[82vh] max-w-[92vw] object-contain"
                 />
@@ -694,9 +696,10 @@ export function ProfileHeader({
             >
               {user.avatarUrl ? (
                 <img
-                  src={user.avatarUrl}
+                  src={twitterAvatarUrl(user.avatarUrl)}
                   alt={user.displayName}
                   className="h-full w-full object-cover"
+                  referrerPolicy={user.id.startsWith('x-user:')?'no-referrer':undefined}
                 />
               ) : (
                 <div className="flex h-full w-full items-center justify-center bg-background text-[clamp(5rem,18vw,10rem)] font-black text-foreground">

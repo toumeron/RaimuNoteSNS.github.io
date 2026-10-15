@@ -1,3 +1,4 @@
+vi.mock('@/lib/fxTwitter',()=>({searchXPage:async()=>({posts:[],cursor:null})}));
 import {recordRecommendationLike as recordCloudLikeTest} from '@/lib/recommendations';
 import { beforeEach, expect, it, vi } from 'vitest';
 const fixture=vi.hoisted(()=>({authorDelay:0,sizes:[] as number[],cloudLikes:[] as any[],feedback:[] as any[],likedId:'',limeFail:false,blueFail:false,preferencesFail:false,limeSize:2,limeCalls:0,authorCalls:[] as string[],topicCalls:[] as string[],searchCalls:[] as string[],targeted:false,followedTopics:[] as string[],dismissedTopics:[] as string[],discoveryTopics:[] as string[],topicFeedRows:{} as Record<string,any[]>,authorRows:{} as Record<string,any[]>,authorPages:{} as Record<string,any[][]>,misskeyRows:[] as any[],misskeyFail:false,feedFail:false,topicFeedContinues:false,slowTrending:false,slowFeed:false,slowHistory:false,slowTopics:false}));
@@ -407,4 +408,13 @@ it('retrieves an alternate creator before publishing another cached page of only
  const page=await getRecommendationPage(cursor,'viewer');
  expect(fixture.authorCalls).toContain(other);expect(fixture.authorCalls).not.toContain(actor);
  expect(new Set(page.posts.map(post=>post.userId)).size).toBe(2);
+});
+it('retains configured twitter sources beyond the former first-four cutoff and schedules one early',()=>{
+ const handles=['one.bsky.social','two.bsky.social','three.bsky.social','four.bsky.social','Google@twitter.com'];
+ const cursor=createRecommendationCursor(handles);expect(Object.keys(cursor.authors)).toHaveLength(5);expect(Object.keys(cursor.authors).slice(0,2)).toContain('Google@twitter.com');
+});
+it('discovers posts from twitter creators learned from likes',async()=>{
+ const cursor=createRecommendationCursor([]);cursor.preferences={authors:{'x-user:123':10},terms:{},likedSamples:[],likedPostIds:[]} as any;
+ fixture.authorRows['x-user:123']=[{...source('x:2100000000000000001','科学の研究'),source:'x',userId:'x-user:123'}];
+ const page=await getRecommendationPage(cursor,'viewer');expect(fixture.authorCalls).toContain('x-user:123');expect(page.posts.map(post=>post.id)).toContain('x:2100000000000000001');
 });

@@ -384,7 +384,7 @@ export const useUserMediaInfinite = (userId: string | undefined) =>
       ];
 
       const contentFilter = imagePatterns.map((pattern) => `content.ilike.${pattern}`).join(',');
-      const orFilter = `image_urls.not.is.null,image_urls.neq.{},${contentFilter}`;
+      const orFilter = `video.not.is.null,image_urls.neq.{},${contentFilter}`;
 
       query = query.or(orFilter);
 

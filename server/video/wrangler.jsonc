@@ -1,0 +1,15 @@
+{
+  "name": "limenote-videos",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-15",
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "ALLOWED_ORIGINS": "http://localhost:8080,http://localhost:5173,https://toumeron.github.io",
+    "SUPABASE_URL": "https://wrxaayteittkjoblgauk.supabase.co",
+    "S3_ENDPOINT": "https://s3.us-east-005.backblazeb2.com",
+    "S3_REGION": "us-east-005",
+    "S3_BUCKET": "limenote-videos-20261015"
+  },
+  "account_id": "9866cef85989f2fcf19109b77f5efbc5"
+}

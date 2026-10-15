@@ -36,7 +36,7 @@ export function useTimelineFeed(tab: 'all' | 'following', enabled = true) {
       bluesky: async (actor, cursor, limit) => {
         try { return await fetchBlueskyAuthorFeed({ actor, cursor, limit, signal }); }
         catch(error) {
-          if (signal.aborted || (!actor.includes('@') && actor!=='misskey.io')) throw error;
+          if (signal.aborted || (!actor.includes('@') && actor!=='misskey.io' && !actor.startsWith('x-user:'))) throw error;
           console.warn('Misskey feed unavailable; retaining LimeNote timeline',error);
           return {posts:[],cursor:null};
         }

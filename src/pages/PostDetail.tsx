@@ -1,3 +1,7 @@
+import {xConversationPage,twitterReplyUrl} from '@/lib/fxTwitter';
+import {ExternalPostDetails} from '@/components/feed/ExternalPostDetails';
+import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
+import {PostVideoPlayer} from '@/components/video/PostVideoPlayer';
 import { PostPoll } from '@/components/feed/PostPoll';
 import { ExternalReplyDetail } from '@/components/post/ExternalReplyDetail';
 import { randomUUID } from '@/lib/randomUUID';
@@ -34,7 +38,7 @@ import { usePost } from '@/hooks/useFeed';
 import { BookmarkButton } from '@/components/post/BookmarkButton';
 import { fetchBlueskyPostThread, getBlueskyUriFromPostId } from '@/lib/bluesky';
 import { useBlueskySession } from '@/hooks/useBlueskySession';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery,useInfiniteQuery } from '@tanstack/react-query';
 import { formatDate, formatRelative } from '@/lib/format';
 import { getYouTubeId } from '@/lib/utils';
 import { YouTubeEmbed } from '@/components/YouTubeEmbed';
@@ -102,13 +106,13 @@ interface ReplicatedDot {
 // このポスト詳細ページをBluesky由来の投稿で開いた場合、外部リンクへ飛ばさずに
 // 本文・画像・返信をLimeNote内で表示し、いいねは既存の外部投稿用保存処理で扱う。
 type BlueskyPostFields = {
-  source?: 'lime' | 'bluesky' | 'misskey';
+  source?: 'lime' | 'bluesky' | 'misskey' | 'x';
   blueskyUrl?: string;
   blueskyUri?: string;
 };
 
 const isBlueskyPostLike = (post: { id?: string; source?: string }) => (
-  post.source === 'bluesky' || (String(post.id || '').startsWith('bsky:') || String(post.id || '').startsWith('misskey:'))
+  post.source === 'bluesky' || (String(post.id || '').startsWith('bsky:') || String(post.id || '').startsWith('misskey:') || /^x:\d+$/.test(String(post.id || '')))
 );
 
 const getBlueskyPostUrl = (post: Pick<BlueskyPostFields, 'blueskyUrl'> & { author?: { username?: string }; id?: string }) => {
@@ -193,13 +197,17 @@ export default function PostDetail() {
 function RootPostDetail({ replyId }: { replyId: string | null }) {
   const { id = '' } = useParams();
   const isBlueskyPost = isBlueskyPostLike({ id });
+  const isTwitterPost=/^x:\d+$/.test(id);
+  const twitterThread=useInfiniteQuery({queryKey:['twitter-conversation',id],initialPageParam:null as string|null,queryFn:({pageParam,signal})=>xConversationPage(id,pageParam,signal),getNextPageParam:page=>page.cursor??undefined,enabled:isTwitterPost,staleTime:60000,retry:false,refetchOnWindowFocus:false});
   const { data: limeData, isLoading: isLimeLoading, isError: isLimeError } = usePost(isBlueskyPost ? '' : id);
-  const { data: blueskyThread, isLoading: isBlueskyLoading, isError: isBlueskyError, isSuccess: isBlueskySuccess } = useQuery({
+  const { data: otherThread, isLoading: otherLoading, isError: otherError, isSuccess: otherSuccess } = useQuery({
     queryKey: ['bluesky-post', id],
     queryFn: ({ signal }) => fetchBlueskyPostThread(id, signal),
-    enabled: isBlueskyPost,
+    enabled: isBlueskyPost&&!isTwitterPost,
     staleTime: 1000 * 60,
   });
+  const blueskyThread=isTwitterPost?{post:twitterThread.data?.pages[0]?.post,replies:[...new Map((twitterThread.data?.pages.flatMap(page=>page.replies)??[]).map(post=>[post.id,post])).values()]}:otherThread;
+  const isBlueskyLoading=isTwitterPost?twitterThread.isLoading:otherLoading,isBlueskyError=isTwitterPost?twitterThread.isError&&!twitterThread.data:otherError,isBlueskySuccess=isTwitterPost?twitterThread.isSuccess:otherSuccess;
   const blueskyData = blueskyThread?.post;
   const data = isBlueskyPost ? blueskyData : limeData;
   const isLoading = isBlueskyPost ? isBlueskyLoading : isLimeLoading;
@@ -1550,7 +1558,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
             <div className={`flex items-center gap-3 ${useMobileThreadLayout ? 'post-detail-mobile-author-row' : ''}`}>
               <Link to={`/u/${data.author.username}`} onClick={handleAuthorNavigate}>
                 <Avatar userId={data.author.id} className={useMobileThreadLayout ? "post-detail-mobile-avatar" : "h-12 w-12 border-2 border-primary/30"}>
-                  <AvatarImage src={data.author.avatarUrl} alt={data.author.displayName} />
+                  <AvatarImage referrerPolicy={data.source==='x'?'no-referrer':undefined} src={data.author.avatarUrl} alt={data.author.displayName} />
                   <AvatarFallback>{data.author.displayName.slice(0, 1)}</AvatarFallback>
                 </Avatar>
               </Link>
@@ -1559,7 +1567,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                   <span className={`truncate ${useMobileThreadLayout ? 'post-detail-mobile-name' : ''}`}>
                     {data.author.displayName}
                   </span>
-                  {data.author.isPrivate && <PrivateAccountBadge/>}{data.author.isOfficial && (
+                  {data.author.isPrivate && <PrivateAccountBadge/>}<ProviderVerificationBadge verification={data.author.providerVerification} className="h-4 w-4 shrink-0 transform translate-y-[0.5px]"/>{data.author.isOfficial && (
                     <img 
                       src={`${import.meta.env.BASE_URL}verified.png`}
                       alt="Official" 
@@ -1632,7 +1640,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                         className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
                       >
                         <ChartBarBig className="h-4 w-4" />
-                        {isBlueskyPost ? (id.startsWith('misskey:') ? 'Misskeyで見る' : 'Blueskyで見る') : 'ポストアクティビティー'}
+                        {isBlueskyPost ? (id.startsWith('x:') ? 'twitterで見る' : id.startsWith('misskey:') ? 'Misskeyで見る' : 'Blueskyで見る') : 'ポストアクティビティー'}
                       </button>
 
                       {isMyPost && !isBlueskyPost && !('replyId' in data && data.replyId) && <PinPostMenuButton userId={data.userId} postId={data.id} onClose={()=>setShowMenu(false)}/>}
@@ -1707,7 +1715,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
           {isBlueskyPost && (
             <div className="flex items-center gap-1 mt-1.5 text-muted-foreground/70">
               <Globe className="h-3.5 w-3.5" />
-              <span className="text-[15px] font-medium">{id.startsWith('misskey:') ? 'Misskey' : 'Bluesky'}</span>
+              <span className="text-[15px] font-medium">{id.startsWith('x:') ? 'twitter' : id.startsWith('misskey:') ? 'Misskey' : 'Bluesky'}</span>
             </div>
           )}
 
@@ -1725,8 +1733,8 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                 aria-label="画像を拡大表示"
               >
                 <img
-                  src={singleImageUrl}
-                  alt="投稿画像"
+                  referrerPolicy={data.source==='x'?'no-referrer':undefined} src={singleImageUrl}
+                  alt={data.imageAltTexts?.[0]||"投稿画像"}
                   className="block select-none"
                   style={getSingleImageDisplayStyle()}
                   draggable={false}
@@ -1768,7 +1776,9 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
             </div>
           )}
 
+          {((data as PostWithAuthor)?.video || data?.externalVideo) && <PostVideoPlayer postId={data.id} video={((data as PostWithAuthor).video || data.externalVideo)!} externalVideo={data.externalVideo} post={data as PostWithAuthor}/>}
           {!isBlueskyPost && limeData?.poll && <PostPoll post={limeData} />}
+          <ExternalPostDetails post={data as PostWithAuthor}/>
 
           {(data as PostWithAuthor).isQuote && <QuotedPost post={(data as PostWithAuthor).parentPost} />}
 
@@ -1867,7 +1877,8 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
             {isBlueskyPost ? (
               <button
                 type="button"
-                onClick={(e) => e.stopPropagation()}
+                aria-label={isTwitterPost?'twitterで返信':'返信'}
+                onClick={(e) => {e.stopPropagation();const url=twitterReplyUrl(id);if(url)window.open(url,'_blank','noopener,noreferrer');}}
                 className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm text-muted-foreground transition-colors hover:text-accent ${useMobilePresentation ? 'post-detail-mobile-reply-count' : ''}`}
               >
                 <MessageCircle className="h-5 w-5" />
@@ -2176,6 +2187,8 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
             ) : (
               <CommentList postId={data.id} mobileFlat={useMobileThreadLayout} threadAuthorId={data.author.id} />
             )}
+            {isTwitterPost&&twitterThread.hasNextPage&&!twitterThread.isFetchNextPageError&&<button type="button" className="w-full p-4 text-primary hover:underline disabled:opacity-50" disabled={twitterThread.isFetchingNextPage} onClick={()=>void twitterThread.fetchNextPage()}>{twitterThread.isFetchingNextPage?'読み込み中…':'返信をさらに表示'}</button>}
+            {isTwitterPost&&twitterThread.isFetchNextPageError&&<button type="button" className="w-full p-4 text-primary" onClick={()=>void twitterThread.fetchNextPage()}>返信の読み込みを再試行</button>}
           </div>
         </>
       )}

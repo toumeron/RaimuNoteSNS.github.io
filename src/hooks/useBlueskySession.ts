@@ -1,3 +1,4 @@
+import {isXId} from '@/lib/fxTwitter';
 import {isMisskeyId} from '@/lib/misskey';
 import { useEffect, useState } from 'react';
 import {
@@ -18,15 +19,15 @@ import {
  * 実際に実行できる状態とみなす。
  */
 export function useBlueskySession(targetId?:string): BlueskySession | null {
-  const [session, setSession] = useState<BlueskySession | null>(()=>isMisskeyId(targetId) ? null : getStoredBlueskySession());
+  const [session, setSession] = useState<BlueskySession | null>(()=>(isMisskeyId(targetId)||isXId(targetId)) ? null : getStoredBlueskySession());
 
   useEffect(() => {
-    const syncFromStorage = () => setSession(isMisskeyId(targetId) ? null : getStoredBlueskySession());
+    const syncFromStorage = () => setSession((isMisskeyId(targetId)||isXId(targetId)) ? null : getStoredBlueskySession());
     syncFromStorage();
 
     const handleSessionChanged = (event: Event) => {
       const detail = (event as CustomEvent<{ session: BlueskySession | null }>).detail;
-      if (isMisskeyId(targetId)) syncFromStorage(); else setSession(detail?.session ?? getStoredBlueskySession());
+      if ((isMisskeyId(targetId)||isXId(targetId))) syncFromStorage(); else setSession(detail?.session ?? getStoredBlueskySession());
     };
 
     const handleStorage = (event: StorageEvent) => {

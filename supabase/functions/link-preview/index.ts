@@ -1,3 +1,5 @@
+import {loadTwitterSearch} from './twitterSearch.ts';
+import {loadBlueskySearch} from './bluesky.ts';
 import {loadGeoMapPins,geoMapJobs,loadGeoMapDetail} from './geoMaps.ts';
 import { quota, boundedBody } from '../_shared/security.ts';
 import {createClient} from 'https://esm.sh/@supabase/supabase-js@2';
@@ -30,6 +32,8 @@ Deno.serve(async request=>{
       return Response.json(await loadGeoMapPins(jobs,Deno.env.get('FLICKR_API_KEY')),{headers});
     }
     if(mode==='map-geo-detail')return Response.json({post:await loadGeoMapDetail(input.id,Deno.env.get('FLICKR_API_KEY'))},{headers});
+    if(mode==='twitter-search')return Response.json(await loadTwitterSearch(input.query,input.feed,input.offset),{headers});
+    if(mode==='bluesky')return Response.json({data:await loadBlueskySearch(input.endpoint,input.params)},{headers});
     if(mode==='misskey')return Response.json({data:await loadMisskey(input.endpoint,input.params)},{headers});
     if(input.mode==='image'){
       const image=await loadImage(input.url,new URL(Deno.env.get('SUPABASE_URL')!).hostname);
@@ -41,5 +45,5 @@ Deno.serve(async request=>{
     if(cache.size>=500)cache.delete(cache.keys().next().value!);
     cache.set(original,{expires:Date.now()+(preview?3600000:300000),preview});
     return Response.json({preview},{headers});
-  }catch(error){console.error('External reader failed',error instanceof Error?error.message:'failed');return ['map-pins','map-geo-pins','map-geo-detail'].includes(mode??'') ? Response.json({error:'地図の投稿位置を取得できませんでした'},{status:502,headers}) : mode==='misskey' ? Response.json({error:'Misskeyの取得に失敗しました'},{status:502,headers}) : Response.json({preview:null,retryable:true,reason:error instanceof Error&&(/^(Page HTTP \d{3}|Timeout|Private address|Amazon product unavailable)$/.test(error.message))?error.message:error instanceof Error?error.name:'Fetch failure'},{headers});}
+  }catch(error){console.error('External reader failed',error instanceof Error?error.message:'failed');return ['map-pins','map-geo-pins','map-geo-detail'].includes(mode??'') ? Response.json({error:'地図の投稿位置を取得できませんでした'},{status:502,headers}) : mode==='twitter-search' ? Response.json({error:'twitter検索の取得に失敗しました'},{status:502,headers}) : mode==='bluesky' ? Response.json({error:'Bluesky検索の取得に失敗しました'},{status:502,headers}) : mode==='misskey' ? Response.json({error:'Misskeyの取得に失敗しました'},{status:502,headers}) : Response.json({preview:null,retryable:true,reason:error instanceof Error&&(/^(Page HTTP \d{3}|Timeout|Private address|Amazon product unavailable)$/.test(error.message))?error.message:error instanceof Error?error.name:'Fetch failure'},{headers});}
 });

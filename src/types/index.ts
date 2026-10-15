@@ -12,6 +12,7 @@ export type User = {
   isSuspended?: boolean;
   review?: boolean;
   isPrivate?: boolean;
+  providerVerification?: { provider: 'twitter'; type: 'individual' | 'organization' | 'government' };
   isOfficial?: boolean; 
   emojiEffect?: string; // 絵文字の雨機能用の追加
   
@@ -20,7 +21,16 @@ export type User = {
   bot_prompt?: string;   // AIへの指示内容
 };
 
+export type ExternalVideo = { playlist: string; format?: 'hls' | 'mp4'; thumbnail?: string; width: number; height: number; duration: number; alt?: string };
+
+export type ExternalPostDetails = { views?:number; bookmarks?:number; reposts?:number; quotes?:number; poll?:import('@/lib/polls').Poll; communityNote?:string };
+
 export type Post = {
+  externalDetails?: ExternalPostDetails;
+  externalPinned?: boolean;
+  externalRepostedBy?: {id:string;displayName:string;username:string};
+  externalVideo?: ExternalVideo;
+  video?: import('@/lib/postVideo').PostVideo | null;
   scheduledAt?:string;
   poll?:import('@/lib/polls').Poll|null;
   mapLocation?: import('@/lib/mapLocation').MapLocation | null;
@@ -33,7 +43,7 @@ export type Post = {
   recommendationVisual?: import('@/lib/recommendationVisual').RecommendationVisual;
   recommendationVisualStatus?: 'checked'|'unavailable';
   recommendationAuthorTopics?: string[];
-  source?: 'lime' | 'bluesky' | 'misskey';
+  source?: 'lime' | 'bluesky' | 'misskey' | 'x';
   blueskyUrl?: string;
   blueskyUri?: string;
   cid?: string;

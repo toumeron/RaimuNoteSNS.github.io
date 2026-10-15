@@ -5,11 +5,11 @@ import {randomUUID} from '@/lib/randomUUID';
 import {searchAccounts,searchProfileUser} from '@/lib/accountSearch';
 import type {User} from '@/types';
 
-export type ListMember=Pick<User,'id'|'username'|'displayName'|'avatarUrl'|'bio'|'isOfficial'|'isPrivate'>;
+export type ListMember=Pick<User,'id'|'username'|'displayName'|'avatarUrl'|'bio'|'isOfficial'|'isPrivate'|'providerVerification'>;
 export type UserList={id:string;owner_id:string;name:string;description:string;is_private:boolean;cover_ref:string|null;members:ListMember[];created_at:string;updated_at:string;owner:{username:string;display_name:string;avatar_url:string;is_official?:boolean;is_private?:boolean};coverUrl?:string;followers?:number;saved?:boolean};
 const select='*,owner:profiles!owner_id(username,display_name,avatar_url,is_official,is_private)';
 export const listsKey=(owner?:string)=>['user-lists',owner??null];
-export function listMember(user:ListMember):ListMember{return {id:user.id,username:user.username,displayName:(user.displayName??user.username).slice(0,100),avatarUrl:user.avatarUrl?.startsWith('https://')?user.avatarUrl.slice(0,2000):'',bio:(user.bio??'').slice(0,500),isOfficial:!!user.isOfficial,isPrivate:!!user.isPrivate};}
+export function listMember(user:ListMember):ListMember{return {id:user.id,username:user.username,displayName:(user.displayName??user.username).slice(0,100),avatarUrl:user.avatarUrl?.startsWith('https://')?user.avatarUrl.slice(0,2000):'',bio:(user.bio??'').slice(0,500),isOfficial:!!user.isOfficial,isPrivate:!!user.isPrivate,...(user.providerVerification?{providerVerification:user.providerVerification}:{})};}
 async function enrich(rows:UserList[],saved:string[]=[]) {
  if(!rows.length)return rows;
  if(rows.length>100){const result:UserList[]=[];for(let start=0;start<rows.length;start+=100)result.push(...await enrich(rows.slice(start,start+100),saved));return result;}

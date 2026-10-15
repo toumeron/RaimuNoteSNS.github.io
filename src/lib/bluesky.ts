@@ -1,7 +1,9 @@
+import {relayBlueskySearch} from './blueskySearchRelay';
 import { isAccountReadOnly } from '@/lib/accountSuspension';
 import { extractPostMapLocation } from './mapLocation';
 import { cloudExternalHandles, saveExternalProviderHandles } from './externalAccounts';
 import {externalFetch, accountSearchScore} from './utils';
+import {isXActor,isXId,xFeed,xProfile,xThread,xConversationPage,xFollowList,configuredXHandles,searchX} from './fxTwitter';
 import { searchMisskey, configuredMisskeyHandles, isMisskeyActor, isMisskeyId, misskeyFeed, misskeyProfile, misskeyThread, misskeyFollowList, misskeyRequest, mapMisskeyNote, type MisskeyNote, misskeyEnabled, misskeyViewer, likeMisskey, unlikeMisskey, misskeyFollowState, followMisskey, unfollowMisskey } from './misskey';
 import {singlePreviewUrl,type LinkPreview} from './linkPreview';
 import {TOPICS,matchingTopics,type TopicId} from './topics';
@@ -530,6 +532,10 @@ export async function unfollowBlueskyUser(followUri: string): Promise<void> {
 }
 
 export type BlueskyMappedPost = {
+  externalDetails?: import('@/types').ExternalPostDetails;
+  externalPinned?: boolean;
+  externalRepostedBy?: {id:string;displayName:string;username:string};
+  externalVideo?: import('@/types').ExternalVideo;
   mapLocation?: import('./mapLocation').MapLocation | null;
   languages?: string[];
   recommendationLanguages?: string[];
@@ -563,11 +569,12 @@ export type BlueskyMappedPost = {
     displayName: string;
     avatarUrl: string;
     isOfficial: boolean;
+    providerVerification?: import('@/types').User['providerVerification'];
     isPrivate?: boolean;
     bio: string;
     createdAt: string;
   };
-  source: 'bluesky' | 'misskey';
+  source: 'bluesky' | 'misskey' | 'x';
   isQuote?: boolean;
   parentId?: string | null;
   parentPost?: import('@/types').PostWithAuthor | null;
@@ -611,6 +618,9 @@ type BlueskyEmbed = {
   $type?: string;
   images?: Array<{ fullsize?: string; thumb?: string;alt?:string }>;
   thumbnail?: string;
+  playlist?: string;
+  alt?: string;
+  aspectRatio?: { width: number; height: number };
   external?: { uri?: string; thumb?: string; title?: string; description?: string };
   media?: BlueskyEmbed;
   record?: {
@@ -708,9 +718,8 @@ async function fetchBlueskySearchEndpoint(
 ): Promise<Response> {
   let lastResponse: Response | null = null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    // 公開 AppView はブラウザからの未認証 GET 用に提供されているため、
-    // まずこちらを使う。CDN/CORS などで一方が失敗しても、もう一方を試す。
-    for (const baseUrl of [BSKY_PUBLIC_API, BSKY_SEARCH_API]) {
+    // 投稿検索は検索対応の AppView へ送る。public AppView は検索を拒否する場合がある。
+    for (const baseUrl of endpoint==='app.bsky.feed.searchPosts'?[BSKY_SEARCH_API]:[BSKY_PUBLIC_API, BSKY_SEARCH_API]) {
       const cooldownKey=baseUrl+'/'+endpoint;
       if((searchEndpointCooldown.get(cooldownKey)??0)>Date.now())continue;
       try {
@@ -741,8 +750,22 @@ async function fetchBlueskySearchEndpoint(
       lastResponse = response;
     } catch (error) { if (signal?.aborted) throw error; }
   }
+  if(['app.bsky.feed.searchPosts','app.bsky.actor.searchActors','app.bsky.actor.searchActorsTypeahead'].includes(endpoint)){
+    try{const response=await relayBlueskySearch(endpoint,params,signal);if(response?.ok)return response;}catch(error){if(signal?.aborted)throw error;}
+  }
   if (!lastResponse) throw new Error(`Bluesky ${endpoint} request did not start`);
   return lastResponse;
+}
+
+function extractVideo(embed: BlueskyEmbed | undefined): import('@/types').ExternalVideo | undefined {
+  if (!embed) return;
+  if (embed.$type === 'app.bsky.embed.recordWithMedia#view') return extractVideo(embed.media);
+  if (embed.$type !== 'app.bsky.embed.video#view' || !embed.playlist) return;
+  try { if (new URL(embed.playlist).protocol !== 'https:') return; } catch { return; }
+  const ratio = embed.aspectRatio;
+  return { playlist: embed.playlist, thumbnail: embed.thumbnail, alt: embed.alt,
+    width: ratio && ratio.width > 0 ? ratio.width : 16,
+    height: ratio && ratio.height > 0 ? ratio.height : 9, duration: 0 };
 }
 
 function extractImageUrls(embed: BlueskyEmbed | undefined): string[] {
@@ -759,7 +782,7 @@ function extractImageUrls(embed: BlueskyEmbed | undefined): string[] {
   }
 
   if (type.includes('video') && embed.thumbnail) {
-    return [embed.thumbnail];
+    return extractVideo(embed) ? [] : [embed.thumbnail];
   }
 
   if (embed.external?.thumb) {
@@ -851,7 +874,7 @@ function applyLinkFacets(
 // Legacy shared UI guard: both providers must bypass native UUID mutations.
 export function isBlueskyPost(post: { id?: string; source?: string } | null | undefined): boolean {
   if (!post) return false;
-  return post.source === 'bluesky' || String(post.id || '').startsWith('bsky:') || isMisskeyId(post.id);
+  return post.source === 'bluesky' || String(post.id || '').startsWith('bsky:') || isMisskeyId(post.id) || isXId(post.id);
 }
 
 export function getBlueskyPostUrl(
@@ -911,6 +934,7 @@ export function mapBlueskyFeedItemToPost(item: BlueskyFeedItem): BlueskyMappedPo
     userId: post.author.did,
     content,
     imageUrls,
+    externalVideo: extractVideo(post.embed),
     languages:post.record?.langs??[],
     imageAltTexts:(post.embed?.images??post.embed?.media?.images??[]).map(image=>image.alt??''),
     contentLabels:(post.labels??[]).flatMap(label=>label.val?[label.val]:[]),
@@ -969,6 +993,7 @@ export async function fetchBlueskyLikedPosts(signal?:AbortSignal):Promise<Bluesk
 }
 
 export async function fetchBlueskyPostThread(postId: string, signal?: AbortSignal): Promise<BlueskyPostThread> {
+  if (isXId(postId)) return xConversationPage(postId, undefined, signal);
   if (isMisskeyId(postId)) return misskeyThread(postId, signal);
   const uri = getBlueskyUriFromPostId(postId);
   if (!uri) return { post: null, replies: [] };
@@ -1005,11 +1030,13 @@ export async function fetchBlueskyPostThread(postId: string, signal?: AbortSigna
 }
 
 export async function fetchBlueskyPost(postId: string, signal?: AbortSignal): Promise<BlueskyMappedPost | null> {
+  if (isXId(postId)) return (await xThread(postId, signal)).post;
   const thread = await fetchBlueskyPostThread(postId, signal);
   return thread.post;
 }
 
 export async function fetchBlueskyProfile(actor: string, signal?: AbortSignal): Promise<BlueskyProfile | null> {
+  if (isXActor(actor)) return xProfile(actor, signal);
   if (isMisskeyActor(actor)) return misskeyProfile(actor, signal);
   const normalizedActor = normalizeBlueskyHandle(actor);
   if (!normalizedActor) return null;
@@ -1175,6 +1202,7 @@ export async function fetchBlueskyAuthorFeed(options?: {
   signal?: AbortSignal;
   includeReposts?: boolean;
 }): Promise<BlueskyAuthorFeedPage> {
+  if (options?.actor && isXActor(options.actor)) return xFeed(options);
   if (options?.actor && isMisskeyActor(options.actor)) return misskeyFeed(options);
   const actor = options?.actor || BSKY_AUTHOR_HANDLE;
   const limit = Math.min(100, Math.max(1, options?.limit ?? 30));
@@ -1422,6 +1450,7 @@ export async function fetchBlueskyFollowers(options: {
   limit?: number;
   signal?: AbortSignal;
 }): Promise<BlueskyFollowListPage> {
+  if (isXActor(options.actor)) return xFollowList(options.actor,false,options.cursor,options.limit,options.signal);
   if (isMisskeyActor(options.actor)) return misskeyFollowList(options.actor,false,options.cursor,options.limit,options.signal);
   return fetchBlueskyFollowList('app.bsky.graph.getFollowers', 'followers', options);
 }
@@ -1432,13 +1461,14 @@ export async function fetchBlueskyFollows(options: {
   limit?: number;
   signal?: AbortSignal;
 }): Promise<BlueskyFollowListPage> {
+  if (isXActor(options.actor)) return xFollowList(options.actor,true,options.cursor,options.limit,options.signal);
   if (isMisskeyActor(options.actor)) return misskeyFollowList(options.actor,true,options.cursor,options.limit,options.signal);
   return fetchBlueskyFollowList('app.bsky.graph.getFollows', 'follows', options);
 }
 
 // BlueskyのDIDは "did:" で始まるため、これでLimeの内部ユーザーと区別できる
 export function isBlueskyProfileId(id: string | null | undefined): boolean {
-  return typeof id === 'string' && (id.startsWith('did:') || id.startsWith('misskey-user:'));
+  return typeof id === 'string' && (id.startsWith('did:') || id.startsWith('misskey-user:') || id.startsWith('x-user:'));
 }
 
 export function mergePostsByCreatedAt<T extends { id: string; createdAt: string }>(
@@ -1523,7 +1553,7 @@ export async function fetchBlueskyTopicPosts(options: {query:string;cursor?:stri
 }
 
 // Historical Bluesky-named readers above dispatch external IDs to their own provider.
-export function getConfiguredExternalHandles() { return [...getConfiguredBlueskyHandles(),...configuredMisskeyHandles()]; }
+export function getConfiguredExternalHandles() { return [...getConfiguredBlueskyHandles(),...configuredMisskeyHandles(),...configuredXHandles()]; }
 
 export async function fetchTrendingJapaneseBlueskyPosts(options?:{cursor?:string|null;limit?:number;queryLimit?:number;signal?:AbortSignal}):Promise<BlueskyAuthorFeedPage> {
   const results=await Promise.allSettled([
@@ -1554,6 +1584,7 @@ export async function searchExternalUsers(query:string,options:{includeBluesky?:
   const results=await Promise.allSettled([
     options.includeBluesky===false ? Promise.resolve({users:[]}):searchBluesky(normalized,{includePosts:false,signal:options.signal}),
     searchMisskey(normalized,false,options.signal),
+    searchX(normalized,false,options.signal),
   ]);
   if(options.signal?.aborted)throw options.signal.reason;
   if(results.every(result=>result.status==='rejected'))throw (results[0] as PromiseRejectedResult).reason;

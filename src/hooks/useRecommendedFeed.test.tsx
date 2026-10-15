@@ -104,7 +104,7 @@ it.each([true,false])('resumes an empty first screen with pending sources=%s whe
  const cursor=api.createRecommendationCursor([]);cursor.preferences={authors:{},terms:{}};cursor.stalledPages=3;
  const pages=Array.from({length:8},(_,i)=>({posts:[],preferences:{authors:{},terms:{}},next:hasNext?cursor:undefined,pendingAnalysis:false,automaticPaused:i===7,requestKey:100+i}));
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
- const key=['feed','recommended','scoring-v36-stable-diverse-art','pixel-viewer',[]];
+ const key=['feed','recommended','scoring-v38-curated-discovery','pixel-viewer',[]];
  client.setQueryData(key,{pages,pageParams:Array(8).fill(cursor)});
  vi.mocked(api.getRecommendationPreferences).mockResolvedValueOnce({authors:{'new-creator':10},terms:{}});
  vi.mocked(api.getRecommendationPage).mockResolvedValueOnce({posts:[work('bsky:restored','new-creator')],preferences:{authors:{'new-creator':10},terms:{}},next:undefined,pendingAnalysis:false,automaticPaused:false,requestKey:200});
@@ -133,7 +133,7 @@ it('does not lose hydrated creator preferences when an older empty read complete
 it('uses fresh initial preferences on refresh instead of an older cached dismissal',async()=>{
  const api=await import('@/api/recommendations');const cursor=api.createRecommendationCursor([]);
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
- const key=['feed','recommended','scoring-v36-stable-diverse-art','pixel-viewer',[]];
+ const key=['feed','recommended','scoring-v38-curated-discovery','pixel-viewer',[]];
  const old={authors:{},terms:{},feedback:[{id:'old-dismissal',userId:'new-creator',createdAt:'2026-10-01T00:00:00Z'}]};
  client.setQueryData(key,{pages:[{posts:[],preferences:old,next:undefined,pendingAnalysis:false,automaticPaused:false,requestKey:400}],pageParams:[cursor]});
  vi.mocked(api.getRecommendationPage).mockResolvedValueOnce({posts:[work('bsky:fresh-initial','new-creator')],preferences:{authors:{'new-creator':10},terms:{}},next:undefined,pendingAnalysis:false,automaticPaused:false,requestKey:401});
@@ -149,7 +149,7 @@ it('finishes an empty initial scan with retained source cursors and allows a vis
  const cursor=api.createRecommendationCursor([]);cursor.preferences={authors:{},terms:{}};
  const pages=Array.from({length:8},(_,i)=>({posts:[],preferences:{authors:{},terms:{}},next:cursor,pendingAnalysis:false,automaticPaused:false,requestKey:500+i}));
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
- client.setQueryData(['feed','recommended','scoring-v36-stable-diverse-art','pixel-viewer',[]],{pages,pageParams:Array(8).fill(cursor)});
+ client.setQueryData(['feed','recommended','scoring-v38-curated-discovery','pixel-viewer',[]],{pages,pageParams:Array(8).fill(cursor)});
  const view=renderHook(()=>useRecommendedFeed(true),{wrapper:({children})=><QueryClientProvider client={client}>{children}</QueryClientProvider>});
  expect(view.result.current.hasNextPage).toBe(true);
  expect(view.result.current.isFilling).toBe(false);
@@ -162,7 +162,7 @@ it('finishes an empty initial scan with retained source cursors and allows a vis
 it('continues beyond the initial empty-scan budget when only a few posts are visible and sources remain',async()=>{
  const api=await import('@/api/recommendations');const cursor=api.createRecommendationCursor([]);cursor.preferences={authors:{},terms:{}};
  const pages=Array.from({length:8},(_,i)=>({posts:i===0?[{...candidate,id:'shown-one'},{...candidate,id:'shown-two'}]:[],preferences:cursor.preferences!,next:cursor,pendingAnalysis:false,automaticPaused:false,requestKey:800+i}));
- const client=new QueryClient({defaultOptions:{queries:{retry:false}}});client.setQueryData(['feed','recommended','scoring-v36-stable-diverse-art','pixel-viewer',[]],{pages,pageParams:Array(8).fill(cursor)});
+ const client=new QueryClient({defaultOptions:{queries:{retry:false}}});client.setQueryData(['feed','recommended','scoring-v38-curated-discovery','pixel-viewer',[]],{pages,pageParams:Array(8).fill(cursor)});
  const view=renderHook(()=>useRecommendedFeed(true),{wrapper:({children})=><QueryClientProvider client={client}>{children}</QueryClientProvider>});
  await waitFor(()=>expect(api.getRecommendationPage).toHaveBeenCalled());
  await waitFor(()=>expect(view.result.current.data?.pages.length).toBeGreaterThan(8));view.unmount();client.clear();
@@ -173,7 +173,7 @@ it('drops work already shown when a warmed or resumed continuation returns it ag
  const shown={...candidate,id:'already-shown'};
  const prefs={authors:{},terms:{}};
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
- client.setQueryData(['feed','recommended','scoring-v36-stable-diverse-art','pixel-viewer',[]],{pages:[{posts:[shown],preferences:prefs,next:cursor,pendingAnalysis:false,automaticPaused:true,requestKey:1}],pageParams:[api.createRecommendationCursor([])]});
+ client.setQueryData(['feed','recommended','scoring-v38-curated-discovery','pixel-viewer',[]],{pages:[{posts:[shown],preferences:prefs,next:cursor,pendingAnalysis:false,automaticPaused:true,requestKey:1}],pageParams:[api.createRecommendationCursor([])]});
  vi.mocked(api.getRecommendationPage).mockResolvedValueOnce({posts:[shown,{...candidate,id:'another-copy'}],preferences:prefs,next:undefined,pendingAnalysis:false,automaticPaused:false,requestKey:2});
  const view=renderHook(()=>useRecommendedFeed(true),{wrapper:({children})=><QueryClientProvider client={client}>{children}</QueryClientProvider>});
  await act(async()=>{await view.result.current.fetchNextPage();});

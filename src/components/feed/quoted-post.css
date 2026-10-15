@@ -90,3 +90,13 @@
 [data-lime-embedded] [data-lime-post-content] > [data-lime-post-header] { grid-row:1; margin-bottom:0; }
 [data-lime-embedded] [data-lime-post-body] { grid-row:2; }
 [data-lime-embedded] [data-lime-post-body] > div:first-child > p { margin-top:0; }
+
+/* Quoted videos share the image's edge-to-edge frame inside the quote border. */
+[data-lime-quoted-post] > [data-lime-embedded] [data-lime-post-provider] { padding-inline:12px; }
+[data-lime-quoted-post] > [data-lime-embedded] .post-video-player {
+  grid-column:1 / -1;
+  margin-top:0;
+  border:0;
+  border-radius:0;
+  overflow:hidden;
+}

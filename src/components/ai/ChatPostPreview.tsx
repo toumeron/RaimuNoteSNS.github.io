@@ -1,3 +1,4 @@
+import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
 import { PostPoll } from '@/components/feed/PostPoll';
 import type {ReactNode} from 'react';
 import {Link} from 'react-router-dom';
@@ -24,7 +25,7 @@ export function ChatPostPreview({content,fallback}:{content:string;fallback:Reac
     <Avatar className="dm-avatar"><AvatarImage src={post.author.avatarUrl}/><AvatarFallback>{post.author.displayName[0]}</AvatarFallback></Avatar>
     <strong>{post.author.displayName}</strong>
     {post.author.isPrivate&&<PrivateAccountBadge className="h-4 w-4 shrink-0"/>}
-    {post.author.isOfficial&&<img src={`${import.meta.env.BASE_URL}verified.png`} alt="認証済み" className="h-4 w-4 shrink-0"/>}
+    <ProviderVerificationBadge verification={post.author.providerVerification} className="h-4 w-4 shrink-0"/>{post.author.isOfficial&&<img src={`${import.meta.env.BASE_URL}verified.png`} alt="認証済み" className="h-4 w-4 shrink-0"/>}
     <time dateTime={post.createdAt}>· {new Date(post.createdAt).toLocaleDateString('ja-JP',{month:'long',day:'numeric'})}</time>
    </Link>
    <Link to={`/post/${post.id}`} className="dm-post-preview-content">{post.content}</Link>

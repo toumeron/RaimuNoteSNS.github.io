@@ -1,3 +1,8 @@
+import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
+import {twitterReplyUrl} from '@/lib/fxTwitter';
+import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
+import {ExternalPostDetails} from '@/components/feed/ExternalPostDetails';
+import {PostVideoPlayer} from '@/components/video/PostVideoPlayer';
 import { PrivateAccountBadge } from "@/components/common/OfficialBadge";
 import { mobilePostMenuOS } from "@/components/post/PostActionSheet";
 import "@/components/post/post-actions.css";
@@ -621,11 +626,11 @@ export function CommentCard({
     if (hasStickers(text)) return renderStickerText(text, renderContentWithMentions);
     if (!text) return null;
 
-    const parts = text.split(/(@\w+)/g);
+    const parts = externalPost?splitMentionText(text):text.split(/(@\w+)/g);
 
     return parts.map((part, index) => {
       if (part.startsWith('@')) {
-        const username = part.substring(1);
+        const username = externalPost?mentionProfileHandle(part,externalPost.author):part.substring(1);
 
         return (
           <Link
@@ -719,7 +724,7 @@ export function CommentCard({
           </span>
 
           {comment.author.isPrivate && <PrivateAccountBadge/>}
-          {comment.author.isOfficial && (
+          <ProviderVerificationBadge verification={externalPost?.author.providerVerification} className="h-[1.1em] w-[1.1em] shrink-0 transform translate-y-[1px]"/>{comment.author.isOfficial && (
             <img
               src={`${import.meta.env.BASE_URL}verified.png`}
               alt="Official"
@@ -869,7 +874,7 @@ export function CommentCard({
               <Link
                 to={replyUrl}
                 aria-label="この返信に返信する"
-                onClick={(e) => {e.stopPropagation();if(onMediaReply){e.preventDefault();onMediaReply();}}}
+                onClick={(e) => {e.stopPropagation();const intent=detail&&externalPost&&twitterReplyUrl(externalPost.id);if(intent){e.preventDefault();window.open(intent,'_blank','noopener,noreferrer');return;}if(onMediaReply){e.preventDefault();onMediaReply();}}}
                 className={`inline-flex items-center gap-1.5 rounded-full ${useMobilePresentation && !detail ? "px-2 text-[13px]" : "px-2.5 text-sm"} py-1 transition-colors hover:text-accent h-full ${detail && mobileFlat ? 'post-detail-mobile-reply-count' : ''}`}
               >
                 <MessageCircle className="h-5 w-5" />
@@ -1271,7 +1276,7 @@ export function CommentCard({
                         </span>
 
                         {comment.author.isPrivate && <PrivateAccountBadge/>}
-          {comment.author.isOfficial && (
+          <ProviderVerificationBadge verification={externalPost?.author.providerVerification} className="h-4 w-4 shrink-0 transform translate-y-[0.5px]"/>{comment.author.isOfficial && (
                           <img
                             src={`${import.meta.env.BASE_URL}verified.png`}
                             alt="Official"
@@ -1321,6 +1326,8 @@ export function CommentCard({
               </div>
 
               <LinkPreviewCard {...linkPreview} />
+              {externalPost?.externalVideo&&<PostVideoPlayer postId={externalPost.id} post={externalPost} video={externalPost.externalVideo} externalVideo={externalPost.externalVideo}/>}
+              {externalPost&&<ExternalPostDetails post={externalPost}/>}
               {youtubeId && (
                 <div onClick={(e) => e.stopPropagation()} className="mt-3">
                   <YouTubeEmbed videoId={youtubeId} />
@@ -1338,7 +1345,7 @@ export function CommentCard({
               {allImageUrls.length === 1 && !failedUrls.includes(allImageUrls[0]) ? (
                 <div className="mt-3 flex max-w-full justify-start" onClick={(e) => e.stopPropagation()}>
                   <button type="button" data-lime-single-post-image aria-label="画像を拡大表示" className="block max-w-full cursor-zoom-in overflow-hidden rounded-2xl border border-border/50 bg-black/[0.025] text-left shadow-none dark:bg-white/[0.035]" style={singleImageFrameStyle} onClick={(e) => handleImageClick(e, allImageUrls[0])}>
-                    <img src={allImageUrls[0]} alt="返信画像" className="block select-none" style={{ width: '100%', height: 'auto', objectFit: 'contain' }} draggable={false} loading="lazy" decoding="async" onLoad={(e) => { const image = e.currentTarget; if (image.naturalWidth && image.naturalHeight) setImageSize({ url: allImageUrls[0], width: image.naturalWidth, height: image.naturalHeight }); }} onError={() => setFailedUrls((prev) => prev.includes(allImageUrls[0]) ? prev : [...prev, allImageUrls[0]])} />
+                    <img src={allImageUrls[0]} alt={externalPost?.imageAltTexts?.[0]||"返信画像"} referrerPolicy={externalPost?.source==='x'?'no-referrer':undefined} className="block select-none" style={{ width: '100%', height: 'auto', objectFit: 'contain' }} draggable={false} loading="lazy" decoding="async" onLoad={(e) => { const image = e.currentTarget; if (image.naturalWidth && image.naturalHeight) setImageSize({ url: allImageUrls[0], width: image.naturalWidth, height: image.naturalHeight }); }} onError={() => setFailedUrls((prev) => prev.includes(allImageUrls[0]) ? prev : [...prev, allImageUrls[0]])} />
                   </button>
                 </div>
               ) : allImageUrls.length > 1 && (
@@ -1355,6 +1362,7 @@ export function CommentCard({
                   }}
                 >
                   <PostImages
+                    altTexts={externalPost?.imageAltTexts}
                     urls={allImageUrls}
                     embedded={embedded}
                     onImageError={(url) => {

@@ -18,7 +18,7 @@ export async function getFollowStats(userId: string): Promise<{
   canView?: boolean;
 }> {
   // External provider IDs are not UUIDs in Lime's follows table.
-  if (userId.startsWith('misskey-user:') || userId.startsWith('did:')) {
+  if (userId.startsWith('x-user:') || userId.startsWith('misskey-user:') || userId.startsWith('did:')) {
     return { followers: 0, following: 0, followedByMe: false };
   }
   const state = await getAccountFollowState(userId);
@@ -54,7 +54,7 @@ export type KnownFollower = { id: string; username: string; displayName: string;
 /** Visible, accepted followers that the viewer already follows. */
 export async function getKnownFollowers(viewerId: string, targetId: string): Promise<{total:number;users:KnownFollower[]}> {
   const empty={total:0,users:[] as KnownFollower[]};
-  if(!viewerId||viewerId===targetId||targetId.startsWith('did:')||targetId.startsWith('misskey-user:'))return empty;
+  if(!viewerId||viewerId===targetId||targetId.startsWith('did:')||targetId.startsWith('misskey-user:')||targetId.startsWith('x-user:'))return empty;
   const followedIds=new Set<string>();
   for(let offset=0;;offset+=1000){
     const {data,error}=await supabase.from('follows').select('followee_id').eq('follower_id',viewerId).eq('approved',true).order('followee_id').range(offset,offset+999);

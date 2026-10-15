@@ -37,11 +37,12 @@ it('searches personalized topics without discarding low-like posts and passes cu
   expect(fetcher.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
   expect(page.posts).toHaveLength(1);expect(page.posts[0].likesCount).toBe(0);expect(page.cursor).toBe('next');
 });
-it('falls back to the second public search host when the first refuses the request',async()=>{
-  const fetcher=vi.fn().mockResolvedValueOnce(new Response('',{status:403})).mockResolvedValueOnce(new Response('{"posts":[]}',{status:200}));
+it('sends post searches directly to the search AppView instead of the public CDN',async()=>{
+  const fetcher=vi.fn().mockResolvedValue(new Response('{"posts":[]}',{status:200}));
   vi.stubGlobal('fetch',fetcher);
-  expect((await fetchBlueskyTopicPosts({query:'猫'})).posts).toEqual([]);
-  expect(fetcher.mock.calls[1][0]).toContain('api.bsky.app');
+  expect((await fetchBlueskyTopicPosts({query:'JR東日本'})).posts).toEqual([]);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(new URL(fetcher.mock.calls[0][0]).hostname).toBe('api.bsky.app');
 });
 
 const misskeyUser={id:'local-user',username:'cat',name:'Misskey Cat',avatarUrl:'https://media.misskeyusercontent.jp/avatar.png'};
@@ -112,7 +113,7 @@ it('suggestions include both providers within the existing external slots',async
 it('excluding Bluesky does not remove Misskey suggestions',async()=>{
   const fetcher=vi.fn(async(url:string)=>new Response(JSON.stringify(url.endsWith('users/show') ? misskeyUser:[misskeyUser])));vi.stubGlobal('fetch',fetcher);
   expect((await searchExternalUsers('cat',{includeBluesky:false}))[0].username).toBe('cat@misskey.io');
-  expect(fetcher.mock.calls.every(([url])=>String(url).includes("misskey.io"))).toBe(true);
+  expect(fetcher.mock.calls.every(([url])=>!String(url).includes("bsky.app"))).toBe(true);
 });
 it('federated mention links remain intact and short Misskey mentions stay on their server',()=>{
   expect(splitMentionText('hello @cat@misskey.io and @cat.bsky.social.')).toEqual(['hello ','@cat@misskey.io',' and ','@cat.bsky.social','.']);

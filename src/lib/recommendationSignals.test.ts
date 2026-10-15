@@ -161,3 +161,13 @@ it('rejects incompatible features, unsafe trees, and unvalidated models',()=>{
  expect(validRankModel({...model,trees:[{...model.trees[0],decision_type:'=='}]})).toBe(false);
 });
 });
+
+it('keeps curated illustration discovery available after learning personal art tastes without downloading a vision model',()=>{
+ const author='did:plc:liked-artist';
+ const base={imageUrls:['https://images.example/liked.jpg'],content:'キャラクターイラスト',createdAt:new Date().toISOString(),likesCount:1,commentsCount:0,repostsCount:0,likedByMe:false,repostedByMe:false,source:'bluesky',languages:['ja'],author:{id:author,username:'liked.bsky.social'}} as any;
+ const preferences:RecommendationPreferences={authors:{[author]:8},terms:{},followedTopics:['digital-illustration'],authorTopics:{[author]:{'digital-illustration':8}},likedSamples:[{...base,id:'bsky:liked',userId:author,recommendationTopics:['digital-illustration']}]};
+ const candidate={...base,id:'bsky:unseen-curated',userId:'did:plc:new-artist',imageUrls:['https://images.example/new.jpg'],content:'',recommendationTopics:['digital-illustration'],recommendationSources:['at://did:plc:pbznmgl4g4srad5kabmmfkmi/app.bsky.feed.generator/aaaewbdiflbom'],recommendationLanguages:['ja'],author:{id:'did:plc:new-artist',username:'new.bsky.social'}} as PostWithAuthor;
+ expect(rankRecommendations([candidate],preferences,'viewer').map(post=>post.id)).toContain(candidate.id);
+ expect(rankRecommendations([{...candidate,id:'bsky:keyword-only',recommendationSources:['search:萌え']}],preferences,'viewer')).toEqual([]);
+ expect(rankRecommendations([{...candidate,id:'bsky:unrelated',recommendationTopics:['pets'],recommendationVisual:{version:1,kind:'photo',topics:['pets'],confidence:.9,similarity:0,vector:Array(512).fill(0)}}],preferences,'viewer')).toEqual([]);
+});

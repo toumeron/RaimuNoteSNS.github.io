@@ -1,3 +1,6 @@
+import {composerMediaDrop,isVideoAttachment} from '@/lib/composerMediaDrop';
+import {preparePostVideo,type PreparedVideo} from '@/lib/postVideo';
+import {PostVideoPlayer} from '@/components/video/PostVideoPlayer';
 import {ScheduleControl,ScheduledPostNotice} from '@/components/feed/ScheduleControl';
 import { allowAccountWrite } from '@/lib/accountSuspension';
 import {useAutoTextarea} from '@/hooks/useAutoTextarea';
@@ -190,6 +193,12 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
   const removePoll=()=>{pollRef.current?.options.forEach(option=>{if(option.image)URL.revokeObjectURL(option.image);});setPoll(null);};
   useEffect(()=>()=>{pollRef.current?.options.forEach(option=>{if(option.image)URL.revokeObjectURL(option.image);});},[]);
   const [sticker,setSticker]=useState<string|null>(null);
+  const [video,setVideo]=useState<PreparedVideo|null>(null);
+  const [videoProgress,setVideoProgress]=useState<number|null>(null);
+  const videoRef=useRef<PreparedVideo|null>(null);videoRef.current=video;
+  const videoAbort=useRef<AbortController|null>(null);
+  const removeVideo=()=>{videoAbort.current?.abort();if(videoRef.current)URL.revokeObjectURL(videoRef.current.url);setVideo(null);setVideoProgress(null);};
+  useEffect(()=>()=>{videoAbort.current?.abort();if(videoRef.current)URL.revokeObjectURL(videoRef.current.url);},[]);
   const [previews, setPreviews] = useState<string[]>([]);
   const [previewOriginals, setPreviewOriginals] = useState<string[]>([]);
   const [editingImageIndex, setEditingImageIndex] = useState<number | null>(null);
@@ -411,6 +420,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
   }, []);
 
   const addImageFiles = useCallback((incomingFiles: File[]) => {
+    if(videoRef.current||videoAbort.current){toast.error('動画は画像と同時に添付できません');return true;}
     const imageFiles = incomingFiles.filter((file) => file.type.startsWith('image/'));
     if (imageFiles.length === 0) return false;
 
@@ -1211,10 +1221,20 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
     requestAnimationFrame(resizeTextarea);
   };
 
-  const onFile = useCallback((e: ChangeEvent<HTMLInputElement>) => {
-    addImageFiles(Array.from(e.target.files ?? []));
-    if (fileRef.current) fileRef.current.value = '';
-  }, [addImageFiles]);
+  const attachMediaFiles = async (files:File[]) => {
+    if(isPending)return;
+    const selected=files.filter(isVideoAttachment);
+    if(!selected.length){addImageFiles(files);return;}
+    if(files.length!==1||previews.length||video||poll){toast.error('動画は1本だけ添付できます。画像・投票とは同時に添付できません');return;}
+    if(videoAbort.current)return;
+    const controller=new AbortController();videoAbort.current=controller;setVideoProgress(0);
+    try{const result=await preparePostVideo(selected[0],setVideoProgress,controller.signal);if(!controller.signal.aborted)setVideo(result);else URL.revokeObjectURL(result.url);}
+    catch(error){if(!controller.signal.aborted)toast.error((error as Error).message||'動画を処理できませんでした');}
+    finally{if(videoAbort.current===controller){videoAbort.current=null;setVideoProgress(null);}}
+  };
+
+  const onFile = (event:ChangeEvent<HTMLInputElement>)=>{const files=Array.from(event.target.files??[]);event.target.value='';void attachMediaFiles(files);};
+  const mediaDrop=composerMediaDrop(attachMediaFiles,isPending||videoProgress!==null);
 
   const removePreview = useCallback((i: number) => {
     const previewUrl = previewsRef.current[i];
@@ -1241,8 +1261,9 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
     if (!user) return;
 
     const trimmed = appendSticker(content,sticker);
-    if (!trimmed && (previews.length===0 || !!poll)) {
-      toast.error(poll?'投票の質問を入力してください':'本文または画像を追加してください');
+    if(videoProgress!==null)return;
+    if (!trimmed && ((previews.length===0&&!video) || !!poll)) {
+      toast.error(poll?'投票の質問を入力してください':'本文・画像・動画のいずれかを追加してください');
       return;
     }
     if (trimmed.length > MAX_LEN) {
@@ -1258,6 +1279,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
         ...(scheduledAt?{scheduledAt}:{}),
         content: trimmed, 
         imageUrls: previews,
+        ...(video?{video}:{}),
         parentId: quotedPost?.id,
         isQuote: !!quotedPost,
         user_id: user.id,
@@ -1279,6 +1301,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
         });
       }
 
+      removeVideo();
       setContent(''); setSticker(null); setScheduledAt(null);
       const urls = new Set([...previewsRef.current, ...previewOriginalsRef.current]);
       urls.forEach((url) => URL.revokeObjectURL(url));
@@ -1441,7 +1464,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
 
   return (
     <>
-      <div
+      <div {...mediaDrop}
         data-lime-post-composer
         className={cn(
         "rounded-3xl bg-card p-5 shadow-[0_3px_14px_rgb(0_0_0/0.07)] transition-all duration-300",
@@ -1566,6 +1589,8 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
             </div>
           )}
 
+          {videoProgress!==null&&<div className="my-3 rounded-xl bg-muted p-4 text-sm" role="status">動画を圧縮中… {Math.round(videoProgress*100)}%<progress className="mt-2 w-full" value={videoProgress} max={1}/><button type="button" onClick={removeVideo}>キャンセル</button></div>}
+          {video&&<div className="relative"><PostVideoPlayer video={video} previewUrl={video.url}/><button type="button" className="absolute right-2 top-2 rounded-full bg-black/70 p-2 text-white" aria-label="添付動画を削除" disabled={isPending} onClick={removeVideo}><X size={18}/></button></div>}
           {previews.length > 0 && (
             <div className="grid grid-cols-2 gap-2">
               {previews.map((src, i) => (
@@ -1595,20 +1620,20 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
 
           <div className="flex items-center justify-between pt-3">
             <div className="flex items-center gap-2">
-              <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={onFile} />
+              <input ref={fileRef} type="file" accept="image/*,video/mp4,video/webm,video/quicktime" multiple hidden onChange={onFile} />
               <Button
                 type="button"
                 size="sm"
                 variant="ghost"
                 aria-label="画像を追加" className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
                 data-lime-composer-tool data-lime-attachment-tool onClick={() => fileRef.current?.click()}
-                disabled={previews.length >= MAX_IMAGES}
+                disabled={isPending || !!video || videoProgress!==null || previews.length >= MAX_IMAGES}
               >
                 <ComposerIcon kind="image"/>
 
               </Button>
 
-<Button type="button" size="sm" variant="ghost" data-lime-composer-tool aria-label="投票を追加" aria-pressed={!!poll} disabled={isPending||!!poll} className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={()=>setPoll(newPollDraft())}><PollIcon className="h-5 w-5"/></Button>
+<Button type="button" size="sm" variant="ghost" data-lime-composer-tool aria-label="投票を追加" aria-pressed={!!poll} disabled={isPending||!!poll||!!video||videoProgress!==null} className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={()=>setPoll(newPollDraft())}><PollIcon className="h-5 w-5"/></Button>
                 <ScheduleControl value={scheduledAt} onChange={setScheduledAt} disabled={isPending}/>
 
               {/* 公開範囲選択 (追加) */}
@@ -1671,7 +1696,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
             <Button
               type="button"
               onClick={submit}
-              disabled={isPending || overLimit || (!appendSticker(content,sticker) && (previews.length===0 || !!poll)) || !!(poll&&validatePollDraft(poll))}
+              disabled={isPending || videoProgress!==null || overLimit || (!appendSticker(content,sticker) && ((previews.length===0&&!video) || !!poll)) || !!(poll&&validatePollDraft(poll))}
               aria-label={quotedPost?'引用ポスト':'ポスト'}
               className={cn("shrink-0 rounded-full bg-gradient-primary font-bold shadow-soft transition hover:shadow-pop",homeInline?"h-9 w-9 p-0 sm:h-10 sm:w-auto sm:px-5":"px-5")}
             >
