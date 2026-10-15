@@ -40,7 +40,7 @@ jobs:
           VITE_VIDEO_WORKER_URL: https://limenote-videos.megayont2.workers.dev
 
       - name: Setup Pages
-        uses: actions/configure-pages@v4
+        uses: actions/configure-pages@v6
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
