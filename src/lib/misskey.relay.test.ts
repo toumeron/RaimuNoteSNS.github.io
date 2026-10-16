@@ -55,3 +55,10 @@ it('does not hide a reply fetch failure as an empty thread',async()=>{
  fixture.invoke.mockImplementation(async(_name:string,{body}:any)=>body.endpoint==='notes/show'?{data:{data:{id:'root123',visibility:'public',text:'親',user:{id:'owner',username:'owner'}}},error:null}:{data:null,error:new Error('read failed')});
  await expect(misskeyThread('misskey:https://misskey.io/notes/root123')).rejects.toThrow('取得に失敗');
 });
+
+it('keeps Misskey renote totals in posts and quotes',async()=>{
+ const {mapMisskeyNote}=await import('./misskey');
+ const quoted={id:'quoted-count',createdAt:'2026-10-17T00:00:00Z',text:'元の投稿',visibility:'public',user:{id:'artist',username:'artist'},renoteCount:24};
+ const post=mapMisskeyNote({...quoted,id:'quote-count',text:'引用',renoteCount:12,renote:quoted})!;
+ expect(post.repostsCount).toBe(12);expect(post.externalDetails?.reposts).toBe(12);expect(post.parentPost?.repostsCount).toBe(24);
+});

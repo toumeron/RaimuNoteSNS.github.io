@@ -184,7 +184,7 @@ export async function getVideoFeed(before?:FeedCursor,signal?:AbortSignal):Promi
  * 「フォロー中」タブでも、フォローしている投稿主のメンバー限定投稿は
  * 自分がそのメンバーになっていれば表示する。
  */
-export async function getFollowingFeed(page: number = 0, limit: number = 10, before?: FeedCursor): Promise<PostWithAuthor[]> {
+export async function getFollowingFeed(page: number = 0, limit: number = 10, before?: FeedCursor,signal?:AbortSignal): Promise<PostWithAuthor[]> {
   const userId = await getCurrentUserId();
   if (!userId) return [];
 
@@ -192,9 +192,9 @@ export async function getFollowingFeed(page: number = 0, limit: number = 10, bef
   const to = from + limit - 1;
 
   const [{ data: followingData }, { data: followedByData }, { data: membershipsData }] = await Promise.all([
-    supabase.from('follows').select('followee_id').eq('follower_id', userId),
-    supabase.from('follows').select('follower_id').eq('followee_id', userId),
-    supabase.from('memberships').select('creator_id').eq('member_id', userId),
+    readWithSignal(supabase.from('follows').select('followee_id').eq('follower_id', userId),signal),
+    readWithSignal(supabase.from('follows').select('follower_id').eq('followee_id', userId),signal),
+    readWithSignal(supabase.from('memberships').select('creator_id').eq('member_id', userId),signal),
   ]);
   const followingIds = followingData?.map(f => f.followee_id).filter(Boolean) || [];
   if (followingIds.length === 0) return [];
@@ -218,7 +218,7 @@ export async function getFollowingFeed(page: number = 0, limit: number = 10, bef
     filterConditions += `,and(user_id.in.(${followingCreatorsIAmMemberOf.join(',')}),visibility.eq.members)`;
   }
 
-  const postsRes = await supabase
+  const postsRes = await readWithSignal(supabase
       .from('posts')
       .select(POST_SELECT_QUERY).or('parent_id.is.null,is_quote.eq.true')
       .or(before
@@ -226,10 +226,10 @@ export async function getFollowingFeed(page: number = 0, limit: number = 10, bef
         : filterConditions)
       .order('created_at', { ascending: false })
       .order('id', { ascending: false })
-      .range(from, to);
+      .range(from, to),signal);
   if (postsRes.error) throw postsRes.error;
   const rows = postsRes.data ?? [];
-  const { likedIds, repostedIds } = await getViewerReactions(userId, rows);
+  const { likedIds, repostedIds } = await getViewerReactions(userId, rows,signal);
   return rows.map((row: any) => rowToPost(row, likedIds, repostedIds));
 }
 

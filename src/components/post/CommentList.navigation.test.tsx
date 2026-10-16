@@ -71,3 +71,10 @@ describe('reply card interactions', () => {
     window.removeEventListener('lime-open-media-viewer', opened);
   });
 });
+
+it.each(['x:2110766445940572599','bsky:at://did:plc:actor/app.bsky.feed.post/record'])('opens the external reply activity for %s',async(id)=>{
+ const externalPost={...comment,author:{...comment.author,bio:'',coverUrl:''},id,commentsCount:0,repostsCount:0,repostedByMe:false,visibility:'public' as const,isBot:false,source:id.startsWith('x:')?'x' as const:'bluesky' as const};
+ renderWithQuery(<MemoryRouter><CommentCard comment={comment} externalPost={externalPost} currentUserId="author" mobileFlat thread/><Location/></MemoryRouter>);
+ fireEvent.click(screen.getByRole('button',{name:'コメントのメニュー'}));fireEvent.click(screen.getByRole('button',{name:'ポストアクティビティ'}));
+ expect(screen.getByTestId('location')).toHaveTextContent(`/post/${encodeURIComponent(id)}/activity`);
+});

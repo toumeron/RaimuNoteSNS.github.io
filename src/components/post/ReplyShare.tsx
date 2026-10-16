@@ -1,3 +1,4 @@
+import {displayUsername} from '@/lib/displayUsername';
 import type { PostWithAuthor } from '@/types';
 import '@/components/post/post-actions.css';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -454,7 +455,7 @@ export function ReplyShare({ comment, currentUserId, externalPost, className = '
                           {isSending ? '送信中...' : target.displayName}
                         </span>
                         <span className="mt-0.5 w-full truncate text-[11px] text-muted-foreground">
-                          @{target.username}
+                          @{displayUsername(target.username)}
                         </span>
                       </button>
                     );

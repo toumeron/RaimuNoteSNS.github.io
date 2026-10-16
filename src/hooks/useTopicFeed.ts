@@ -8,7 +8,7 @@ import {recommendationIsDismissed} from '@/lib/recommendations';
 import type {PostWithAuthor} from '@/types';
 export function useTopicFeed(topic?:TopicId) {
  const {user,loading}=useAuth(),client=useQueryClient();
- const queryKey=['feed','topic',user?.id??null,topic??null];
+ const queryKey=['feed','topic',user?.id??null,topic??null,'twitter-v1'];
  const query=useInfiniteQuery({queryKey,enabled:!!topic&&!loading,initialPageParam:topic?createTopicCursor(topic):undefined,
   queryFn:({pageParam,signal})=>getTopicPage(pageParam!,user?.id??null,signal),getNextPageParam:page=>page.next,
   retry:false,gcTime:60000,staleTime:60000,refetchOnWindowFocus:false,refetchOnMount:false});

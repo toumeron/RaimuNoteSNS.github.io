@@ -23,10 +23,13 @@ export function RepostButton({ post, mobilePresentation = false, refreshState = 
   const {user} = useAuth();
   const [persistedState,setPersistedState]=useState<{count:number;reposted:boolean;updatedAt:number}|null>(null);
   const externalState = useQuery({queryKey: ['repost-state', post.id, user?.id ?? null],
-    queryFn: () => isReplyPostId(post.id) ? getReplyRepostState(post.id) : isExternalPostId(post.id) ? getExternalRepostState(post.id) : getNativeRepostState(post.id), enabled: refreshState || isExternalPostId(post.id) || isReplyPostId(post.id), staleTime:30_000, refetchOnWindowFocus:false});
+    queryFn: ({signal}) => isReplyPostId(post.id) ? getReplyRepostState(post.id) : isExternalPostId(post.id) ? getExternalRepostState(post.id,signal) : getNativeRepostState(post.id), enabled: refreshState || isExternalPostId(post.id) || isReplyPostId(post.id), staleTime:30_000, ...(isExternalPostId(post.id)?{retry:false,retryOnMount:false,refetchOnReconnect:false,refetchOnMount:false}:{}), refetchOnWindowFocus:false});
   const usePersisted = persistedState && externalState.dataUpdatedAt <= persistedState.updatedAt;
   const reposted = usePersisted ? persistedState.reposted : externalState.data?.repostedByMe ?? post.repostedByMe;
-  const count = usePersisted ? persistedState.count : externalState.data?.repostsCount ?? post.repostsCount ?? 0;
+  const external=isExternalPostId(post.id);
+  const localCount=usePersisted?persistedState.count:externalState.data?.repostsCount??(external?0:post.repostsCount??0);
+  const remoteCount=external?post.externalDetails?.reposts??post.repostsCount??0:0;
+  const count=remoteCount+localCount;
   const mobile = useMobilePostMenu();
   const [sheetOpen, setSheetOpen] = useState(false);
   const quoteAfterClose = (event: Event) => {
@@ -42,7 +45,7 @@ export function RepostButton({ post, mobilePresentation = false, refreshState = 
   };
   const repost = () => { const viewer = user?.id ?? null; mutation.mutate(post.id, {onSuccess: result => {
     recordRecommendationEngagement(post,viewer,'repost',result.reposted);
-    if (refreshState || isExternalPostId(post.id) || isReplyPostId(post.id)) setPersistedState({reposted:result.reposted,count:result.repostsCount ?? Math.max(0,count+(result.reposted?1:-1)),updatedAt:externalState.dataUpdatedAt});
+    if (refreshState || isExternalPostId(post.id) || isReplyPostId(post.id)) setPersistedState({reposted:result.reposted,count:result.repostsCount ?? Math.max(0,localCount+(result.reposted?1:-1)),updatedAt:externalState.dataUpdatedAt});
   }}); };
   const trigger = <button type="button" aria-label="リポスト" data-lime-post-action="repost" disabled={mutation.isPending}
     onClick={mobile ? () => setSheetOpen(true) : undefined}

@@ -1,3 +1,5 @@
+import {displayUsername} from '@/lib/displayUsername';
+import {PrivateMediaImage} from '@/components/media/PrivateMediaImage';
 import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 import {splitMentionText} from '@/lib/utils';
 import { openMediaViewer } from '@/components/media/openMediaViewer';
@@ -826,7 +828,7 @@ export default function MediaViewer() {
       const imageUrl = `https://res.cloudinary.com/dveiikhhw/image/upload/${cleanPublicId}.${customEmoji.format}`;
 
       return (
-        <img
+        <PrivateMediaImage
           src={imageUrl}
           alt={customEmoji.name}
           className={className}
@@ -1036,7 +1038,7 @@ export default function MediaViewer() {
                         className="flex min-w-0 items-center gap-2"
                       >
                         {reactionUser.avatarUrl ? (
-                          <img
+                          <PrivateMediaImage
                             src={reactionUser.avatarUrl}
                             alt={reactionUser.displayName}
                             className="h-5 w-5 shrink-0 rounded-full object-cover"
@@ -1052,7 +1054,7 @@ export default function MediaViewer() {
                             {reactionUser.displayName}
                           </span>
                           <span className="truncate text-[10px] leading-none text-muted-foreground/70">
-                            @{reactionUser.username}
+                            @{displayUsername(reactionUser.username)}
                           </span>
                         </div>
                       </div>
@@ -1565,7 +1567,7 @@ export default function MediaViewer() {
             data-media-key={item.displayImageKey}
             className="relative flex h-[calc(100%-1.5rem)] min-h-[calc(100%-1.5rem)] shrink-0 snap-start items-center justify-center bg-muted/40 px-0 py-0 sm:px-3 md:h-full md:min-h-full md:px-5 dark:bg-black"
           >
-            <img
+            <PrivateMediaImage
               src={item.displayImageUrl}
               onClick={() => openMediaViewer({ url: item.displayImageUrl, postId: item.id, media: item.imageUrls.map(src => ({ src })) })}
               alt=""
@@ -1607,7 +1609,7 @@ export default function MediaViewer() {
                     to={`/u/${activeItem.author.username}`}
                     onClick={(event) => event.stopPropagation()}
                   >
-                    <img
+                    <PrivateMediaImage
                       src={activeItem.author.avatarUrl}
                       alt={activeItem.author.displayName}
                       className="h-11 w-11 rounded-full object-cover"
@@ -1637,7 +1639,7 @@ export default function MediaViewer() {
 
                     {activeItem.author.isPrivate && <PrivateAccountBadge/>}
                     {activeItem.author.isOfficial && (
-                      <img
+                      <PrivateMediaImage
                         src={`${import.meta.env.BASE_URL}verified.png`}
                         alt="Official"
                         className="h-4 w-4 shrink-0 translate-y-[0.5px]"
@@ -1651,7 +1653,7 @@ export default function MediaViewer() {
                     className="block truncate text-sm text-muted-foreground hover:underline"
                     onClick={(event) => event.stopPropagation()}
                   >
-                    @{activeItem.author.username || "unknown"}
+                    @{displayUsername(activeItem.author.username || "unknown")}
                   </Link>
                 </div>
               </div>
@@ -1726,7 +1728,7 @@ export default function MediaViewer() {
                 onClick={(event) => event.stopPropagation()}
                 className="shrink-0"
               >
-                <img
+                <PrivateMediaImage
                   src={activeItem.author.avatarUrl}
                   alt={activeItem.author.displayName}
                   className="h-10 w-10 rounded-full object-cover"
@@ -1757,7 +1759,7 @@ export default function MediaViewer() {
 
                   {activeItem.author.isPrivate && <PrivateAccountBadge/>}
                     {activeItem.author.isOfficial && (
-                    <img
+                    <PrivateMediaImage
                       src={`${import.meta.env.BASE_URL}verified.png`}
                       alt="Official"
                       className="h-3.5 w-3.5 shrink-0 translate-y-[0.5px]"
@@ -1767,7 +1769,7 @@ export default function MediaViewer() {
                 </Link>
 
                 <span className="truncate text-xs text-muted-foreground dark:text-white/50">
-                  @{activeItem.author.username || "unknown"}
+                  @{displayUsername(activeItem.author.username || "unknown")}
                 </span>
 
                 {activeItem.visibility === "following" && (

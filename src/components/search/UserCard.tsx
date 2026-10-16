@@ -1,3 +1,4 @@
+import {displayUsername} from '@/lib/displayUsername';
 import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
 import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 import { Link } from "react-router-dom";
@@ -63,7 +64,7 @@ export default function UserCard({ user, explore = false }: UserCardProps) {
           </div>
 
           <span className="text-muted-foreground/80 text-[14px] leading-none">
-            @{user.username}
+            @{displayUsername(user.username)}
           </span>
 
           {user.bio && (

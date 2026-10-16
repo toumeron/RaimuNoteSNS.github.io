@@ -9,3 +9,8 @@ it('preserves native Bluesky HLS video and dimensions instead of displaying a st
 });
 it('retains videos attached to quote posts',()=>{expect(map({$type:'app.bsky.embed.recordWithMedia#view',media:video}).externalVideo?.playlist).toBe(video.playlist);});
 it('keeps the thumbnail fallback when there is no usable playlist',()=>{const post=map({...video,playlist:'javascript:alert(1)'});expect(post.externalVideo).toBeUndefined();expect(post.imageUrls).toEqual([video.thumbnail]);});
+
+it('retains source repost counts through timeline normalization',()=>{
+ const mapped=mapBlueskyFeedItemToPost({post:{uri:'at://did:plc:artist/app.bsky.feed.post/count',author:{did:'did:plc:artist',handle:'artist.bsky.social'},record:{text:'投稿'},repostCount:123}})!;
+ expect(mapped.repostsCount).toBe(123);expect(mapped.externalDetails?.reposts).toBe(123);expect(normalizeTimelineBlueskyPost(mapped).repostsCount).toBe(123);
+});

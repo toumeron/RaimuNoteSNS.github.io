@@ -36,21 +36,38 @@
 [data-lime-embedded] [data-lime-post-body] > div:first-child {
   padding: 0 12px;
 }
-[data-lime-quoted-post] > [data-lime-embedded] [data-lime-single-post-image] {
+/* Quoted photos are cropped thumbnails, including posts without text. */
+[data-lime-quoted-post] > [data-lime-embedded] [data-lime-post-images] {
+  width: 160px;
+  max-width: 100%;
+  margin: 8px 12px 12px;
+  overflow: hidden;
+  border-radius: 12px;
+}
+[data-lime-quoted-post] > [data-lime-embedded] [data-lime-single-post-image],
+[data-lime-quoted-post] > [data-lime-embedded] [data-lime-post-image-grid] {
+  display: block;
   width: 100% !important;
   max-width: 100% !important;
-  height: auto !important;
-  max-height: none !important;
+  height: 120px !important;
+  max-height: 120px !important;
+  margin: 0;
   aspect-ratio: auto !important;
   border: 0;
   border-radius: 0;
+  padding: 0;
 }
-[data-lime-quoted-post] > [data-lime-embedded] [data-lime-single-post-image] img {
+[data-lime-quoted-post] > [data-lime-embedded] [data-lime-post-image-grid] img,
+[data-lime-quoted-post] > [data-lime-embedded] [data-lime-single-post-image] img,
+[data-lime-quoted-post] > [data-lime-embedded] [data-lime-post-image-grid] > div:first-child {
   width: 100% !important;
-  max-width: 100% !important;
-  height: auto !important;
-  max-height: none !important;
+  height: 100% !important;
+  max-height: 100% !important;
+  aspect-ratio: auto !important;
+  object-fit: cover !important;
+  display: block;
 }
+[data-lime-quoted-post] > [data-lime-embedded] [data-lime-post-image-grid] > div:not(:first-child) { display: none; }
 [data-lime-embedded] [data-lime-post-body] {
   padding-bottom: 12px;
 }
@@ -91,7 +108,7 @@
 [data-lime-embedded] [data-lime-post-body] { grid-row:2; }
 [data-lime-embedded] [data-lime-post-body] > div:first-child > p { margin-top:0; }
 
-/* Quoted videos share the image's edge-to-edge frame inside the quote border. */
+/* Quoted videos retain their existing frame inside the quote border. */
 [data-lime-quoted-post] > [data-lime-embedded] [data-lime-post-provider] { padding-inline:12px; }
 [data-lime-quoted-post] > [data-lime-embedded] .post-video-player {
   grid-column:1 / -1;
@@ -99,4 +116,42 @@
   border:0;
   border-radius:0;
   overflow:hidden;
+}
+
+/* Quote text has the same bounded preview on timelines and detail screens. */
+[data-lime-quoted-post] > [data-lime-embedded] [data-lime-post-body] > div:first-child p {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* With text, the thumbnail sits left of the excerpt, below the shared header. */
+[data-lime-quote-image-text] { --quote-photo-size: 88px; }
+@media (min-width: 640px) {
+  [data-lime-quote-image-text] { --quote-photo-size: 112px; }
+}
+[data-lime-quote-image-text] > [data-lime-embedded] [data-lime-post-body] {
+  display: grid;
+  grid-template-columns: var(--quote-photo-size) minmax(0, 1fr);
+  gap: 12px;
+  padding: 4px 12px 12px;
+  align-items: start;
+}
+[data-lime-quote-image-text] > [data-lime-embedded] [data-lime-post-body] > div:first-child {
+  grid-column: 2;
+  grid-row: 1;
+  padding: 0;
+  min-width: 0;
+}
+[data-lime-quote-image-text] > [data-lime-embedded] [data-lime-post-images] {
+  grid-column: 1;
+  grid-row: 1;
+  width: var(--quote-photo-size);
+  margin: 0;
+}
+[data-lime-quote-image-text] > [data-lime-embedded] [data-lime-single-post-image],
+[data-lime-quote-image-text] > [data-lime-embedded] [data-lime-post-image-grid] {
+  height: var(--quote-photo-size) !important;
+  max-height: var(--quote-photo-size) !important;
 }

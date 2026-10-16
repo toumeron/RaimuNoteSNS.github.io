@@ -1,5 +1,5 @@
 import {afterEach, beforeEach, expect, it, vi} from 'vitest';
-import {clearPrivateMedia, createPrivateMediaFetch, MEDIA_PREFIX} from './privateMediaFetch';
+import {clearPrivateMedia, createPrivateMediaFetch, MEDIA_PREFIX, resolvePrivateMediaUrl, isDeferredPrivateMedia} from './privateMediaFetch';
 const path='11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/33333333-3333-4333-8333-333333333333.png';
 const ref=MEDIA_PREFIX+path;
 const db='https://example.supabase.co';
@@ -52,4 +52,35 @@ it('revalidates storage permissions on refresh while reusing the same local imag
  const fetcher=createPrivateMediaFetch(db,transport);
  await fetcher(db+'/rest/v1/posts');await fetcher(db+'/rest/v1/posts');
  expect(transport).toHaveBeenCalledTimes(4);expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+});
+
+it('returns post metadata before downloading even one attachment, then checks RLS on demand',async()=>{
+ let finish!:(response:Response)=>void;
+ const transport=vi.fn().mockResolvedValueOnce(Response.json([{content:'ready',image_urls:[ref],parent_post:{image_urls:[ref]}}])).mockImplementationOnce(()=>new Promise<Response>(resolve=>{finish=resolve;}));
+ const controller=new AbortController();
+ const response=await createPrivateMediaFetch(db,transport,true)(db+'/rest/v1/posts',{signal:controller.signal,headers:{authorization:'Bearer viewer',apikey:'public-key'}});
+ const rows=await response.json(),token=rows[0].image_urls[0];
+ expect(rows[0].content).toBe('ready');expect(isDeferredPrivateMedia(token)).toBe(true);expect(rows[0].parent_post.image_urls[0]).toBe(token);expect(transport).toHaveBeenCalledTimes(1);
+ // Completing/cancelling metadata does not cancel a later image request.
+ controller.abort();const pending=resolvePrivateMediaUrl(token);
+ expect(transport).toHaveBeenCalledTimes(2);expect(transport.mock.calls[1][1].signal.aborted).toBe(false);
+ expect(transport.mock.calls[1][1].headers.get('authorization')).toBe('Bearer viewer');
+ finish(new Response('png',{headers:{'content-type':'image/png'}}));expect(await pending).toBe('blob:protected');
+});
+it('invalidates deferred attachments at account changes before any old credentials can be used',async()=>{
+ const transport=vi.fn().mockResolvedValue(Response.json({image_urls:[ref]}));
+ const response=await createPrivateMediaFetch(db,transport,true)(db+'/rest/v1/posts');
+ const {image_urls:[token]}=await response.json();clearPrivateMedia();
+ expect(await resolvePrivateMediaUrl(token)).toBeNull();expect(transport).toHaveBeenCalledTimes(1);
+});
+it('does not expose a deferred image if Storage denies access',async()=>{
+ const transport=vi.fn().mockResolvedValueOnce(Response.json({image_urls:[ref]})).mockResolvedValueOnce(new Response('',{status:403}));
+ const {image_urls:[token]}=await (await createPrivateMediaFetch(db,transport,true)(db+'/rest/v1/posts')).json();
+ expect(await resolvePrivateMediaUrl(token)).toBeNull();expect(URL.createObjectURL).not.toHaveBeenCalled();
+});
+
+it('does not download an entire liked-image history while preparing recommendation preferences',async()=>{
+ const transport=vi.fn().mockResolvedValue(Response.json(Array.from({length:200},(_,i)=>({id:i,posts:{image_urls:[ref]}}))));
+ const rows=await (await createPrivateMediaFetch(db,transport,true)(db+'/rest/v1/likes')).json();
+ expect(rows).toHaveLength(200);expect(isDeferredPrivateMedia(rows[0].posts.image_urls[0])).toBe(true);expect(transport).toHaveBeenCalledTimes(1);
 });

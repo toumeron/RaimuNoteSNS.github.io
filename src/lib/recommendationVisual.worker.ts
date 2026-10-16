@@ -8,7 +8,11 @@ let engine:Promise<{processor:Awaited<ReturnType<typeof AutoProcessor.from_pretr
 function load(){
  engine??=Promise.all([
   AutoProcessor.from_pretrained(prototypes.model,{revision:prototypes.revision}),
-  CLIPVisionModelWithProjection.from_pretrained(prototypes.model,{revision:prototypes.revision,dtype:'q8',device:'wasm'}),
+  (async()=>{
+   const gpu=(navigator as Navigator&{gpu?:{requestAdapter:()=>Promise<unknown>}}).gpu;
+   if(gpu){try{if(await gpu.requestAdapter())return await CLIPVisionModelWithProjection.from_pretrained(prototypes.model,{revision:prototypes.revision,dtype:'q8',device:'webgpu'});}catch{/* Keep the same model/precision on CPU when GPU initialization is unavailable. */}}
+   return CLIPVisionModelWithProjection.from_pretrained(prototypes.model,{revision:prototypes.revision,dtype:'q8',device:'wasm'});
+  })(),
  ]).then(([processor,model])=>({processor,model})).catch(error=>{engine=undefined;throw error;});
  return engine;
 }
@@ -38,6 +42,7 @@ async function imageBlob(url:string):Promise<Blob>{
  return blob;
 }
 const run=createRecommendationVisualQueue({
+ capacity:8,
  load,
  prepare:async(data:{id:number;url:string})=>{
   if(cancelled.has(data.id))throw new Error('Cancelled');

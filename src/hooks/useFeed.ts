@@ -117,10 +117,10 @@ const canViewPost = (
 export const useFeed = (tab: 'all' | 'following' = 'all') =>
   useInfiniteQuery({
     queryKey: tab === 'all' ? feedKeys.all : feedKeys.following,
-    queryFn: ({ pageParam = 0 }) => {
+    queryFn: ({ pageParam = 0,signal }) => {
       return tab === 'all'
-        ? getFeed(pageParam as number, LIMIT)
-        : getFollowingFeed(pageParam as number, LIMIT);
+        ? getFeed(pageParam as number, LIMIT,undefined,signal)
+        : getFollowingFeed(pageParam as number, LIMIT,undefined,signal);
     },
     initialPageParam: 0,
     getNextPageParam: (lastPage, allPages) => {
@@ -132,6 +132,7 @@ export const useFeed = (tab: 'all' | 'following' = 'all') =>
     placeholderData: (previousData) => previousData,
     // キャッシュ保持時間の設定（必要に応じて）
     staleTime: 1000 * 60,
+    retry:false,
   });
 
 /**
@@ -142,6 +143,7 @@ export const usePost = (id: string) =>
     queryKey: postKey(id),
     queryFn: () => getPostById(id),
     enabled: !!id,
+    retry:false,
   });
 
 /**
@@ -171,6 +173,7 @@ export const useUserPosts = (userId: string | undefined) =>
       });
     },
     enabled: !!userId,
+    retry:false,
   });
 
 /**

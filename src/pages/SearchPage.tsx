@@ -1,3 +1,7 @@
+import {hasAttachedPostVideo} from '@/lib/postPresentation';
+import {displayUsername} from '@/lib/displayUsername';
+import {PrivateMediaImage} from '@/components/media/PrivateMediaImage';
+import {searchProviderBatch} from '@/lib/searchProviderBatch';
 import {PostVideoThumbnail} from '@/components/video/PostVideoThumbnail';
 import {twitterSearchQuery} from '@/lib/twitterSearch';
 import {normalizeTimelineBlueskyPost} from '@/lib/timelinePaging';
@@ -449,9 +453,11 @@ export function getPostMedia(post: {
   content?: string | null;
   imageUrls?: string[] | null;
   imageUrl?: string | null;
+  video?: unknown;
+  externalVideo?: unknown;
 }): { images: string[]; youtubeIds: string[] } {
   const content = post.content || '';
-  const youtubeIds = extractYouTubeIds(content);
+  const youtubeIds = hasAttachedPostVideo(post)?[]:extractYouTubeIds(content);
 
   // Bluesky投稿にYouTubeリンクが含まれると、Bluesky側の外部リンクカードの
   // サムネイルが imageUrls に入ってくる。PostCard と同様に、その場合は画像として数えず
@@ -727,7 +733,7 @@ function SearchMediaGrid({ posts }: SearchMediaGridProps) {
             className="group relative aspect-square overflow-hidden bg-black/5 dark:bg-white/10"
             aria-label={tile.type !== 'image' ? '動画を開く' : '画像を開く'}
           >
-            {tile.type==='video'?<PostVideoThumbnail postId={tile.post.id} duration={(tile.post.video||tile.post.externalVideo)!.duration} external={!!tile.post.externalVideo} thumbnail={tile.post.externalVideo?.thumbnail}/>:<img
+            {tile.type==='video'?<PostVideoThumbnail postId={tile.post.id} duration={(tile.post.video||tile.post.externalVideo)!.duration} external={!!tile.post.externalVideo} thumbnail={tile.post.externalVideo?.thumbnail}/>:<PrivateMediaImage
               referrerPolicy={/^https:\/\/pbs[.]twimg[.]com\//.test(tile.src)?'no-referrer':undefined} src={tile.src}
               alt=""
               loading="lazy"
@@ -1135,7 +1141,7 @@ function SearchResults({
         const previousTwitter=feedsRef.current[mode];
         const twitterQuery=twitterSearchQuery(effective);
         const twitterRequest=(effective.source==='all'||effective.source==='x')&&twitterQuery&&(page===0||!previousTwitter.twitterDone)
-          ? searchXPage(twitterQuery,{cursor:page===0?null:previousTwitter.twitterCursor,feed:mode,signal:searchControllerRef.current.signal}).then(result=>({...result,error:null as unknown}),error=>({posts:[],cursor:null,error}))
+          ? searchXPage(twitterQuery,{cursor:page===0?null:previousTwitter.twitterCursor,feed:mode,preferAlternative:true,signal:searchControllerRef.current.signal}).then(result=>({...result,error:null as unknown}),error=>({posts:[],cursor:null,error}))
           : Promise.resolve({posts:[],cursor:null,error:null as unknown});
         const extraRequest=(page===0 ? fetchBlueskyPosts(effective):Promise.resolve([] as PostWithAuthor[])).catch(error=>{if(!searchControllerRef.current.signal.aborted)console.warn('External search failed',error);return [] as PostWithAuthor[];});
         let currentPage = page;
@@ -1157,11 +1163,11 @@ function SearchResults({
           const previous=prev[mode];
           const shown=new Set(page===0 ? []:previous.items.map(post=>post.id));
           const candidates=sortPosts([...(page===0 ? []:previous.remaining),...local.items,...extra,...twitterPosts],mode).filter(post=>!shown.has(post.id));
-          const batch=candidates.slice(0,PAGE_SIZE),remaining=candidates.slice(PAGE_SIZE);
+          const {posts:batch,remaining}=searchProviderBatch(candidates,PAGE_SIZE,effective.source==='all');
           return {...prev,[mode]:{
             items:page===0 ? batch:[...previous.items,...batch],
-            remaining,localHasMore:local.hasMore,twitterCursor:twitter.cursor,twitterDone:!twitter.cursor,twitterError:twitter.error?(twitter.error instanceof Error?twitter.error.message:'twitterの検索結果を取得できませんでした'):undefined,
-            page:currentPage,hasMore:local.hasMore || remaining.length>0 || !!twitter.cursor,
+            remaining,localHasMore:local.hasMore,twitterCursor:twitter.error?previous.twitterCursor:twitter.cursor,twitterDone:twitter.error?false:!twitter.cursor,twitterError:twitter.error?(twitter.error instanceof Error?twitter.error.message:'twitterの検索結果を取得できませんでした'):undefined,
+            page:currentPage,hasMore:local.hasMore || remaining.length>0 || !!twitter.cursor || !!twitter.error,
             loading:false,loaded:true,error:null,
           }};
         });
@@ -1993,7 +1999,7 @@ function SearchPageContent() {
                     ) : (
                       <>
                         {row.user.avatarUrl ? (
-                          <img
+                          <PrivateMediaImage
                             src={row.user.avatarUrl}
                             alt={row.user.displayName}
                             loading="lazy"
@@ -2007,7 +2013,7 @@ function SearchPageContent() {
                             <span className="truncate font-bold text-[15px]">{row.user.displayName}</span>
                             {row.user.isPrivate && <PrivateAccountBadge/>}
                             {row.user.isOfficial && (
-                              <img
+                              <PrivateMediaImage
                                 src={`${import.meta.env.BASE_URL}verified.png`}
                                 alt="Official"
                                 className="h-4 w-4 shrink-0 translate-y-[0.5px]"
@@ -2015,7 +2021,7 @@ function SearchPageContent() {
                               />
                             )}
                           </span>
-                          <span className="truncate text-[13px] text-[rgb(83,100,113)] dark:text-gray-400">@{row.user.username}</span>
+                          <span className="truncate text-[13px] text-[rgb(83,100,113)] dark:text-gray-400">@{displayUsername(row.user.username)}</span>
                         </div>
                       </>
                     )}

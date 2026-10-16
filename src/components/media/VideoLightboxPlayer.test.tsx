@@ -29,3 +29,28 @@ it('aborts a previous slide and never plays a private download that finishes aft
  const signal=mocks.resolve.mock.calls[0][1] as AbortSignal;view.unmount();expect(signal.aborted).toBe(true);
  finish({url:'blob:late',local:true});await waitFor(()=>expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:late'));expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
 });
+
+it('does not replace the saved sound-on choice when autoplay temporarily requires mute',async()=>{
+ mocks.resolve.mockResolvedValue({url:'https://video.example/video.mp4',local:false});
+ const observed:boolean[]=[];
+ vi.mocked(HTMLMediaElement.prototype.play).mockImplementation(async function(this:HTMLMediaElement){observed.push(this.muted);if(observed.length===1)throw new DOMException('Autoplay restricted','NotAllowedError');running=true;this.dispatchEvent(new Event('play'));});
+ const view=render(<VideoLightboxPlayer {...prefs} muted={false} selection={{postId:'blocked',video}} host={null}/>);
+ await waitFor(()=>expect(observed).toEqual([false,true]));expect(prefs.onMutedChange).not.toHaveBeenCalled();
+ view.rerender(<VideoLightboxPlayer {...prefs} muted={false} selection={{postId:'next',video}} host={null}/>);
+ await waitFor(()=>expect(observed).toEqual([false,true,false]));expect(prefs.onMutedChange).not.toHaveBeenCalled();
+});
+
+it('pauses the outgoing slide during a pending swipe and resumes if the transition is cancelled',async()=>{
+ mocks.resolve.mockResolvedValue({url:'https://video.example/current.mp4',local:false});
+ const props={...prefs,selection:{postId:'current',video},host:null};
+ const view=render(<VideoLightboxPlayer {...props}/>);await waitFor(()=>expect(running).toBe(true));
+ view.rerender(<VideoLightboxPlayer {...props} suspended/>);expect(running).toBe(false);
+ view.rerender(<VideoLightboxPlayer {...props}/>);await waitFor(()=>expect(running).toBe(true));expect(prefs.onMutedChange).not.toHaveBeenCalled();
+});
+it('does not start late playback while the outgoing slide is suspended',async()=>{
+ let finish!:(value:any)=>void;mocks.resolve.mockImplementation(()=>new Promise(resolve=>{finish=resolve;}));
+ const props={...prefs,selection:{postId:'late',video},host:null};
+ const view=render(<VideoLightboxPlayer {...props}/>);view.rerender(<VideoLightboxPlayer {...props} suspended/>);
+ finish({url:'https://video.example/late.mp4',local:false});await waitFor(()=>expect(screen.queryByLabelText('動画を読み込み中')).not.toBeInTheDocument());
+ expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+});

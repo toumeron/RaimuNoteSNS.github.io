@@ -1,3 +1,4 @@
+import {profilePostIdentity} from './profileReplyThreads';
 import {relayTwitterSearch} from './twitterSearchRelay';
 import {externalRead} from './utils';
 import {twitterAvatarUrl} from './twitterAvatar';
@@ -27,10 +28,10 @@ export function mapXPost(post:FxPost,depth=0):BlueskyMappedPost|null{
  const author=mapXUser(post.author),video=post.media?.videos?.find(item=>https(item.url));
  const stream=video?.formats?.find(format=>format.container==='m3u8'&&https(format.url));
  const parent=depth<2&&post.quote?mapXPost(post.quote,depth+1):null;
- return {id:`x:${post.id}`,userId:author.id,author,content:(post.raw_text?.facets??[]).reduce((text,facet)=>facet.type==='url'&&facet.original&&https(facet.replacement)?text.split(facet.original).join(facet.replacement!):text,post.text??''),imageUrls:(post.media?.photos??[]).flatMap(item=>https(item.url)?[item.url]:[]),imageAltTexts:(post.media?.photos??[]).map(item=>item.altText??''),createdAt:date(post.created_timestamp?post.created_timestamp*1000:post.created_at),visibility:'public',likedByMe:false,likesCount:post.likes??0,commentsCount:post.replies??0,isBot:false,cid:'',source:'x',externalPinned:post.is_pinned===true||post.pinned===true,externalDetails:{views:post.views,bookmarks:post.bookmarks,reposts:post.reposts??post.retweets,quotes:post.quotes,communityNote:post.community_note?.text,poll:post.poll?{options:post.poll.choices.map(choice=>({label:choice.label,votes:choice.count})),endsAt:post.poll.ends_at}:undefined},...(post.reposted_by?{externalRepostedBy:{id:`x-user:${post.reposted_by.id}`,displayName:post.reposted_by.name,username:`${post.reposted_by.screen_name}@twitter.com`},profileRepostedBy:`x-user:${post.reposted_by.id}`,profileRepostedAt:date(post.created_timestamp?post.created_timestamp*1000:post.created_at)}:{}),blueskyUrl:`https://twitter.com/${post.author.screen_name}/status/${post.id}`,blueskyUri:`x:${post.id}`,languages:post.lang?[post.lang]:[],contentLabels:post.possibly_sensitive?['graphic-media']:[],...(post.card&&https(post.card.url)?{linkPreview:{url:post.card.url,domain:new URL(post.card.url).hostname,title:post.card.title??post.card.domain??new URL(post.card.url).hostname,description:post.card.description,image:https(post.card.image?.url)??''}}:{}),
+ return {id:`x:${post.id}`,userId:author.id,author,content:(post.raw_text?.facets??[]).reduce((text,facet)=>facet.type==='url'&&facet.original&&https(facet.replacement)?text.split(facet.original).join(facet.replacement!):text,post.text??''),imageUrls:(post.media?.photos??[]).flatMap(item=>https(item.url)?[item.url]:[]),imageAltTexts:(post.media?.photos??[]).map(item=>item.altText??''),createdAt:date(post.created_timestamp?post.created_timestamp*1000:post.created_at),visibility:'public',likedByMe:false,likesCount:post.likes??0,repostsCount:post.reposts??post.retweets??0,commentsCount:post.replies??0,isBot:false,cid:'',source:'x',externalPinned:post.is_pinned===true||post.pinned===true,externalDetails:{views:post.views,bookmarks:post.bookmarks,reposts:post.reposts??post.retweets,quotes:post.quotes,communityNote:post.community_note?.text,poll:post.poll?{options:post.poll.choices.map(choice=>({label:choice.label,votes:choice.count})),endsAt:post.poll.ends_at}:undefined},...(post.reposted_by?{externalRepostedBy:{id:`x-user:${post.reposted_by.id}`,displayName:post.reposted_by.name,username:`${post.reposted_by.screen_name}@twitter.com`},profileRepostedBy:`x-user:${post.reposted_by.id}`,profileRepostedAt:date(post.created_timestamp?post.created_timestamp*1000:post.created_at)}:{}),blueskyUrl:`https://twitter.com/${post.author.screen_name}/status/${post.id}`,blueskyUri:`x:${post.id}`,languages:post.lang?[post.lang]:[],contentLabels:post.possibly_sensitive?['graphic-media']:[],...(post.card&&https(post.card.url)?{linkPreview:{url:post.card.url,domain:new URL(post.card.url).hostname,title:post.card.title??post.card.domain??new URL(post.card.url).hostname,description:post.card.description,image:https(post.card.image?.url)??''}}:{}),
  ...(video?{externalVideo:{playlist:stream?.url??video.url,format:stream||video.format?.includes('mpegurl')||video.url.includes('.m3u8')?'hls' as const:'mp4' as const,thumbnail:https(video.thumbnail_url),width:video.width||16,height:video.height||9,duration:video.duration??0}}:{}),
  ...(replyId?{externalReplyToId:`x:${replyId}`,externalReplyToUsername:replyName?`${replyName}@twitter.com`:undefined}:{}),
- ...(parent?{isQuote:true,parentId:parent.id,parentPost:{...parent,repostsCount:post.quote?.reposts??0,repostedByMe:false,author:{coverUrl:'',...parent.author}}}:{}),};
+ ...(parent?{isQuote:true,parentId:parent.id,parentPost:{...parent,repostsCount:parent.repostsCount??0,repostedByMe:false,author:{coverUrl:'',...parent.author}}}:{}),};
 }
 type FxPage={code:number;results?:FxPost[];cursor?:{bottom?:string|null};status?:FxPost;tweet?:FxPost;thread?:FxPost[];replies?:FxPost[];user?:FxUser;users?:FxUser[]};
 const cache=new Map<string,{until:number;data:FxPage}>();
@@ -39,23 +40,23 @@ async function request(path:string,signal?:AbortSignal,timeout=12000,priority:'i
  const controller=new AbortController(),abort=()=>controller.abort(signal?.reason);if(signal?.aborted)abort();else signal?.addEventListener('abort',abort,{once:true});const timer=setTimeout(()=>controller.abort(),timeout);
  try{return await externalRead(async()=>{const response=await fetch(`https://api.fxtwitter.com/2/${path}`,{signal:controller.signal,referrerPolicy:'no-referrer',headers:{Accept:'application/json'}});if(!response.ok&&response.status!==404)throw new Error(`twitterの投稿を取得できませんでした (${response.status})`);const data=await response.json() as FxPage;if(data.code!==200&&data.code!==404)throw new Error('twitterの投稿を取得できませんでした');if(controller.signal.aborted)throw new DOMException('Aborted','AbortError');if(data.code===200||!path.startsWith('search?'))cache.set(path,{until:Date.now()+(data.code===200?60000:15000),data});if(cache.size>100)cache.delete(cache.keys().next().value!);return data;},controller.signal,priority);}finally{clearTimeout(timer);signal?.removeEventListener('abort',abort);}
 }
-export async function xFeed(options:{actor?:string;cursor?:string|null;limit?:number;filter?:string;signal?:AbortSignal}){
+export async function xFeed(options:{actor?:string;cursor?:string|null;limit?:number;filter?:string;signal?:AbortSignal;includeReposts?:boolean}){
  const params=new URLSearchParams({count:String(Math.min(options.limit??20,100))});if(options.cursor)params.set('cursor',options.cursor);if(options.filter==='posts_with_replies'){params.set('with_replies','1');params.set('groupthreads','1');}const path=options.filter==='posts_with_media'?'media':'statuses';const data=await request(`profile/${encodeURIComponent(xHandle(options.actor!))}/${path}?${params}`,options.signal);const raw=(data.results??[]).flatMap(row=>row.type==='thread'?row.statuses??[]:[row]);const all=new Map(raw.map(row=>[row.id,row]));
- const build=(row:FxPost,seen=new Set<string>()):BlueskyMappedPost|null=>{if(seen.has(row.id)||seen.size>=20)return null;seen.add(row.id);const post=mapXPost(row);if(!post)return null;const parent=post.externalReplyToId&&all.get(post.externalReplyToId.slice(2));if(parent){const mapped=build(parent,seen);if(mapped)post.externalReplyParent={...mapped,repostsCount:0,repostedByMe:false,author:{coverUrl:'',...mapped.author}};}return post;};
- return {posts:[...new Map(raw.map(row=>build(row)).filter((post):post is BlueskyMappedPost=>!!post).map(post=>[post.id,post])).values()],cursor:data.cursor?.bottom&&data.cursor.bottom!==options.cursor?data.cursor.bottom:null};
+ const build=(row:FxPost,seen=new Set<string>()):BlueskyMappedPost|null=>{if(seen.has(row.id)||seen.size>=20)return null;seen.add(row.id);const post=mapXPost(row);if(!post)return null;const parent=post.externalReplyToId&&all.get(post.externalReplyToId.slice(2));if(parent){const mapped=build(parent,seen);if(mapped)post.externalReplyParent={...mapped,repostsCount:mapped.repostsCount??0,repostedByMe:false,author:{coverUrl:'',...mapped.author}};}return post;};
+ return {posts:[...new Map(raw.map(row=>build(row)).filter((post):post is BlueskyMappedPost=>!!post).filter(post=>!(options.filter==='posts_with_media'||options.includeReposts===false)||!post.profileRepostedBy).map(post=>[profilePostIdentity(post),post])).values()],cursor:data.cursor?.bottom&&data.cursor.bottom!==options.cursor?data.cursor.bottom:null};
 }
 export async function xProfile(actor:string,signal?:AbortSignal){const data=await request(`profile/${encodeURIComponent(xHandle(actor))}`,signal,12000,'interactive');return data.user?mapXUser(data.user):null;}
 export async function xConversationPage(id:string,cursor?:string|null,signal?:AbortSignal){
- const parsed=xPostId(id);if(!parsed)return {post:null,replies:[],cursor:null};
+ const parsed=xPostId(id);if(!parsed)return {post:null,replies:[],cursor:null,totalReplies:undefined as number|undefined};
  const params=new URLSearchParams();if(cursor)params.set('cursor',cursor);
  const data=await request(`conversation/${parsed.slice(2)}${params.size?'?'+params:''}`,signal,12000,'interactive');
  const raw=data.status??data.tweet;
  const ancestors=new Map((data.thread??[]).map(post=>[post.id,post]));
- const build=(raw:FxPost,seen=new Set<string>()):BlueskyMappedPost|null=>{if(seen.has(raw.id)||seen.size>=20)return null;seen.add(raw.id);const post=mapXPost(raw);if(!post)return null;const parent=post.externalReplyToId&&ancestors.get(post.externalReplyToId.slice(2));if(parent){const mapped=build(parent,seen);if(mapped)post.externalReplyParent={...mapped,repostsCount:0,repostedByMe:false,author:{coverUrl:'',...mapped.author}};}return post;};
+ const build=(raw:FxPost,seen=new Set<string>()):BlueskyMappedPost|null=>{if(seen.has(raw.id)||seen.size>=20)return null;seen.add(raw.id);const post=mapXPost(raw);if(!post)return null;const parent=post.externalReplyToId&&ancestors.get(post.externalReplyToId.slice(2));if(parent){const mapped=build(parent,seen);if(mapped)post.externalReplyParent={...mapped,repostsCount:mapped.repostsCount??0,repostedByMe:false,author:{coverUrl:'',...mapped.author}};}return post;};
  const post=raw?build(raw):null;
  const ancestorIds=new Set<string>();let ancestor=post?.externalReplyParent;while(ancestor&&!ancestorIds.has(ancestor.id)){ancestorIds.add(ancestor.id);ancestor=ancestor.externalReplyParent;}
  const replies=[...new Map([...(data.replies??[]),...(data.thread??[])].map(row=>{const mapped=mapXPost(row);return [row.id,mapped&&{...mapped,externalReplyToId:mapped.externalReplyToId??parsed}];})).values()].filter((row):row is NonNullable<typeof row>=>!!row&&row.id!==parsed&&!ancestorIds.has(row.id));
- return {post,replies,cursor:replies.length>0&&data.cursor?.bottom&&data.cursor.bottom!==cursor?data.cursor.bottom:null};
+ return {post,replies,totalReplies:typeof raw?.replies==='number'?raw.replies:undefined,cursor:raw?.replies!==0&&replies.length>0&&data.cursor?.bottom&&data.cursor.bottom!==cursor?data.cursor.bottom:null};
 }
 export async function xThread(id:string,signal?:AbortSignal):Promise<BlueskyPostThread>{
  const parsed=xPostId(id);if(!parsed)return {post:null,replies:[]};
@@ -102,3 +103,13 @@ export async function xFollowList(actor:string,following:boolean,cursor?:string|
 }
 
 export const twitterReplyUrl=(id:string)=>/^x:\d{2,20}$/.test(id)?`https://twitter.com/intent/tweet?in_reply_to=${id.slice(2)}`:null;
+
+export async function fetchTwitterPostActivity(postId:string,tab:'quotes'|'reposts',cursor?:string|null,signal?:AbortSignal){
+ const id=xPostId(postId);if(!id)throw new Error('投稿IDが無効です');
+ const params=new URLSearchParams({count:'50'});if(cursor)params.set('cursor',cursor);
+ const data=await request(`status/${id.slice(2)}/${tab}?${params}`,signal,12000,'interactive');
+ if(data.code!==200)throw new Error(`twitterのアクティビティを取得できませんでした (${data.code})`);
+ const users=tab==='reposts'?(data.users??data.results??[]) as FxUser[]:[];
+ const mappedUsers=users.filter(user=>user.id&&user.screen_name).map(mapXUser),posts=tab==='quotes'?(data.results??[]).flatMap(row=>{const post=mapXPost(row);return post?[post]:[];}):[];
+ return {users:mappedUsers,posts,cursor:(tab==='quotes'?posts.length:mappedUsers.length)&&data.cursor?.bottom&&data.cursor.bottom!==cursor?data.cursor.bottom:null};
+}

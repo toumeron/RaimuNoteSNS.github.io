@@ -1,3 +1,4 @@
+import {displayUsername} from '@/lib/displayUsername';
 import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 import { AtSign, CalendarDays, Globe2, Info, MapPin } from 'lucide-react';
 import { useParams } from 'react-router-dom';
@@ -27,7 +28,7 @@ export default function AccountAboutPage() {
               <h2 className="min-w-0 break-all text-center text-xl font-bold">{user.displayName || user.username}</h2>
               {user.isPrivate && <PrivateAccountBadge/>}{user.isOfficial && <img src={`${import.meta.env.BASE_URL}verified.png`} alt="Official" className="h-[1.25em] w-[1.25em] shrink-0 translate-y-[1px]" loading="eager" />}
             </div>
-            <p className="mt-1 text-base text-muted-foreground break-all px-4">@{user.username}</p>
+            <p className="mt-1 text-base text-muted-foreground break-all px-4">@{displayUsername(user.username)}</p>
           </div>
           <dl className="space-y-10 px-5 pb-12 sm:px-6">
             <div className="flex items-center gap-5"><CalendarDays className="h-6 w-6 shrink-0" aria-hidden="true" /><div><dt className="text-base">登録日</dt><dd className="mt-1 text-base text-muted-foreground">{month(user.createdAt)}</dd></div></div>

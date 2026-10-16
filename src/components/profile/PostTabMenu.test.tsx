@@ -1,3 +1,5 @@
+import {useState} from 'react';
+import {selectProfilePosts} from '@/lib/profileReplyThreads';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -74,4 +76,22 @@ it('opens sorting only on click, with one divider and an overlapping sort panel'
  expect(screen.getByRole('group',{name:'並び替え'})).toBeVisible();
  fireEvent.click(screen.getByRole('menuitem',{name:'人気順'}));
  expect(sort).toHaveBeenCalledWith('popular');
+});
+
+it.each(['desktop','mobile'])('filters rendered twitter profile entries when selecting posts on %s, including later pages',async(device)=>{
+ vi.spyOn(navigator,'userAgent','get').mockReturnValue(device==='mobile'?'iPhone':'Desktop');
+ const own={id:'x:601',userId:'x-user:1'},quote={...own,id:'x:602',isQuote:true};
+ const repost={...own,id:'x:603',profileRepostedBy:'x-user:1'},partial={...own,id:'x:604',externalRepostedBy:{id:'x-user:1'}};
+ function ProfileEntries(){
+  const [filter,setFilter]=useState<'all'|'posts'>('all'),[more,setMore]=useState(false);
+  const rows=[own,quote,repost,partial,...(more?[{...own,id:'x:605',userId:'x-user:2'},{...own,id:'x:606'}]:[])].map(post=>({post}));
+  return <><Tabs defaultValue="posts"><TabsList><PostTabMenu filter={filter} sort="latest" onFilterChange={setFilter} onSortChange={()=>{}}><TabsTrigger value="posts">{filter==='all'?'すべて':'ポスト'}</TabsTrigger></PostTabMenu></TabsList></Tabs><ul>{selectProfilePosts(rows,filter,'latest','x-user:1').map(row=><li key={row.post.id}>{row.post.id}</li>)}</ul><button onClick={()=>setMore(true)}>次のページ</button></>;
+ }
+ render(<ProfileEntries/>);
+ expect(screen.getAllByRole('listitem')).toHaveLength(4);
+ if(device==='mobile')fireEvent.change(screen.getByRole('combobox',{name:'ポストの表示'}),{target:{value:'posts'}});
+ else{fireEvent.keyDown(screen.getByRole('tab'),{key:'Enter'});fireEvent.click(await screen.findByRole('menuitem',{name:'ポスト'}));}
+ expect(screen.getAllByRole('listitem').map(row=>row.textContent).sort()).toEqual(['x:601','x:602']);
+ fireEvent.click(screen.getByRole('button',{name:'次のページ'}));
+ expect(screen.getAllByRole('listitem').map(row=>row.textContent).sort()).toEqual(['x:601','x:602','x:606']);
 });

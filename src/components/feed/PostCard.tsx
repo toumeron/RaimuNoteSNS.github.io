@@ -1,3 +1,8 @@
+import {displayUsername} from '@/lib/displayUsername';
+import {canShowPostLinkPreview,hasAttachedPostVideo} from '@/lib/postPresentation';
+import {PostSourceLabel} from '@/components/post/PostSourceLabel';
+import {isDeferredPrivateMedia} from '@/lib/privateMediaFetch';
+import {PrivateMediaImage} from '@/components/media/PrivateMediaImage';
 import {ExternalPostDetails} from '@/components/feed/ExternalPostDetails';
 import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
 import {PostVideoPlayer} from '@/components/video/PostVideoPlayer';
@@ -225,7 +230,7 @@ const setCachedNaturalSize = (url: string, size: { width: number; height: number
 
 const getPostImageUrlsForPreload = (post: PostWithAuthor) => {
   const contentImageUrls = post.content?.match(imageUrlRegex) || [];
-  return [...(post.imageUrls || []), ...contentImageUrls].filter(Boolean).slice(0, 1);
+  return [...(post.imageUrls || []), ...contentImageUrls].filter(url=>!!url&&!isDeferredPrivateMedia(url)).slice(0, 1);
 };
 
 const resolveImageNaturalSizeFromProbe = (image: HTMLImageElement) => {
@@ -1506,7 +1511,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
         : `custom_emojis/${customEmoji.public_id}`;
 
       const imageUrl = `https://res.cloudinary.com/dveiikhhw/image/upload/${cleanPublicId}.${customEmoji.format}`;
-      return <img src={offlineBookmark?.media.get(imageUrl)??imageUrl} alt={customEmoji.name} className={className} />;
+      return <PrivateMediaImage src={offlineBookmark?.media.get(imageUrl)??imageUrl} alt={customEmoji.name} className={className} />;
     }
     return <span className="text-lg leading-none select-none">{emojiStr}</span>;
   };
@@ -1553,11 +1558,11 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
 
   const isMembersOnlyPost = currentVisibility === 'members';
   const canViewMembersOnlyPost = !isMembersOnlyPost || isMyPost || isMember === true;
-  const linkPreview=useLinkPreview(post.content,canViewMembersOnlyPost,post.linkPreview,!isBlueskyPost);
+  const linkPreview=useLinkPreview(post.content,canViewMembersOnlyPost&&canShowPostLinkPreview(post,embedded),post.linkPreview,!isBlueskyPost);
   const isCheckingMembersOnlyAccess = isMembersOnlyPost && !isMyPost && isMember === undefined;
 
   const { youtubeId, spotifyUrls, allImageUrls, displayContent, singleImageUrl } = useMemo(() => {
-    const nextYoutubeId = extractYouTubeId(post.content);
+    const nextYoutubeId = hasAttachedPostVideo(post)?null:extractYouTubeId(post.content);
     const nextSpotifyUrls = post.content.match(spotifyUrlRegex) || [];
     const extractedImageUrls = post.content.match(imageUrlRegex) || [];
 
@@ -1568,10 +1573,10 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
     // 埋め込み本体（YouTubeEmbed）だけを表示する。
     const nextAllImageUrls = (isBlueskyPost && nextYoutubeId)
       ? []
-      : [...(post.imageUrls || []).filter(url=>url!==linkPreview.preview?.image), ...extractedImageUrls].slice(0, 4);
+      : [...(post.imageUrls || []).filter(url=>url!==post.linkPreview?.image&&url!==linkPreview.preview?.image), ...extractedImageUrls].slice(0, 4);
 
     const nextDisplayContent = post.content
-      .replace(youtubeUrlRegex, '')
+      .replace(youtubeUrlRegex, nextYoutubeId?'':'$&')
       .replace(imageUrlRegex, '')
       .replace(spotifyUrlRegex, '')
       .trim();
@@ -1583,7 +1588,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
       displayContent: nextDisplayContent,
       singleImageUrl: nextAllImageUrls.length === 1 ? nextAllImageUrls[0] : null,
     };
-  }, [post.content, post.imageUrls, isBlueskyPost,linkPreview.preview?.image]);
+  }, [post.content, post.imageUrls, isBlueskyPost,linkPreview.preview?.image,post.video,post.externalVideo]);
 
   useEffect(() => {
     const cached = singleImageUrl ? getCachedNaturalSize(singleImageUrl) : null;
@@ -1745,12 +1750,12 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
   const handleActivityClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (isBlueskyPost) {
+    if (isBlueskyPost && post.id.startsWith('misskey:')) {
       if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
       setShowMenu(false);
       return;
     }
-    navigate(`/post/${post.id}/activity`);
+    navigate(`/post/${encodeURIComponent(post.id)}/activity`);
     setShowMenu(false);
   };
 
@@ -2178,14 +2183,14 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
           </span>
           {post.author.isPrivate && <PrivateAccountBadge />}
           <ProviderVerificationBadge verification={post.author.providerVerification} className="h-[1.1em] w-[1.1em] shrink-0 transform translate-y-[1px]"/>{post.author.isOfficial && (
-            <img
+            <PrivateMediaImage
               src={`${import.meta.env.BASE_URL}verified.png`}
               alt="Official"
               className="h-[1.1em] w-[1.1em] shrink-0 transform translate-y-[1px]"
             />
           )}
         </div>
-        <p className="text-[15px] text-muted-foreground stroke-none">@{post.author.username}</p>
+        <p className="text-[15px] text-muted-foreground stroke-none">@{displayUsername(post.author.username)}</p>
       </div>
 
       {post.author.bio && (
@@ -2277,7 +2282,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                           className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
                         >
                           <ChartBarBig className="h-4 w-4" />
-                          {isBlueskyPost ? (post.id.startsWith('x:') ? 'twitterで見る' : post.id.startsWith('misskey:') ? 'Misskeyで見る' : 'Blueskyで見る') : 'ポストアクティビティー'}
+                          {post.id.startsWith('misskey:') ? 'Misskeyで見る' : 'ポストアクティビティー'}
                         </button>
 
                         {onNotInterested&&<button onClick={async event=>{event.stopPropagation();try{await onNotInterested(post);setShowMenu(false);}catch{toast.error('興味なしを保存できませんでした');}}} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold hover:bg-muted"><EyeOff className="h-4 w-4" />興味なし</button>}
@@ -2373,7 +2378,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                                     {u.displayName}
                                   </span>
                                   <span className="text-[10px] text-muted-foreground/70 truncate leading-none">
-                                    @{u.username}
+                                    @{displayUsername(u.username)}
                                   </span>
                                 </div>
                               </div>
@@ -2387,6 +2392,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
               </div>
             )}
 
+            {!embedded&&!mediaPresentation&&<PostSourceLabel post={post} small={useMobilePresentation}/>}
             {!embedded && <div data-lime-post-actions className={useMobilePresentation ? "mt-2 flex items-center gap-1 text-muted-foreground relative h-8" : "mt-3 flex items-center gap-1 text-muted-foreground relative h-9"}>
               <div onClick={(e) => e.stopPropagation()} className="flex items-center h-full">
                 {isBlueskyPost ? (
@@ -2804,7 +2810,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                         </span>
                         {post.author.isPrivate && <PrivateAccountBadge />}
           <ProviderVerificationBadge verification={post.author.providerVerification} className="h-4 w-4 shrink-0 transform translate-y-[0.5px]"/>{post.author.isOfficial && (
-                          <img
+                          <PrivateMediaImage
                             src={`${import.meta.env.BASE_URL}verified.png`}
                             alt="Official"
                             className="h-4 w-4 shrink-0 transform translate-y-[0.5px]"
@@ -2818,7 +2824,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                 </HoverCard>
 
                 <span className={useMobilePresentation ? "truncate text-[16px] text-muted-foreground ml-1 opacity-80 shrink" : "truncate text-base text-muted-foreground ml-1 opacity-80 shrink"}>
-                  @{post.author.username}
+                  @{displayUsername(post.author.username)}
                 </span>
 
                 <span className="text-muted-foreground mx-1 shrink-0">·</span>
@@ -2877,7 +2883,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-black text-foreground">メンバー限定投稿</p>
                         <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                          この投稿は @{post.author.username} のメンバーだけが閲覧できます。
+                          この投稿は @{displayUsername(post.author.username)} のメンバーだけが閲覧できます。
                         </p>
                       </div>
                     </div>
@@ -2910,13 +2916,6 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                 </div>
               )}
 
-              {isBlueskyPost && (
-                <div data-lime-post-provider className="flex items-center gap-1 mt-1.5 text-muted-foreground/70">
-                  <Globe className="h-3.5 w-3.5" />
-                  <span className={useMobilePresentation ? "text-[13px] font-medium" : "text-[15px] font-medium"}>{post.id.startsWith('x:') ? 'twitter' : post.id.startsWith('misskey:') ? 'Misskey' : 'Bluesky'}</span>
-                </div>
-              )}
-
               {canViewMembersOnlyPost && <LinkPreviewCard {...linkPreview} />}
               {canViewMembersOnlyPost && youtubeId && (
                 <div onClick={(e) => e.stopPropagation()} className="mt-3">
@@ -2933,7 +2932,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
               )}
 
               {canViewMembersOnlyPost && (singleImageUrl ? (
-                <div className="mt-3 flex max-w-full justify-start" onClick={(e) => e.stopPropagation()}>
+                <div data-lime-post-images={allImageUrls.length>0||undefined} className="mt-3 flex max-w-full justify-start" onClick={(e) => e.stopPropagation()}>
                   <button
                     type="button"
                     className="block max-w-full cursor-zoom-in overflow-hidden rounded-2xl border border-border/50 bg-black/[0.025] text-left shadow-none dark:bg-white/[0.035]"
@@ -2942,7 +2941,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                     onClick={(e) => handleImageClick(e, singleImageUrl)}
                     aria-label="画像を拡大表示"
                   >
-                    <img
+                    <PrivateMediaImage
                       referrerPolicy={post.source==='x'?'no-referrer':undefined} src={singleImageUrl}
                       alt={post.imageAltTexts?.[0]||"投稿画像"}
                       className="block select-none"
@@ -2971,6 +2970,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                 </div>
               ) : (
                 <div
+                  data-lime-post-images={allImageUrls.length>0||undefined}
                   className="cursor-zoom-in"
                   onClick={(e) => {
                     const target = e.target as HTMLElement;
@@ -2995,7 +2995,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
               ))}
             </div>
 
-            {(post.video || post.externalVideo) && <PostVideoPlayer postId={post.id} video={(post.video || post.externalVideo)!} externalVideo={post.externalVideo} post={post}/>}
+            {(post.video || post.externalVideo) && <PostVideoPlayer embedded={embedded} postId={post.id} video={(post.video || post.externalVideo)!} externalVideo={post.externalVideo} post={post}/>}
             {post.poll && <PostPoll post={post}/>}
             <ExternalPostDetails post={post}/>
 
@@ -3093,7 +3093,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                           {isSending ? '送信中...' : target.displayName}
                         </span>
                         <span className="mt-0.5 w-full truncate text-[11px] text-muted-foreground">
-                          @{target.username}
+                          @{displayUsername(target.username)}
                         </span>
                       </button>
                     );

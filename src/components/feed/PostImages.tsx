@@ -1,3 +1,4 @@
+import {PrivateMediaImage} from '@/components/media/PrivateMediaImage';
 import { cn } from '@/lib/utils';
 
 export function PostImages({
@@ -31,7 +32,7 @@ export function PostImages({
             urls.length === 3 && i === 0 && 'row-span-2 aspect-auto',
           )}
         >
-          <img
+          <PrivateMediaImage
             referrerPolicy={/^https:\/\/pbs[.]twimg[.]com\//.test(src)?'no-referrer':undefined} src={src}
             alt={altTexts?.[i]??''}
             loading="lazy"

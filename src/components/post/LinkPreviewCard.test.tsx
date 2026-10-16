@@ -4,9 +4,10 @@ import {vi,it,expect,beforeEach} from 'vitest';
 import {PostLinkPreview,useLinkPreview,LinkPreviewCard} from './LinkPreviewCard';
 import {OfflineBookmarkContext} from '@/components/stickers/OfflineBookmarkContext';
 const invoke=vi.hoisted(()=>vi.fn());vi.mock('@/lib/supabase',()=>({supabase:{functions:{invoke}}}));
+const auth=vi.hoisted(()=>({user:{id:'viewer'} as {id:string}|null,loading:false}));vi.mock('@/hooks/useAuth',()=>({useAuth:()=>auth}));
 const preview={url:'https://example.com/diary',domain:'example.com',title:'9月日記',image:'https://example.com/cover.jpg'};
 function mount(content:string){return render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><PostLinkPreview content={content}/></QueryClientProvider>);}
-beforeEach(()=>{invoke.mockReset();localStorage.clear();});
+beforeEach(()=>{invoke.mockReset();localStorage.clear();auth.user={id:'viewer'};auth.loading=false;});
 it('renders a linked image and title only on success',async()=>{invoke.mockResolvedValue({data:{preview}});mount('日記 https://example.com/diary');expect(await screen.findByRole('link',{name:'9月日記'})).toHaveAttribute('href',preview.url);await waitFor(()=>expect(document.querySelector('[data-link-preview] img')).toHaveAttribute('src',preview.image));});
 it('does not request multiple URLs or render failed previews',async()=>{mount('https://example.com/a https://example.com/b');expect(invoke).not.toHaveBeenCalled();invoke.mockResolvedValue({data:{preview:null}});mount('https://example.com/c');await waitFor(()=>expect(invoke).toHaveBeenCalledOnce());expect(document.querySelector('[data-link-preview]')).toBeNull();});
 it('keeps text metadata when the preview image fails',async()=>{invoke.mockResolvedValue({data:{preview}});function Body(){const state=useLinkPreview(`本文 ${preview.url}`);return <><p>{state.text(`本文 ${preview.url}`)}</p><LinkPreviewCard {...state}/></>;}render(<QueryClientProvider client={new QueryClient()}><Body/></QueryClientProvider>);await screen.findByRole('link',{name:preview.title});expect(screen.getByText('本文')).toBeInTheDocument();fireEvent.error(document.querySelector('[data-link-preview] img')!);expect(screen.getByText('本文')).toBeInTheDocument();expect(screen.getByRole('link',{name:preview.title})).toBeInTheDocument();expect(document.querySelector('[data-link-preview] img')).toBeNull();});
@@ -42,4 +43,25 @@ it('renders and reuses title and description without an image',async()=>{
 });
 it('retries negative metadata cached before the server request path was repaired',async()=>{
  localStorage.setItem('lime-link-previews-v1',JSON.stringify({[preview.url]:{preview:null,savedAt:Date.now(),version:2}}));invoke.mockResolvedValue({data:{preview:{...preview,image:''}}});mount(preview.url);await screen.findByRole('link',{name:preview.title});expect(invoke).toHaveBeenCalledOnce();
+});
+it('waits for authentication instead of caching an anonymous failure',async()=>{
+ auth.user=null;auth.loading=true;invoke.mockResolvedValue({data:{preview}});
+ const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
+ const view=()=> <QueryClientProvider client={client}><PostLinkPreview content={preview.url}/></QueryClientProvider>;
+ const mounted=render(view());expect(invoke).not.toHaveBeenCalled();
+ auth.user={id:'viewer'};auth.loading=false;mounted.rerender(view());
+ expect(await screen.findByRole('link',{name:preview.title})).toBeInTheDocument();expect(invoke).toHaveBeenCalledOnce();
+});
+it('renders supplied metadata when URL normalization adds the root slash',()=>{
+ auth.user=null;auth.loading=true;
+ function Card(){return <LinkPreviewCard {...useLinkPreview('https://example.com',true,{...preview,url:'https://example.com'})}/>;}
+ render(<QueryClientProvider client={new QueryClient()}><Card/></QueryClientProvider>);
+ expect(screen.getByRole('link',{name:preview.title})).toHaveAttribute('href','https://example.com/');expect(invoke).not.toHaveBeenCalled();
+});
+
+it.each([{imageUrls:['https://example.com/attached.jpg']},{video:{url:'video.mp4'}},{externalVideo:{url:'video.m3u8'}},{embedded:true}])('does not render or request provided URL previews for media or quotes: %s',async extra=>{
+ const {canShowPostLinkPreview}=await import('@/lib/postPresentation');
+ function Card(){const state=useLinkPreview(preview.url,canShowPostLinkPreview(extra,extra.embedded),preview);return <LinkPreviewCard {...state}/>;}
+ const view=render(<QueryClientProvider client={new QueryClient()}><Card/></QueryClientProvider>);
+ expect(view.container.querySelector('[data-link-preview]')).toBeNull();expect(invoke).not.toHaveBeenCalled();view.unmount();
 });

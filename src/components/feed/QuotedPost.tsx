@@ -1,3 +1,4 @@
+import {quotePreviewText} from '@/lib/postPresentation';
 import './quoted-post.css';
 import { PostCard } from './PostCard';
 import type { PostWithAuthor } from '@/types';
@@ -11,9 +12,12 @@ export function QuotedPost({ post, timelineGlass = false, compact = false }: { p
   const sourceId = post.parentId || post.parentPost?.id || (replySource ? `reply:${replySource}` : null);
   const sourceUrl = sourceId ? new URL(`${import.meta.env.BASE_URL}post/${encodeURIComponent(sourceId)}`, window.location.origin).href : null;
   const preview = post.isQuote ? { ...post, isQuote: false, parentPost: null, content: sourceUrl && !post.content.includes(sourceUrl) ? `${post.content} ${sourceUrl}`.trim() : post.content } : post;
+  const hasPhoto=(post.imageUrls??[]).some(url=>url!==post.linkPreview?.image)||/https?:\/\/\S+\.(?:png|jpe?g|gif|webp)(?:[?#]\S*)?/i.test(post.content);
+  const hasText=!!post.content.replace(/https?:\/\/\S+/g,'').trim();
+  const boundedPreview={...preview,content:quotePreviewText(preview.content)};
   return (
-    <div data-lime-quoted-post data-lime-quote-preview={compact || undefined} className="mt-3 overflow-hidden rounded-2xl border border-border/60" onClick={event => event.stopPropagation()}>
-      {post.replyId ? <RepostedReplyCard post={post} embedded /> : <PostCard post={preview} timelineGlass={timelineGlass} thread embedded />}
+    <div data-lime-quoted-post data-lime-quote-image-text={hasPhoto&&hasText||undefined} data-lime-quote-preview={compact || undefined} className="mt-3 overflow-hidden rounded-2xl border border-border/60" onClick={event => event.stopPropagation()}>
+      {post.replyId ? <RepostedReplyCard post={boundedPreview} embedded /> : <PostCard post={boundedPreview} timelineGlass={timelineGlass} thread embedded />}
     </div>
   );
 }

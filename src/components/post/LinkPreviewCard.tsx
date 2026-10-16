@@ -2,15 +2,20 @@ import {readSavedPreview,savePreview,savedPreviewImage} from "@/lib/linkPreview"
 import {useContext,useEffect,useState} from 'react';
 import {useQuery} from '@tanstack/react-query';
 import {OfflineBookmarkContext} from '@/components/stickers/OfflineBookmarkContext';
-import {fetchLinkPreview,singlePreviewUrl,type LinkPreview} from '@/lib/linkPreview';
+import {fetchLinkPreview,singlePreviewUrl,previewUrlMatches,type LinkPreview} from '@/lib/linkPreview';
+import {useAuth} from '@/hooks/useAuth';
 export function useLinkPreview(content:string,enabled=true,provided?:LinkPreview,persist=true) {
+  const {user,loading}=useAuth();
   const url=singlePreviewUrl(content);
   const saved=url&&persist?readSavedPreview(url):undefined;
-  const seed=saved?.preview??(url&&provided?.url===url?provided:null);
+  const providedMatches=previewUrlMatches(url,provided?.url);
+  const seed=saved?.preview??(providedMatches?{...provided!,url:url!}:null);
   const offline=useContext(OfflineBookmarkContext);
   const [failed,setFailed]=useState<string|null>(null);
-  const query=useQuery({queryKey:[persist?'link-preview-saved-v6':'link-preview-live-v6',url],queryFn:()=>fetchLinkPreview(url!,persist),enabled:enabled&&!!url&&!offline&&!seed,initialData:saved?.preview,staleTime:persist&&saved?.preview?Infinity:60_000,gcTime:86400000,retry:1});
-  useEffect(()=>{if(persist&&enabled&&url&&provided?.url===url&&!offline&&!saved)savePreview(url,provided);},[persist,enabled,url,provided,offline,saved]);
+  // The reader requires a session. An anonymous result from the auth-loading
+  // frame must not suppress the card after login or an account switch.
+  const query=useQuery({queryKey:[persist?'link-preview-saved-v7':'link-preview-live-v7',user?.id??null,url],queryFn:()=>fetchLinkPreview(url!,persist),enabled:enabled&&!loading&&!!user&&!!url&&!offline&&!seed,initialData:saved?.preview,staleTime:persist&&saved?.preview?Infinity:60_000,gcTime:86400000,retry:1});
+  useEffect(()=>{if(persist&&enabled&&url&&providedMatches&&!offline&&!saved)savePreview(url,{...provided!,url});},[persist,enabled,url,provided,providedMatches,offline,saved]);
   const resolved=enabled&&url?(offline?offline.linkPreviews?.[url]??seed:seed??query.data):null;
   const preview=resolved&&failed===url?{...resolved,image:''}:resolved;
   return {preview:preview??null,cacheImage:persist&&!offline,onImageError:()=>setFailed(url),text:(text:string)=>preview?text.replace(url!, '').replace(content.match(/https?:\/\/[^\s<>"\u3000]+/i)?.[0]??url!, '').trim():text};
@@ -31,7 +36,7 @@ function SavedImage({image,cacheImage,onError,...props}:{image:string;cacheImage
   savedPreviewImage(image).then(blob=>{if(!active)return;objectUrl=blob?URL.createObjectURL(blob):undefined;setLoaded({image,src:objectUrl??image});});
   return()=>{active=false;if(objectUrl)URL.revokeObjectURL(objectUrl);};
  },[image,cacheImage]);
- const src=!cacheImage||!/^https?:\/\//.test(image)?image:loaded?.image===image?loaded.src:undefined;
+ const src=cacheImage&&loaded?.image===image?loaded.src:image;
  return <img {...props} src={src} onError={onError}/>;
 }
 

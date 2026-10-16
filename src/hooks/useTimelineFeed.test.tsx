@@ -58,26 +58,25 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('timeline query publication', () => {
-  it('does not publish Bluesky before the Lime response on the initial load', async () => {
+  it('waits only for native posts and never requests an external source in latest', async () => {
     let release!: (posts: PostWithAuthor[]) => void;
     db.initialLime = new Promise(resolve => { release = resolve; });
     const view = mount();
-    await waitFor(() => expect(db.blueCalls).toHaveBeenCalled());
+    await waitFor(() => expect(db.limeCalls).toHaveBeenCalled());
+    expect(db.blueCalls).not.toHaveBeenCalled();
     expect(view.result.current.data).toBeUndefined();
     expect(view.result.current.isLoading).toBe(true);
     await act(async () => { release(db.lime.slice(0, 10)); });
     await waitFor(() => expect(view.result.current.isSuccess).toBe(true));
     expect(view.result.current.data!.pages[0].posts).toHaveLength(20);
   });
-  it('does not publish Lime before the slower Bluesky response either', async () => {
-    let release!: (page: { posts: PostWithAuthor[]; cursor: string | null }) => void;
-    db.initialBlue = new Promise(resolve => { release = resolve; });
-    const view = mount(); await waitFor(() => expect(db.limeCalls).toHaveBeenCalled());
-    expect(view.result.current.data).toBeUndefined();
-    await act(async () => { release({ posts: db.blue.slice(0, 10), cursor: '10' }); });
-    await waitFor(() => expect(view.result.current.data?.pages[0].posts).toHaveLength(20));
+  it('publishes native posts even when a configured external source would never respond',async()=>{
+    db.initialBlue=new Promise(()=>{});
+    const view=mount();await waitFor(()=>expect(view.result.current.data?.pages[0].posts).toHaveLength(20));
+    expect(db.blueCalls).not.toHaveBeenCalled();expect(view.result.current.data!.pages[0].posts.every(post=>post.id.startsWith('lime-'))).toBe(true);
   });
-  it('keeps both sources in the fourth and fifth query pages', async () => {
+  it('keeps latest native-only in the fourth and fifth query pages', async () => {
+    db.lime=Array.from({length:120},(_,i)=>post('lime-'+i,300-i));
     const view = mount(); await waitFor(() => expect(view.result.current.isSuccess).toBe(true));
     for (let i = 1; i < 5; i++) {
       await act(async () => { await view.result.current.fetchNextPage(); });
@@ -85,8 +84,8 @@ describe('timeline query publication', () => {
     }
     expect(view.result.current.data!.pages).toHaveLength(5);
     for (const page of view.result.current.data!.pages) {
-      expect(page.posts.filter(row => row.id.startsWith('lime-'))).toHaveLength(10);
-      expect(page.posts.filter(row => row.id.startsWith('bsky-'))).toHaveLength(10);
+      expect(page.posts.filter(row => row.id.startsWith('lime-'))).toHaveLength(20);
+      expect(page.posts.filter(row => row.id.startsWith('bsky-'))).toHaveLength(0);
     }
   });
   it('keeps a separate source cursor for the following tab', async () => {
@@ -113,7 +112,7 @@ it('does not reuse another account timeline while switching accounts',async()=>{
  db.viewer='cat';view.rerender({tab:'all'});expect(view.result.current.data).toBeUndefined();
  release([post('cat-only',300)]);await waitFor(()=>expect(view.result.current.isSuccess).toBe(true));
  expect(view.result.current.data?.pages[0].posts[0].id).toBe('cat-only');
- expect(view.client.getQueryData(['feed','all','timeline','cat',['author']])).toBeDefined();
+ expect(view.client.getQueryData(['feed','all','timeline-native-v2','cat',[]])).toBeDefined();
 });
 
 it.each(['all','following'] as const)('%s does not fetch server-wide external posts when no users are registered',async(tab)=>{
@@ -122,9 +121,22 @@ it.each(['all','following'] as const)('%s does not fetch server-wide external po
   expect(db.blueCalls).not.toHaveBeenCalled();
   expect(view.result.current.data!.pages[0].posts.every(post=>!post.id.startsWith('bsky-'))).toBe(true);
 });
-it.each(['all','following'] as const)('%s retains native posts when a registered Misskey user fails',async(tab)=>{
+it.each(['following'] as const)('%s retains native posts when a registered Misskey user fails',async(tab)=>{
   db.handles=['cat@misskey.io'];db.initialBlue=new Promise((_,reject)=>setTimeout(()=>reject(new Error('Misskey unavailable')),0));
   const view=mount(tab);await waitFor(()=>expect(view.result.current.isSuccess).toBe(true));
   expect(view.result.current.data!.pages[0].posts.length).toBeGreaterThan(0);
   expect(view.result.current.data!.pages[0].posts.every(post=>!post.id.startsWith('bsky-'))).toBe(true);
+});
+
+it('adds a late followed twitter response automatically without requiring another scroll or read',async()=>{
+ db.handles=['artist@twitter.com'];
+ let release!:(page:{posts:PostWithAuthor[];cursor:null})=>void;
+ db.initialBlue=new Promise(resolve=>{release=resolve;});
+ const view=mount('following');
+ await waitFor(()=>expect(view.result.current.data?.pages[0].posts.some(post=>post.id==='followed-lime')).toBe(true),{timeout:2000});
+ expect(db.blueCalls).toHaveBeenCalledTimes(1);expect(view.result.current.data?.pages).toHaveLength(1);
+ await act(async()=>{release({posts:[{...post('x:followed-late',204),source:'x'}],cursor:null});});
+ await waitFor(()=>expect(view.result.current.data?.pages[0].posts.map(post=>post.id)).toEqual(['followed-lime','x:followed-late']));
+ expect(db.blueCalls).toHaveBeenCalledTimes(1);expect(view.result.current.data?.pages).toHaveLength(1);
+ view.unmount();view.client.clear();
 });

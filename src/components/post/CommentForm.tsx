@@ -1,3 +1,5 @@
+import {displayUsername} from '@/lib/displayUsername';
+import {PrivateMediaImage} from '@/components/media/PrivateMediaImage';
 import {ComposerIcon} from '@/components/feed/ComposerIcon';
 import {DraftEmojiText} from "@/components/stickers/Stickers";
 import { StickerPicker, StickerDraft } from '@/components/stickers/Stickers';
@@ -193,7 +195,7 @@ export function CommentForm({
         {(images.length > 0 || sticker) && <div className={`reply-attachments grid w-full gap-2 ${compactMobile ? 'flex flex-wrap' : images.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
           <StickerDraft inline={!!text.trim()} name={sticker} onRemove={()=>setSticker(null)}/>
           {images.map(url => <div key={url} className={`relative overflow-hidden rounded-2xl border border-border/60 ${compactMobile ? "h-16 w-16" : ""}`}>
-            <img src={url} alt="添付画像のプレビュー" className={compactMobile ? 'h-full w-full object-cover' : images.length === 1 ? 'block w-full max-h-[480px] object-contain' : 'aspect-square w-full object-cover'} />
+            <PrivateMediaImage src={url} alt="添付画像のプレビュー" className={compactMobile ? 'h-full w-full object-cover' : images.length === 1 ? 'block w-full max-h-[480px] object-contain' : 'aspect-square w-full object-cover'} />
             <button type="button" disabled={isPending} onClick={() => setEditingImage(url)} aria-label="編集" className={compactMobile ? "absolute inset-0" : "absolute left-1.5 top-1.5 inline-flex items-center rounded-full bg-black/55 px-3 py-1.5 text-xs font-bold text-white shadow-sm backdrop-blur-md transition hover:bg-black/70"}>{!compactMobile && "編集"}</button>
             <button type="button" disabled={isPending} onClick={() => removeImage(url)} aria-label="添付画像を削除" className="absolute right-1.5 top-1.5 rounded-full bg-background/80 p-1 backdrop-blur transition hover:bg-background"><X className="h-4 w-4" /></button>
           </div>)}
@@ -342,7 +344,7 @@ export function CommentForm({
           <header><button type="button" aria-label="返信入力を閉じる" onClick={() => setMediaReplyOpen(false)}><ArrowLeft /></button><button type="button" className="lime-media-reply-send" aria-label="コメントを送信" disabled={isPending || (!appendSticker(text, sticker) && images.length === 0)} onClick={submit}>{isPending ? <Loader2 className="animate-spin h-5 w-5" /> : '返信'}</button></header>
           <main>
             <ReplyChain>
-              {replyTo && <div className="lime-media-reply-source"><PostCard post={replyTo} embedded thread /><p className="lime-media-reply-recipient">返信先: <Link to={`/u/${replyTo.author.username}`} className="text-primary">@{replyTo.author.username}</Link>さん</p></div>}
+              {replyTo && <div className="lime-media-reply-source"><PostCard post={replyTo} embedded thread /><p className="lime-media-reply-recipient">返信先: <Link to={`/u/${replyTo.author.username}`} className="text-primary">@{displayUsername(replyTo.author.username)}</Link>さん</p></div>}
               {form}
             </ReplyChain>
           </main>

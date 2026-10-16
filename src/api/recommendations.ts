@@ -8,7 +8,7 @@ import {recommendationOriginLanguages,topicAuthorCandidates} from '@/lib/recomme
 import {recommendationIdentity,recommendationFingerprint} from "@/lib/recommendationSignals";
 import {recommendationIsEligible} from "@/lib/recommendationSignals";
 import {isDeclaredGeneratedArt} from "@/lib/recommendationSignals";
-import {applyCachedRecommendationVisuals,visualSimilarity} from '@/lib/recommendationVisual';
+import {applyCachedRecommendationVisuals,visualSimilarity,restoreRecommendationVisuals} from '@/lib/recommendationVisual';
 import type {TopicId} from '@/lib/topics';
 import { normalizeTimelineBlueskyPost } from '@/lib/timelinePaging';
 import { addRecommendationInterest, rejectedRecommendationTopics,isRecommendationAuthorRejected,rankRecommendations, recommendationQueries, readRecommendationLikes,selectRecommendationLikeSamples,readRecommendationImpressions,recommendationIsDismissed,selectRecommendationPage, type RecommendationPreferences } from '@/lib/recommendations';
@@ -97,7 +97,7 @@ async function loadRecommendationPreferences(viewerId:string|null,onTopics:((pre
 
   }
   const likes=readRecommendationLikes(viewerId);
-  preferences.likedSamples=selectRecommendationLikeSamples(applyCachedRecommendationVisuals([...likes.filter(post=>post.imageUrls?.length),...(preferences.likedSamples??[])]));
+  preferences.likedSamples=selectRecommendationLikeSamples(applyCachedRecommendationVisuals(restoreRecommendationVisuals([...likes.filter(post=>post.imageUrls?.length),...(preferences.likedSamples??[])])));
   for(const post of preferences.likedSamples)if(post.recommendationVisual&&!preferences.visualInterests?.some(vector=>visualSimilarity(vector,post.recommendationVisual!.vector)>.999)){preferences.visualInterests??=[];preferences.visualInterests.push(post.recommendationVisual.vector);}
   for(const post of likes)if(!learnedLikes.has(recommendationIdentity(post)))addRecommendationInterest(preferences,post,2,post.engagedAt ?? new Date(Date.now()-30*86400000).toISOString());
   return preferences;
@@ -128,6 +128,7 @@ export type RecommendationCursor={
   topicAuthorLanguages?:Record<string,string[]>;
   history:PostWithAuthor[];
   pendingVisual?:PostWithAuthor[];
+  catalogRead?:boolean;
   remaining:PostWithAuthor[];seen:string[];preferences?:RecommendationPreferences;
 };
 export function createRecommendationCursor(handles:string[]):RecommendationCursor {

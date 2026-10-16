@@ -2,6 +2,9 @@ import { supabase } from "@/lib/supabase";
 import { spaceLinkIn } from "@/lib/spaceLinks";
 
 export type LinkPreview={url:string;domain:string;title:string;image:string;description?:string};
+export function previewUrlMatches(first:string|null,second:string|undefined):boolean{
+ try{return !!first&&!!second&&new URL(first).href===new URL(second).href;}catch{return false;}
+}
 export function singlePreviewUrl(content:string):string|null {
   const urls=content.match(/https?:\/\/[^\s<>"\u3000]+/gi)??[];
   if(urls.length!==1)return null;

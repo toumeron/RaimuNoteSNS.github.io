@@ -1,3 +1,4 @@
+import {displayUsername} from '@/lib/displayUsername';
 import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
 import {twitterAvatarUrl} from '@/lib/twitterAvatar';
 import {ProfileListPicker} from '@/components/lists/ListDialogs';
@@ -554,7 +555,7 @@ export function ProfileHeader({
               )}
             </div>
             <p className="truncate text-[15px] leading-5 text-muted-foreground">
-              @{user.username}
+              @{displayUsername(user.username)}
             </p>
           </div>
         </div>

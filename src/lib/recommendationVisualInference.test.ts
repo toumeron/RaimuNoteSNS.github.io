@@ -35,3 +35,24 @@ it('reuses the model after a reading pause and eventually releases its memory',a
  const second=enrichRecommendationVisuals([post('idle-second')],['digital-illustration']);expect(workers).toHaveLength(1);workers[0].finish();await second;idleRecommendationVisualWorker();
  await vi.advanceTimersByTimeAsync(120000);expect(workers[0].terminate).toHaveBeenCalledTimes(1);
 });
+
+it('keeps the initialized model when consuming a ready reserve cancels unfinished analysis',async()=>{
+ vi.stubGlobal('Worker',FakeWorker);
+ const controller=new AbortController();
+ const cancelled=enrichRecommendationVisuals([post('cancel-reserve')],['digital-illustration'],controller.signal);
+ const rejection=expect(cancelled).rejects.toMatchObject({name:'AbortError'});
+ controller.abort();await rejection;expect(workers[0].terminate).not.toHaveBeenCalled();
+ const next=enrichRecommendationVisuals([post('after-cancel')],['digital-illustration']);
+ expect(workers).toHaveLength(1);workers[0].finish();expect((await next)[0].recommendationVisualStatus).toBe('checked');
+});
+
+it('does not repeatedly request a failed image when scrolling reaches it again',async()=>{
+ vi.useFakeTimers();vi.stubGlobal('Worker',FakeWorker);
+ const first=enrichRecommendationVisuals([post('failed-first','failed-shared')],['digital-illustration']);
+ workers[0].onerror?.();expect((await first)[0].recommendationVisualStatus).toBe('unavailable');
+ const second=await enrichRecommendationVisuals([post('failed-next','failed-shared')],['digital-illustration']);
+ expect(second[0].recommendationVisualStatus).toBe('unavailable');expect(workers).toHaveLength(1);
+ await vi.advanceTimersByTimeAsync(60001);
+ const retry=enrichRecommendationVisuals([post('failed-recovered','failed-shared')],['digital-illustration']);
+ expect(workers).toHaveLength(2);workers[1].finish();expect((await retry)[0].recommendationVisualStatus).toBe('checked');
+});

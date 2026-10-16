@@ -1,0 +1,52 @@
+name: Prepare public recommendation images
+on:
+  workflow_call:
+  workflow_dispatch:
+concurrency:
+  group: recommendation-catalog
+  cancel-in-progress: false
+permissions:
+  contents: write
+jobs:
+  build:
+    # GitHub-hosted Linux runners are free for this public repository. Never
+    # consume a private repository's paid runner allowance.
+    if: github.event.repository.private == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - uses: actions/cache@v4
+        with:
+          path: /tmp/lime-recommendation-model
+          key: recommendation-clip-q8-d15189d7028b43f1d3e65039190477f6af591c2a
+      - name: Analyse public images
+        run: node scripts/recommendations/build-catalog.mjs
+        env:
+          RECOMMENDATION_MODEL_CACHE: /tmp/lime-recommendation-model
+          RECOMMENDATION_CATALOG_OUTPUT: /tmp/recommendation-catalog.json
+          RECOMMENDATION_CATALOG_AUTHORS: ${{ vars.RECOMMENDATION_CATALOG_AUTHORS }}
+          RECOMMENDATION_CATALOG_FEEDS: ${{ vars.RECOMMENDATION_CATALOG_FEEDS }}
+      - name: Publish data without changing main or deploying Pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git ls-remote --exit-code --heads origin generated/recommendations; then
+            git fetch origin generated/recommendations
+            git switch --detach FETCH_HEAD
+          else
+            git switch --orphan generated/recommendations
+            git rm -rf --ignore-unmatch .
+          fi
+          cp /tmp/recommendation-catalog.json catalog.json
+          git add catalog.json
+          git diff --cached --quiet && exit 0
+          git commit -m 'Refresh public image recommendation catalog'
+          git push origin HEAD:refs/heads/generated/recommendations
