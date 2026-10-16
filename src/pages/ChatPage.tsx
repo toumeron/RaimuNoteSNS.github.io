@@ -1,24 +1,28 @@
+import {LOCAL_GEMMA_MODEL,normalizeChatModel,isLocalGemmaSession,canChangeChatModel,type LimeChatModel} from '@/lib/localGemmaConfig';
+import {checkLocalGemmaDownload,getLocalGemmaState,subscribeLocalGemma,downloadLocalGemma,loadLocalGemma,deleteLocalGemma,releaseLocalGemma,generateLocalGemma} from '@/lib/localGemma';
+import { listLocalGemmaSessions, saveLocalGemmaSession, deleteLocalGemmaSession } from "@/lib/localGemmaConfig";
+import { LocalGemmaModelRow } from "@/components/ai/ChatPostPreview";
 import { PostPoll } from '@/components/feed/PostPoll';
 import { allowAccountWrite } from '@/lib/accountSuspension';
 import {TypingPixelCat,MessagePixelCat,useMessagePixelCat,LIME_AI_CAT_ICON} from '@/components/chat/PixelCat';
 import { streamChatWithFallback } from '@/lib/chatModelFallback';
 import {extractDocumentText} from '@/lib/documentText';
 import { playIncomingRingtone, unlockIncomingRingtone } from '@/lib/incomingRingtone';
-import { GROUP_CALL_INSTRUCTION, runGroupFriendTurn, type FriendCallUtterance } from '@/lib/groupFriendCall';
+import { GROUP_CALL_INSTRUCTION, runGroupFriendTurn, type FriendCallUtterance } from "@/lib/aiFriends";
 import { randomUUID } from '@/lib/randomUUID';
 import { useIncomingFriendCalls } from '@/hooks/useIncomingFriendCalls';
 import { FriendProfile } from '@/components/chat/FriendProfile';
-import { IncomingFriendCall } from '@/components/chat/IncomingFriendCall';
+import { IncomingFriendCall } from "@/components/chat/CallSessionProvider";
 import {FRIEND_IMAGE_INSTRUCTION,chooseFriendImageQuery,stripImageQuery,appendFriendPhoto,readFriendPhoto,validFriendPhoto} from '../../supabase/functions/_shared/friendImages';
-import {FriendPhoto} from '@/components/chat/FriendPhoto';
-import {waitForFriendReply} from '../../supabase/functions/_shared/friendPacing';
-import {FRIEND_REACTION_INSTRUCTION,parseFriendResponse} from '../../supabase/functions/_shared/friendReaction';
+import { FriendPhoto } from "@/components/chat/DirectChatMessage";
+import { waitForFriendReply } from "./../../supabase/functions/_shared/chatContext.ts";
+import { FRIEND_REACTION_INSTRUCTION, parseFriendResponse } from "./../../supabase/functions/_shared/chatContext.ts";
 import {boundedChatContext} from '../../supabase/functions/_shared/chatContext';
 import {ChatPostPreview} from '@/components/ai/ChatPostPreview';
-import {ChatMenuContent} from '@/components/ai/ChatMenuContent';
+import { ChatMenuContent } from "@/components/ai/ChatPostPreview";
 import { ProfileImageCropper } from '@/components/profile/ProfileImageCropper';
 import { AI_CHAT_DELETED, AI_CHAT_HISTORY_CHANGED, AI_FRIENDS_CHANGED, avatarOf, loadAvatars, saveAvatars, defaultAvatarUrl, listAssistants, findAssistant, saveCustomAssistant, deleteCustomAssistant, type AssistantItem, type AssistantDraft, type AvatarMap } from '@/lib/aiFriends';
-import { Skeleton } from '@/components/ui/skeleton';
+import { Skeleton } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { DirectMessagePanelHeader } from '@/components/layout/Header';
 import { DropdownMenu,  DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -28,10 +32,10 @@ import { PrivateAccountBadge } from "@/components/common/OfficialBadge";
 import { createSandboxWorker, sandboxDocument, type SandboxWorker } from '@/lib/sandboxExecution';
 import {LipSync, type Emotion} from '@/lib/avatarLipSync';
 import {VrmStage, createBus, triggerGesture, type GestureName, type AvatarBus, type CameraPreset, type StageStatus, type ModelInfo} from '@/components/ai/AvatarStage';
-import {listModels, putModel, deleteModel, type StoredModel} from '@/lib/avatarModelStore';
+import { listModels, putModel, deleteModel, type StoredModel } from "@/lib/avatarModels";
 export {LipSync} from '@/lib/avatarLipSync';
 export {VrmStage, createBus} from '@/components/ai/AvatarStage';
-import { isValidElement, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { isValidElement, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
@@ -214,9 +218,15 @@ type MemoryItem = { id: string; content: string }
 const loadMemories = (uid?: string | null) => readList<MemoryItem>(uid, 'memories')
 
 /* ---------- チャットごとの付加情報 (ピン留め / モード / アシスタント) ---------- */
-type SessionMeta = { pinned?: boolean; mode?: Mode; assistantId?: string | null }
+type SessionMeta = { model?:LimeChatModel; pinned?: boolean; mode?: Mode; assistantId?: string | null }
 type SessionMetaMap = Record<string, SessionMeta>
-const loadSessionMeta = (uid?: string | null) => read<SessionMetaMap>(uid, 'session-meta', {})
+const loadSessionMeta = (uid?: string | null): SessionMetaMap => {
+  const meta = read<SessionMetaMap>(uid, 'session-meta', {})
+  for (const session of Object.values(meta)) {
+    if (session.model !== undefined) session.model = normalizeChatModel(session.model)
+  }
+  return meta
+}
 const saveSessionMeta = (uid: string | null | undefined, m: SessionMetaMap) => { write(uid, 'session-meta', m); window.dispatchEvent(new Event(AI_CHAT_HISTORY_CHANGED)); }
 
 /* ---------- 自作キャラクター ---------- */
@@ -1354,9 +1364,10 @@ type MarkdownProps = {
   activeArtifactId?: string | null;
   streaming?: boolean;
   onOpenArtifact?: (a: Artifact) => void;
+  localOnly?:boolean;
 };
 
-function MarkdownImpl({ content, sources = [], fenceArtifacts, activeArtifactId, streaming, onOpenArtifact }: MarkdownProps) {
+function MarkdownImpl({ content, sources = [], fenceArtifacts, activeArtifactId, streaming, onOpenArtifact,localOnly=false }: MarkdownProps) {
   const rehypePlugins = useMemo(
     () => [
       ...(sources.length ? [rehypeCite(sources)] : []),
@@ -1368,6 +1379,7 @@ function MarkdownImpl({ content, sources = [], fenceArtifacts, activeArtifactId,
 
   let fenceIdx = 0;
   const components = {
+    ...(localOnly?{img:({alt}:{alt?:string})=><span>{alt??''}</span>}:{}),
     a: ({ href, children }: { href?: string; children?: ReactNode }) => (
       <a href={href} target="_blank" rel="noreferrer">
         {children}
@@ -4771,6 +4783,7 @@ const streamFromEdge = async (
 
 /** アシスタント本文のMarkdown表示。他のメッセージがストリーミング更新されても再描画されないようメモ化する */
 const MessageMarkdown = memo(function MessageMarkdown({
+  localOnly=false,
   messageId,
   content,
   sources,
@@ -4778,6 +4791,7 @@ const MessageMarkdown = memo(function MessageMarkdown({
   streaming,
   onOpenArtifact,
 }: {
+  localOnly?:boolean
   messageId: string
   content: string
   sources?: Source[]
@@ -4786,12 +4800,13 @@ const MessageMarkdown = memo(function MessageMarkdown({
   onOpenArtifact: (artifact: Artifact) => void
 }) {
   const fences = useMemo(
-    () => fenceArtifacts({ id: messageId, content }),
-    [messageId, content],
+    () => localOnly?[]:fenceArtifacts({ id: messageId, content }),
+    [messageId, content,localOnly],
   )
 
   return (
     <Markdown
+      localOnly={localOnly}
       content={content}
       sources={sources}
       fenceArtifacts={fences}
@@ -4822,8 +4837,13 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const sidebarRef = useRef<HTMLDivElement>(null)
   const sidebarOpenerRef = useRef<HTMLButtonElement>(null)
-  const [selectedModel, setSelectedModel] = useState<'fast' | 'advanced'>('fast')
+  const [selectedModel, setSelectedModel] = useState<LimeChatModel>('fast')
+  const modelSelectionVersion=useRef(0);
+  const isLocalChat=isLocalGemmaSession(currentSessionId);
+  const gemmaState=useSyncExternalStore(subscribeLocalGemma,getLocalGemmaState,getLocalGemmaState);
+  useEffect(()=>{void checkLocalGemmaDownload();},[]);
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false)
+  const [chatMenuOpen,setChatMenuOpen]=useState(false)
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null)
 
   // --- 統合した機能の状態 ---
@@ -4996,7 +5016,6 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
       };
     }
 
-    const syncTimer = window.setInterval(syncFromLocalStorage, 100);
     fetchLimeProStatus();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
@@ -5010,7 +5029,6 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
       window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener('focus', handleFocusOrVisible);
       document.removeEventListener('visibilitychange', handleFocusOrVisible);
-      window.clearInterval(syncTimer);
       subscription.unsubscribe();
       if (broadcastChannel) {
         broadcastChannel.close();
@@ -5071,7 +5089,10 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
   useEffect(() => {
     if (!user) return
 
+    let disposed=false;
     const fetchSessions = async () => {
+      const localSessions=await listLocalGemmaSessions(user.id).catch(()=>[]);
+      if(disposed)return;
       try {
         const { data, error } = await supabase
           .from('chat_sessions')
@@ -5081,10 +5102,12 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
 
         if (error) throw error
 
-        const formattedSessions: ChatSession[] = (data ?? []).map((item: any) => ({id:item.id,title:item.title,messages:item.messages||[],updatedAt:item.updated_at}));
+        const formattedSessions: ChatSession[] = [...localSessions,...(data ?? []).filter((item:any)=>!isLocalGemmaSession(item.id)).map((item: any) => ({id:item.id,title:item.title,messages:item.messages||[],updatedAt:item.updated_at}))].sort((a,b)=>new Date(b.updatedAt).getTime()-new Date(a.updatedAt).getTime());
+        if(disposed)return;
         const meta = loadSessionMeta(uid);
+        setSessionMeta(meta);
         const existing = embedded ? formattedSessions.find(session => (meta[session.id]?.assistantId ?? null) === (friendId ?? null)) : formattedSessions[0];
-        if(existing){setSessions(formattedSessions);setCurrentSessionId(existing.id);setAssistant(findAssistant(uid,friendId ?? meta[existing.id]?.assistantId));}
+        if(existing){setSelectedModel(isLocalGemmaSession(existing.id)?LOCAL_GEMMA_MODEL:meta[existing.id]?.model??'fast');setSessions(formattedSessions);setCurrentSessionId(existing.id);setAssistant(findAssistant(uid,friendId ?? meta[existing.id]?.assistantId));}
         else {
           const newId=randomUUID();const now=Date.now();
           setSessions([{id:newId,title:'新しいチャット',messages:[],updatedAt:now},...formattedSessions]);setCurrentSessionId(newId);
@@ -5092,6 +5115,8 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
           await supabase.from('chat_sessions').insert({id:newId,user_id:user.id,title:'新しいチャット',messages:[],updated_at:now});
         }
       } catch (e) {
+        if(disposed)return;
+        if(localSessions.length){setSessions(localSessions);setCurrentSessionId(localSessions[0].id);setSelectedModel(LOCAL_GEMMA_MODEL);return;}
         console.error(e)
         // エラー時もフォールバックとして空のセッションを作成
         const newId = randomUUID()
@@ -5107,7 +5132,8 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
     }
 
     fetchSessions()
-  }, [user, friendId, embedded, uid])
+    return()=>{disposed=true;modelSelectionVersion.current++;abortRef.current?.abort();releaseLocalGemma();};
+  }, [user?.id, friendId, embedded, uid])
 
   const currentSession = sessions.find(s => s.id === currentSessionId)
   const messages = currentSession ? currentSession.messages : []
@@ -5116,7 +5142,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
   const streamingMessageId = isLoading && lastMessage?.role === 'assistant' ? lastMessage.id : null
 
   // 現在のチャットの成果物(ツール作成ファイル + コードブロック内のHTML/SVG)
-  const artifacts = useMemo(() => allArtifacts(messages.map(toArtifactSource)), [messages])
+  const artifacts = useMemo(() => isLocalChat?[]:allArtifacts(messages.map(toArtifactSource)), [messages,isLocalChat])
   const panelOpen = artifactOpen && artifacts.length > 0 && view === 'chat'
 
   useEffect(() => {
@@ -5136,6 +5162,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
   }, [messages, isLoading])
 
   useEffect(() => {
+    if(isLocalChat){setPostLinkPreview(null);setPostLinkPreviewLoading(false);return;}
     const detected = extractSupportedPostLink(input)
 
     if (!detected) {
@@ -5181,7 +5208,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [input, dismissedPostPreviewId, postLinkPreview?.id])
+  }, [input, dismissedPostPreviewId, postLinkPreview?.id,isLocalChat])
 
   useEffect(() => {
     messageSpeaker.current.cancel()
@@ -5190,6 +5217,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
 
   useEffect(() => {
     return () => {
+      modelSelectionVersion.current++;releaseLocalGemma();
       messageSpeaker.current.cancel()
       abortRef.current?.abort()
     }
@@ -5228,6 +5256,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
 
   const persistSession = async (id: string, title: string, msgs: Message[], updatedAt: number) => {
     if (!user || deletedSessionIds.current.has(id)) return
+    if(isLocalGemmaSession(id)){await saveLocalGemmaSession(user.id,{id,title,messages:msgs,updatedAt});return;}
     const {error} = await supabase.from('chat_sessions').upsert({
       id,
       user_id: user.id,
@@ -5248,9 +5277,10 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
     lastArtifactCountRef.current = 0
   }
 
-  const createNewSession = async () => {
+  const createNewSession = async (model:LimeChatModel=selectedModel,carryInstructions=false) => {
+    if(isLoading)return;
     if (!user) return
-    const newId = randomUUID()
+    const newId = model===LOCAL_GEMMA_MODEL?`local-gemma:${randomUUID()}`:randomUUID()
     const now = Date.now()
     const newSession: ChatSession = {
       id: newId,
@@ -5264,14 +5294,16 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
     setPostLinkPreview(null)
     setPostLinkPreviewLoading(false)
     setDismissedPostPreviewId(null)
-    setAssistant(findAssistant(uid,friendId))
-    if(embedded)updateSessionMeta(newId,{assistantId:friendId??null})
+    const character=carryInstructions?assistant:findAssistant(uid,friendId);
+    setAssistant(character);setSelectedModel(model);
+    updateSessionMeta(newId,{assistantId:character?.id??null,model})
     resetComposerExtras()
     if (window.innerWidth < 768) {
       setIsSidebarOpen(false)
     }
 
-    // Supabaseにセッションを挿入
+    if(model===LOCAL_GEMMA_MODEL){await saveLocalGemmaSession(user.id,newSession);return;}
+    // Model selection stays in sessionMeta.
     try {
       await supabase.from('chat_sessions').insert({
         id: newId,
@@ -5285,7 +5317,25 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
     }
   }
 
+  const chooseModel=async(model:LimeChatModel)=>{
+    if(isLoading||!canChangeChatModel(selectedModel,messages.length,model))return;
+    if(model==='advanced'&&!hasLimePro)return;
+    const version=++modelSelectionVersion.current;
+    setIsModelSelectorOpen(false);setChatMenuOpen(false);
+    try{if(model!==selectedModel)await createNewSession(model,true);
+      if(model===LOCAL_GEMMA_MODEL){await downloadLocalGemma();if(version===modelSelectionVersion.current)await loadLocalGemma();}
+      else releaseLocalGemma();
+    }catch(error){if((error as Error).name!=='AbortError')toast.error((error as Error).message);}
+  };
+  const manageGemmaDownload=()=>{void downloadLocalGemma().catch(error=>toast.error(error.message));};
+  const removeGemma=()=>{if(isLoading&&isLocalChat)return;void deleteLocalGemma().catch(error=>toast.error(error.message));};
+  const gemmaRow=<LocalGemmaModelRow state={gemmaState} selected={selectedModel===LOCAL_GEMMA_MODEL} disabled={isLoading} onSelect={()=>void chooseModel(LOCAL_GEMMA_MODEL)} onDownload={manageGemmaDownload} onDelete={removeGemma}/>;
+
   const selectSession = (id: string) => {
+    if(isLoading)return;
+    modelSelectionVersion.current++;if(!isLocalGemmaSession(id))releaseLocalGemma();
+    setSelectedModel(isLocalGemmaSession(id)?LOCAL_GEMMA_MODEL:sessionMeta[id]?.model??'fast');
+    setInput('');setPostLinkPreview(null);
     setCurrentSessionId(id)
     resetComposerExtras()
     const meta = sessionMeta[id]
@@ -5297,6 +5347,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
 
   const deleteSession = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation()
+    deletedSessionIds.current.add(id);if(currentSessionId===id)abortRef.current?.abort();
     const filtered = sessions.filter(s => s.id !== id)
     setSessions(filtered)
     setSessionMeta(prev => {
@@ -5306,7 +5357,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
     
     if (currentSessionId === id) {
       if (filtered.length > 0) {
-        setCurrentSessionId(filtered[0].id)
+        setCurrentSessionId(filtered[0].id);setSelectedModel(isLocalGemmaSession(filtered[0].id)?LOCAL_GEMMA_MODEL:sessionMeta[filtered[0].id]?.model??'fast')
       } else {
         const newId = randomUUID()
         const now = Date.now()
@@ -5316,7 +5367,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
           messages: [],
           updatedAt: now
         }])
-        setCurrentSessionId(newId)
+        setCurrentSessionId(newId);setSelectedModel('fast')
 
         if (user) {
           try {
@@ -5334,6 +5385,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
       }
     }
 
+    if(isLocalGemmaSession(id)){if(uid)await deleteLocalGemmaSession(uid,id);return;}
     // Supabaseからセッションを削除
     try {
       await supabase.from('chat_sessions').delete().eq('id', id)
@@ -5346,6 +5398,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
     const nextTitle = title.trim()
     if (!nextTitle) return
     setSessions(prev => prev.map(s => (s.id === id ? { ...s, title: nextTitle } : s)))
+    if(isLocalGemmaSession(id)){const session=sessions.find(row=>row.id===id);if(uid&&session)await saveLocalGemmaSession(uid,{...session,title:nextTitle});return;}
     try {
       await supabase.from('chat_sessions').update({ title: nextTitle }).eq('id', id)
     } catch (error) {
@@ -5359,6 +5412,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
   }
 
   const handleSpeak = (messageId: string, text: string) => {
+    if(isLocalChat)return;
     if (callSession.isActive()) return
     messageSpeaker.current.cancel()
     if (speakingMessageId === messageId) { setSpeakingMessageId(null); return }
@@ -5391,6 +5445,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
   /* ---------- 添付ファイル(ドラッグ&ドロップ・貼り付け) ---------- */
 
   const addFiles = async (files: FileList | File[]) => {
+    if(isLocalChat){toast.error('Gemma 3 270Mはテキストで会話できます');return;}
     setAttachError('')
     for (const file of Array.from(files)) {
       setAttachLoading(n => n + 1)
@@ -5408,7 +5463,25 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
   /* ---------- AIへのリクエスト(送信・再生成・編集して再送信で共通) ---------- */
 
   const runAssistant = async (updatedMessages: Message[], sessionId: string, sessionTitle: string) => {
-    const model = selectedModel
+    const model = isLocalGemmaSession(sessionId)?LOCAL_GEMMA_MODEL:selectedModel;
+    if(model===LOCAL_GEMMA_MODEL){
+      const ac=new AbortController();abortRef.current=ac;setIsLoading(true);setAssistantStreamStatus('thinking');
+      const replyId=randomUUID();let text='',frame:number|undefined;
+      const patch=()=>{frame=undefined;setSessions(prev=>prev.map(row=>row.id===sessionId?{...row,messages:[...updatedMessages,{id:replyId,role:'assistant',content:text}]}:row));};
+      patch();
+      try{
+        const instructions=['あなたはGemma 3 270Mです。日本語で親しみやすく会話してください。',assistant?.systemPrompt,buildExtraInstructions({mode:'chat',character:!!assistant,userName:chatSettings.userName,customInstructions:chatSettings.customInstructions,memories:chatSettings.memoryEnabled?memories.map(memory=>memory.content):[]})].filter(Boolean).join('\n');
+        text=await generateLocalGemma(updatedMessages.map(({role,content})=>({role,content})),instructions,ac.signal,part=>{text=part;if(frame===undefined)frame=requestAnimationFrame(patch);});
+      }catch(error){if((error as Error).name!=='AbortError')toast.error((error as Error).message);}
+      finally{
+        if(frame!==undefined)cancelAnimationFrame(frame);
+        const history=text.trim()?[...updatedMessages,{id:replyId,role:'assistant' as const,content:text}]:updatedMessages;
+        setSessions(prev=>prev.map(row=>row.id===sessionId?{...row,messages:history,updatedAt:Date.now()}:row));
+        try{await persistSession(sessionId,sessionTitle,history,Date.now());}catch{toast.error('端末内に履歴を保存できませんでした');}
+        abortRef.current=null;setIsLoading(false);setAssistantStreamStatus('idle');
+      }
+      return;
+    }
     const friendStartedAt = Date.now()
     const pacedFriend = embedded && !!assistant
     const ac = new AbortController()
@@ -5796,13 +5869,14 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!allowAccountWrite()) return
+    if(isLocalChat&&(!gemmaState.downloaded||gemmaState.status!=='ready'))return;
     if ((!input.trim() && pendingAttachments.length === 0) || isLoading || attachLoading > 0 || !currentSessionId) return
 
     const trimmedInput = input.trim()
     const detectedPostLink = extractSupportedPostLink(trimmedInput)
     let sendingPostPreview: PostLinkPreview | undefined = undefined
 
-    if (detectedPostLink && dismissedPostPreviewId !== detectedPostLink.id) {
+    if (!isLocalChat && detectedPostLink && dismissedPostPreviewId !== detectedPostLink.id) {
       const currentPreview = postLinkPreview?.id === detectedPostLink.id ? postLinkPreview : null
       sendingPostPreview = currentPreview ?? await fetchPostLinkPreview(detectedPostLink.id, detectedPostLink.url) ?? undefined
     }
@@ -5870,6 +5944,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
   }
 
   const openVoiceMode = () => {
+    if(isLocalChat)return;
     if (callSession.isActive()) return
     incomingCalls.dismiss()
     messageSpeaker.current.cancel()
@@ -5940,13 +6015,13 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
   const incomingCalls = useIncomingFriendCalls<{
     assistant: AssistantItem; opening: string; history: Message[];
   }>({
-    account: uid,
+    account: isLocalChat?null:uid,
     busy: () => callSession.isActive() || voiceOpen || Boolean(incomingCalls.incoming),
     prepare: async signal => {
       const friends = listAssistants(uid);
       if (!friends.length) return null;
       const character = friends[Math.floor(Math.random() * friends.length)];
-      const recent = sessions.filter(session => sessionMeta[session.id]?.assistantId === character.id)
+      const recent = sessions.filter(session => !isLocalGemmaSession(session.id)&&sessionMeta[session.id]?.assistantId === character.id)
         .sort((a, b) => Number(new Date(b.updatedAt)) - Number(new Date(a.updatedAt)))
         .flatMap(session => session.messages.slice(-6)).slice(0, 6)
         .filter(message => message.content.trim()).map(message => ({ ...message, content: message.content.slice(0, 500), attachments: undefined }));
@@ -5987,6 +6062,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
 
   /** アシスタントに発信する */
   const openAssistantCall = (targetAssistant?: AssistantItem | null) => {
+    if(isLocalChat)return;
     const nextAssistant = targetAssistant ?? assistant
     if (!nextAssistant || callSession.isActive()) return
     incomingCalls.dismiss()
@@ -6081,7 +6157,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
         <div className="w-full md:w-64 flex flex-col h-full shrink-0">
           <div className="p-3.5 flex items-center justify-between gap-2">
             <button
-              onClick={createNewSession}
+              onClick={()=>void createNewSession()}
               className="flex-1 flex items-center justify-between px-3 py-2.5 rounded-2xl bg-[#f7f8f9] hover:bg-[#e2e6ea]/55 dark:bg-transparent dark:hover:bg-[#1c2128] transition duration-200 text-sm font-semibold text-[#333a42] dark:text-[#e4e7ea] border border-[#bfe3f7] dark:border-[#252b33]"
             >
               <span className="flex items-center gap-2">
@@ -6274,15 +6350,16 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
         {friendProfileOpen && assistant && <FriendProfile friend={assistant} uid={uid} avatars={avatars} onClose={() => setFriendProfileOpen(false)} onTalk={() => setView('chat')} onCall={openAssistantCall}/>}
         {/* ヘッダーエリア */}
         {embedded && <DirectMessagePanelHeader className={`dm-thread-header ${view === 'assistants' ? 'dm-ai-friends' : ''}`} back={onBack} actions={<>
-          <button type="button" className="dm-icon-button dm-round" aria-label="通話" onClick={() => openAssistantCall(assistant ?? {id:'limeai',slug:null,name:'LimeAI',description:'',systemPrompt:'あなたはLimeAIです。日本語で親しみやすく会話してください。',starter:'',greeting:'こんにちは、LimeAIです。',category:'',builtin:true})}><Phone size={23}/></button>
-          {!friendId && <button type="button" className="dm-icon-button dm-round" aria-label="ビデオ通話" onClick={openVoiceMode}><Video size={23}/></button>}
-          <DropdownMenu><DropdownMenuTrigger asChild><button type="button" className="dm-icon-button dm-round" aria-label="LimeAIのメニュー"><MoreHorizontal size={23}/></button></DropdownMenuTrigger><ChatMenuContent align="end" className="dm-menu">
+          <button type="button" className="dm-icon-button dm-round" aria-label="通話" disabled={isLocalChat} onClick={() => openAssistantCall(assistant ?? {id:'limeai',slug:null,name:'LimeAI',description:'',systemPrompt:'あなたはLimeAIです。日本語で親しみやすく会話してください。',starter:'',greeting:'こんにちは、LimeAIです。',category:'',builtin:true})}><Phone size={23}/></button>
+          {!friendId && <button type="button" className="dm-icon-button dm-round" aria-label="ビデオ通話" disabled={isLocalChat} onClick={openVoiceMode}><Video size={23}/></button>}
+          <DropdownMenu open={chatMenuOpen} onOpenChange={setChatMenuOpen}><DropdownMenuTrigger asChild><button type="button" className="dm-icon-button dm-round" aria-label="LimeAIのメニュー"><MoreHorizontal size={23}/></button></DropdownMenuTrigger><ChatMenuContent align="end" className="dm-menu">
             {friendId && assistant && !assistant.builtin && <><DropdownMenuItem onSelect={onEditFriend}>フレンドを編集</DropdownMenuItem><DropdownMenuItem onSelect={()=>{if(confirm(`「${assistant.name}」を削除しますか?`)){deleteCustomAssistant(uid,assistant.id);onBack?.()}}}>フレンドを削除</DropdownMenuItem></>}
             {onBackgroundChange&&<DropdownMenuItem onSelect={()=>window.setTimeout(onBackgroundChange,0)}>チャットの背景</DropdownMenuItem>}
-            <DropdownMenuItem onSelect={createNewSession}>新しいチャット</DropdownMenuItem>
+            <DropdownMenuItem onSelect={()=>void createNewSession()}>新しいチャット</DropdownMenuItem>
             <DropdownMenuItem onSelect={() => setIsSidebarOpen(true)}>履歴を検索</DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => setSelectedModel('fast')}>LimeAI 6 Fast {selectedModel === 'fast' && <Check size={16}/>}</DropdownMenuItem>
-            <DropdownMenuItem disabled={!hasLimePro} onSelect={() => setSelectedModel('advanced')}>LimeAI 6 Thinking {selectedModel === 'advanced' && <Check size={16}/>}</DropdownMenuItem>
+            <DropdownMenuItem disabled={isLoading||isLocalChat&&messages.length>0} onSelect={() => void chooseModel('fast')}>LimeAI 6 Fast {selectedModel === 'fast' && <Check size={16}/>}</DropdownMenuItem>
+            <DropdownMenuItem disabled={!hasLimePro||isLoading||isLocalChat&&messages.length>0} onSelect={() => void chooseModel('advanced')}>LimeAI 6 Thinking {selectedModel === 'advanced' && <Check size={16}/>}</DropdownMenuItem>
+            {!friendId&&gemmaRow}
             {artifacts.length > 0 && <DropdownMenuItem onSelect={() => setArtifactOpen(!artifactOpen)}>プレビューパネル</DropdownMenuItem>}
           </ChatMenuContent></DropdownMenu>
         </>}><div className="dm-thread-peer" role={friendId ? "button" : undefined} tabIndex={friendId ? 0 : undefined} aria-label={friendId ? "フレンドのプロフィール" : undefined} onClick={() => { if (friendId) setFriendProfileOpen(true); }} onKeyDown={e => { if (friendId && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); setFriendProfileOpen(true); } }}><Avatar className="dm-avatar"><AvatarImage src={friendId && assistant ? avatarOf(assistant,avatars) : LIME_AI_CAT_ICON} style={!friendId?{objectFit:'contain',background:'#090c0e'}:undefined}/><AvatarFallback>AI</AvatarFallback></Avatar><span className="dm-peer-name">{view === 'assistants' ? 'フレンド' : assistant?.name ?? 'LimeAI'}</span></div></DirectMessagePanelHeader>}
@@ -6327,8 +6404,9 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
                   </div>
 
                   <button
+                    disabled={isLoading||isLocalChat&&messages.length>0}
                     onClick={() => {
-                      setSelectedModel('fast');
+                      void chooseModel('fast');
                       setIsModelSelectorOpen(false);
                     }}
                     className={`flex items-center justify-between p-2.5 md:p-3 rounded-2xl transition text-left ${
@@ -6352,9 +6430,10 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
                   </button>
 
                   <button
+                    disabled={isLoading||isLocalChat&&messages.length>0}
                     onClick={() => {
                       if (hasLimePro) {
-                        setSelectedModel('advanced');
+                        void chooseModel('advanced');
                         setIsModelSelectorOpen(false);
                       } else {
                         window.location.href = '/RaimuNoteSNS.github.io/LimePro';
@@ -6386,6 +6465,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
                       )}
                     </div>
                   </button>
+                  {gemmaRow}
                 </div>
               </>
             )}
@@ -6398,6 +6478,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
             onClick={openVoiceMode}
             title="ボイスモード"
             aria-label="ボイスモード"
+              disabled={isLocalChat}
             className="p-2 md:p-2.5 rounded-2xl hover:bg-[#e2e6ea]/55 dark:hover:bg-[#1c2128] text-[#69707a] dark:text-[#a8b0ba] hover:text-[#3aa5e0] dark:hover:text-[#86c9ee] transition"
           >
             <AudioLines className="w-4 h-4 md:w-5 md:h-5" />
@@ -6419,6 +6500,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
 
         {embedded && uid && initialAction==='friend' && <AssistantsView key={`${uid}:${friendId??'new'}`} simple initialCreate initialFriend={findAssistant(uid,friendId)} onSaved={friend=>onFriendCreated?.(friend.id)} onCancel={onBack} uid={uid} avatars={avatars} onUse={applyAssistantPreset} onCall={openAssistantCall} onChanged={refreshAssistant} onAvatarChange={changeAssistantAvatar}/>}
 
+        {isLocalChat&&<div data-local-gemma-status className="px-3 py-1">{gemmaRow}{gemmaState.error&&<p role="alert" className="px-2 text-sm text-destructive">{gemmaState.error}</p>}</div>}
         {/* タイムライン */}
         <div ref={catHistoryRef} className={embedded ? "dm-history" : "flex-1 overflow-y-auto custom-scrollbar bg-transparent"} onScroll={embedded ? event=>{const element=event.currentTarget;aiNearBottom.current=element.scrollHeight-element.scrollTop-element.clientHeight<64} : undefined}>
           {view === 'assistants' ? (
@@ -6438,8 +6520,8 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
           ) : embedded ? (
             <>
               {messages.length === 0 && <div className="dm-peer-intro"><Avatar className="dm-avatar"><AvatarImage src={friendId && assistant ? avatarOf(assistant,avatars) : LIME_AI_CAT_ICON} style={!friendId?{objectFit:'contain',background:'#090c0e'}:undefined}/><AvatarFallback>AI</AvatarFallback></Avatar><span className="dm-peer-name">{assistant?.name ?? 'LimeAI'}</span></div>}
-              {messages.filter(msg=>!(assistant&&isLoading&&msg.id===streamingMessageId)&&(msg.role!=='assistant'||msg.content.trim()||msg.id===streamingMessageId&&isLoading)).map(msg=>{const displayed=msg.role==='assistant'?readFriendPhoto(msg.content):{text:msg.content,photo:null};return <div key={msg.id} className={`dm-message ${msg.role === 'user' ? 'is-own' : ''}`} data-pixel-cat-message={msg.id}>{catVisit?.id===msg.id&&<MessagePixelCat motion={catVisit.motion} offset={catVisit.offset}/>}<FriendPhoto photo={displayed.photo} account={uid}/><ChatPostPreview content={displayed.text} fallback={<div className="dm-bubble">
-                {!msg.content && isLoading ? <Skeleton className="h-5 w-16 rounded-full"/> : msg.role === 'user' ? <p>{msg.content}</p> : <MessageMarkdown messageId={msg.id} content={displayed.text} sources={msg.sources} activeArtifactId={activeArtifactId} streaming={streamingMessageId===msg.id} onOpenArtifact={openArtifact}/>}
+              {messages.filter(msg=>!(assistant&&isLoading&&msg.id===streamingMessageId)&&(msg.role!=='assistant'||msg.content.trim()||msg.id===streamingMessageId&&isLoading)).map(msg=>{const displayed=msg.role==='assistant'&&!isLocalChat?readFriendPhoto(msg.content):{text:msg.content,photo:null};return <div key={msg.id} className={`dm-message ${msg.role === 'user' ? 'is-own' : ''}`} data-pixel-cat-message={msg.id}>{catVisit?.id===msg.id&&<MessagePixelCat motion={catVisit.motion} offset={catVisit.offset}/>}<FriendPhoto photo={displayed.photo} account={uid}/><ChatPostPreview disabled={isLocalChat} content={displayed.text} fallback={<div className="dm-bubble">
+                {!msg.content && isLoading ? <Skeleton className="h-5 w-16 rounded-full"/> : msg.role === 'user' ? <p>{msg.content}</p> : <MessageMarkdown localOnly={isLocalChat} messageId={msg.id} content={displayed.text} sources={msg.sources} activeArtifactId={activeArtifactId} streaming={streamingMessageId===msg.id} onOpenArtifact={openArtifact}/>}
               </div>}/>{msg.reactions&&<div className="dm-reactions">{Object.entries(msg.reactions).map(([emoji,users])=><span className="dm-friend-reaction" key={emoji} title={`${assistant?.name??'フレンド'}のリアクション`}>{emoji}<strong>{Object.keys(users).length}</strong></span>)}</div>}</div>})}
               <div ref={messagesEndRef}/>
             </>
@@ -6585,6 +6667,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
                                   ) : (
                                     <div className={isStreaming ? 'caret' : ''}>
                                       <MessageMarkdown
+                                        localOnly={isLocalChat}
                                         messageId={msg.id}
                                         content={visibleMessageContent}
                                         sources={msg.sources}
@@ -6774,7 +6857,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
 
         {/* 入力フォームエリア */}
         {embedded && assistant && isLoading && <div className="dm-typing" role="status"><span className="dm-typing-dots" aria-hidden="true"><i/><i/><i/></span><span><strong>{assistant.name}</strong>が入力中…</span><TypingPixelCat/></div>}
-        {view === 'chat' && (embedded ? <form className="dm-compose" onSubmit={event=>{aiNearBottom.current=true;void handleSend(event)}}><div className="dm-compose-row"><div className="dm-input"><textarea ref={composerRef} aria-label="メッセージ" placeholder="メッセージ" rows={1} value={input} onChange={event=>setInput(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing&&window.matchMedia('(hover: hover) and (pointer: fine)').matches){event.preventDefault();event.currentTarget.form?.requestSubmit()}}}/>{isLoading ? <button type="button" className="dm-icon-button" aria-label="停止" onClick={handleStop}><Square size={20}/></button> : <button type="submit" className="dm-icon-button" aria-label="送信" disabled={!input.trim()}><Send size={21}/></button>}</div></div></form> :
+        {view === 'chat' && (embedded ? <form className="dm-compose" onSubmit={event=>{aiNearBottom.current=true;void handleSend(event)}}><div className="dm-compose-row"><div className="dm-input"><textarea ref={composerRef} aria-label="メッセージ" placeholder="メッセージ" rows={1} value={input} onChange={event=>setInput(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing&&window.matchMedia('(hover: hover) and (pointer: fine)').matches){event.preventDefault();event.currentTarget.form?.requestSubmit()}}}/>{isLoading ? <button type="button" className="dm-icon-button" aria-label="停止" onClick={handleStop}><Square size={20}/></button> : <button type="submit" className="dm-icon-button" aria-label="送信" disabled={!input.trim()||isLocalChat&&(!gemmaState.downloaded||gemmaState.status!=='ready')}><Send size={21}/></button>}</div></div></form> :
         <div className="dm-ai-composer p-4 w-full max-w-3xl mx-auto shrink-0">
           {(postLinkPreviewLoading || postLinkPreview) && (
             <div className="mb-3">
@@ -6876,6 +6959,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
               onClick={openVoiceMode}
               title="ボイスモード"
               aria-label="ボイスモード"
+              disabled={isLocalChat}
               className="p-3 rounded-full flex items-center justify-center text-[#69707a] dark:text-[#a8b0ba] hover:text-[#3aa5e0] dark:hover:text-[#86c9ee] hover:bg-[#e2e6ea]/55 dark:hover:bg-[#1c2128] transition shrink-0"
             >
               <AudioLines className="w-4 h-4" />
@@ -6894,7 +6978,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
               <button
                 type="submit"
                 aria-label="送信"
-                disabled={(!input.trim() && pendingAttachments.length === 0) || attachLoading > 0}
+                disabled={(!input.trim() && pendingAttachments.length === 0) || attachLoading > 0 || isLocalChat&&(!gemmaState.downloaded||gemmaState.status!=='ready')}
                 className={`p-3 rounded-full transition flex items-center justify-center shrink-0 ${(!input.trim() && pendingAttachments.length === 0) || attachLoading > 0 ? 'bg-[#e4e7ea] dark:bg-[#252b33] text-[#a8b0ba]' : 'bg-gradient-to-br from-[#86c9ee] to-[#3aa5e0] text-white shadow-[0_6px_18px_-6px_rgba(58,165,224,0.9)]'}`}
               >
                 <Send className="w-4 h-4 ml-[2px]" />

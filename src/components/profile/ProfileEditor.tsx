@@ -2,16 +2,16 @@ import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { Camera, Loader2, X } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
+import { Input } from "@/components/ui/button";
+import { Label } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/button";
 import { DialogClose, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { useAuth } from '@/hooks/useAuth';
 import { useUpdateProfile } from '@/hooks/useProfile';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 import { z } from 'zod';
-import './profile-editor.css';
+import "@/pages/settings.css";
 import { ProfileImageCropper, type ProfileImageCropTarget } from './ProfileImageCropper';
 const schema = z.object({
   displayName: z.string().trim().min(1, '表示名を入力してください').max(30, '30文字以内で入力してください'),

@@ -1,4 +1,4 @@
-import { classifyTrendCategory, trendSearchVolume } from '../../../src/lib/trend-categories.ts';
+import { classifyTrendCategory, trendSearchVolume } from "@/lib/topics";
 export const GOOGLE_TRENDS_URL = 'https://trends.google.com/trending/rss?geo=JP';
 export type TrendItem = { title: string; traffic: string; context?: string; category?: string; categories?: string[] };
 

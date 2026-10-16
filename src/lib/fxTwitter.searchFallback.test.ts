@@ -14,3 +14,10 @@ it('bounds recommendation hydration to two posts without skipping the other sear
  const first=await searchXPage('ファンアート',{preferAlternative:true,limit:2});expect(first.posts.map(post=>post.id)).toEqual(['x:301','x:302']);expect(first.cursor).toBe('yahoo:2');
  const second=await searchXPage('ファンアート',{cursor:first.cursor,preferAlternative:true,limit:2});expect(second.posts.map(post=>post.id)).toEqual(['x:303','x:304']);expect(second.cursor).toBe('yahoo:4');expect(relay.mock.calls[1][2]).toBe(2);expect(fetcher).toHaveBeenCalledTimes(4);
 });
+
+it('hydrates twenty requested search results and continues from the correct cursor',async()=>{
+ relay.mockReset();const ids=Array.from({length:20},(_,i)=>String(5000+i));relay.mockResolvedValue({ids,cursor:20});
+ vi.stubGlobal('fetch',vi.fn(async(url:string)=>new Response(JSON.stringify({code:200,status:{id:url.match(/status\/(\d+)/)![1],type:'status',text:'キオクシア',author:{id:'123',screen_name:'market'}}}))));
+ const page=await searchXPage('キオクシア',{preferAlternative:true,limit:20});
+ expect(page.posts.map(post=>post.id)).toEqual(ids.map(id=>'x:'+id));expect(page.cursor).toBe('yahoo:20');expect(relay.mock.calls[0][4]).toBe(20);
+});

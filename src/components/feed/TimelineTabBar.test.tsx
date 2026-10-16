@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 vi.mock('@/hooks/useLists',()=>({useListCatalog:()=>({data:[]}),useInvalidateLists:()=>vi.fn()}));
 import { TimelineTabBar } from './TimelineTabBar';
-import { normalizeTimelineTabs, useTimelineTabs, saveTimelineTabs } from '@/lib/timelineTabs';
+import { normalizeTimelineTabs, useTimelineTabs, saveTimelineTabs } from "@/components/feed/TimelineTabBar";
 beforeEach(()=>localStorage.clear());afterEach(cleanup);
 function Mount({owner='owner'}:{owner?:string}){const tabs=useTimelineTabs(owner);return <TimelineTabBar tabs={tabs} owner={owner} active="all" onSelect={vi.fn()} onDoubleClick={vi.fn()}/>;}
 it('customizes tab order and persists changes without hide buttons',()=>{

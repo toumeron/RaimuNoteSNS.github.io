@@ -1,5 +1,8 @@
-import {afterEach, beforeEach, expect, it, vi} from 'vitest';
-import {clearPrivateMedia, createPrivateMediaFetch, MEDIA_PREFIX, resolvePrivateMediaUrl, isDeferredPrivateMedia} from './privateMediaFetch';
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { clearPrivateMedia, createPrivateMediaFetch, MEDIA_PREFIX, resolvePrivateMediaUrl, isDeferredPrivateMedia } from "@/lib/privateMediaFetch";
+import { boundedResponseBlob, ResponseTooLarge, createDevFunctionFetch } from "@/lib/devFunctionFetch";
+
+describe("privateMediaFetch", () => {
 const path='11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/33333333-3333-4333-8333-333333333333.png';
 const ref=MEDIA_PREFIX+path;
 const db='https://example.supabase.co';
@@ -83,4 +86,46 @@ it('does not download an entire liked-image history while preparing recommendati
  const transport=vi.fn().mockResolvedValue(Response.json(Array.from({length:200},(_,i)=>({id:i,posts:{image_urls:[ref]}}))));
  const rows=await (await createPrivateMediaFetch(db,transport,true)(db+'/rest/v1/likes')).json();
  expect(rows).toHaveLength(200);expect(isDeferredPrivateMedia(rows[0].posts.image_urls[0])).toBe(true);expect(transport).toHaveBeenCalledTimes(1);
+});
+});
+
+describe("boundedResponse", () => {
+it('stops and cancels oversized chunked images despite a forged Content-Length',async()=>{
+ let cancelled=false,reads=0;
+ const stream=new ReadableStream<Uint8Array>({pull(controller){reads++;controller.enqueue(new Uint8Array(8));},cancel(){cancelled=true;}});
+ await expect(boundedResponseBlob(new Response(stream,{headers:{'content-type':'image/png','content-length':'1'}}),10)).rejects.toBeInstanceOf(ResponseTooLarge);
+ expect(cancelled).toBe(true);expect(reads).toBeLessThanOrEqual(3);
+});
+it('preserves valid image bytes and MIME type',async()=>{
+ const blob=await boundedResponseBlob(new Response('hello',{headers:{'content-type':'image/png'}}),10);
+ expect(blob.size).toBe(5);expect(blob.type).toBe('image/png');
+});
+});
+
+describe("devFunctionFetch", () => {
+const devFunctionFetchTestDb = 'https://example.supabase.co';
+const proxy = 'http://192.168.11.51:8080/RaimuNoteSNS.github.io/__lime-link-preview';
+it('routes preview/Misskey requests through the local server, retaining authentication and body', async () => {
+  const transport = vi.fn().mockResolvedValue(Response.json({ preview: null }));
+  const options = { method: 'POST', headers: { authorization: 'Bearer viewer', apikey: 'public' }, body: '{"mode":"misskey"}' };
+  await createDevFunctionFetch(devFunctionFetchTestDb, proxy, transport)(devFunctionFetchTestDb + '/functions/v1/link-preview', options);
+  expect(transport).toHaveBeenCalledWith(proxy, options);
+});
+it('preserves Request inputs and query strings', async () => {
+  const transport = vi.fn().mockResolvedValue(new Response('ok'));
+  const input = new Request(devFunctionFetchTestDb + '/functions/v1/link-preview?test=1', { method: 'POST', headers: { authorization: 'Bearer viewer' }, body: 'payload' });
+  await createDevFunctionFetch(devFunctionFetchTestDb, proxy, transport)(input);
+  const request = transport.mock.calls[0][0] as Request;
+  expect(request.url).toBe(proxy + '?test=1');
+  expect(request.headers.get('authorization')).toBe('Bearer viewer');
+  expect(await request.text()).toBe('payload');
+});
+it('does not proxy storage, database, other functions or other hosts', async () => {
+  const transport = vi.fn().mockResolvedValue(new Response('ok'));
+  const fetcher = createDevFunctionFetch(devFunctionFetchTestDb, proxy, transport);
+  for (const url of [devFunctionFetchTestDb + '/rest/v1/posts', devFunctionFetchTestDb + '/storage/v1/object/file', devFunctionFetchTestDb + '/functions/v1/chat', 'https://other.example/functions/v1/link-preview']) {
+    await fetcher(url);
+    expect(transport).toHaveBeenLastCalledWith(url, undefined);
+  }
+});
 });

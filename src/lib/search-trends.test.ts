@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { classifyTrendCategory } from "./trend-categories";
-import { prepareExploreTrends, rankPersonalTrends } from "./search-trends";
-import { parseGoogleTrends, parseGoogleTrendingPage } from "../../supabase/functions/get-trends/trends";
+import { classifyTrendCategory } from "@/lib/topics";
+import { prepareExploreTrends, rankPersonalTrends } from "@/lib/search-trends";
+import { parseGoogleTrends, parseGoogleTrendingPage } from "./../../supabase/functions/get-trends/trends.ts";
+import { type PostWithAuthor } from "@/types/index";
+import { searchProviderBatch } from "@/lib/twitterSearch";
+import { matchMarketAsset, suggestMarketAssets, parseMarketChart } from "./../../supabase/functions/market-data/http.ts";
 
+describe("search-trends", () => {
 describe("search-trends", () => {
 const trends = [{title:'物価',traffic:'100K+'},{title:'サッカー決勝',traffic:'30K+'},{title:'猫のゲーム',traffic:'5K+'}];
 describe('search discovery trends', () => {
@@ -71,5 +75,67 @@ it('rejects broken source formats and removes invalid volumes, duplicates and fo
   expect(()=>parseGoogleTrendingPage(trendPage([]))).toThrow();
   const foreign=topic('別の国',999999,[4]);foreign[2]='US';
   expect(parseGoogleTrendingPage(trendPage([topic('有効な話題',500,[4]),topic('有効な話題',800,[4]),topic('検索数不明',0,[4]),foreign]))).toHaveLength(1);
+});
+});
+});
+
+describe("searchProviderBatch", () => {
+const post=(id:string)=>({id,source:id.startsWith('x:')?'x':'bluesky'}) as PostWithAuthor;
+it('keeps six relevant twitter results visible when newer Bluesky results would otherwise fill all twenty slots',()=>{
+ const other=Array.from({length:30},(_,i)=>post('bsky:'+i)),twitter=Array.from({length:6},(_,i)=>post('x:'+i));
+ const first=searchProviderBatch([...other,...twitter],20,true);
+ expect(first.posts.filter(post=>post.source==='x').map(post=>post.id)).toEqual(twitter.map(post=>post.id));expect(first.posts[0].source).toBe('x');expect(first.posts).toHaveLength(20);
+ const second=searchProviderBatch(first.remaining,20,true);expect(new Set([...first.posts,...second.posts].map(post=>post.id)).size).toBe(36);expect(second.remaining).toEqual([]);
+});
+it('prioritizes twitter when enough matching results exist, without changing order inside each service',()=>{
+ const rows=[...Array.from({length:30},(_,i)=>post('bsky:'+i)),...Array.from({length:30},(_,i)=>post('x:'+i))];
+ const page=searchProviderBatch(rows,20,true);expect(page.posts.filter(post=>post.source==='x')).toHaveLength(18);expect(page.posts.slice(0,4).map(post=>post.id)).toEqual(['x:0','x:1','x:2','x:3']);
+});
+it('retains normal ranking for an explicitly selected source and fills shortages without placeholders',()=>{
+ const rows=[post('bsky:1'),post('x:1')];expect(searchProviderBatch(rows,20,false).posts).toEqual(rows);expect(searchProviderBatch([post('x:1'),post('x:1')],20,true).posts).toHaveLength(1);
+});
+
+it('keeps the twitter allocation on each scroll batch and never replays a result',()=>{
+ let remaining=[...Array.from({length:80},(_,i)=>post('bsky:'+i)),...Array.from({length:80},(_,i)=>post('x:'+i))];
+ const seen=new Set<string>();
+ for(let i=0;i<3;i++){
+  const page=searchProviderBatch(remaining,20,true);
+  expect(page.posts.filter(row=>row.source==='x')).toHaveLength(18);
+  for(const row of page.posts){expect(seen.has(row.id)).toBe(false);seen.add(row.id);}
+  remaining=page.remaining;
+ }
+});
+});
+
+describe("marketData", () => {
+const asset=matchMarketAsset('$AAPL')!;
+const payload=(extra={})=>({chart:{result:[{meta:{symbol:'AAPL',regularMarketPrice:102,regularMarketTime:30,previousClose:100,currency:'USD',currentTradingPeriod:{regular:{start:10,end:30}},...extra},timestamp:[5,10,20,30,40],indicators:{quote:[{close:[99,100,null,102,103],volume:[1,2,3,4,5]}]}}]}});
+it('resolves cashtags, names and Japanese security codes without matching ordinary phrases',()=>{
+ for(const query of ['$aapl','AAPL','Apple','アップル'])expect(matchMarketAsset(query)?.symbol).toBe('AAPL');
+ expect(matchMarketAsset('7203')?.symbol).toBe('7203.T');expect(matchMarketAsset('日経平均株価')?.symbol).toBe('^N225');
+ expect(matchMarketAsset('Appleの新製品')).toBeUndefined();expect(matchMarketAsset('')).toBeUndefined();
+ expect(suggestMarketAssets('$AAP')[0].symbol).toBe('AAPL');expect(suggestMarketAssets('n')).toEqual([]);
+});
+it('computes actual daily changes, filters null points and distinguishes extended hours',()=>{
+ const quote=parseMarketChart(payload(),asset,'1D');expect(quote.change).toBe(2);expect(quote.changePercent).toBe(2);
+ expect(quote.points.map(point=>point.time)).toEqual([10,30,40]);expect(quote.points.map(point=>point.extended)).toEqual([false,true,true]);
+ expect(quote.extended).toEqual({time:40,price:103});
+});
+it('never treats the beginning of a month/year chart as the previous day close',()=>{
+ const quote=parseMarketChart(payload({previousClose:undefined,chartPreviousClose:50,regularMarketChangePercent:2}),asset,'1Y');
+ expect(quote.previousClose).toBeNull();expect(quote.changePercent).toBe(2);expect(quote.change).toBeCloseTo(2);
+ expect(quote.points.every(point=>!point.extended)).toBe(true);
+});
+it('rejects missing prices, upstream errors and a different instrument',()=>{
+ expect(()=>parseMarketChart({chart:{error:{}}},asset,'1D')).toThrow();
+ expect(()=>parseMarketChart(payload({regularMarketPrice:null}),asset,'1D')).toThrow();
+ expect(()=>parseMarketChart(payload({symbol:'MSFT'}),asset,'1D')).toThrow();
+});
+
+it('resolves major Japanese companies by names, cashtags and alphanumeric exchange codes',()=>{
+ for(const query of ['キオクシア','キオクシアホールディングス','285A','$285A','285A.T','Kioxia'])expect(matchMarketAsset(query)?.symbol).toBe('285A.T');
+ expect(matchMarketAsset('ソフトバンク')?.symbol).toBe('9434.T');expect(matchMarketAsset('ソフトバンクG')?.symbol).toBe('9984.T');
+ expect(matchMarketAsset('NTT')?.symbol).toBe('9432.T');expect(matchMarketAsset('三菱重工')?.symbol).toBe('7011.T');
+ expect(suggestMarketAssets('キオ')[0].symbol).toBe('285A.T');
 });
 });

@@ -135,7 +135,6 @@ export function Logo({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
       };
     }
 
-    const syncTimer = window.setInterval(syncFromLocalStorage, 100);
 
     fetchLimeProStatus();
 
@@ -149,7 +148,6 @@ export function Logo({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
       window.removeEventListener('focus', handleFocusOrVisible);
       document.removeEventListener('visibilitychange', handleFocusOrVisible);
 
-      window.clearInterval(syncTimer);
 
 
       if (broadcastChannel) {

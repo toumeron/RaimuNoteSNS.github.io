@@ -1,11 +1,14 @@
-import {displayUsername} from '@/lib/displayUsername';
+import { useMinuteTick } from "@/hooks/useViewportWidth";
+import {useViewportWidth} from '@/hooks/useViewportWidth';
+import { twitterReplyText } from "@/lib/twitterReplyPaging";
+import { displayUsername } from "@/lib/format";
 import {canShowPostLinkPreview,hasAttachedPostVideo} from '@/lib/postPresentation';
 import {PostSourceLabel} from '@/components/post/PostSourceLabel';
-import {PrivateMediaImage} from '@/components/media/PrivateMediaImage';
+import { PrivateMediaImage } from "@/components/profile/ProfileMediaPreview";
 import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
 import {twitterReplyUrl} from '@/lib/fxTwitter';
-import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
-import {ExternalPostDetails} from '@/components/feed/ExternalPostDetails';
+import { ProviderVerificationBadge } from "@/components/common/OfficialBadge";
+import { ExternalPostDetails } from "@/components/feed/QuotedPost";
 import {PostVideoPlayer} from '@/components/video/PostVideoPlayer';
 import { PrivateAccountBadge } from "@/components/common/OfficialBadge";
 import { mobilePostMenuOS } from "@/components/post/PostActionSheet";
@@ -38,7 +41,7 @@ import { getYouTubeId } from "@/lib/utils";
 import { YouTubeEmbed } from "@/components/YouTubeEmbed";
 import { SpotifyEmbed } from "@/components/SpotifyEmbed";
 import { PostImages } from "@/components/feed/PostImages";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/popover";
 import dayjs from "dayjs";
 import { commentThreadUrl, getAuthorReplyConversations } from "@/lib/commentThread";
 import { ReplyChain } from "@/components/post/ReplyChain";
@@ -173,7 +176,7 @@ export function CommentCard({
   const [deleted, setDeleted] = useState(false);
   const [imageSize, setImageSize] = useState<{ url: string; width: number; height: number } | null>(null);
   const [failedUrls, setFailedUrls] = useState<string[]>([]);
-  const [, setTick] = useState(0);
+  useMinuteTick();
 
   // カスタム絵文字・リアクション用
   const [showPicker, setShowPicker] = useState(false);
@@ -190,7 +193,7 @@ export function CommentCard({
   const [activeDots, setActiveDots] = useState<ReplicatedDot[]>([]);
 
   // スマホ判定
-  const [isMobile, setIsMobile] = useState(false);
+  const isMobile=useViewportWidth(640);
 
   const buttonRef = useRef<HTMLButtonElement>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -215,13 +218,6 @@ export function CommentCard({
   useEffect(() => {
     if (!externalPost) { fetchReactions(); fetchCustomEmojis(); }
 
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 640);
-    };
-
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-
     const channel = externalPost ? null : supabase
       .channel(`comment-reactions-${comment.id}-${getChannelSuffix()}`)
       .on(
@@ -238,13 +234,8 @@ export function CommentCard({
       )
       .subscribe();
 
-    const timer = setInterval(() => {
-      setTick((tick) => tick + 1);
-    }, 60000);
 
     return () => {
-      clearInterval(timer);
-      window.removeEventListener('resize', checkMobile);
       if (channel) supabase.removeChannel(channel);
     };
   }, [comment.id, !!externalPost]);
@@ -513,7 +504,7 @@ export function CommentCard({
   const extractedImageUrls = comment.content.match(imageRegex) || [];
   const allImageUrls = [...new Set([...(comment.imageUrls ?? []).filter(url=>url!==externalPost?.linkPreview?.image), ...extractedImageUrls])].slice(0, 4);
 
-  let displayContent = comment.content;
+  let displayContent = twitterReplyText(comment.content,externalPost?.source==='x'&&!!(externalPost.externalReplyToId||externalPost.externalReplyToUsername||replyToUsername));
   displayContent = displayContent.replace(/(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|embed\/|shorts\/)?([a-zA-Z0-9_-]{11})([^?\s\n]*)?(\S+)?/g, youtubeId?'':'$&');
   displayContent = displayContent.replace(imageRegex, '');
   displayContent = displayContent.replace(spotifyRegex, '');
@@ -1228,7 +1219,7 @@ export function CommentCard({
         data-lime-comment-card={comment.id}
         data-lime-embedded={embedded || undefined}
         data-lime-reply-detail={detail || undefined}
-        data-lime-thread-item={thread || undefined}
+        data-lime-thread-item={thread && !embedded || undefined}
         onClick={handleCardClick}
         className={
           embedded ? 'relative w-full cursor-pointer' : flat
@@ -1240,7 +1231,7 @@ export function CommentCard({
         }
       >
         {isMobile && !thread && !flat && (
-          <div className="pointer-events-none absolute bottom-0 left-1/2 w-screen -translate-x-1/2 border-b border-border/60" />
+          <div data-lime-post-divider className="pointer-events-none absolute bottom-0 left-1/2 w-screen -translate-x-1/2 border-b border-border/60" />
         )}
 
         {repostedByLabel && !embedded && <div data-lime-repost-label className="mb-1 flex items-center gap-3 text-sm font-semibold text-muted-foreground"><span className="inline-flex w-11 shrink-0 justify-end"><RepostIcon className="h-4 w-4" /></span><span>{repostedByLabel}がリポストしました</span></div>}
@@ -1250,7 +1241,7 @@ export function CommentCard({
               <Link
                 to={`/u/${comment.author.username}`}
                 className="shrink-0"
-                data-lime-thread-avatar={thread || undefined}
+                data-lime-thread-avatar={thread && !embedded || undefined}
                 data-lime-post-avatar
                 onClick={(e) => e.stopPropagation()}
               >
@@ -1409,18 +1400,13 @@ export function CommentList({
   const { data, isLoading, isError } = useComments(postId);
   const [expandedReplies, setExpandedReplies] = useState<ReadonlySet<string>>(new Set());
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [, setTick] = useState(0);
+  useMinuteTick();
 
   useEffect(() => { setExpandedReplies(new Set()); }, [postId, parentCommentId]);
 
   useEffect(() => {
     getCurrentUserId().then(setCurrentUserId);
 
-    const timer = setInterval(() => {
-      setTick((t) => t + 1);
-    }, 60000);
-
-    return () => clearInterval(timer);
   }, []);
 
   if (isLoading) {

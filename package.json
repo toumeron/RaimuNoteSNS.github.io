@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "npm run build:anime-extension && vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
@@ -14,11 +14,13 @@
     "test:avatars": "playwright test",
     "test:security-db": "node scripts/security-db-test.mjs",
     "test:security-browser": "node scripts/security-browser-test.mjs",
-    "test:secrets": "python3 scripts/check-secrets.py"
+    "test:secrets": "python3 scripts/check-secrets.py",
+    "build:anime-extension": "node extensions/anime-history/package.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
     "@huggingface/transformers": "3.8.1",
+    "@huggingface/transformers-gemma": "npm:@huggingface/transformers@3.8.1",
     "@livekit/components-react": "^2.9.24",
     "@livekit/components-styles": "^1.2.0",
     "@maplibre/maplibre-gl-leaflet": "^0.1.4",
@@ -128,7 +130,10 @@
   "overrides": {
     "postcss-selector-parser": "^7.1.6",
     "katex": "$katex",
-    "sharp": "^0.35.5"
+    "sharp": "^0.35.5",
+    "@huggingface/transformers-gemma": {
+      "onnxruntime-web": "1.24.3"
+    }
   },
   "engines": {
     "node": "^22.12.0 || ^24.0.0 || >=26.0.0"

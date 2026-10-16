@@ -3,7 +3,7 @@ import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
 import {afterEach,expect,it,vi} from 'vitest';
 const load=vi.hoisted(()=>vi.fn());
 vi.mock('@/api/search-news',()=>({getLatestSearchNews:load}));
-import {useSearchNews} from './useSearchNews';
+import { useSearchNews } from "@/hooks/useTrends";
 afterEach(()=>{cleanup();vi.clearAllMocks();});
 const result={items:[{id:'article'}],sources:{article:{authors:[{id:'author',avatarUrl:'avatar.jpg'}],postsCount:1}}};
 it('keeps article and avatars together on remount without reloading originals',async()=>{

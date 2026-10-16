@@ -4,7 +4,7 @@ import type { PostWithAuthor } from '@/types';
 vi.mock('@/App', () => ({ PostOverlay: ({ initialQuotedPost, isOpen, onClose }: { initialQuotedPost: PostWithAuthor; isOpen: boolean; onClose: () => void }) => (
   isOpen ? <button onClick={onClose}>引用投稿する: {initialQuotedPost.content}</button> : null
 ) }));
-import { QuoteModal } from './QuoteModal';
+import { QuoteModal } from "@/components/feed/QuotedPost";
 describe('quote composer overlay', () => {
   it('passes the original post to the existing post overlay and forwards closing', () => {
     const close = vi.fn();

@@ -1,7 +1,8 @@
+import { twitterReplyText } from "@/lib/twitterReplyPaging";
 import {profilePostIdentity} from './profileReplyThreads';
 import {relayTwitterSearch} from './twitterSearchRelay';
 import {externalRead} from './utils';
-import {twitterAvatarUrl} from './twitterAvatar';
+import { twitterAvatarUrl } from "@/components/ui/avatar";
 import type {BlueskyMappedPost,BlueskyProfile,BlueskyPostThread} from './bluesky';
 import {cloudExternalHandles} from './externalAccounts';
 export const isXId=(id?:string|null)=>!!id&&/^x:(?:\d{2,20})$|^x-user:\d+$/.test(id);
@@ -28,7 +29,7 @@ export function mapXPost(post:FxPost,depth=0):BlueskyMappedPost|null{
  const author=mapXUser(post.author),video=post.media?.videos?.find(item=>https(item.url));
  const stream=video?.formats?.find(format=>format.container==='m3u8'&&https(format.url));
  const parent=depth<2&&post.quote?mapXPost(post.quote,depth+1):null;
- return {id:`x:${post.id}`,userId:author.id,author,content:(post.raw_text?.facets??[]).reduce((text,facet)=>facet.type==='url'&&facet.original&&https(facet.replacement)?text.split(facet.original).join(facet.replacement!):text,post.text??''),imageUrls:(post.media?.photos??[]).flatMap(item=>https(item.url)?[item.url]:[]),imageAltTexts:(post.media?.photos??[]).map(item=>item.altText??''),createdAt:date(post.created_timestamp?post.created_timestamp*1000:post.created_at),visibility:'public',likedByMe:false,likesCount:post.likes??0,repostsCount:post.reposts??post.retweets??0,commentsCount:post.replies??0,isBot:false,cid:'',source:'x',externalPinned:post.is_pinned===true||post.pinned===true,externalDetails:{views:post.views,bookmarks:post.bookmarks,reposts:post.reposts??post.retweets,quotes:post.quotes,communityNote:post.community_note?.text,poll:post.poll?{options:post.poll.choices.map(choice=>({label:choice.label,votes:choice.count})),endsAt:post.poll.ends_at}:undefined},...(post.reposted_by?{externalRepostedBy:{id:`x-user:${post.reposted_by.id}`,displayName:post.reposted_by.name,username:`${post.reposted_by.screen_name}@twitter.com`},profileRepostedBy:`x-user:${post.reposted_by.id}`,profileRepostedAt:date(post.created_timestamp?post.created_timestamp*1000:post.created_at)}:{}),blueskyUrl:`https://twitter.com/${post.author.screen_name}/status/${post.id}`,blueskyUri:`x:${post.id}`,languages:post.lang?[post.lang]:[],contentLabels:post.possibly_sensitive?['graphic-media']:[],...(post.card&&https(post.card.url)?{linkPreview:{url:post.card.url,domain:new URL(post.card.url).hostname,title:post.card.title??post.card.domain??new URL(post.card.url).hostname,description:post.card.description,image:https(post.card.image?.url)??''}}:{}),
+ return {id:`x:${post.id}`,userId:author.id,author,content:twitterReplyText((post.raw_text?.facets??[]).reduce((text,facet)=>facet.type==='url'&&facet.original&&https(facet.replacement)?text.split(facet.original).join(facet.replacement!):text,post.text??''),!!(replyId||replyName)),imageUrls:(post.media?.photos??[]).flatMap(item=>https(item.url)?[item.url]:[]),imageAltTexts:(post.media?.photos??[]).map(item=>item.altText??''),createdAt:date(post.created_timestamp?post.created_timestamp*1000:post.created_at),visibility:'public',likedByMe:false,likesCount:post.likes??0,repostsCount:post.reposts??post.retweets??0,commentsCount:post.replies??0,isBot:false,cid:'',source:'x',externalPinned:post.is_pinned===true||post.pinned===true,externalDetails:{views:post.views,bookmarks:post.bookmarks,reposts:post.reposts??post.retweets,quotes:post.quotes,communityNote:post.community_note?.text,poll:post.poll?{options:post.poll.choices.map(choice=>({label:choice.label,votes:choice.count})),endsAt:post.poll.ends_at}:undefined},...(post.reposted_by?{externalRepostedBy:{id:`x-user:${post.reposted_by.id}`,displayName:post.reposted_by.name,username:`${post.reposted_by.screen_name}@twitter.com`},profileRepostedBy:`x-user:${post.reposted_by.id}`,profileRepostedAt:date(post.created_timestamp?post.created_timestamp*1000:post.created_at)}:{}),blueskyUrl:`https://twitter.com/${post.author.screen_name}/status/${post.id}`,blueskyUri:`x:${post.id}`,languages:post.lang?[post.lang]:[],contentLabels:post.possibly_sensitive?['graphic-media']:[],...(post.card&&https(post.card.url)?{linkPreview:{url:post.card.url,domain:new URL(post.card.url).hostname,title:post.card.title??post.card.domain??new URL(post.card.url).hostname,description:post.card.description,image:https(post.card.image?.url)??''}}:{}),
  ...(video?{externalVideo:{playlist:stream?.url??video.url,format:stream||video.format?.includes('mpegurl')||video.url.includes('.m3u8')?'hls' as const:'mp4' as const,thumbnail:https(video.thumbnail_url),width:video.width||16,height:video.height||9,duration:video.duration??0}}:{}),
  ...(replyId?{externalReplyToId:`x:${replyId}`,externalReplyToUsername:replyName?`${replyName}@twitter.com`:undefined}:{}),
  ...(parent?{isQuote:true,parentId:parent.id,parentPost:{...parent,repostsCount:parent.repostsCount??0,repostedByMe:false,author:{coverUrl:'',...parent.author}}}:{}),};
@@ -66,10 +67,11 @@ let searchUnavailableUntil=0;
 async function alternativeSearch(query:string,options:{cursor?:string|null;feed?:'latest'|'top'|'media'|'media-top';signal?:AbortSignal;limit?:number}){
  const offset=options.cursor?.startsWith('yahoo:')?Number(options.cursor.slice(6)):0;
  if(!Number.isInteger(offset)||offset<0||offset>1000)throw new Error('検索カーソルが無効です');
- const page=await relayTwitterSearch(query,options.feed??'latest',offset,options.signal);
- const ids=page.ids.slice(0,Math.max(1,Math.min(6,options.limit??6)));
+ const limit=Math.max(1,Math.min(20,Math.floor(options.limit??6)||6));
+ const page=await relayTwitterSearch(query,options.feed??'latest',offset,options.signal,limit);
+ const ids=page.ids.slice(0,limit);
  const results:BlueskyMappedPost[]=[];let index=0;
- await Promise.all(Array.from({length:Math.min(2,ids.length)},async()=>{while(index<ids.length){const id=ids[index++];try{const item=await xThread(`x:${id}`,options.signal);if(item.post)results.push(item.post);}catch(error){if(options.signal?.aborted)throw error;}}}));
+ await Promise.all(Array.from({length:Math.min(limit>6?3:2,ids.length)},async()=>{while(index<ids.length){const id=ids[index++];try{const item=await xThread(`x:${id}`,options.signal);if(item.post)results.push(item.post);}catch(error){if(options.signal?.aborted)throw error;}}}));
  if(page.ids.length&&!results.length)throw new Error('twitterの投稿情報を取得できませんでした');
  const byId=new Map(results.map(post=>[post.id,post]));
  const next=ids.length<page.ids.length?offset+ids.length:page.cursor;

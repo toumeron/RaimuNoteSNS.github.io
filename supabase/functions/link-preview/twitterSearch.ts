@@ -7,10 +7,11 @@ export function parseTwitterSearchPage(html:string):{ids:string[];total:number}{
  const ids=[...new Set<string>(page.timeline.entry.map((row:{id?:unknown})=>row.id).filter((id:unknown):id is string=>typeof id==='string'&&/^\d{2,20}$/.test(id)))];
  return {ids,total:Math.max(ids.length,Number(page.timeline.head?.totalResultsAvailable)||0)};
 }
-export async function loadTwitterSearch(query:unknown,feed:unknown,offset:unknown){
+export async function loadTwitterSearch(query:unknown,feed:unknown,offset:unknown,limit:unknown=6){
  if(typeof query!=='string'||!query.trim()||query.length>500)throw new Error('Invalid query');
  if(!['latest','top','media','media-top'].includes(String(feed)))throw new Error('Invalid feed');
  if(typeof offset!=='number'||!Number.isInteger(offset)||offset<0||offset>1000)throw new Error('Invalid cursor');
+ if(typeof limit!=='number'||!Number.isInteger(limit)||limit<1||limit>20)throw new Error('Invalid limit');
  const block=Math.floor(offset/40)*40,key=JSON.stringify([query,feed,block]);
  let saved=cache.get(key);
  if(!saved||saved.until<Date.now()){
@@ -23,6 +24,6 @@ export async function loadTwitterSearch(query:unknown,feed:unknown,offset:unknow
   saved={until:Date.now()+60000,...parseTwitterSearchPage(new TextDecoder().decode(bytes))};
   if(cache.size>=30)cache.delete(cache.keys().next().value!);cache.set(key,saved);
  }
- const local=offset-block,ids=saved.ids.slice(local,local+6),next=offset+ids.length;
+ const local=offset-block,ids=saved.ids.slice(local,local+limit),next=offset+ids.length;
  return {ids,cursor:ids.length&&next<Math.min(saved.total,1000)&&(local+ids.length<saved.ids.length||saved.ids.length===40)?next:null};
 }

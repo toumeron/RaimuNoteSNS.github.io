@@ -1,9 +1,10 @@
-import type { SVGProps } from "react";
+import { type SVGProps, type DragEvent } from "react";
 
-export type ComposerIconKind = 'image' | 'poll' | 'smile' | 'globe' | 'users' | 'members' | 'send';
+// ComposerIcon
+type ComposerIconKind = 'image' | 'poll' | 'smile' | 'globe' | 'users' | 'members' | 'send';
 
 /** Original toolbar drawings: common 32-unit canvas and 20px toolbar scale. */
-export function ComposerIcon({kind,...props}:SVGProps<SVGSVGElement>&{kind:ComposerIconKind}) {
+function ComposerIcon({kind,...props}:SVGProps<SVGSVGElement>&{kind:ComposerIconKind}) {
  const drawings={
   image:<><rect x="4" y="4" width="24" height="24" rx="5"/><circle cx="21" cy="11" r="2.2" fill="currentColor" stroke="none"/><path d="m5 21 6.5-6.5L25 28"/></>,
   poll:<><circle cx="7.5" cy="9" r="3.5"/><circle cx="7.5" cy="23" r="3.5"/><path d="M17 9h11M17 23h11"/></>,
@@ -16,15 +17,51 @@ export function ComposerIcon({kind,...props}:SVGProps<SVGSVGElement>&{kind:Compo
  return <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" data-composer-icon={kind} {...props}>{drawings[kind]}</svg>;
 }
 
-export function PollIcon(props:SVGProps<SVGSVGElement>) {
+function PollIcon(props:SVGProps<SVGSVGElement>) {
  return <ComposerIcon kind="poll" {...props}/>;
 }
 
 // Opposing vertical arrows with rounded bends, matching the supplied reference.
-export function RepostIcon(props: SVGProps<SVGSVGElement>) {
+function RepostIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
       <path d="M5 4v12a4 4 0 0 0 4 4h5M2 7l3-3 3 3M10 4h5a4 4 0 0 1 4 4v12m-3-3 3 3 3-3" />
     </svg>
   );
 }
+
+// composerMediaDrop
+/** Finder and some mobile file providers omit a file's MIME type. Parse the bytes later. */
+function isVideoAttachment(file:Pick<File,'type'|'name'>):boolean {
+ return file.type.startsWith('video/')||/\.(mp4|m4v|mov|webm|mkv)$/i.test(file.name);
+}
+function composerMediaDrop(attach:(files:File[])=>unknown,disabled:boolean){
+ return {
+  'data-lime-media-dropzone':true,
+  onDragOver(event:DragEvent<HTMLElement>){
+   if(!Array.from(event.dataTransfer.types).includes('Files')&&!Array.from(event.dataTransfer.items??[]).some(item=>item.kind==='file'))return;
+   event.preventDefault();event.stopPropagation();event.dataTransfer.dropEffect=disabled?'none':'copy';
+  },
+  onDrop(event:DragEvent<HTMLElement>){
+   const files=Array.from(event.dataTransfer.files);if(!files.length)return;
+   event.preventDefault();event.stopPropagation();if(!disabled)void attach(files);
+  },
+ };
+}
+
+// postSchedule
+function validSchedule(value:string,now=Date.now()) {
+ const time=Date.parse(value);return Number.isFinite(time)&&time>=now+60_000&&time<=now+366*86400_000;
+}
+function scheduleLabel(value:string) {return new Intl.DateTimeFormat('ja-JP',{timeZone:'Asia/Tokyo',year:'numeric',month:'long',day:'numeric',weekday:'short',hour:'numeric',minute:'2-digit',hour12:false}).format(new Date(value));}
+type ScheduledPost={id:string;scheduledAt:string;status:'pending'|'failed';error?:string;payload:{content:string;image_urls:string[]}};
+
+export { ComposerIcon };
+export { PollIcon };
+export { RepostIcon };
+export type { ComposerIconKind };
+export { isVideoAttachment };
+export { composerMediaDrop };
+export { validSchedule };
+export { scheduleLabel };
+export type { ScheduledPost };

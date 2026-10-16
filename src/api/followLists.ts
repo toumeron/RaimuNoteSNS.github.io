@@ -3,7 +3,7 @@ import {fetchBlueskyFollowers,fetchBlueskyFollows,isBlueskyProfileId} from '@/li
 import type {User} from '@/types';
 export type FollowListTab='known'|'followers'|'following';
 export type FollowListPage={users:User[];cursor:string|null};
-const mapProfile=(p:any):User=>({id:p.id,username:p.username,displayName:p.display_name||p.displayName||p.username,avatarUrl:p.avatar_url||p.avatarUrl||'',bio:p.bio||'',coverUrl:p.cover_url||'',createdAt:p.created_at||'',isOfficial:p.is_official??false,providerVerification:p.providerVerification,isPrivate:p.is_private??false});
+const mapProfile=(p:any):User=>({id:p.id,username:p.username,displayName:p.display_name||p.displayName||p.username,avatarUrl:p.avatar_url||p.avatarUrl||'',bio:p.bio||'',coverUrl:p.cover_url||'',createdAt:p.created_at||'',isOfficial:p.is_official??p.isOfficial??false,providerVerification:p.providerVerification,isPrivate:p.is_private??p.isPrivate??false});
 export async function fetchFollowListPage(target:User,tab:FollowListTab,viewerId:string,cursor:string|null,signal?:AbortSignal):Promise<FollowListPage>{
  const known=tab==='known',following=tab==='following';
  let knownIds=new Set<string>(),knownHandles=new Set<string>();
@@ -25,7 +25,9 @@ export async function fetchFollowListPage(target:User,tab:FollowListTab,viewerId
   if(profile)return !known||knownIds.has(profile.id)?mapProfile(profile):null;
   if(!following||!row.external_provider)return null;
   const p=row.external_profile??{};
-  return mapProfile({id:p.id??(row.external_provider==='misskey'?'misskey-user:':'did:handle:')+row.external_handle,username:row.external_handle,...p});
+  const twitter=row.external_provider==='x';
+  const username=p.username??(twitter?`${row.external_handle.replace(/@(?:x|twitter)\.com$/i,'')}@twitter.com`:row.external_handle);
+  return mapProfile({...p,id:p.id??(twitter?'x-user:':row.external_provider==='misskey'?'misskey-user:':'did:handle:')+row.external_handle,username});
  });
  return {users:users.filter((profile):profile is User=>!!profile),cursor:data?.length===50?String(offset+50):null};
 }

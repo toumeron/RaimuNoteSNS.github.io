@@ -1,14 +1,14 @@
-import {displayUsername} from '@/lib/displayUsername';
+import { displayUsername } from "@/lib/format";
 import {nextTwitterReplyCursor} from '@/lib/twitterReplyPaging';
 import {canShowPostLinkPreview,hasAttachedPostVideo} from '@/lib/postPresentation';
 import {PostSourceLabel} from '@/components/post/PostSourceLabel';
-import {PrivateMediaImage} from '@/components/media/PrivateMediaImage';
+import { PrivateMediaImage } from "@/components/profile/ProfileMediaPreview";
 import {xConversationPage,twitterReplyUrl} from '@/lib/fxTwitter';
-import {ExternalPostDetails} from '@/components/feed/ExternalPostDetails';
-import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
+import { ExternalPostDetails } from "@/components/feed/QuotedPost";
+import { ProviderVerificationBadge } from "@/components/common/OfficialBadge";
 import {PostVideoPlayer} from '@/components/video/PostVideoPlayer';
 import { PostPoll } from '@/components/feed/PostPoll';
-import { ExternalReplyDetail } from '@/components/post/ExternalReplyDetail';
+import { ExternalReplyDetail } from "@/components/post/ExternalReplyList";
 import { randomUUID } from '@/lib/randomUUID';
 import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 import { mobilePostMenuOS } from "@/components/post/PostActionSheet";
@@ -16,13 +16,13 @@ import {ExternalLikeButton} from '@/components/post/ExternalLikeButton';
 import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
 import { openMediaViewer } from '@/components/media/openMediaViewer';
 import {useLayoutEffect} from 'react';
-import {HighlightPostMenuButton} from '@/components/post/HighlightPostMenuButton';
-import {PinPostMenuButton} from "@/components/post/HighlightPostMenuButton";
+import { HighlightPostMenuButton } from "@/components/post/BookmarkButton";
+import { PinPostMenuButton } from "@/components/post/BookmarkButton";
 import {LinkPreviewCard,useLinkPreview} from '@/components/post/LinkPreviewCard';
 import { renderStickerText } from "@/components/stickers/Stickers";
 import { hasStickers } from '@/lib/stickers';
 import { SpacePostCard } from '@/components/spaces/SpacePostCard';
-import { spaceLinkIn } from '@/lib/spaceLinks';
+import { spaceLinkIn } from "@/lib/postPresentation";
 import '@/components/post/post-actions.css';
 import { RepostButton } from '@/components/feed/RepostButton';
 import { QuotedPost } from '@/components/feed/QuotedPost';
@@ -2185,7 +2185,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
             ) : (
               <CommentList postId={data.id} mobileFlat={useMobileThreadLayout} threadAuthorId={data.author.id} />
             )}
-            {isTwitterPost&&twitterThread.hasNextPage&&!!blueskyThread?.replies.length&&!twitterThread.isFetchNextPageError&&<button type="button" className="w-full p-4 text-primary hover:underline disabled:opacity-50" disabled={twitterThread.isFetchingNextPage} onClick={()=>void twitterThread.fetchNextPage()}>{twitterThread.isFetchingNextPage?'読み込み中…':'返信をさらに表示'}</button>}
+            {isTwitterPost&&twitterThread.hasNextPage&&!!blueskyThread?.replies.length&&!twitterThread.isFetchNextPageError&&<button type="button" className="w-full p-4 text-primary hover:underline disabled:opacity-50" disabled={twitterThread.isFetchingNextPage} onClick={()=>void twitterThread.fetchNextPage()}>{twitterThread.isFetchingNextPage?'読み込み中…':''}</button>}
             {isTwitterPost&&twitterThread.isFetchNextPageError&&<button type="button" className="w-full p-4 text-primary" onClick={()=>void twitterThread.fetchNextPage()}>返信の読み込みを再試行</button>}
           </div>
         </>

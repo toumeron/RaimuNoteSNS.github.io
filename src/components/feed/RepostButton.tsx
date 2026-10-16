@@ -12,7 +12,7 @@ import type { PostWithAuthor } from '@/types';
 import { useQuery } from '@tanstack/react-query';
 import { getExternalRepostState, isExternalPostId } from '@/api/external-posts';
 import { getReplyPost, getReplyRepostState, isReplyPostId } from '@/api/reply-reposts';
-import { AnimatedCount } from '@/components/post/AnimatedCount';
+import { AnimatedCount } from "@/components/post/PostSourceLabel";
 import { toast } from 'sonner';
 import { getNativeRepostState } from '@/api/repost-state';
 

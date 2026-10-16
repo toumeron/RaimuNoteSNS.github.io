@@ -18,3 +18,9 @@ it.each(['did:plc:external','misskey-user:external'])('supports provider list pa
  state.known=[{external_handle:'friend@misskey.io'}];state.external.mockResolvedValue({users:[{...target,id:'external-friend',username:'friend@misskey.io'},{...target,id:'other',username:'other'}],cursor:'next'});
  const result=await fetchFollowListPage({...target,id},'known','viewer','previous');expect(result.users).toHaveLength(1);expect(result.cursor).toBe('next');expect(state.external).toHaveBeenCalledWith('followers',expect.objectContaining({cursor:'previous',actor:'target',limit:50}));
 });
+
+it('keeps twitter identity, verification and external metadata in native following lists',async()=>{
+ state.rows=[{profile:null,external_provider:'x',external_handle:'google',external_profile:{displayName:'Google',providerVerification:{provider:'twitter',type:'organization'},isPrivate:false}}];
+ const page=await fetchFollowListPage(target,'following','viewer',null);
+ expect(page.users[0]).toMatchObject({id:'x-user:google',username:'google@twitter.com',displayName:'Google',providerVerification:{provider:'twitter',type:'organization'}});
+});

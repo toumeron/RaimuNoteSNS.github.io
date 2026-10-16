@@ -1,4 +1,4 @@
-import {resolveExternalMp4} from '@/lib/externalVideoSource';
+import { resolveExternalMp4 } from "@/lib/mediaThumbnail";
 import {attachHls} from '@/lib/hlsPlayback';
 import {useEffect,useRef,useState} from 'react';
 import {createPortal} from 'react-dom';

@@ -1,6 +1,6 @@
 import {FRIEND_REPLY_INSTRUCTION} from '../_shared/friendImages.ts';
-import {parseFriendResponse} from '../_shared/friendReaction.ts';
-import { requestModelWithFailover } from '../_shared/modelFailover.ts';
+import { parseFriendResponse } from "./../_shared/chatContext.ts";
+import { requestModelWithFailover } from "./../_shared/chatContext.ts";
 import {boundedChatContext} from '../_shared/chatContext.ts';
 import { authenticate, quota, boundedBody } from '../_shared/security.ts';
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2"

@@ -1,6 +1,6 @@
 import {searchXPage} from '@/lib/fxTwitter';
 import {TOPICS} from '@/lib/topics';
-import { learnedRecommendationScores } from './learned-recommendations';
+import { learnedRecommendationScores } from "@/api/topics";
 import { supabase } from '@/lib/supabase';
 import { getFeed, getPostsByUser, searchPosts } from './posts';
 import {discoverBlueskyTopicFeeds,fetchBlueskyTopicFeed,fetchBlueskyAuthorFeed, fetchBlueskyLikedPosts,fetchBlueskyTopicPosts, fetchTrendingJapaneseBlueskyPosts } from '@/lib/bluesky';

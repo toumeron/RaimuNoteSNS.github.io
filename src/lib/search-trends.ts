@@ -1,5 +1,5 @@
 import { recommendationTerms, type RecommendationPreferences } from './recommendations';
-import { classifyTrendCategory, trendSearchVolume } from './trend-categories';
+import { classifyTrendCategory, trendSearchVolume } from "@/lib/topics";
 import {topicAffinity} from './topics';
 export type ExploreTrend = {title: string; traffic: string; rank?: number; category?: string; categories?: string[]; context?: string};
 export function prepareExploreTrends(trends: ExploreTrend[], news: {title: string; content: string; category: string}[]): ExploreTrend[] {

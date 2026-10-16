@@ -1,7 +1,7 @@
 import { useSharedDisplay, setSharedDisplay } from '@/lib/sharedAccountDisplay';
-import {ACCENT_COLORS,useAccentColor,setAccentColor} from '@/lib/accentTheme';
+import { ACCENT_COLORS, useAccentColor, setAccentColor } from "@/lib/settingsSections";
 import {AccountPrivacySettings} from '@/components/profile/AccountPrivacySettings';
-import { NotificationSettings } from '@/components/profile/NotificationSettings';
+import { NotificationSettings } from "@/components/profile/AccountPrivacySettings";
 import { setExternalAccountAdded } from '@/lib/externalAccounts';
 import { uploadProfileMedia } from "@/lib/uploadPostMedia";
 import { getPrivateBotPrompt } from "@/lib/privateProfile";
@@ -9,7 +9,7 @@ import {createAccountExport,checkExportAbort} from '@/lib/accountExport';
 import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription} from '@/components/ui/dialog';
 import {useQueryClient} from '@tanstack/react-query';
 import {configuredMisskeyHandles,isMisskeyActor} from '@/lib/misskey';
-import {CompanionSettings} from '@/components/ai/CompanionSettings';
+import { CompanionSettings } from "@/components/ai/PageCompanion";
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import {
   Download,
@@ -36,9 +36,9 @@ import {
 } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
+import { Input } from "@/components/ui/button";
+import { Label } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/button";
 import { useDesktopLayout } from '@/components/layout/DesktopLayoutContext';
 import { SETTINGS_DESCRIPTIONS, SETTINGS_GROUPS, SETTINGS_SECTIONS, settingsGroupForSection } from '@/lib/settingsSections';
 import './settings.css';
@@ -47,7 +47,7 @@ import { useUpdateProfile } from '@/hooks/useProfile';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useTheme } from 'next-themes';
-import { Switch } from '@/components/ui/switch';
+import { Switch } from "@/components/ui/button";
 import { User } from '@/types';
 import { supabase } from '@/lib/supabase';
 import {

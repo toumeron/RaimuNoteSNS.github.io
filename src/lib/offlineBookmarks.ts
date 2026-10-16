@@ -1,6 +1,6 @@
 import {isDeferredPrivateMedia,resolvePrivateMediaUrl} from './privateMediaFetch';
 import { randomUUID } from '@/lib/randomUUID';
-import {boundedResponseBlob,ResponseTooLarge} from './boundedResponse';
+import { boundedResponseBlob, ResponseTooLarge } from "@/lib/devFunctionFetch";
 import {supabase} from './supabase';
 import type {LinkPreview} from './linkPreview';
 import type {LiveSpace} from "@/components/spaces/SpaceProvider";

@@ -9,7 +9,7 @@ import { createLimeMapStyle, GSI_MAP_ATTRIBUTION } from '@/lib/limeMapStyle';
 import './maps.css';
 import { installHighwayLabels } from '@/lib/highwayLabels';
 import {createMapPostIcon,updateMapPostIcon} from '@/lib/mapPostIcon';
-import {groupMapPosts} from '@/lib/mapPostGroups';
+import { groupMapPosts } from "@/lib/mapPostIcon";
 import type { PostWithAuthor } from '@/types';
 import type { ExternalMapPostDetail } from '@/api/external-map-posts';
 import { normaliseMapLocation, type MapBounds, type MapLocation, type MapPostPin } from '@/lib/mapLocation';

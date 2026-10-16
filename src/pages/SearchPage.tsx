@@ -1,7 +1,12 @@
+import { SearchPostRow } from "@/components/search/SearchExploreContent";
+import { searchTwitterResults } from "@/lib/twitterSearch";
+import { ProviderVerificationBadge } from "@/components/common/OfficialBadge";
+import {StockMarketCard,StockSuggestion} from '@/components/search/StockMarketCard';
+import {matchMarketAsset,suggestMarketAssets,type MarketAsset} from '@/lib/marketData';
 import {hasAttachedPostVideo} from '@/lib/postPresentation';
-import {displayUsername} from '@/lib/displayUsername';
-import {PrivateMediaImage} from '@/components/media/PrivateMediaImage';
-import {searchProviderBatch} from '@/lib/searchProviderBatch';
+import { displayUsername } from "@/lib/format";
+import { PrivateMediaImage } from "@/components/profile/ProfileMediaPreview";
+import { searchProviderBatch } from "@/lib/twitterSearch";
 import {PostVideoThumbnail} from '@/components/video/PostVideoThumbnail';
 import {twitterSearchQuery} from '@/lib/twitterSearch';
 import {normalizeTimelineBlueskyPost} from '@/lib/timelinePaging';
@@ -19,8 +24,8 @@ import { useDesktopLayout } from '@/components/layout/DesktopLayoutContext';
 import { SearchExploreContent } from '@/components/search/SearchExploreContent';
 import { SearchExploreTabs } from '@/components/search/SearchExploreTabs';
 import { SearchTabIndicator } from "@/components/search/SearchExploreTabs";
-import { useSearchExploreTab } from '@/hooks/useSearchExploreTab';
-import {useSearchNews} from '@/hooks/useSearchNews';
+import { useSearchExploreTab } from "@/hooks/useTrends";
+import { useSearchNews } from "@/hooks/useTrends";
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -1140,8 +1145,10 @@ function SearchResults({
         // (メディアタブでBlueskyを除外すると、LimeNoteの画像投稿があっても何も出ない原因)。
         const previousTwitter=feedsRef.current[mode];
         const twitterQuery=twitterSearchQuery(effective);
+        const bufferedTwitter=page===0?0:previousTwitter.remaining.filter(post=>post.source==='x').length;
+        const twitterTarget=Math.max(0,(effective.source==='x'?PAGE_SIZE:18)-bufferedTwitter);
         const twitterRequest=(effective.source==='all'||effective.source==='x')&&twitterQuery&&(page===0||!previousTwitter.twitterDone)
-          ? searchXPage(twitterQuery,{cursor:page===0?null:previousTwitter.twitterCursor,feed:mode,preferAlternative:true,signal:searchControllerRef.current.signal}).then(result=>({...result,error:null as unknown}),error=>({posts:[],cursor:null,error}))
+          ? searchTwitterResults(twitterQuery,{cursor:page===0?null:previousTwitter.twitterCursor,feed:mode,signal:searchControllerRef.current.signal,target:twitterTarget,matches:post=>postMatchesSearch(post,effective,{trustServerTerms:true}),exclude:new Set(page===0?[]:[...previousTwitter.items,...previousTwitter.remaining].map(post=>post.id))})
           : Promise.resolve({posts:[],cursor:null,error:null as unknown});
         const extraRequest=(page===0 ? fetchBlueskyPosts(effective):Promise.resolve([] as PostWithAuthor[])).catch(error=>{if(!searchControllerRef.current.signal.aborted)console.warn('External search failed',error);return [] as PostWithAuthor[];});
         let currentPage = page;
@@ -1155,8 +1162,8 @@ function SearchResults({
         }
 
         const [extra,twitter]=await Promise.all([extraRequest,twitterRequest]);
-        if(twitter.error&&effective.source==='x')throw twitter.error;
-        const twitterPosts=twitter.posts.map(normalizeTimelineBlueskyPost).filter(post=>postMatchesSearch(post,effective,{trustServerTerms:true}));
+        if(twitter.error&&effective.source==='x'&&!twitter.posts.length)throw twitter.error;
+        const twitterPosts=twitter.posts;
         if (token !== tokenRef.current[mode]) return;
 
         setFeeds(prev=>{
@@ -1166,7 +1173,7 @@ function SearchResults({
           const {posts:batch,remaining}=searchProviderBatch(candidates,PAGE_SIZE,effective.source==='all');
           return {...prev,[mode]:{
             items:page===0 ? batch:[...previous.items,...batch],
-            remaining,localHasMore:local.hasMore,twitterCursor:twitter.error?previous.twitterCursor:twitter.cursor,twitterDone:twitter.error?false:!twitter.cursor,twitterError:twitter.error?(twitter.error instanceof Error?twitter.error.message:'twitterの検索結果を取得できませんでした'):undefined,
+            remaining,localHasMore:local.hasMore,twitterCursor:twitter.cursor??(twitter.error?previous.twitterCursor:null),twitterDone:twitter.error?false:!twitter.cursor,twitterError:twitter.error?(twitter.error instanceof Error?twitter.error.message:'twitterの検索結果を取得できませんでした'):undefined,
             page:currentPage,hasMore:local.hasMore || remaining.length>0 || !!twitter.cursor || !!twitter.error,
             loading:false,loaded:true,error:null,
           }};
@@ -1375,15 +1382,15 @@ function SearchResults({
     if (status) return status;
 
     return (
-      <div className="flex flex-col gap-4 bg-transparent max-sm:gap-0">
+      <div data-lime-search-result-list className="flex flex-col gap-4 bg-transparent max-sm:gap-0">
         {m === 'top' && (
           <div className="px-4 pb-1 text-[12px] text-[rgb(83,100,113)] dark:text-gray-400"></div>
         )}
         {currentFeed?.twitterError&&<p role="status" className="px-4 py-2 text-sm text-muted-foreground">{currentFeed.twitterError}</p>}
         {currentFeed!.items.map((post) => (
-          <div key={post.id} className="bg-transparent sm:overflow-hidden sm:rounded-xl sm:transition-colors sm:hover:bg-black/[0.01] sm:dark:hover:bg-white/[0.02]">
+          <SearchPostRow key={post.id}>
             <PostCard post={post} />
-          </div>
+          </SearchPostRow>
         ))}
         {sentinel}
       </div>
@@ -1528,6 +1535,7 @@ const desktopTabTriggerClass =
 
 // PC版の検索バーのサジェスト行(検索キーワード or ユーザー)の型定義
 type SuggestionRow =
+  | { type: 'stock'; value: string; asset: MarketAsset }
   | { type: 'search'; value: string }
   | { type: 'user'; value: string; user: User };
 
@@ -1544,6 +1552,7 @@ function SearchPageContent() {
   const location = useLocation();
   const [searchQuery, setSearchQuery] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
+  const marketAsset=matchMarketAsset(searchQuery);
   const [allUsers, setAllUsers] = useState<User[]>([]);
   // PC版の検索バー(サジェスト付き)用の状態。
   const [inputValue, setInputValue] = useState('');
@@ -1787,6 +1796,7 @@ function SearchPageContent() {
   const suggestionRows = useMemo<SuggestionRow[]>(() => {
     const rows: SuggestionRow[] = [];
     if (inputValue.trim()) {
+      for(const asset of suggestMarketAssets(inputValue))rows.push({type:'stock',value:`$${asset.symbol}`,asset});
       rows.push({ type: 'search', value: inputValue.trim() });
       for (const u of liveSuggestions) rows.push({ type: 'user', value: u.username, user: u });
     } else {
@@ -1983,7 +1993,7 @@ function SearchPageContent() {
                         : 'hover:bg-black/[0.03] dark:hover:bg-white/5'
                     }`}
                   >
-                    {row.type === 'search' ? (
+                    {row.type === 'stock' ? <StockSuggestion asset={row.asset}/> : row.type === 'search' ? (
                       <>
                         {!inputValue.trim()
                           ? <Clock className="w-[18px] h-[18px] text-[rgb(83,100,113)] dark:text-gray-400" />
@@ -2012,6 +2022,7 @@ function SearchPageContent() {
                           <span className="flex min-w-0 items-center gap-1">
                             <span className="truncate font-bold text-[15px]">{row.user.displayName}</span>
                             {row.user.isPrivate && <PrivateAccountBadge/>}
+                            <ProviderVerificationBadge verification={row.user.providerVerification} className="h-4 w-4 shrink-0"/>
                             {row.user.isOfficial && (
                               <PrivateMediaImage
                                 src={`${import.meta.env.BASE_URL}verified.png`}
@@ -2069,6 +2080,8 @@ function SearchPageContent() {
           {!searchQuery ? (
             renderSearchHomeSections()
           ) : (
+            <>
+            {marketAsset&&(activeTab==='top'||activeTab==='latest')&&<StockMarketCard key={marketAsset.symbol} asset={marketAsset}/>}
             <SearchResults
               searchQuery={searchQuery}
               activeTab={activeTab}
@@ -2078,6 +2091,7 @@ function SearchPageContent() {
               refreshKey={refreshKey}
               onChangeQuery={handleChangeQuery}
             />
+            </>
           )}
         </div>
       </div>

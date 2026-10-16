@@ -62,7 +62,7 @@ it('primes and resumes output in the original gesture and shares it between ring
  vi.resetModules();const start=vi.fn(),resume=vi.fn().mockResolvedValue(undefined),created=vi.fn();
  class Context{state='suspended';sampleRate=44100;destination={};constructor(){created();}resume=resume;createBuffer=vi.fn(()=>({}));createBufferSource=()=>({buffer:null,connect:vi.fn(),disconnect:vi.fn(),start,onended:null});}
  vi.stubGlobal('AudioContext',Context);const session={type:'auto'};Object.defineProperty(navigator,'audioSession',{configurable:true,value:session});
- const audio=await import('./audioPlayback');audio.unlockAudioPlayback();
+ const audio=await import("@/lib/callTranscription");audio.unlockAudioPlayback();
  expect(start).toHaveBeenCalledWith(0);expect(resume).toHaveBeenCalledOnce();expect(session.type).toBe('playback');
  expect(audio.getAudioPlaybackContext()).toBe(audio.getAudioPlaybackContext());expect(created).toHaveBeenCalledOnce();
  delete (navigator as any).audioSession;

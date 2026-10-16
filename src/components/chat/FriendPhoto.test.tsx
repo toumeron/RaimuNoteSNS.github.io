@@ -1,6 +1,6 @@
 import {afterEach,expect,it,vi} from 'vitest';
 import {cleanup,fireEvent,render,screen} from '@testing-library/react';
-import {FriendPhoto} from './FriendPhoto';
+import { FriendPhoto } from "@/components/chat/DirectChatMessage";
 import {DirectChatMessage} from './DirectChatMessage';
 import {appendFriendPhoto} from '../../../supabase/functions/_shared/friendImages';
 const viewer=vi.hoisted(()=>vi.fn());

@@ -143,7 +143,10 @@
       "overrides": {
         "postcss-selector-parser": "^7.1.6",
         "katex": "$katex",
-        "sharp": "^0.35.5"
+        "sharp": "^0.35.5",
+        "@huggingface/transformers-gemma": {
+          "onnxruntime-web": "1.24.3"
+        }
       }
     }
   }

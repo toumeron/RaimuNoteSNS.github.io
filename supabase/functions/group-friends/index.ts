@@ -1,7 +1,7 @@
 import {FRIEND_IMAGE_INSTRUCTION,chooseFriendImageQuery,findFriendPhoto,appendFriendPhoto,readFriendPhoto} from '../_shared/friendImages.ts';
-import {invitedGroupFriends} from '../_shared/groupFriendParticipation.ts';
-import {GROUP_FRIEND_PARTICIPATION_INSTRUCTION,friendDeclinedReply,waitForFriendReply} from '../_shared/friendPacing.ts';
-import {FRIEND_REACTION_INSTRUCTION,parseFriendResponse} from '../_shared/friendReaction.ts';
+import { invitedGroupFriends } from "./../_shared/chatContext.ts";
+import { GROUP_FRIEND_PARTICIPATION_INSTRUCTION, friendDeclinedReply, waitForFriendReply } from "./../_shared/chatContext.ts";
+import { FRIEND_REACTION_INSTRUCTION, parseFriendResponse } from "./../_shared/chatContext.ts";
 import {createClient} from 'https://esm.sh/@supabase/supabase-js@2';
 import {authenticate,boundedBody} from '../_shared/security.ts';
 import {boundedChatContext} from '../_shared/chatContext.ts';

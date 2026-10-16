@@ -1,12 +1,12 @@
 import { useAutoPagination } from '@/hooks/use-mobile';
-import './news-history.css';
+import "@/components/layout/desktop-layout.css";
 import { useMemo } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Link, Navigate, useLocation, useSearchParams } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { formatRelative } from '@/lib/format';
 import { getNewsHistory, getNewsRelatedPosts } from '@/api/search-news';
-import { useNewsStory } from "@/hooks/useSearchNews";
+import { useNewsStory } from "@/hooks/useTrends";
 import { useAuth } from '@/hooks/useAuth';
 import { PostCard } from '@/components/feed/PostCard';
 import { Button } from '@/components/ui/button';

@@ -474,3 +474,10 @@ verify_jwt = false
 
 [functions.list-media]
 verify_jwt = false
+
+[functions.market-data]
+verify_jwt = false
+
+# Every request verifies the current user JWT in-handler. Annict credentials stay server-side.
+[functions.anime-history]
+verify_jwt = false

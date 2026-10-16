@@ -4,7 +4,7 @@ import type { PostWithAuthor } from '@/types';
 vi.mock('@/components/feed/PostCard', () => ({ PostCard: ({ post, embedded }: any) => <div data-testid="parent" data-embedded={String(!!embedded)}>{post.content}</div> }));
 vi.mock("@/components/post/CommentList", () => ({ ExternalReplyCard: ({ post, detail }: any) => <div data-lime-reply-detail={detail}>{post.content}</div> }));
 vi.mock('./ReplyChain', () => ({ ReplyChain: ({ children }: any) => <div data-lime-reply-chain>{children}</div> }));
-import { ExternalReplyDetail } from './ExternalReplyDetail';
+import { ExternalReplyDetail } from "@/components/post/ExternalReplyList";
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 it('shows the parent with its actions and anchors the selected reply until user interaction', () => {
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });

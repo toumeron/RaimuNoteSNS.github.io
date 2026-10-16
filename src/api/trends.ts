@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase';
-import { trendSearchVolume } from '@/lib/trend-categories';
+import { trendSearchVolume } from "@/lib/topics";
 import type { ExploreTrend } from '@/lib/search-trends';
 
 export async function getTrendRanking(): Promise<ExploreTrend[]> {

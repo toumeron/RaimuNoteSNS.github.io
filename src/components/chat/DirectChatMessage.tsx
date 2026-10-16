@@ -1,16 +1,31 @@
-import {CachedChatImage} from './CachedChatImage';
-import {readFriendPhoto} from '../../../supabase/functions/_shared/friendImages';
-import {FriendPhoto} from './FriendPhoto';
-import {useEffect,useRef,useState,type ReactNode} from 'react';
-import {Copy,Heart,Reply,MoreHorizontal,Trash2} from 'lucide-react';
-import {deleteDirectMessage,toggleDirectReaction,type DirectMessage,type DirectGroup} from '@/api/directMessages';
-import {Avatar,AvatarImage,AvatarFallback} from '@/components/ui/avatar';
-import {Popover,PopoverTrigger,PopoverContent} from '@/components/ui/popover';
-import {DropdownMenu,DropdownMenuTrigger,DropdownMenuItem} from '@/components/ui/dropdown-menu';
-import {ChatMenuContent} from '@/components/ai/ChatMenuContent';
-import {Dialog,DialogContent,DialogTitle,DialogDescription} from '@/components/ui/dialog';
+import { readFriendPhoto, type FriendPhoto as Photo, validFriendPhoto } from "./../../../supabase/functions/_shared/friendImages.ts";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Copy, Heart, Reply, MoreHorizontal, Trash2, Link2 } from "lucide-react";
+import { deleteDirectMessage, toggleDirectReaction, type DirectMessage, type DirectGroup } from "@/api/directMessages";
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { ChatMenuContent } from "@/components/ai/ChatPostPreview";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { YouTubeEmbed } from "@/components/YouTubeEmbed";
+import { useCachedChatImage } from "@/lib/chatImageCache";
+import { openMediaViewer } from "@/components/media/openMediaViewer";
+
+// CachedChatImage
+function CachedChatImage({url,account,alt,label,media}:{url:string;account?:string;alt:string;label:string;media?:string[]}){
+ const src=useCachedChatImage(url,account);
+ return <button type="button" className="dm-media-image" aria-label={label} onClick={()=>openMediaViewer({url:src||url,media:(media??[url]).map(item=>({src:item===url?src||url:item,type:'image'}))})}><img src={src||undefined} alt={alt} loading="lazy" referrerPolicy="no-referrer"/></button>;
+}
+
+// FriendPhoto
+function FriendPhoto({photo,account}:{photo:Photo|null;account?:string}){
+ const src=useCachedChatImage(photo?.url??'',account);const [failed,setFailed]=useState(false);useEffect(()=>setFailed(false),[photo?.url]);if(!photo||!validFriendPhoto(photo)||failed)return null;
+ return <figure className="dm-friend-photo"><div className="dm-message-media"><button type="button" className="dm-media-image" aria-label="フレンドの画像を拡大" onClick={()=>openMediaViewer({url:src||photo.url,media:[{src:src||photo.url,type:'image'}]})}><img src={src||undefined} alt={photo.title} loading="lazy" referrerPolicy="no-referrer" onError={()=>setFailed(true)}/></button></div><figcaption><a href={photo.sourceUrl} target="_blank" rel="noopener noreferrer">Wikimedia Commons</a>{photo.artist&&` · ${photo.artist}`} · {photo.license}</figcaption></figure>;
+}
+
+// DirectChatMessage
 const emojis=['👍','😢','👩‍💻','🆗','🙏','😮','😋','😭','🎉','👎','❤️','🔥','🤠','😂','🤩','🙃','💯','🧠','⭕'];
-export function DirectChatMessage({message:m,userId,group,content,media,enabled,onChanged,onReply,reply,cat}:{message:DirectMessage;userId:string;group?:DirectGroup;content:ReactNode;media?:ReactNode;enabled:boolean;onChanged:()=>Promise<unknown>;onReply:()=>void;reply?:DirectMessage;cat?:ReactNode}){
+function DirectChatMessage({message:m,userId,group,content,media,enabled,onChanged,onReply,reply,cat}:{message:DirectMessage;userId:string;group?:DirectGroup;content:ReactNode;media?:ReactNode;enabled:boolean;onChanged:()=>Promise<unknown>;onReply:()=>void;reply?:DirectMessage;cat?:ReactNode}){
  const own=m.sender_id===userId&&!m.friend_id;const member=group?.members.find(p=>p.id===m.sender_id);const name=m.friend_name??member?.displayName??'メンバー';const avatar=m.friend_avatar??member?.avatarUrl;
  const row=useRef<HTMLDivElement>(null);const [expanded,setExpanded]=useState(false);const [selected,setSelected]=useState(false);const [picker,setPicker]=useState(false);const [menu,setMenu]=useState(false);const [deleting,setDeleting]=useState<boolean|null>(null);const [busy,setBusy]=useState(false);const [error,setError]=useState('');const hold=useRef<ReturnType<typeof setTimeout>>();const origin=useRef({x:0,y:0});const held=useRef(false);
  useEffect(()=>()=>clearTimeout(hold.current),[]);
@@ -41,3 +56,46 @@ export function DirectChatMessage({message:m,userId,group,content,media,enabled,
   <Dialog open={deleting!==null} onOpenChange={open=>{if(!open&&!busy)setDeleting(null)}}><DialogContent className="dm-dialog"><DialogTitle>{deleting?'全員から削除':'自分から削除'}</DialogTitle><DialogDescription>{deleting?'このメッセージを全員の画面から削除します。':'このメッセージを自分の画面から削除します。他のメンバーの画面には残ります。'}</DialogDescription>{error&&<p role="alert" className="dm-error">{error}</p>}<div className="dm-delete-controls"><button type="button" className="dm-secondary" disabled={busy} onClick={()=>setDeleting(null)}>キャンセル</button><button type="button" className="dm-primary" disabled={busy} onClick={()=>void action(()=>deleteDirectMessage(m.id,deleting===true))}>削除する</button></div></DialogContent></Dialog>
  </div>;
 }
+
+// DirectMessageContent
+const linkPattern=/https?:\/\/[^\s<>"']+/g;
+function youtubeMessageId(value:string):string|null {
+ try{
+  const url=new URL(value);
+  let id:string|null=null;
+  if(url.hostname==='youtu.be')id=url.pathname.split('/')[1];
+  else if(['youtube.com','www.youtube.com','m.youtube.com','music.youtube.com','youtube-nocookie.com','www.youtube-nocookie.com'].includes(url.hostname)){
+   if(url.pathname==='/watch')id=url.searchParams.get('v');
+   else if(/^\/(shorts|live|embed)\//.test(url.pathname))id=url.pathname.split('/')[2];
+  }
+  return id&&/^[\w-]{11}$/.test(id)?id:null;
+ }catch{return null;}
+}
+function directMessageVideoIds(content:string):string[] {
+ return [...new Set([...content.matchAll(linkPattern)].map(match=>youtubeMessageId(match[0].replace(/[。、,!?）)\]}]+$/g,''))).filter((id):id is string=>!!id))].slice(0,3);
+}
+function directMessageText(content:string):string {
+ return content.replace(linkPattern,link=>youtubeMessageId(link.replace(/[。、,!?）)\]}]+$/g,''))?'':link).trim();
+}
+function DirectMessageMedia({content}:{content:string}) {
+ const videos=directMessageVideoIds(content);
+ return videos.length?<div className="dm-message-media dm-youtube-media">{videos.map(id=><div key={id} className="dm-video-embed" onClick={event=>event.stopPropagation()}><YouTubeEmbed videoId={id}/></div>)}</div>:null;
+}
+function DirectMessageContent({content}:{content:string}) {
+ const text=directMessageText(content);
+ if(!text)return null;
+ let solo:URL|null=null;
+ if(/^https?:\/\/[^\s]+$/.test(text)){try{solo=new URL(text);}catch{/* Render an incomplete URL as ordinary message text. */}}
+ return <div className="dm-message-text">
+  {solo?<a className="dm-link-card" href={solo.href} target="_blank" rel="noopener noreferrer" title={solo.href} onClick={event=>event.stopPropagation()}><span className="dm-link-icon" aria-hidden="true"><Link2 size={22}/></span><span className="dm-link-copy"><strong>{solo.href.replace(/^https?:\/\//,'')}</strong><span className="dm-link-domain">{solo.hostname}</span></span></a>:<p>{text.split(/(https?:\/\/[^\s]+)/g).map((part,i)=>/^https?:\/\//.test(part)?<a key={i} href={part} target="_blank" rel="noopener noreferrer" onClick={event=>event.stopPropagation()}>{part}</a>:part)}</p>}
+ </div>;
+}
+
+export { DirectChatMessage };
+export { youtubeMessageId };
+export { directMessageVideoIds };
+export { directMessageText };
+export { DirectMessageMedia };
+export { DirectMessageContent };
+export { CachedChatImage };
+export { FriendPhoto };

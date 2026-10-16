@@ -1,5 +1,6 @@
-import {displayUsername} from '@/lib/displayUsername';
-import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
+import {isBlueskyProfileId} from '@/lib/bluesky';
+import { displayUsername } from "@/lib/format";
+import { ProviderVerificationBadge } from "@/components/common/OfficialBadge";
 import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 import { Link } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -77,7 +78,7 @@ export default function UserCard({ user, explore = false }: UserCardProps) {
 
       {currentUserId !== user.id && (
         <div className="shrink-0 ml-3 pt-1">
-          <FollowButton userId={user.id} />
+          <FollowButton userId={user.id} externalProfile={isBlueskyProfileId(user.id)?user:undefined} />
         </div>
       )}
     </div>

@@ -1,8 +1,4 @@
-<<<<<<< HEAD
-import {beforeEach,expect,it} from 'vitest';
-=======
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
->>>>>>> 374490cc (“update23”)
 import fixtures from './fixtures/recommendationVisual.json';
 import {classifyRecommendationVisual} from './recommendationVisual';
 import {parseRecommendationCatalog,RECOMMENDATION_CATALOG_MAX_AGE,applyCatalogRecommendationVisuals} from './recommendationCatalog';
@@ -35,8 +31,6 @@ it('reuses a catalog vector for the identical image, without treating another wo
  ],catalogRows);
  expect(rows[0].recommendationVisual).toEqual(visual);expect(rows[1].recommendationVisual).toBeUndefined();
 });
-<<<<<<< HEAD
-=======
 
 afterEach(()=>{vi.unstubAllEnvs();vi.unstubAllGlobals();vi.useRealTimers();});
 it('delivers real verified bootstrap pixels while an external refresh never settles',async()=>{
@@ -55,4 +49,3 @@ it('keeps verified cards available when the refresh fails after the cache interv
  expect(await readRecommendationCatalog()).toHaveLength(1);await vi.advanceTimersByTimeAsync(60001);
  expect(await readRecommendationCatalog()).toHaveLength(1);
 });
->>>>>>> 374490cc (“update23”)

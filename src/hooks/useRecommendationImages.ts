@@ -1,12 +1,14 @@
-import {preserveRecommendationHistory} from '@/lib/recommendationPaging';
-import {useEffect,useRef,useState} from 'react';
-import {useQueryClient,type QueryKey} from '@tanstack/react-query';
-import {refreshRecommendationVisualPage,type getRecommendationPage} from '@/api/recommendations';
-import type {PostWithAuthor} from '@/types';
+import { preserveRecommendationHistory } from "@/lib/topicRecommendations";
+import { useEffect, useRef, useState } from "react";
+import { useQueryClient, type QueryKey } from "@tanstack/react-query";
+import { refreshRecommendationVisualPage, type getRecommendationPage } from "@/api/recommendations";
+import { type PostWithAuthor } from "@/types/index";
+
+// useRecommendationImages
 type Page=Awaited<ReturnType<typeof getRecommendationPage>>;
 type Feed={pages:Page[];pageParams:unknown[]};
 /** A serial, bounded pixel-analysis job runs after first paint, never in the page request. */
-export function useRecommendationImages(enabled:boolean,viewer:string|null,key:QueryKey,feed:Feed|undefined,busy:boolean){
+function useRecommendationImages(enabled:boolean,viewer:string|null,key:QueryKey,feed:Feed|undefined,busy:boolean){
  const [completed,setCompleted]=useState(0);
  const client=useQueryClient(),job=useRef<AbortController|null>(null),attempted=useRef(new Set<string>()),count=useRef(0);
  useEffect(()=>{attempted.current.clear();count.current=0;return()=>{job.current?.abort();job.current=null;};},[enabled,viewer]);
@@ -46,3 +48,24 @@ export function useRecommendationImages(enabled:boolean,viewer:string|null,key:Q
   return()=>{window.clearTimeout(timer);if(!attempted.current.has(rows[0].imageUrls[0])){controller.abort();if(job.current===controller)job.current=null;}};
  },[enabled,viewer,revision,busy,completed,feed?.pages.length,feed?.pages.at(-1)?.preferences.likedSamples?.length]);
 }
+
+// useTimelineContinuation
+/** Keep paging a visible bottom without overlapping reads. Empty source bursts
+ * are paused by the feed and require one new gesture to try again. */
+function useTimelineContinuation({enabled,inView,hasNextPage,isFetching,isFetchNextPageError,automaticPaused,scrollIntent,pageCount,fetchNextPage}:{
+ enabled:boolean;inView:boolean;hasNextPage:boolean;isFetching:boolean;isFetchNextPageError:boolean;
+ automaticPaused:boolean;scrollIntent:number;pageCount:number;fetchNextPage:(options:{cancelRefetch:boolean})=>Promise<unknown>;
+}) {
+ const consumedIntent=useRef(0);
+ useEffect(()=>{
+  if(!enabled||!inView||!hasNextPage||isFetching)return;
+  if((automaticPaused||isFetchNextPageError)&&scrollIntent<=consumedIntent.current)return;
+  consumedIntent.current=scrollIntent;
+  void fetchNextPage({cancelRefetch:false});
+ // A warmed page may resolve before React publishes isFetching=true.
+ // Its page count still advances, so the visible bottom must be rechecked.
+ },[enabled,inView,hasNextPage,isFetching,isFetchNextPageError,automaticPaused,scrollIntent,pageCount,fetchNextPage]);
+}
+
+export { useRecommendationImages };
+export { useTimelineContinuation };

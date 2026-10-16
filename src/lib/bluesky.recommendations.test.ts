@@ -1,9 +1,11 @@
-import {splitMentionText,mentionProfileHandle,externalRead,externalFetch} from './utils';
-import { afterEach, expect, it, vi } from 'vitest';
-import { fetchBlueskyTopicPosts, fetchBlueskyAuthorFeed, fetchBlueskyPostThread, fetchBlueskyProfile, likeBlueskyPost, unlikeBlueskyPost, followBlueskyUser, unfollowBlueskyUser, getConfiguredExternalHandles, fetchTrendingJapaneseBlueskyPosts, searchExternalUsers } from './bluesky';
-import { configuredMisskeyHandles, mapMisskeyNote, type MisskeyNote, searchMisskey } from './misskey';
-import { normalizeTimelineBlueskyPost } from './timelinePaging';
-import {mapBlueskyFeedItemToPost,discoverBlueskyTopicFeeds,fetchBlueskyTopicFeed} from './bluesky';
+import { splitMentionText, mentionProfileHandle, externalRead, externalFetch } from "@/lib/utils";
+import { afterEach, expect, it, vi, beforeEach } from "vitest";
+import { fetchBlueskyTopicPosts, fetchBlueskyAuthorFeed, fetchBlueskyPostThread, fetchBlueskyProfile, likeBlueskyPost, unlikeBlueskyPost, followBlueskyUser, unfollowBlueskyUser, getConfiguredExternalHandles, fetchTrendingJapaneseBlueskyPosts, searchExternalUsers, mapBlueskyFeedItemToPost, discoverBlueskyTopicFeeds, fetchBlueskyTopicFeed, refreshBlueskySession, getStoredBlueskySession, authorizedBlueskyFetch, logoutFromBluesky } from "@/lib/bluesky";
+import { configuredMisskeyHandles, mapMisskeyNote, type MisskeyNote, searchMisskey } from "@/lib/misskey";
+import { normalizeTimelineBlueskyPost } from "@/lib/timelinePaging";
+import { ACTIVE_ACCOUNT_KEY } from "@/lib/savedAccounts";
+
+describe("bluesky.recommendations", () => {
 it('preserves image descriptions and labels without adding text to the visible post',()=>{
  const mapped=mapBlueskyFeedItemToPost({post:{uri:'at://did:plc:artist/app.bsky.feed.post/image',author:{did:'did:plc:artist',handle:'artist.bsky.social'},record:{text:''},embed:{images:[{fullsize:'https://images.example/art.jpg',alt:'水彩の絵'}]},labels:[{val:'ai-generated'}]}});
  expect(mapped?.content).toBe('');expect(mapped?.imageAltTexts).toEqual(['水彩の絵']);expect(mapped?.contentLabels).toEqual(['ai-generated']);
@@ -223,4 +225,53 @@ it('uses the public Discover feed when anonymous search is refused and preserves
 it('reports unavailable external sources instead of a successful empty feed when search and public feed both fail',async()=>{
  vi.stubGlobal('fetch',vi.fn(async()=>new Response('',{status:403})));
  await expect(fetchTrendingJapaneseBlueskyPosts({limit:8,queryLimit:1})).rejects.toThrow('public feed unavailable');
+});
+});
+
+describe("bluesky.session", () => {
+const session={did:'did:plc:test',handle:'test.bsky.social',accessJwt:'access',refreshJwt:'refresh'};
+const rotated={...session,accessJwt:'rotated-access',refreshJwt:'rotated-refresh'};
+beforeEach(()=>{localStorage.clear();localStorage.setItem(ACTIVE_ACCOUNT_KEY,'owner');localStorage.setItem('lime_bluesky_session',JSON.stringify(session));});
+afterEach(()=>vi.unstubAllGlobals());
+it.each([429,500,502,503])('does not delete login on a temporary %s response',async status=>{
+ vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({error:'Unavailable'}),{status})));
+ await expect(refreshBlueskySession()).rejects.toThrow();expect(getStoredBlueskySession()).toEqual(session);
+});
+it('keeps login on network loss',async()=>{vi.stubGlobal('fetch',vi.fn(async()=>{throw new TypeError('network failed');}));await expect(refreshBlueskySession()).rejects.toThrow();expect(getStoredBlueskySession()).toEqual(session);});
+it.each(['ExpiredToken','InvalidToken'])('clears only a genuinely rejected refresh token: %s',async error=>{vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({error}),{status:400})));await expect(refreshBlueskySession()).rejects.toThrow();expect(getStoredBlueskySession()).toBeNull();});
+it('shares one refresh across parallel requests and stores the rotated session',async()=>{
+ let release!:()=>void;const pending=new Promise<void>(resolve=>release=resolve);
+ const request=vi.fn(async()=>{await pending;return new Response(JSON.stringify(rotated));});vi.stubGlobal('fetch',request);
+ const a=refreshBlueskySession(),b=refreshBlueskySession();release();expect(await a).toEqual(rotated);expect(await b).toEqual(rotated);expect(request).toHaveBeenCalledTimes(1);expect(getStoredBlueskySession()).toEqual(rotated);
+});
+it('does not restore credentials after logout while refresh is in flight',async()=>{
+ let release!:()=>void;const pending=new Promise<void>(resolve=>release=resolve);
+ vi.stubGlobal('fetch',vi.fn(async(url:string)=>{if(url.includes('refreshSession')){await pending;return new Response(JSON.stringify(rotated));}return new Response('{}');}));
+ const refresh=refreshBlueskySession();await logoutFromBluesky();release();expect(await refresh).toBeNull();expect(getStoredBlueskySession()).toBeNull();
+});
+it('does not publish another LimeNote account’s credentials after an account switch',async()=>{
+ let release!:()=>void;const pending=new Promise<void>(resolve=>release=resolve);
+ vi.stubGlobal('fetch',vi.fn(async()=>{await pending;return new Response(JSON.stringify(rotated));}));
+ const refresh=refreshBlueskySession();localStorage.setItem(ACTIVE_ACCOUNT_KEY,'other');release();expect(await refresh).toBeNull();expect(getStoredBlueskySession()).toEqual(session);
+});
+it('retries an authenticated operation with rotated access credentials',async()=>{
+ const request=vi.fn(async(url:string,init:RequestInit)=>url.includes('refreshSession')?new Response(JSON.stringify(rotated)):init.headers&& (init.headers as any).Authorization==='Bearer access'?new Response(JSON.stringify({error:'ExpiredToken'}),{status:400}):new Response('{}'));
+ vi.stubGlobal('fetch',request);expect((await authorizedBlueskyFetch('test')).ok).toBe(true);expect(getStoredBlueskySession()).toEqual(rotated);
+});
+});
+
+describe("bluesky.video", () => {
+const video={$type:'app.bsky.embed.video#view',playlist:'https://video.bsky.app/watch/abc/playlist.m3u8',thumbnail:'https://video.bsky.app/thumb.jpg',aspectRatio:{width:1080,height:1920},alt:'動画の説明'};
+const map=(embed:typeof video|{$type:string;media:typeof video})=>mapBlueskyFeedItemToPost({post:{uri:'at://did:plc:artist/app.bsky.feed.post/video',author:{did:'did:plc:artist',handle:'artist.bsky.social'},record:{text:'動画'},embed}})!;
+it('preserves native Bluesky HLS video and dimensions instead of displaying a still image',()=>{
+ const post=map(video);expect(post.imageUrls).toEqual([]);expect(post.externalVideo).toEqual({playlist:video.playlist,thumbnail:video.thumbnail,width:1080,height:1920,duration:0,alt:video.alt});
+ expect(normalizeTimelineBlueskyPost(post).externalVideo).toEqual(post.externalVideo);
+});
+it('retains videos attached to quote posts',()=>{expect(map({$type:'app.bsky.embed.recordWithMedia#view',media:video}).externalVideo?.playlist).toBe(video.playlist);});
+it('keeps the thumbnail fallback when there is no usable playlist',()=>{const post=map({...video,playlist:'javascript:alert(1)'});expect(post.externalVideo).toBeUndefined();expect(post.imageUrls).toEqual([video.thumbnail]);});
+
+it('retains source repost counts through timeline normalization',()=>{
+ const mapped=mapBlueskyFeedItemToPost({post:{uri:'at://did:plc:artist/app.bsky.feed.post/count',author:{did:'did:plc:artist',handle:'artist.bsky.social'},record:{text:'投稿'},repostCount:123}})!;
+ expect(mapped.repostsCount).toBe(123);expect(mapped.externalDetails?.reposts).toBe(123);expect(normalizeTimelineBlueskyPost(mapped).repostsCount).toBe(123);
+});
 });

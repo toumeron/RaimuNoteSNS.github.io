@@ -1,10 +1,11 @@
+import {PostSourceLabelVisibility} from '@/components/post/PostSourceLabel';
 import {PostVideoPlayer} from '@/components/video/PostVideoPlayer';
-import {displayUsername} from '@/lib/displayUsername';
+import { displayUsername } from "@/lib/format";
 import {canShowPostLinkPreview,hasAttachedPostVideo} from '@/lib/postPresentation';
 import { uniqueProfileMediaPosts } from '@/lib/profileReplyThreads';
-import {PrivateMediaImage} from '@/components/media/PrivateMediaImage';
-import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
-import {twitterAvatarUrl} from '@/lib/twitterAvatar';
+import { PrivateMediaImage } from "@/components/profile/ProfileMediaPreview";
+import { ProviderVerificationBadge } from "@/components/common/OfficialBadge";
+import { twitterAvatarUrl } from "@/components/ui/avatar";
 import {ProfileMediaPreview} from '@/components/profile/ProfileMediaPreview';
 import { PostPoll } from '@/components/feed/PostPoll';
 import { SuspensionNotice } from '@/components/account/AccountSuspension';
@@ -29,7 +30,7 @@ import { renderStickerText } from "@/components/stickers/Stickers";
 import { hasStickers } from '@/lib/stickers';
 import { profilePostIdentity } from "@/lib/profileReplyThreads";
 import { SpacePostCard } from '@/components/spaces/SpacePostCard';
-import { spaceLinkIn } from '@/lib/spaceLinks';
+import { spaceLinkIn } from "@/lib/postPresentation";
 import { BookmarkButton } from '@/components/post/BookmarkButton';
 import { ReplyShare } from '@/components/post/ReplyShare';
 import { useAuth } from '@/hooks/useAuth';
@@ -39,14 +40,14 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
 import { useInView } from 'react-intersection-observer';
-import { ChevronDown, Loader2, MoreHorizontal, ChartBarBig, Image as ImageIcon, X, MessageCircle, Plus, Upload, Link as LinkIcon, Send, Globe, Heart } from 'lucide-react';
+import { ChevronDown, Loader2, MoreHorizontal, ChartBarBig, Image as ImageIcon, X, MessageCircle, Plus, Upload, Link as LinkIcon, Send, Heart } from 'lucide-react';
 import { ProfileHeader } from '@/components/profile/ProfileHeader';
 import { PostCard } from '@/components/feed/PostCard';
 import { RepostButton } from '@/components/feed/RepostButton';
 import { RepostedReplyCard } from "@/components/post/CommentList";
 import { replyToPost } from '@/api/reply-reposts';
 import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
-import { Skeleton } from '@/components/ui/skeleton';
+import { Skeleton } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { LikeButton } from '@/components/post/LikeButton';
@@ -2295,7 +2296,7 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
   );
 });
 
-const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
+export const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
   thread,
   onImageClick,
   onImageError,
@@ -2376,13 +2377,6 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
                 {renderProfileThreadTextWithMentions(parentContent, navigate,parentAuthor)}
               </p>
             ) : null}
-
-            {isParentBluesky && (
-              <div className="flex items-center gap-1 mt-1.5 text-muted-foreground/70">
-                <Globe className="h-3.5 w-3.5" />
-                <span className="text-[15px] font-medium">{parent?.id.startsWith('x:') ? 'twitter' : parent?.id.startsWith('misskey:') ? 'Misskey' : 'Bluesky'}</span>
-              </div>
-            )}
 
             <ProfileThreadEmbeds
               item={parent}
@@ -3292,6 +3286,7 @@ export default function Profile() {
   if (!isBlueskyProfile && 'isSuspended' in user && user.isSuspended) return <div><SuspensionNotice profile /></div>;
 
   return (
+    <PostSourceLabelVisibility.Provider value={false}>
     <div
       data-lime-profile-page
       data-lime-profile-pulling={isPulling || isPullRefreshing || undefined}
@@ -3555,5 +3550,6 @@ export default function Profile() {
         </div>
       )}
     </div>
+    </PostSourceLabelVisibility.Provider>
   );
 }

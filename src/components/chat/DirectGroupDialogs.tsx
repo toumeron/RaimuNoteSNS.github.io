@@ -7,7 +7,7 @@ import {useQuery} from '@tanstack/react-query';
 import {ArrowLeft,Bell,BellOff,Check,Copy,Link2,LogOut,MoreHorizontal,Pencil,Shield,UserPlus,Users,X} from 'lucide-react';
 import {Dialog,DialogContent,DialogDescription,DialogTitle} from '@/components/ui/dialog';
 import {DropdownMenu,DropdownMenuItem,DropdownMenuTrigger} from '@/components/ui/dropdown-menu';
-import {ChatMenuContent} from '@/components/ai/ChatMenuContent';
+import { ChatMenuContent } from "@/components/ai/ChatPostPreview";
 import {Avatar,AvatarFallback,AvatarImage} from '@/components/ui/avatar';
 import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 import {ProfileImageCropper} from '@/components/profile/ProfileImageCropper';

@@ -1,23 +1,26 @@
-import {displayUsername} from '@/lib/displayUsername';
-import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
+import { observeDocumentHeight } from "@/lib/observePostElements";
+import {StockSuggestion} from '@/components/search/StockMarketCard';
+import {suggestMarketAssets,type MarketAsset} from '@/lib/marketData';
+import { displayUsername } from "@/lib/format";
+import { ProviderVerificationBadge } from "@/components/common/OfficialBadge";
 import {MOBILE_DRAWER_EDGE_ZONE,isMobileDrawerBlocked} from '@/lib/mobileDrawerGesture';
 import {ProfileListPicker} from '@/components/lists/ListDialogs';
-import {ListHeaderActions} from '@/components/lists/ListHeaderActions';
+import { ListHeaderActions } from "@/components/search/SearchExploreTabs";
 import { TimelineTabBar } from '@/components/feed/TimelineTabBar';
-import { isFeedTabValue, type FeedTabValue, useTimelineTabs } from '@/lib/timelineTabs';
+import { isFeedTabValue, type FeedTabValue, useTimelineTabs } from "@/components/feed/TimelineTabBar";
 import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 import { useMobilePostMenu } from "@/components/post/PostActionSheet";
 import { FollowButton } from '@/components/profile/FollowButton';
 import { useFollowStats } from '@/hooks/useProfile';
-import { UnreadBadge } from "@/components/notifications/NotificationTabs";
-import { NewsHeaderActions } from '@/components/news/NewsHeaderActions';
-import { NotificationTabs } from '@/components/notifications/NotificationTabs';
-import { TopicTabs } from '@/components/topics/TopicTabs';
+import { UnreadBadge } from "@/components/search/SearchExploreTabs";
+import { NewsHeaderActions } from "@/components/search/SearchExploreTabs";
+import { NotificationTabs } from "@/components/search/SearchExploreTabs";
+import { TopicTabs } from "@/components/search/SearchExploreTabs";
 import { usePostOverlay } from "@/components/layout/DesktopLayoutContext";
 import { MobileAccountShortcuts } from './AccountSwitcher';
 import { SearchExploreTabs } from '@/components/search/SearchExploreTabs';
 import { useSpaces } from "@/components/spaces/SpaceProvider";
-import { DesktopAccountFooter } from './DesktopAccountFooter';
+import { DesktopAccountFooter } from "@/components/layout/DesktopSidebar";
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal, flushSync } from 'react-dom';
@@ -245,6 +248,7 @@ function getSuggestFreeText(raw: string): string {
 }
 
 type HeaderSuggestionRow =
+  | { type: 'stock'; value: string; asset: MarketAsset }
   | { type: 'search'; value: string }
   | { type: 'user'; value: string; user: User };
 // ------------------------------------------------------------------------------------
@@ -1907,21 +1911,9 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   useEffect(() => {
     if (typeof document === 'undefined') return;
 
-    const trackDocumentHeight = () => {
-      maxDocumentHeightRef.current = Math.max(
-        maxDocumentHeightRef.current,
-        document.documentElement.scrollHeight
-      );
-    };
-
-    trackDocumentHeight();
-    window.addEventListener('resize', trackDocumentHeight);
-    window.addEventListener('scroll', trackDocumentHeight, { passive: true });
-
-    return () => {
-      window.removeEventListener('resize', trackDocumentHeight);
-      window.removeEventListener('scroll', trackDocumentHeight);
-    };
+    return observeDocumentHeight(height=>{
+      maxDocumentHeightRef.current=Math.max(maxDocumentHeightRef.current,height);
+    });
   }, []);
 
   // 検索バー・検索ページ用タブは「検索ページ('/search')のみ・モバイルのみ」で表示する。
@@ -2105,6 +2097,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   const headerSuggestionRows = useMemo<HeaderSuggestionRow[]>(() => {
     const rows: HeaderSuggestionRow[] = [];
     if (headerSearchValue.trim()) {
+      for(const asset of suggestMarketAssets(headerSearchValue))rows.push({type:'stock',value:`$${asset.symbol}`,asset});
       rows.push({ type: 'search', value: headerSearchValue.trim() });
       for (const u of headerLiveUserSuggestions) rows.push({ type: 'user', value: u.username, user: u });
     } else {
@@ -2127,6 +2120,8 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   const isListsPage=normalizeAppPath(location.pathname)==='/lists'||normalizeAppPath(location.pathname).startsWith('/lists/');
   const isTopicsPage = normalizeAppPath(location.pathname) === '/topics';
   const accountAboutMatch = normalizeAppPath(location.pathname).match(/^\/u\/([^/]+)\/about\/?$/);
+  const watchHistoryMatch = normalizeAppPath(location.pathname).match(/^\/u\/([^/]+)\/watch-history\/?$/);
+  const profileUtilityMatch = accountAboutMatch ?? watchHistoryMatch;
   const mobileProfileViewport = useMobilePostMenu();
   const hideHeaderOnMobileProfile = mobileProfileViewport && isProfilePath(location.pathname);
   const [profileListsOpen,setProfileListsOpen]=useState(false);
@@ -2657,7 +2652,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
                     : "hover:bg-black/[0.03] dark:hover:bg-white/5"
                 )}
               >
-                {row.type === 'search' ? (
+                {row.type === 'stock' ? <StockSuggestion asset={row.asset}/> : row.type === 'search' ? (
                   <>
                     {!headerSearchValue.trim() ? (
                       <Clock className="h-[18px] w-[18px] text-[rgb(83,100,113)] dark:text-gray-400" />
@@ -2695,6 +2690,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
                       <span className="flex min-w-0 items-center gap-1">
                         <span className="truncate text-[15px] font-bold">{row.user.displayName}</span>
                         {row.user.isPrivate && <PrivateAccountBadge />}
+                        <ProviderVerificationBadge verification={row.user.providerVerification} className="h-4 w-4 shrink-0"/>
                         {row.user.isOfficial && (
                           <img
                             src={`${import.meta.env.BASE_URL}verified.png`}
@@ -3549,7 +3545,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
             <button className="lime-profile-bar-control" aria-label="戻る" onClick={() => window.history.state?.idx > 0 ? navigate(-1) : navigate('/')}><ArrowLeft className="h-5 w-5" /></button>
             <div className="lime-profile-bar-title relative"><div className="truncate text-base font-bold">{mobileProfileInfo?.user.displayName}{mobileProfileInfo?.user.isPrivate && <PrivateAccountBadge/>}<ProviderVerificationBadge verification={mobileProfileInfo?.user.providerVerification} className="inline-block h-4 w-4"/>{mobileProfileInfo?.user.isOfficial && <img src={`${import.meta.env.BASE_URL}verified.png`} alt="Official" className="inline-block h-4 w-4"/>}</div><div className="text-xs">{mobileProfileInfo?.posts.toLocaleString()}件のポスト</div></div>
             <Link className={`lime-profile-bar-control ${profileSummaryOffscreen && mobileProfileInfo?.user.id !== user?.id ? 'is-collapsed' : ''}`} aria-hidden={profileSummaryOffscreen && mobileProfileInfo?.user.id !== user?.id || undefined} tabIndex={profileSummaryOffscreen && mobileProfileInfo?.user.id !== user?.id ? -1 : undefined} aria-label="プロフィールを検索" to={`/search?q=${encodeURIComponent(`@${mobileProfileInfo?.user.username ?? ''}`)}`}><Search className="h-5 w-5" /></Link>
-            <DropdownMenu modal={false}><DropdownMenuTrigger asChild><button className="lime-profile-bar-control" aria-label="プロフィールのその他のメニュー"><MoreHorizontal className="h-5 w-5" /></button></DropdownMenuTrigger><DropdownMenuContent align="end" className="z-[600]" onCloseAutoFocus={event => event.preventDefault()}>{user&&mobileProfileInfo&&<DropdownMenuItem onSelect={()=>setProfileListsOpen(true)}>リストから追加／削除</DropdownMenuItem>}<DropdownMenuItem onClick={() => {void navigator.clipboard.writeText(window.location.href);toast.success('リンクをコピーしました');}}>リンクをコピー</DropdownMenuItem><DropdownMenuItem onClick={() => { if (navigator.share) void navigator.share({title: mobileProfileInfo?.user.displayName, url: window.location.href}).catch(() => {}); else {void navigator.clipboard.writeText(window.location.href);toast.success('リンクをコピーしました');} }}>プロフィールを共有</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
+            <DropdownMenu modal={false}><DropdownMenuTrigger asChild><button className="lime-profile-bar-control" aria-label="プロフィールのその他のメニュー"><MoreHorizontal className="h-5 w-5" /></button></DropdownMenuTrigger><DropdownMenuContent align="end" className="z-[600]" onCloseAutoFocus={event => event.preventDefault()}>{user&&mobileProfileInfo&&<DropdownMenuItem onSelect={()=>setProfileListsOpen(true)}>リストから追加／削除</DropdownMenuItem>}{mobileProfileInfo&&!/^(did:|bsky:|x-user:|misskey-user:)/.test(mobileProfileInfo.user.id)&&<DropdownMenuItem onSelect={()=>navigate(`/u/${encodeURIComponent(mobileProfileInfo.user.username)}/watch-history`)}>視聴履歴</DropdownMenuItem>}<DropdownMenuItem onClick={() => {void navigator.clipboard.writeText(window.location.href);toast.success('リンクをコピーしました');}}>リンクをコピー</DropdownMenuItem><DropdownMenuItem onClick={() => { if (navigator.share) void navigator.share({title: mobileProfileInfo?.user.displayName, url: window.location.href}).catch(() => {}); else {void navigator.clipboard.writeText(window.location.href);toast.success('リンクをコピーしました');} }}>プロフィールを共有</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
             {mobileProfileInfo && mobileProfileInfo.user.id !== user?.id && <div className={`relative lime-profile-bar-follow ${profileSummaryOffscreen ? 'is-visible' : ''}`} ref={element => element?.toggleAttribute('inert', !(profileSummaryOffscreen))} aria-hidden={!(profileSummaryOffscreen)}><FollowButton userId={mobileProfileInfo.user.id} externalProfile={mobileProfileInfo.user.id.startsWith('did:') || mobileProfileInfo.user.id.startsWith('misskey-user:') || mobileProfileInfo.user.id.startsWith('x-user:') ? mobileProfileInfo.user : undefined} /></div>}
           </> : isPostActivityPage ? <>
             <Button variant="ghost" size="icon" className="shrink-0 rounded-full" aria-label="戻る" onClick={()=>window.history.state?.idx>0?navigate(-1):navigate('/')}><ArrowLeft className="h-5 w-5"/></Button>
@@ -3572,11 +3568,11 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
             <h1 className="ml-2 min-w-0 flex-1 text-xl font-bold">トピック</h1>
           </> : isNotificationsPage ? <>
             <h1 className="min-w-0 flex-1 text-xl font-bold">通知</h1>
-          </> : accountAboutMatch ? <>
+          </> : profileUtilityMatch ? <>
             <Button asChild variant="ghost" size="icon" className="shrink-0 rounded-full">
-              <Link to={`/u/${accountAboutMatch[1]}`} aria-label="プロフィールに戻る"><ArrowLeft className="h-5 w-5" /></Link>
+              <Link to={`/u/${profileUtilityMatch[1]}`} aria-label="プロフィールに戻る"><ArrowLeft className="h-5 w-5" /></Link>
             </Button>
-            <h1 className="ml-2 min-w-0 truncate text-xl font-bold">アカウントについて</h1>
+            <h1 className="ml-2 min-w-0 truncate text-xl font-bold">{watchHistoryMatch ? '視聴履歴' : 'アカウントについて'}</h1>
           </> : <>
 
           <div className="sm:order-3">
@@ -3658,6 +3654,6 @@ export function DirectMessagePanelHeader({children,actions,back,className=''}:{c
 }
 
 /** Profile relationship list uses the existing Header module's panel chrome. */
-export function ProfileListHeader({name,username,back}:{name:string;username:string;back:()=>void}){
- return <header className="follow-list-heading"><button type="button" aria-label="戻る" onClick={back}><ArrowLeft size={22}/></button><div><h1>{name}</h1><p>@{displayUsername(username)}</p></div></header>;
+export function ProfileListHeader({name,username,back,verification}:{name:string;username:string;back:()=>void;verification?:User['providerVerification']}){
+ return <header className="follow-list-heading"><button type="button" aria-label="戻る" onClick={back}><ArrowLeft size={22}/></button><div><h1>{name}<ProviderVerificationBadge verification={verification} className="ml-1 inline-block h-5 w-5 align-text-bottom"/></h1><p>@{displayUsername(username)}</p></div></header>;
 }

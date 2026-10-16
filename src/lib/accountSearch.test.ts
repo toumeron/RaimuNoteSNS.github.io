@@ -15,3 +15,8 @@ it('keeps native results when the external account service fails',async()=>{
  mocks.external.mockRejectedValue(new Error('offline'));expect(await searchAccounts('cat')).toHaveLength(1);
  expect(searchProfileUser({id:'a',username:'a',is_official:false,is_private:false})).toMatchObject({isOfficial:false,isPrivate:false});
 });
+
+it('does not discard provider verification when normalizing a saved external profile',()=>{
+ const verification={provider:'twitter',type:'organization'};
+ expect(searchProfileUser({id:'x-user:1',username:'google@twitter.com',providerVerification:verification}).providerVerification).toEqual(verification);
+});

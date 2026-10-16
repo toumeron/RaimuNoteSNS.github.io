@@ -8,7 +8,7 @@ import { DesktopTimelineSidebar } from './DesktopSidebar';
 import './desktop-layout.css';
 import { DesktopLayoutContext } from './DesktopLayoutContext';
 import { PageCompanion } from '@/components/ai/PageCompanion';
-import { Skeleton } from '@/components/ui/skeleton';
+import { Skeleton } from "@/components/ui/button";
 import { isIpad } from '@/lib/utils';
 
 export function AppLayout() {

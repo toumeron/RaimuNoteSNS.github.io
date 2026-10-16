@@ -1,5 +1,8 @@
+import { useSyncExternalStore } from "react";
+
+// hlsPlayback
 /** Attach an HLS stream only when playback is requested; abort releases buffers and requests. */
-export async function attachHls(media: HTMLVideoElement, url: string, signal: AbortSignal, onError: (message: string) => void) {
+async function attachHls(media: HTMLVideoElement, url: string, signal: AbortSignal, onError: (message: string) => void) {
  const check = () => { if (signal.aborted) throw new DOMException('Aborted', 'AbortError'); };
  check();
  const {default: Hls, FetchLoader} = await import('hls.js');
@@ -26,3 +29,29 @@ export async function attachHls(media: HTMLVideoElement, url: string, signal: Ab
   hls.loadSource(url);
  });
 }
+
+// videoSoundPreference
+const key='lime-video-muted';
+const event='lime:video-sound-change';
+let fallback=true;
+function readVideoMuted():boolean{
+ try{const value=localStorage.getItem(key);return value===null?true:value!=='false';}catch{return fallback;}
+}
+function setVideoMuted(muted:boolean):void{
+ fallback=muted;
+ try{localStorage.setItem(key,String(muted));}catch{/* Retain the choice in this session if storage is disabled. */}
+ if(typeof window!=='undefined')window.dispatchEvent(new Event(event));
+}
+function subscribe(change:()=>void){
+ const storage=(e:StorageEvent)=>{if(e.key===key||e.key===null)change();};
+ window.addEventListener(event,change);window.addEventListener('storage',storage);
+ return()=>{window.removeEventListener(event,change);window.removeEventListener('storage',storage);};
+}
+function useVideoMutedPreference(){
+ return [useSyncExternalStore(subscribe,readVideoMuted,()=>true),setVideoMuted] as const;
+}
+
+export { attachHls };
+export { readVideoMuted };
+export { setVideoMuted };
+export { useVideoMutedPreference };

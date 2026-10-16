@@ -32,7 +32,7 @@ Deno.serve(async request=>{
       return Response.json(await loadGeoMapPins(jobs,Deno.env.get('FLICKR_API_KEY')),{headers});
     }
     if(mode==='map-geo-detail')return Response.json({post:await loadGeoMapDetail(input.id,Deno.env.get('FLICKR_API_KEY'))},{headers});
-    if(mode==='twitter-search')return Response.json(await loadTwitterSearch(input.query,input.feed,input.offset),{headers});
+    if(mode==='twitter-search')return Response.json(await loadTwitterSearch(input.query,input.feed,input.offset,input.limit),{headers});
     if(mode==='bluesky')return Response.json({data:await loadBlueskySearch(input.endpoint,input.params)},{headers});
     if(mode==='misskey')return Response.json({data:await loadMisskey(input.endpoint,input.params)},{headers});
     if(input.mode==='image'){

@@ -1,9 +1,11 @@
+import {useTrendViews} from '@/hooks/useTrendViews';
+import { readTrendViews, recordTrendDeliveries } from "@/hooks/useTrendViews";
 import {createTwitterTrendCursor,getTwitterTrendPage,type TwitterTrendCursor} from '@/api/twitter-trends';
 import { SuspensionNotice } from '@/components/account/AccountSuspension';
 import {isTimelinePost,isLimeNoteTimelinePost,showTimelineEmpty} from "@/lib/timelinePaging";
 import {useListFeed} from '@/hooks/useLists';
-import {useTopicFeed} from '@/hooks/useTopicFeed';
-import {isFeedTabValue,feedTabTopic,useTimelineTabs,type FeedTabValue} from '@/lib/timelineTabs';
+import { useTopicFeed } from "@/hooks/useTopics";
+import { isFeedTabValue, feedTabTopic, useTimelineTabs, type FeedTabValue } from "@/components/feed/TimelineTabBar";
 import { RefreshCw, Sparkles, Loader2 } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
@@ -14,7 +16,7 @@ import {useAuth} from '@/hooks/useAuth';
 import { PostComposer } from '@/components/feed/PostComposer';
 import { PostCard } from '@/components/feed/PostCard';
 import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
-import { useTimelineContinuation } from '@/hooks/useTimelineContinuation';
+import { useTimelineContinuation } from "@/hooks/useRecommendationImages";
 import { useTimelineFeed } from '@/hooks/useTimelineFeed';
 import { useIsPWA, TIMELINE_PAGINATION_MARGIN } from "@/hooks/use-mobile";
 import { supabase } from '@/lib/supabase';
@@ -243,16 +245,20 @@ export default function Feed() {
     following: [],
     trending: [],
   });
-  // --- トレンドタブ(Twitter・トピック別・いいね1,000件以上)用の状態 ---
+  // --- トレンドタブ(Twitter・トピック別の人気投稿)用の状態 ---
   const [trendingPosts, setTrendingPosts] = useState<PostWithAuthor[]>([]);
   const [trendingLoading, setTrendingLoading] = useState(false);
+  const [trendingError,setTrendingError]=useState(false);
   const [trendingHasMore, setTrendingHasMore] = useState(true);
   const trendingLoadingRef = useRef(false);
   const trendingRequestIdRef = useRef(0);
   const trendingCursorRef = useRef<TwitterTrendCursor | null>(null);
   const trendingHasMoreRef = useRef(true);
   const trendingControllerRef=useRef<AbortController|null>(null);
-  useEffect(()=>()=>{trendingRequestIdRef.current++;trendingControllerRef.current?.abort();trendingLoadingRef.current=false;},[user?.id]);
+  const [trendingPageCount,setTrendingPageCount]=useState(0);
+  const trendingReserve=useRef<{cursor:TwitterTrendCursor;controller:AbortController;promise:ReturnType<typeof getTwitterTrendPage>}|null>(null);
+  const clearTrendingReserve=()=>{trendingReserve.current?.controller.abort();trendingReserve.current=null;};
+  useEffect(()=>()=>{trendingRequestIdRef.current++;trendingControllerRef.current?.abort();clearTrendingReserve();trendingLoadingRef.current=false;},[user?.id]);
 
   const selectedList=activeTab.startsWith('list:')?activeTab.slice(5):undefined;
   const listFeed=useListFeed(selectedList);
@@ -275,7 +281,7 @@ export default function Feed() {
 
   const [recommendationScrollIntent,setRecommendationScrollIntent]=useState(0);
   useEffect(()=>{
-    if(!isRankedTab)return;
+    if(!isRankedTab&&activeTab!=='trending')return;
     let lastGestureEvent=0;
     const scrollIntent=(event:Event)=>{
       if(event instanceof WheelEvent&&event.deltaY<=0)return;
@@ -322,7 +328,7 @@ export default function Feed() {
   const hasPosts=allPosts.length>0;
 
 
-  // トレンドは明示したトピックとTwitterのいいね1,000件以上の条件だけで取得する。
+  // トレンドは明示したトピックとTwitterの人気順の候補から取得する。
   // reset=true で1ページ目からやり直し(タブ初回表示・引っ張って更新時)、
   // reset=false で「もっと読み込む」として続きを取得する。
   const loadTrendingPosts = useCallback(async (reset = false) => {
@@ -333,17 +339,23 @@ export default function Feed() {
     const controller=new AbortController();trendingControllerRef.current=controller;
     trendingLoadingRef.current = true;
     setTrendingLoading(true);
+    setTrendingError(false);
 
     if (reset) {
-      setTrendingPosts([]);
+      clearTrendingReserve();
       trendingCursorRef.current = null;
       trendingHasMoreRef.current = true;
       setTrendingHasMore(true);
     }
 
+    let cancelWarm:(()=>void)|undefined;
     try {
       const cursor=trendingCursorRef.current??createTwitterTrendCursor(topicPreferences??{followed:[],dismissed:[]});
-      const page=await getTwitterTrendPage(cursor,controller.signal);
+      const warm=trendingReserve.current;
+      const matches=warm?.cursor===cursor&&!warm.controller.signal.aborted;
+      if(matches){trendingReserve.current=null;cancelWarm=()=>warm.controller.abort();controller.signal.addEventListener('abort',cancelWarm,{once:true});}
+      else clearTrendingReserve();
+      const page=await (matches?warm.promise:getTwitterTrendPage(cursor,controller.signal,readTrendViews(user?.id??null)));
 
       if (requestId !== trendingRequestIdRef.current) return;
 
@@ -351,7 +363,10 @@ export default function Feed() {
       trendingHasMoreRef.current = Boolean(page.next);
       setTrendingHasMore(trendingHasMoreRef.current);
 
-      const normalized = page.posts;
+      const viewed=readTrendViews(user?.id??null);
+      const normalized = page.posts.filter(post=>!viewed.has(post.id));
+      recordTrendDeliveries(normalized.map(post=>post.id),user?.id??null);
+      setTrendingPageCount(count=>count+1);
 
       setTrendingPosts((current) => {
         const base = reset ? [] : current;
@@ -370,11 +385,12 @@ export default function Feed() {
       if(controller.signal.aborted)return;
       console.error('Fetch trending twitter posts failed:', error);
       if (requestId === trendingRequestIdRef.current) {
-        if(reset)setTrendingPosts([]);
-        trendingHasMoreRef.current = false;
-        setTrendingHasMore(false);
+        // A failed fetch is not an exhausted source. Keep visible cards and
+        // resume a failed continuation on the next scroll gesture.
+        setTrendingError(true);
       }
     } finally {
+      if(cancelWarm)controller.signal.removeEventListener('abort',cancelWarm);
       if (requestId === trendingRequestIdRef.current) {
         trendingLoadingRef.current = false;
         trendingControllerRef.current=null;
@@ -382,6 +398,19 @@ export default function Feed() {
       }
     }
   }, [user?.id,topicPreferences]);
+
+  useEffect(()=>{
+    if(activeTab!=='trending'||trendingLoading||trendingError||trendingReserve.current)return;
+    const cursor=trendingCursorRef.current;if(!cursor||!trendingPosts.length)return;
+    const controller=new AbortController();
+    const promise=getTwitterTrendPage(cursor,controller.signal,readTrendViews(user?.id??null));
+    trendingReserve.current={cursor,controller,promise};
+    // Consume the prepared page once when scrolling reaches the next batch.
+    void promise.catch(()=>{});
+  },[activeTab,trendingLoading,trendingError,trendingPageCount,user?.id]);
+  useEffect(()=>{if(activeTab!=='trending')clearTrendingReserve();},[activeTab]);
+
+  useTrendViews(activeTab==='trending',user?.id??null);
 
   const trendingScope=JSON.stringify([user?.id??null,topicPreferences?.followed??[],topicPreferences?.dismissed??[]]);
   const loadedTrendingScope=useRef<string|null>(null);
@@ -902,12 +931,7 @@ export default function Feed() {
         if (activeTab === 'trending') {
           await loadTrendingPosts(true);
         } else if(isRankedTab){
-<<<<<<< HEAD
-          if(selectedTopic)await queryClient.resetQueries({queryKey:['feed','topic',user?.id??null,selectedTopic]});
-          else await queryClient.invalidateQueries({queryKey:['feed','recommended']});
-=======
           await queryClient.resetQueries({queryKey:['feed','topic',user?.id??null,selectedTopic]});
->>>>>>> 374490cc (“update23”)
         } else {
           await Promise.all([
             queryClient.invalidateQueries({ queryKey: ['posts'] }),
@@ -979,16 +1003,8 @@ export default function Feed() {
     };
   }, [showIncomingPostInAllVisibleFeeds]);
 
-  useEffect(() => {
-    // トレンドタブは既存のトレンド専用ページングだけを進める。
-    if (activeTab === 'trending') {
-      if (inView && trendingHasMore && !trendingLoading) {
-        void loadTrendingPosts(false);
-      }
-      return;
-    }
-
-  }, [activeTab,inView,trendingHasMore,trendingLoading,loadTrendingPosts]);
+  const fetchNextTrendingPage=useCallback(()=>loadTrendingPosts(false),[loadTrendingPosts]);
+  useTimelineContinuation({enabled:activeTab==='trending',inView,hasNextPage:trendingHasMore,isFetching:trendingLoading,isFetchNextPageError:trendingError,automaticPaused:false,scrollIntent:recommendationScrollIntent,pageCount:trendingPageCount,fetchNextPage:fetchNextTrendingPage});
   useTimelineContinuation({enabled:activeTab!=='trending',inView,hasNextPage:!!hasNextPage,isFetching,isFetchNextPageError,automaticPaused:isRankedTab&&rankedFeed.automaticPaused,scrollIntent:recommendationScrollIntent,pageCount:data?.pages.length??0,fetchNextPage});
 
   useLayoutEffect(() => {
@@ -1462,6 +1478,7 @@ export default function Feed() {
     () => allPosts.slice(virtualRange.start, virtualRange.end).map((post) => (
       <div
         key={`${activeTab}-${post.id}`}
+        data-lime-trend-post={activeTab==='trending'?post.id:undefined}
         data-lime-recommendation-post={isRankedTab ? recommendationIdentity(post) : undefined}
         data-lime-recommendation-fingerprint={isRankedTab ? recommendationFingerprint(post) : undefined}
         className={shouldPlayInitialFloatAnimation&&firstAnimatedPostIds.current?.has(post.id) ? 'animate-float-up' : ''}
@@ -1496,11 +1513,7 @@ export default function Feed() {
       ? 'まだ投稿がありません'
       : activeTab === 'following'
         ? 'フォロー中の投稿はありません'
-<<<<<<< HEAD
-        : selectedList?'リストのメンバーの投稿がまだありません':isRankedTab ? selectedTopic?'このトピックの投稿がまだありません':'' : 'トレンドの投稿がまだありません';
-=======
         : selectedList?'リストのメンバーの投稿がまだありません':isRankedTab ? 'このトピックの投稿がまだありません' : 'トレンドの投稿がまだありません';
->>>>>>> 374490cc (“update23”)
 
   return (
     <div
@@ -1738,17 +1751,13 @@ export default function Feed() {
           </div>
         )}
 
-        {isError && activeTab !== 'trending' && allPosts.length === 0 && (
+        {(activeTab==='trending'?trendingError:isError) && allPosts.length === 0 && (
           <div className="rounded-3xl border border-destructive/20 bg-destructive/5 p-6 text-center">
             <p className="text-sm text-destructive font-bold">読み込みに失敗しました。</p>
           </div>
         )}
 
-<<<<<<< HEAD
-        {showTimelineEmpty(isInitialLoading,isBusyLoadingMore,isError,allPosts.length,activeTab) && (
-=======
         {showTimelineEmpty(isInitialLoading,isBusyLoadingMore,isError,allPosts.length,activeTab) && (activeTab!=='trending'||!trendingHasMore) && (
->>>>>>> 374490cc (“update23”)
           <div className="rounded-3xl border border-dashed border-border/50 bg-card/40 p-10 text-center text-muted-foreground">
             {emptyStateMessage}
           </div>

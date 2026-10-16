@@ -1,4 +1,5 @@
-import {displayUsername} from '@/lib/displayUsername';
+import { ProviderVerificationBadge } from "@/components/common/OfficialBadge";
+import { displayUsername } from "@/lib/format";
 import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 import { AtSign, CalendarDays, Globe2, Info, MapPin } from 'lucide-react';
 import { useParams } from 'react-router-dom';
@@ -26,7 +27,7 @@ export default function AccountAboutPage() {
             <Avatar className="h-20 w-20"><AvatarImage src={user.avatarUrl} alt="" /><AvatarFallback>{(user.displayName || user.username).slice(0, 1)}</AvatarFallback></Avatar>
             <div className="mt-3 flex max-w-full items-center justify-center gap-1 px-4">
               <h2 className="min-w-0 break-all text-center text-xl font-bold">{user.displayName || user.username}</h2>
-              {user.isPrivate && <PrivateAccountBadge/>}{user.isOfficial && <img src={`${import.meta.env.BASE_URL}verified.png`} alt="Official" className="h-[1.25em] w-[1.25em] shrink-0 translate-y-[1px]" loading="eager" />}
+              {user.isPrivate && <PrivateAccountBadge/>}<ProviderVerificationBadge verification={user.providerVerification} className="h-5 w-5 shrink-0"/>{user.isOfficial && <img src={`${import.meta.env.BASE_URL}verified.png`} alt="Official" className="h-[1.25em] w-[1.25em] shrink-0 translate-y-[1px]" loading="eager" />}
             </div>
             <p className="mt-1 text-base text-muted-foreground break-all px-4">@{displayUsername(user.username)}</p>
           </div>

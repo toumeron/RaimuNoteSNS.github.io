@@ -1,12 +1,12 @@
-import {displayUsername} from '@/lib/displayUsername';
-import {usePrivateMediaUrl} from './PrivateMediaImage';
-import {useVideoMutedPreference} from '@/lib/videoSoundPreference';
+import { displayUsername } from "@/lib/format";
+import { usePrivateMediaUrl } from "@/components/profile/ProfileMediaPreview";
+import { useVideoMutedPreference } from "@/lib/hlsPlayback";
 import {resolvePrivateMediaUrl} from '@/lib/privateMediaFetch';
 import {getTwitterVideoPage,type TwitterVideoCursor} from '@/api/twitter-videos';
 import {twitterReplyUrl} from '@/lib/fxTwitter';
-import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
+import { ProviderVerificationBadge } from "@/components/common/OfficialBadge";
 import {VideoLightboxPlayer} from './VideoLightboxPlayer';
-import {videoSelections,videoSwipeDirection,mergeVideoQueue} from './videoSequence';
+import { videoSelections, videoSwipeDirection, mergeVideoQueue } from "@/lib/mediaThumbnail";
 import { PostPoll } from '@/components/feed/PostPoll';
 import {useCachedChatImage} from '@/lib/chatImageCache';
 import {forwardRef,type ImgHTMLAttributes} from 'react';
@@ -34,7 +34,7 @@ import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import type { PostWithAuthor } from '@/types';
 import { MEDIA_VIEWER_EVENT, type MediaViewerSelection } from './openMediaViewer';
 import './media-lightbox.css';
-import { containSize, clampPan, focalPan, pinchZoom } from './mediaGeometry';
+import { containSize, clampPan, focalPan, pinchZoom } from "@/lib/mediaThumbnail";
 
 const CachedLightboxImage=forwardRef<HTMLImageElement,ImgHTMLAttributes<HTMLImageElement>&{account?:string}>(({src,account,...props},ref)=>{const resolved=usePrivateMediaUrl(src);const cached=useCachedChatImage(resolved??'',account);return <img {...props} ref={ref} src={cached||undefined}/>});
 

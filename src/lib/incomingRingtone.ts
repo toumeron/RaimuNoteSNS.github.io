@@ -1,5 +1,5 @@
 import { createSpaceMusic } from './spaceMusic';
-import { getAudioPlaybackContext, unlockAudioPlayback } from './audioPlayback';
+import { getAudioPlaybackContext, unlockAudioPlayback } from "@/lib/callTranscription";
 let music: Promise<AudioBuffer> | undefined;
 function loadMusic(ctx: AudioContext): Promise<AudioBuffer> {
   music ??= createSpaceMusic()

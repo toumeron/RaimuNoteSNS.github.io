@@ -1,22 +1,31 @@
-import { useAutoPagination } from '@/hooks/use-mobile';
-import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
-import { ReviewStars } from './ReviewStars';
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Star } from 'lucide-react';
-import { toast } from 'sonner';
-import { useAuth } from '@/hooks/useAuth';
+import { useAutoPagination } from "@/hooks/use-mobile";
+import { PrivateAccountBadge } from "@/components/common/OfficialBadge";
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Star } from "lucide-react";
+import { toast } from "sonner";
+import { useAuth } from "@/hooks/useAuth";
 import { accountReviewsKey, getAccountReviews, setAccountReviewLike, submitAccountReview } from "@/api/users";
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { LikeButton } from '@/components/post/LikeButton';
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button, Input, Textarea } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { LikeButton } from "@/components/post/LikeButton";
 
+// ReviewStars
+function ReviewStars({ value }: { value: number }) {
+  return <span className="inline-flex shrink-0 text-orange-500" role="img" aria-label={`5つ星のうち${value}`}>
+    {[1,2,3,4,5].map(star => <span key={star} className="relative h-5 w-5">
+      <Star className="absolute inset-0 h-5 w-5" />
+      <span className="absolute inset-y-0 left-0 overflow-hidden" style={{width:`${Math.max(0, Math.min(1, value-star+1))*100}%`}}>
+        <Star className="h-5 w-5 fill-current" />
+      </span>
+    </span>)}
+  </span>;
+}
 
-export function AccountReviewsTab({ profileId }: { profileId: string }) {
+// AccountReviewsTab
+function AccountReviewsTab({ profileId }: { profileId: string }) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const key = accountReviewsKey(profileId);
@@ -98,3 +107,6 @@ export function AccountReviewsTab({ profileId }: { profileId: string }) {
     </Dialog>
   </section>;
 }
+
+export { AccountReviewsTab };
+export { ReviewStars };

@@ -1,12 +1,12 @@
-import {displayUsername} from '@/lib/displayUsername';
-import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
-import {twitterAvatarUrl} from '@/lib/twitterAvatar';
+import { displayUsername } from "@/lib/format";
+import { ProviderVerificationBadge } from "@/components/common/OfficialBadge";
+import { twitterAvatarUrl } from "@/components/ui/avatar";
 import {ProfileListPicker} from '@/components/lists/ListDialogs';
 import {canDirectMessage,openDirectConversation} from '@/api/directMessages';
 import { getKnownFollowers } from '@/api/follows';
 import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 import {cloudExternalHandles,initialiseExternalAccounts,setExternalAccountOwner} from '@/lib/externalAccounts';
-import { ReviewStars } from '@/components/reviews/ReviewStars';
+import { ReviewStars } from "@/components/reviews/AccountReviewsTab";
 import { accountReviewsKey, getAccountReviews } from "@/api/users";
 import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
 import { ArrowLeft, CalendarDays, MapPin, Link2, MoreHorizontal, MessageCircle, Radio, Search, Share2, X } from 'lucide-react';
@@ -445,6 +445,7 @@ export function ProfileHeader({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 {me&&<DropdownMenuItem onSelect={()=>setListPickerOpen(true)}>リストから追加／削除</DropdownMenuItem>}
+                {!isBlueskyProfile&&<DropdownMenuItem onSelect={()=>navigate(`/u/${encodeURIComponent(user.username)}/watch-history`)}>視聴履歴</DropdownMenuItem>}
 
                 <DropdownMenuItem onClick={handleCopyLink}>
                   <Link2 className="mr-2 h-4 w-4" />

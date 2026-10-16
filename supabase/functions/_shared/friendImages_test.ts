@@ -1,5 +1,5 @@
 import {findFriendPhoto,appendFriendPhoto,readFriendPhoto,stripImageQuery,type FriendPhoto} from './friendImages.ts';
-import {parseFriendResponse} from './friendReaction.ts';
+import { parseFriendResponse } from "./chatContext.ts";
 const photo:FriendPhoto={url:'https://upload.wikimedia.org/wikipedia/commons/a/a1/Noodles.jpg',sourceUrl:'https://commons.wikimedia.org/wiki/File:Noodles.jpg',title:'Noodles.jpg',artist:'Photographer',license:'CC BY-SA 4.0'};
 const assert=(value:unknown)=>{if(!value)throw Error('Assertion failed')};
 Deno.test('optional image decision preserves casual replies and hides streamed tags',()=>{

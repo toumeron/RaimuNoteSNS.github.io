@@ -72,3 +72,20 @@ describe('avatar connectors', () => {
   });
 
 });
+
+it('does not connect quoted avatars or nested chains to the outer conversation',()=>{
+ vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}});
+ vi.spyOn(Element.prototype,'getBoundingClientRect').mockImplementation(function(){
+  const index=this.getAttribute('data-avatar-index');const top=index===null?100:120+Number(index)*200;
+  return {top,bottom:top+44,left:index==='1'?200:10,width:44} as DOMRect;
+ });
+ const view=render(<ReplyChain>
+  <article data-lime-thread-item><div data-lime-thread-avatar data-avatar-index="0"/>
+   <article data-lime-embedded data-lime-thread-item><div data-lime-thread-avatar data-avatar-index="1"/></article>
+  </article>
+  <article data-lime-thread-item><div data-lime-thread-avatar data-avatar-index="2"/></article>
+  <ReplyChain><div data-lime-thread-avatar data-avatar-index="3"/></ReplyChain>
+ </ReplyChain>);
+ const lines=view.container.querySelector('[data-lime-reply-chain]')!.querySelectorAll(':scope > [data-lime-thread-lines] > line');
+ expect(lines).toHaveLength(1);expect(lines[0].getAttribute('x1')).toBe('22');expect(lines[0].getAttribute('y2')).toBe('412');
+});

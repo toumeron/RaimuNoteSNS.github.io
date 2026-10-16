@@ -7,16 +7,10 @@ creator-linked twitter media, then runs the pinned q8 CLIP vision model on a
 Node.js CPU. It never uses post text to decide an image's subject, and never
 uploads account likes, follows, feedback or tokens. The client retains the same
 visual topic, positive/negative similarity, creator diversity and seen-post
-<<<<<<< HEAD
-checks. Browser model loading is unnecessary when the catalog contains enough
-eligible candidates; unmatched history images and catalog misses still use the
-existing inference path.
-=======
 checks. The production build includes a verified public fallback catalog so opening a
 feed does not wait for the remote catalog or an image-model download. Personal
 history images hydrate after the first cards render; catalog misses retain the
 bounded inference path.
->>>>>>> 374490cc (“update23”)
 
 The generated local file `public/recommendations/catalog.json` is ignored by Git
 and detected by Vite at startup. Restart Vite after generating it for the first
@@ -24,15 +18,10 @@ time. The public-only GitHub Actions workflow prepares a fresh artifact hourly
 and stores it on `generated/recommendations`, separate from `main` and Pages.
 It requires no cloud inference API or separate server. Failed collection,
 insufficient provider/creator diversity and stale artifacts fail closed. The
-<<<<<<< HEAD
-frontend build uses `VITE_RECOMMENDATION_CATALOG_URL`; catalog entries expire
-after two hours. `RECOMMENDATION_CATALOG_FEEDS` and
-=======
 frontend build uses `VITE_RECOMMENDATION_CATALOG_URL` for asynchronous refresh;
 fresh remote artifacts expire after two hours. A verified build fallback remains
 available for at most seven days, and failures never overwrite it with an empty
 result. Local Vite startup detects the artifact automatically. `RECOMMENDATION_CATALOG_FEEDS` and
->>>>>>> 374490cc (“update23”)
 `RECOMMENDATION_CATALOG_AUTHORS` are optional public source configuration;
 defaults cover the existing artwork feeds and creators' own linked accounts.
 

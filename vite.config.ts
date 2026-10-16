@@ -1,6 +1,9 @@
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
+import {createClient} from '@supabase/supabase-js';
+import {AnnictCatalog} from './supabase/functions/_shared/animeHistory';
+import {createAnimeHistoryHandler} from './supabase/functions/anime-history/handler';
 import {existsSync} from 'node:fs';
 import { VitePWA } from "vite-plugin-pwa";
 
@@ -34,6 +37,35 @@ export default defineConfig(({ mode }) => {
     },
   },
   plugins: [
+    {
+      name: 'lime-anime-history-local-api',
+      configureServer(server) {
+        const token=loadEnv(mode,path.resolve('supabase'),'ANNICT_').ANNICT_ACCESS_TOKEN;
+        const anon=env.VITE_SUPABASE_ANON_KEY;
+        const limits=new Map<string,{until:number;count:number}>();
+        const client=(request:Request)=>createClient(supabaseUrl!,anon,{global:{headers:{Authorization:request.headers.get('authorization')??''}},auth:{persistSession:false,autoRefreshToken:false}});
+        const handler=createAnimeHistoryHandler({
+          catalog:new AnnictCatalog(token??''),client,
+          authenticate:async(request,readOnly)=>{
+            const auth=request.headers.get('authorization')??'';
+            if(!/^Bearer \S+$/i.test(auth))return Response.json({error:'ログインしてください'},{status:401});
+            const db=client(request),{data,error}=await db.auth.getUser(auth.slice(7));
+            if(error||!data.user)return Response.json({error:'ログインしてください'},{status:401});
+            if(!readOnly){const check=await db.rpc('is_account_suspended',{account_id:data.user.id});if(check.error)return Response.json({error:'アカウントの状態を確認できません'},{status:503});if(check.data)return Response.json({error:'凍結中は視聴履歴を変更できません'},{status:403});}
+            return {userId:data.user.id};
+          },
+          limit:async actor=>{
+            if(limits.size>1000)limits.clear();let value=limits.get(actor);if(!value||value.until<Date.now()){value={until:Date.now()+300000,count:0};limits.set(actor,value);}return ++value.count>100?Response.json({error:'時間をおいて再試行してください'},{status:429}):null;
+          },
+        });
+        server.middlewares.use('/RaimuNoteSNS.github.io/__lime-anime-history',async(req,res)=>{
+          try{const chunks:Buffer[]=[];let size=0;for await(const part of req){const chunk=Buffer.from(part);size+=chunk.length;if(size>262144){res.statusCode=413;res.end();return;}chunks.push(chunk);}
+            const request=new Request('http://localhost/__lime-anime-history',{method:req.method,headers:{authorization:String(req.headers.authorization??''),'content-type':'application/json'},...(req.method==='POST'?{body:Buffer.concat(chunks)}:{})});
+            const response=await handler(request);res.statusCode=response.status;response.headers.forEach((value,key)=>res.setHeader(key,value));res.end(await response.text());
+          }catch{res.statusCode=502;res.setHeader('Content-Type','application/json');res.end(JSON.stringify({error:'Annictとの接続を確認できませんでした'}));}
+        });
+      },
+    },
     react(),
     {name:'recommendation-catalog-dev-ready',configureServer(server){
       const catalog=path.resolve('public/recommendations/catalog.json');
@@ -117,7 +149,7 @@ export default defineConfig(({ mode }) => {
           "assets/mmdAvatar-*", "assets/avatarRuntime-*",
           "assets/spaceMusicScore-*", "assets/ChatPage-*", "assets/Settings-*", "assets/MediaViewer-*",
           "assets/PostDetail-*", "assets/Profile-*",
-          "assets/recommendationVisual.worker-*", "assets/recommendationVisualInference-*", "assets/transformers*", "assets/ort-*",
+          "assets/localGemma.worker-*", "assets/recommendationVisual.worker-*", "assets/recommendationVisualInference-*", "assets/transformers*", "assets/ort-*",
           "assets/SearchPage-*", "assets/PostActivity-*", "assets/Share-*", "assets/Notifications-*",
           "assets/FollowersFollowingPage-*", "assets/SpacePage-*", "assets/NewsPage-*",
           "assets/terms-*", "assets/LimePro-*", "assets/NotFound-*",

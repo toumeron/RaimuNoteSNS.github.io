@@ -155,18 +155,12 @@ export async function loadTimelinePage(previous: TimelineCursor, sources: Timeli
 export function isTimelinePost(post:PostWithAuthor):boolean {
  return !post.replyId&&!post.replyPostId&&!post.externalReplyToId&&!(post.parentId&&!post.isQuote);
 }
-<<<<<<< HEAD
-/** Exhausted initial scans can still have a cursor; they must show an empty state. */
+/** External discovery searches cannot prove that no matching posts exist. */
 export function showTimelineEmpty(loading:boolean,fetching:boolean,error:boolean,count:number,tab?:string):boolean {
- return tab!=='recommended'&&!loading&&!fetching&&!error&&count===0;
-=======
-/** A recommendation scan is not evidence that personalized posts do not exist. */
-export function showTimelineEmpty(loading:boolean,fetching:boolean,error:boolean,count:number,tab?:string):boolean {
- return tab!=='recommended'&&!loading&&!fetching&&!error&&count===0;
+ return tab!=='recommended'&&tab!=='trending'&&!loading&&!fetching&&!error&&count===0;
 }
 
 /** Latest is LimeNote-only; a native quote may still contain an external parent. */
 export function isLimeNoteTimelinePost(post:PostWithAuthor):boolean{
  return (!post.source||post.source==='lime')&&!/^(?:bsky:|misskey:|x:)/.test(post.id);
->>>>>>> 374490cc (“update23”)
 }

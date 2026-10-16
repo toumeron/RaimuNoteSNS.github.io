@@ -47,3 +47,6 @@ tests/avatar/local-models/
 .dev.vars.*
 .wrangler/
 public/recommendations/
+
+# Packaged extension artifact; source lives in extensions/anime-history.
+extensions/anime-history.zip

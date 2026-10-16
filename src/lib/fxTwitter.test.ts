@@ -1,5 +1,9 @@
-import {afterEach,expect,it,vi} from 'vitest';
-import {mapXPost,searchX,xFeed,xPostId,xThread,xProfile} from './fxTwitter';
+import { afterEach, expect, it, vi } from "vitest";
+import { mapXPost, searchX, xFeed, xPostId, xThread, xProfile, xConversationPage, searchXPage, mapXUser, fetchTwitterPostActivity } from "@/lib/fxTwitter";
+import { twitterAvatarUrl } from "@/components/ui/avatar";
+import { fetchBlueskyPostActivity } from "@/lib/bluesky";
+
+describe("fxTwitter", () => {
 const post=(id='2110459743903084926')=>({id,type:'status',text:'アニメの動画',created_timestamp:1792080000,likes:10,reposts:3,author:{id:'783214',screen_name:'X',name:'X',avatar_url:'https://pbs.twimg.com/avatar.jpg'},media:{videos:[{url:'https://video.twimg.com/clip.mp4',thumbnail_url:'https://pbs.twimg.com/thumb.jpg',width:1920,height:1080,duration:16,format:'video/mp4'}]}});
 afterEach(()=>{vi.unstubAllGlobals();vi.restoreAllMocks();});
 it('normalizes X URLs and rejects lookalike hosts and invalid IDs',()=>{
@@ -58,4 +62,80 @@ it('removes a phantom continuation when the source declares zero replies',async(
  const {xConversationPage}=await import('./fxTwitter');
  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({code:200,status:{...post('880003'),replies:0},replies:[post('880004')],cursor:{bottom:'phantom'}}))));
  const result=await xConversationPage('x:880003');expect(result.totalReplies).toBe(0);expect(result.cursor).toBeNull();
+});
+
+it('omits automatic reply recipients while retaining reply routing and deliberate inline mentions',()=>{
+ const mapped=mapXPost({...post('880011'),text:'@recipient @another 返信本文 @friend',replying_to:{screen_name:'recipient',status:'880010'}})!;
+ expect(mapped.content).toBe('返信本文 @friend');expect(mapped.externalReplyToId).toBe('x:880010');expect(mapped.externalReplyToUsername).toBe('recipient@twitter.com');
+ expect(mapXPost({...post('880012'),text:'@friend 通常の呼びかけ'})!.content).toBe('@friend 通常の呼びかけ');
+});
+});
+
+describe("fxTwitter.conversation", () => {
+const raw=(id:string,parent?:string)=>({id,type:'status',text:id,created_at:'2026-10-15T00:00:00Z',author:{id:'123',screen_name:'artist',verification:{verified:true,type:'individual'}},replying_to:parent?{screen_name:'artist',status:parent}:null});
+afterEach(()=>vi.unstubAllGlobals());
+it('keeps ancestors separate from replies and pages through replies without duplicates',async()=>{
+ const fetcher=vi.fn().mockImplementation((url:string)=>Promise.resolve(new Response(JSON.stringify(url.includes('cursor=next')?{code:200,status:raw('102','101'),thread:[raw('100'),raw('101','100'),raw('102','101')],replies:[raw('104','103')],cursor:{bottom:'next'}}:{code:200,status:raw('102','101'),thread:[raw('100'),raw('101','100'),raw('102','101'),raw('103','102')],replies:[raw('103','102'),raw('103','102')],cursor:{bottom:'next'}}))));vi.stubGlobal('fetch',fetcher);
+ const first=await xConversationPage('x:102');expect(first.post?.externalReplyParent?.id).toBe('x:101');expect(first.post?.externalReplyParent?.externalReplyParent?.id).toBe('x:100');expect(first.replies.map(post=>post.id)).toEqual(['x:103']);expect(first.cursor).toBe('next');
+ const next=await xConversationPage('x:102','next');expect(next.replies.map(post=>post.id)).toEqual(['x:104']);expect(next.cursor).toBeNull();
+ expect(fetcher.mock.calls[0][0]).toContain('/conversation/102');
+});
+it('retains parent context from grouped profile replies and keeps cursors',async()=>{
+ vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({code:200,results:[{type:'thread',statuses:[raw('111'),raw('112','111')]}],cursor:{bottom:'more'}}))));
+ const page=await xFeed({actor:'artist@twitter.com',filter:'posts_with_replies'});expect(page.posts[1].externalReplyParent?.id).toBe('x:111');expect(page.cursor).toBe('more');
+});
+it('uses the correct Twitter search feed, full operators, pagination and cancellation',async()=>{
+ const fetcher=vi.fn().mockImplementation(()=>Promise.resolve(new Response(JSON.stringify({code:200,results:[raw('121')],cursor:{bottom:'after'}}))));vi.stubGlobal('fetch',fetcher);const signal=new AbortController().signal;
+ const page=await searchXPage('anime from:artist@twitter.com filter:videos',{cursor:'before',feed:'top',signal});const url=new URL(fetcher.mock.calls[0][0]);expect(url.searchParams.get('q')).toBe('anime from:artist filter:videos');expect(url.searchParams.get('feed')).toBe('top');expect(url.searchParams.get('cursor')).toBe('before');expect(page.cursor).toBe('after');
+});
+it('uses the author timeline for an author-only search even when global search is unavailable',async()=>{
+ const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({code:200,results:[raw('131')],cursor:{bottom:null}})));vi.stubGlobal('fetch',fetcher);
+ expect((await searchXPage('(from:uniqueartist)')).posts[0].id).toBe('x:131');expect(fetcher.mock.calls[0][0]).toContain('/profile/uniqueartist/statuses?');
+});
+it('reports upstream search unavailability instead of silently claiming there are no posts',async()=>{
+ vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({code:404,results:[]}),{status:404})));await expect(searchXPage('unavailable-global-query')).rejects.toThrow('LimeNoteへのログインが必要です');
+});
+it('uses the conversation endpoint through the shared external thread loader too',async()=>{
+ const {fetchBlueskyPostThread}=await import("@/lib/bluesky");
+ const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({code:200,status:raw('151'),thread:[raw('151')],replies:[raw('152','151')]})));vi.stubGlobal('fetch',fetcher);
+ const thread=await fetchBlueskyPostThread('x:151');expect(thread.replies.map(post=>post.id)).toEqual(['x:152']);expect(fetcher.mock.calls[0][0]).toContain('/conversation/151');
+});
+it('ends reply pagination when the response contains only the post and ancestors even if a cursor is present',async()=>{
+ vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({code:200,status:raw('171','170'),thread:[raw('170'),raw('171','170')],replies:[],cursor:{bottom:'phantom-next'}}))));
+ const page=await xConversationPage('x:171');expect(page.replies).toEqual([]);expect(page.cursor).toBeNull();expect(page.post?.externalReplyParent?.id).toBe('x:170');
+});
+});
+
+describe("twitterAvatar", () => {
+it.each(['normal','bigger','mini','200x200','400x400'])('uses the full avatar instead of the %s thumbnail',size=>{const url=`https://pbs.twimg.com/profile_images/123/avatar_${size}.jpg`;expect(twitterAvatarUrl(url)).toBe('https://pbs.twimg.com/profile_images/123/avatar.jpg');expect(mapXUser({id:'123',screen_name:'artist',avatar_url:url}).avatarUrl).toBe('https://pbs.twimg.com/profile_images/123/avatar.jpg');});
+it('does not modify other providers, media or lookalike domains',()=>{for(const url of ['https://example.com/profile_images/123/avatar_normal.jpg','https://pbs.twimg.com.evil.test/profile_images/123/avatar_normal.jpg','https://pbs.twimg.com/media/photo_200x200.jpg','https://pbs.twimg.com/profile_images/123/avatar.jpg'])expect(twitterAvatarUrl(url)).toBe(url);});
+});
+
+describe("externalPostActivity", () => {
+afterEach(()=>vi.unstubAllGlobals());
+it('reads Bluesky likes, reposters and quotes using the post URI and provider cursors',async()=>{
+ const uri='at://did:plc:owner/app.bsky.feed.post/record';
+ const actor={did:'did:plc:actor',handle:'actor.bsky.social',displayName:'Actor',avatar:'https://cdn.bsky.app/avatar.jpg'};
+ const fetcher=vi.fn().mockImplementation((url:string)=>Promise.resolve(new Response(JSON.stringify(url.includes('getLikes')?{likes:[{actor}],cursor:'likes-next'}:url.includes('getRepostedBy')?{repostedBy:[actor]}:{posts:[{uri:'at://did:plc:actor/app.bsky.feed.post/quote',cid:'cid',author:actor,record:{text:'Quote',createdAt:'2026-10-17T00:00:00Z'},indexedAt:'2026-10-17T00:00:00Z'}]}))));vi.stubGlobal('fetch',fetcher);
+ const likes=await fetchBlueskyPostActivity('bsky:'+uri,'likes');expect(likes.users[0].username).toBe('actor.bsky.social');expect(likes.cursor).toBe('likes-next');
+ expect((await fetchBlueskyPostActivity('bsky:'+uri,'reposts','previous')).users[0].id).toBe(actor.did);
+ expect((await fetchBlueskyPostActivity('bsky:'+uri,'quotes')).posts[0].content).toBe('Quote');
+ expect(new URL(fetcher.mock.calls[0][0]).searchParams.get('uri')).toBe(uri);expect(new URL(fetcher.mock.calls[1][0]).searchParams.get('cursor')).toBe('previous');
+});
+it('maps twitter quotes/reposters and retains provider pagination without ever fetching likes',async()=>{
+ const author={id:'123',screen_name:'actor',name:'Actor',avatar_url:'https://pbs.twimg.com/avatar_normal.jpg'};
+ const fetcher=vi.fn().mockImplementation((url:string)=>Promise.resolve(new Response(JSON.stringify(url.includes('/quotes')?{code:200,results:[{id:'90102',type:'status',text:'Quote',author}],cursor:{bottom:'more'}}:{code:200,results:[{...author,type:'profile'}],cursor:{bottom:'previous'}}))));vi.stubGlobal('fetch',fetcher);
+ const quotes=await fetchTwitterPostActivity('x:90101','quotes');expect(quotes.posts[0].id).toBe('x:90102');expect(quotes.cursor).toBe('more');
+ const users=await fetchTwitterPostActivity('x:90101','reposts','previous');expect(users.users[0].username).toBe('actor@twitter.com');expect(users.cursor).toBeNull();expect(fetcher.mock.calls.every(call=>!call[0].includes('/likes'))).toBe(true);
+});
+
+it('does not interpret an unavailable twitter activity endpoint as an empty activity list',async()=>{
+ vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({code:404,results:[],cursor:{}}),{status:404})));
+ await expect(fetchTwitterPostActivity('x:90103','quotes')).rejects.toThrow('404');
+});
+
+it('does not expose an empty twitter reposter cursor to automatic paging',async()=>{
+ vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({code:200,results:[],cursor:{bottom:'empty-next'}}))));
+ const page=await fetchTwitterPostActivity('x:90104','reposts');expect(page.users).toEqual([]);expect(page.cursor).toBeNull();
+});
 });

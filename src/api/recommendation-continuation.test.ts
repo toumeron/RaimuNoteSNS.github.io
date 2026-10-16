@@ -1,5 +1,5 @@
 import {beforeEach,expect,it,vi} from 'vitest';
-import {getRecommendationContinuation as readContinuation} from './recommendation-continuation';
+import { getRecommendationContinuation as readContinuation } from "@/api/topics";
 import {getBalancedRecommendationPage} from './balanced-recommendations';
 import {createRecommendationCursor} from './recommendations';
 vi.mock('./balanced-recommendations',()=>({getBalancedRecommendationPage:vi.fn()}));
@@ -37,11 +37,8 @@ it('prepares a production reserve of 20 verified cards instead of stopping at si
  read.mockResolvedValueOnce(page(Array.from({length:8},(_,i)=>'first-'+i),1)).mockResolvedValueOnce(page(Array.from({length:8},(_,i)=>'second-'+i),2)).mockResolvedValueOnce(page(Array.from({length:4},(_,i)=>'third-'+i),3));
  const result=await readContinuation(cursor,null);expect(result.posts).toHaveLength(20);expect(read).toHaveBeenCalledTimes(3);expect(read.mock.calls.map(call=>call[3]?.pageSize)).toEqual([20,12,4]);expect(result.next?.pageKey).toBe(3);
 });
-<<<<<<< HEAD
-=======
 
 it.each(['twitterError','visualError'])('continues a healthy advancing cursor after a failed source: %s',async key=>{
  read.mockResolvedValueOnce(page(['a'],1,{[key]:new Error('unavailable')})).mockResolvedValueOnce(page(['b','c','d','e','f'],2));
  const result=await getRecommendationContinuation(cursor,null);expect(result.posts).toHaveLength(6);expect(read).toHaveBeenCalledTimes(2);
 });
->>>>>>> 374490cc (“update23”)

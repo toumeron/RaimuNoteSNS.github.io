@@ -1,4 +1,4 @@
-import { UnreadBadge } from "@/components/notifications/NotificationTabs";
+import { UnreadBadge } from "@/components/search/SearchExploreTabs";
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';

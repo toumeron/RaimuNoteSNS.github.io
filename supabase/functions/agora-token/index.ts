@@ -1,6 +1,14 @@
-import { authenticate } from '../_shared/security.ts';
-import { corsHeaders } from './_shared/cors.ts';
+import { authenticate } from "./../_shared/security.ts";
 
+// cors
+// supabase/functions/_shared/cors.ts
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
+
+// index
 // This obsolete endpoint accepted arbitrary channels and caller-selected UIDs.
 // All active Spaces use space-token, which checks membership and publishing rights.
 Deno.serve(async (req: Request) => {
@@ -10,3 +18,5 @@ Deno.serve(async (req: Request) => {
   if (actor instanceof Response) return actor;
   return Response.json({error: 'Use the membership-checked space-token endpoint'}, {status: 410, headers: {...corsHeaders, 'Cache-Control': 'no-store'}});
 });
+
+export { corsHeaders };

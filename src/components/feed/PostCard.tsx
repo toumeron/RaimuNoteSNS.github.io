@@ -1,10 +1,13 @@
-import {displayUsername} from '@/lib/displayUsername';
+import { useMinuteTick } from "@/hooks/useViewportWidth";
+import { useTimelinePortalTheme } from "@/hooks/useViewportWidth";
+import {useViewportWidth} from '@/hooks/useViewportWidth';
+import { displayUsername } from "@/lib/format";
 import {canShowPostLinkPreview,hasAttachedPostVideo} from '@/lib/postPresentation';
 import {PostSourceLabel} from '@/components/post/PostSourceLabel';
 import {isDeferredPrivateMedia} from '@/lib/privateMediaFetch';
-import {PrivateMediaImage} from '@/components/media/PrivateMediaImage';
-import {ExternalPostDetails} from '@/components/feed/ExternalPostDetails';
-import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
+import { PrivateMediaImage } from "@/components/profile/ProfileMediaPreview";
+import { ExternalPostDetails } from "@/components/feed/QuotedPost";
+import { ProviderVerificationBadge } from "@/components/common/OfficialBadge";
 import {PostVideoPlayer} from '@/components/video/PostVideoPlayer';
 import {PostPoll} from './PostPoll';
 import { ExternalReplyCard } from "@/components/post/CommentList";
@@ -16,14 +19,14 @@ import {ExternalLikeButton} from '@/components/post/ExternalLikeButton';
 import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
 import {isIosPwa} from '@/lib/utils';
 import { openMediaViewer } from '@/components/media/openMediaViewer';
-import {HighlightPostMenuButton} from '@/components/post/HighlightPostMenuButton';
-import {PinPostMenuButton} from "@/components/post/HighlightPostMenuButton";
+import { HighlightPostMenuButton } from "@/components/post/BookmarkButton";
+import { PinPostMenuButton } from "@/components/post/BookmarkButton";
 import {LinkPreviewCard,useLinkPreview} from '@/components/post/LinkPreviewCard';
 import {OfflineBookmarkContext} from '@/components/stickers/OfflineBookmarkContext';
 import { renderStickerText } from "@/components/stickers/Stickers";
 import { hasStickers } from '@/lib/stickers';
 import { SpacePostCard } from '@/components/spaces/SpacePostCard';
-import { spaceLinkIn } from '@/lib/spaceLinks';
+import { spaceLinkIn } from "@/lib/postPresentation";
 import '@/components/post/post-actions.css';
 import { BookmarkButton } from '@/components/post/BookmarkButton';
 import { RepostButton } from '@/components/feed/RepostButton';
@@ -47,11 +50,7 @@ import { supabase } from '@/lib/supabase';
 import dayjs from 'dayjs';
 import { useMembershipStatus } from '@/hooks/useMembership';
 
-import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@/components/ui/hover-card";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/popover";
 import { FollowButton } from '../profile/FollowButton';
 import { useFollowStats } from '@/hooks/useProfile';
 import { useBlueskySession } from '@/hooks/useBlueskySession';
@@ -877,45 +876,6 @@ function observeCardIntersection(element: Element, callback: CardIntersectionCal
   };
 }
 
-type SharedTickListener = () => void;
-
-const sharedTickListeners = new Set<SharedTickListener>();
-let sharedTickIntervalId: number | null = null;
-
-function subscribeToSharedTick(listener: SharedTickListener) {
-  sharedTickListeners.add(listener);
-
-  if (sharedTickIntervalId === null && typeof window !== 'undefined') {
-    sharedTickIntervalId = window.setInterval(() => {
-      sharedTickListeners.forEach((registeredListener) => registeredListener());
-    }, 60000);
-  }
-
-  return () => {
-    sharedTickListeners.delete(listener);
-
-    if (sharedTickListeners.size === 0 && sharedTickIntervalId !== null) {
-      window.clearInterval(sharedTickIntervalId);
-      sharedTickIntervalId = null;
-    }
-  };
-}
-
-// バグ修正: タイムラインの最新/フォロー中/トレンドタブを切り替えると、
-// Feed.tsx側で各投稿カードの key に activeTab を含めているため
-// (key={`${activeTab}-${post.id}`})、タブ切り替えのたびに PostCard が
-// 新規マウントされる。以前は isMobile の初期値が useState(false) だったため、
-// 新規マウントされる瞬間は必ず「PC版レイアウト」で最初の1フレームが描画され、
-// 直後の useEffect 内の updateMobileState() 実行でモバイル版に切り替わる
-// 二段階レンダーになっていた。これがタブ切り替え時に一瞬だけPC版のカードが
-// 見える(残像に見える)バグの直接の原因。
-// PostCardSkeleton.tsx と同じ考え方で、useState の lazy initializer と
-// useRef の初期値をマウント時点の実際の画面幅から決めることで、
-// 新規マウント時から常に正しいレイアウトで描画されるようにする。
-function getIsMobileViewport() {
-  return typeof window !== 'undefined' && window.innerWidth < 640;
-}
-
 function PostCardComponent({ post, timelineGlass = false, thread = false, embedded = false, repostedByLabel = post.externalRepostedBy?.displayName, pinned = false, mediaPresentation, onMediaReply, onMediaLikeChange, mediaDownload,onNotInterested }: { post: PostWithAuthor; timelineGlass?: boolean; thread?: boolean; embedded?: boolean; repostedByLabel?: string; pinned?:boolean; mediaPresentation?: 'actions' | 'menu'; onMediaReply?: () => void; onMediaLikeChange?: (state:{liked:boolean;count:number})=>void; mediaDownload?:()=>void;onNotInterested?:(post:PostWithAuthor)=>Promise<void> }) {
   const [editLocationOpen,setEditLocationOpen] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
@@ -931,7 +891,6 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [failedUrls, setFailedUrls] = useState<string[]>([]);
   const navigate = useNavigate();
-  const [, setTick] = useState(0);
   const isBlueskyPost = isBlueskyPostLike(post);
   const blueskyPostUrl = getBlueskyPostUrl(post as { blueskyUrl?: string; author?: { username?: string }; id?: string });
   const blueskyProfileUrl = isBlueskyPost
@@ -957,12 +916,9 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
   // マウント直後の最初の描画から実際の画面幅を反映したレイアウトになるため、
   // 「新規マウント時に一瞬だけPC版が見えてしまう」二段階レンダーを防げる。
   const desktopLayout = useDesktopLayout();
-  const [isMobile, setIsMobile] = useState(() => getIsMobileViewport());
+  const isMobile = useViewportWidth(640);
   const useMobilePresentation = isMobile || desktopLayout;
-  const [timelinePortalTheme, setTimelinePortalTheme] = useState<'light' | 'dark'>(() => {
-    if (typeof window === 'undefined') return 'dark';
-    return localStorage.getItem('lime_timeline_visual_theme') === 'light' ? 'light' : 'dark';
-  });
+  const timelinePortalTheme=useTimelinePortalTheme(timelineGlass);
   const [singleImageNaturalSize, setSingleImageNaturalSize] = useState<{ width: number; height: number } | null>(null);
   const [isCardActive, setIsCardActive] = useState(false);
 
@@ -971,8 +927,8 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
   // ここが false 固定のままだと、初回の resize イベントで
   // 「実際は変化していないのに isMobileRef と実際の値がズレて見える」
   // 不整合の芽になるため、isMobile 側と同じ関数で初期化する。
-  const isMobileRef = useRef(getIsMobileViewport());
-  const resizeRafRef = useRef<number | null>(null);
+  const isMobileRef = useRef(isMobile);
+  isMobileRef.current = isMobile;
   const [profileHoverTarget, setProfileHoverTarget] = useState<ProfileHoverTarget>(null);
   const profileHoverOpenTimerRef = useRef<number | null>(null);
   const profileHoverCloseTimerRef = useRef<number | null>(null);
@@ -1092,40 +1048,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
     };
   }, []);
 
-  useEffect(() => {
-    // 修正: 初期値は isMobile/isMobileRef のどちらも既に実測値で
-    // 初期化済みなので、マウント直後の updateMobileState() 即時呼び出しは
-    // 不要(むしろ、初期値が既に正しいのに再度 setIsMobile を呼ぶことで
-    // 不要な再レンダーが発生する余地を作ってしまう)。resize 監視の
-    // セットアップだけを行う。
-    const updateMobileState = () => {
-      const nextIsMobile = window.innerWidth < 640;
-      if (isMobileRef.current === nextIsMobile) return;
 
-      isMobileRef.current = nextIsMobile;
-      setIsMobile(nextIsMobile);
-    };
-
-    const checkMobile = () => {
-      if (resizeRafRef.current !== null) return;
-
-      resizeRafRef.current = window.requestAnimationFrame(() => {
-        resizeRafRef.current = null;
-        updateMobileState();
-      });
-    };
-
-    window.addEventListener('resize', checkMobile);
-
-    return () => {
-      if (resizeRafRef.current !== null) {
-        window.cancelAnimationFrame(resizeRafRef.current);
-        resizeRafRef.current = null;
-      }
-
-      window.removeEventListener('resize', checkMobile);
-    };
-  }, []);
 
   useEffect(() => {
     if (isBlueskyPost) {
@@ -1187,16 +1110,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
     };
   }, [mediaPresentation, isBlueskyPost, isCardActive, showMenu, showPicker, showShareMenu, showLimeDropPanel, post.id]);
 
-  useEffect(() => {
-    const shouldKeepLiveWork = !!mediaPresentation || isCardActive || showMenu || showPicker || showShareMenu || showLimeDropPanel;
-    if (!shouldKeepLiveWork) return;
-
-    const unsubscribe = subscribeToSharedTick(() => {
-      setTick(tick => tick + 1);
-    });
-
-    return unsubscribe;
-  }, [mediaPresentation, isCardActive, showMenu, showPicker, showShareMenu, showLimeDropPanel]);
+  useMinuteTick(!!mediaPresentation || isCardActive || showMenu || showPicker || showShareMenu || showLimeDropPanel);
 
   useEffect(() => {
     const shouldKeepStateWarm = !!mediaPresentation || isCardActive || showMenu || showPicker || showShareMenu || showLimeDropPanel;
@@ -1212,44 +1126,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
     };
   }, [mediaPresentation, isCardActive, showMenu, showPicker, showShareMenu, showLimeDropPanel, post.id]);
 
-  useEffect(() => {
-    if (!timelineGlass) return;
 
-    const syncTimelinePortalTheme = (theme?: string) => {
-      const nextTheme = theme === 'light' ? 'light' : 'dark';
-      setTimelinePortalTheme(nextTheme);
-    };
-
-    syncTimelinePortalTheme(localStorage.getItem('lime_timeline_visual_theme') ?? undefined);
-
-    const handleThemeEvent = (event: Event) => {
-      const detail = (event as CustomEvent<{ theme?: string }>).detail;
-      syncTimelinePortalTheme(detail?.theme);
-    };
-
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key === 'lime_timeline_visual_theme') {
-        syncTimelinePortalTheme(event.newValue ?? undefined);
-      }
-    };
-
-    window.addEventListener('timeline-visual-theme-changed', handleThemeEvent as EventListener);
-    window.addEventListener('storage', handleStorage);
-
-    let channel: BroadcastChannel | null = null;
-    if ('BroadcastChannel' in window) {
-      channel = new BroadcastChannel('timeline-visual-theme');
-      channel.onmessage = (event) => {
-        syncTimelinePortalTheme(event.data?.theme);
-      };
-    }
-
-    return () => {
-      window.removeEventListener('timeline-visual-theme-changed', handleThemeEvent as EventListener);
-      window.removeEventListener('storage', handleStorage);
-      channel?.close();
-    };
-  }, [timelineGlass]);
 
 
 
@@ -2740,7 +2617,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
 
       {mediaPresentation ? <article ref={cardRootRef} data-lime-media-post-actions={mediaPresentation} className="relative w-full">{mediaPresentation === 'menu' ? postMenu : postActions}</article> : <article
         data-lime-post-card
-        data-lime-thread-item={thread || undefined}
+        data-lime-thread-item={thread && !embedded || undefined}
         data-lime-embedded={embedded || undefined}
         style={embedded ? { width: '100%', maxWidth: '100%', margin: 0 } : undefined}
         ref={cardRootRef}
@@ -2757,7 +2634,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
         }
       >
         {isMobile && !timelineGlass && !thread && (
-          <div className="pointer-events-none absolute bottom-0 left-1/2 w-screen -translate-x-1/2 border-b border-border/60" />
+          <div data-lime-post-divider className="pointer-events-none absolute bottom-0 left-1/2 w-screen -translate-x-1/2 border-b border-border/60" />
         )}
 
         {pinned && !embedded && <div data-lime-pinned-label className="mb-1 flex items-center gap-3 text-sm font-semibold text-muted-foreground"><span className="inline-flex w-11 shrink-0 justify-end"><Pin className="h-4 w-4" fill="currentColor"/></span><span>固定</span></div>}
@@ -2773,7 +2650,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
               <Link
                 to={`/u/${post.author.username}`}
                 className="inline-flex h-11 w-11 shrink-0 items-center justify-center"
-                data-lime-thread-avatar={thread || undefined}
+                data-lime-thread-avatar={thread && !embedded || undefined}
                 data-lime-post-avatar
                 onMouseEnter={() => openProfileHover('avatar')}
                 onMouseLeave={closeProfileHover}

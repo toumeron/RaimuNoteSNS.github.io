@@ -1,13 +1,13 @@
-import {composerMediaDrop,isVideoAttachment} from '@/lib/composerMediaDrop';
+import { composerMediaDrop, isVideoAttachment } from "@/components/feed/ComposerIcon";
 import {preparePostVideo,type PreparedVideo} from '@/lib/postVideo';
 import {PostVideoPlayer} from '@/components/video/PostVideoPlayer';
-import {ScheduleControl,ScheduledPostNotice} from '@/components/feed/ScheduleControl';
+import { ScheduleControl, ScheduledPostNotice } from "@/components/feed/PostPoll";
 import { allowAccountWrite } from '@/lib/accountSuspension';
 import { AccountSuspensionFeedback } from '@/components/account/AccountSuspension';
-import {useAutoTextarea} from '@/hooks/useAutoTextarea';
+import { useAutoTextarea } from "@/hooks/useViewportWidth";
 import {ComposerIcon} from '@/components/feed/ComposerIcon';
 import {PollIcon} from "@/components/feed/ComposerIcon";
-import {PollEditor,newPollDraft} from '@/components/feed/PollEditor';
+import { PollEditor, newPollDraft } from "@/components/feed/PostPoll";
 import {validatePollDraft,type PollDraft} from '@/lib/polls';
 import { MediaLightboxRoot } from '@/components/media/MediaLightbox';
 import {DraftEmojiText} from "@/components/stickers/Stickers";
@@ -21,8 +21,8 @@ import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useSta
 import { createPortal } from "react-dom";
 import { useSearchParams } from 'react-router-dom';
 import { Toaster as Sonner } from "@/components/ui/sonner";
-import { Toaster } from "@/components/ui/toaster";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { Toaster } from "@/components/ui/toast";
+import { TooltipProvider } from "@/components/ui/popover";
 import { AuthProvider, useAuth } from "@/hooks/useAuth"; 
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ThemeProvider } from "next-themes"; 
@@ -41,6 +41,7 @@ const PostActivity = lazy(() => import("./pages/PostActivity"));
 const Share = lazy(() => import("./pages/Share"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const Notifications = lazy(() => import("./pages/Notifications"));
+const WatchHistory = lazy(() => import("./pages/WatchHistory"));
 const AccountAboutPage = lazy(() => import("./pages/AccountAboutPage"));
 const FollowersFollowingPage = lazy(() => import("./pages/FollowersFollowingPage"));
 const SpacePage = lazy(() => import("./pages/SpacePage"));
@@ -61,7 +62,7 @@ function RouteLoading() {
 import { Loader2, X, AtSign, Hash, Globe, Users, PenSquare, ArrowLeft, ChevronDown } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
+import { Textarea } from "@/components/ui/button";
 import { useCreatePost } from '@/hooks/useFeed';
 import { getPostById } from '@/api/posts';
 import { cn } from '@/lib/utils';
@@ -76,33 +77,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-// --- スクロール方向検知フック ---
-const useScrollDirection = () => {
-  const [isVisible, setIsVisible] = useState(true);
-  const [lastScrollY, setLastScrollY] = useState(0);
-
-  useEffect(() => {
-    const controlNavbar = () => {
-      const currentScrollY = window.scrollY;
-      const threshold = 100; // 判定を緩くするためにしきい値を増加
-
-      // 差分がしきい値以下の場合は何もしない（微細な揺れを無視）
-      if (Math.abs(currentScrollY - lastScrollY) < threshold) return;
-
-      if (currentScrollY > lastScrollY && currentScrollY > 100) {
-        setIsVisible(false); // 下スクロールで非表示
-      } else if (currentScrollY < lastScrollY) {
-        setIsVisible(true);  // 上スクロールで表示
-      }
-      setLastScrollY(currentScrollY);
-    };
-
-    window.addEventListener('scroll', controlNavbar);
-    return () => window.removeEventListener('scroll', controlNavbar);
-  }, [lastScrollY]);
-
-  return isVisible;
-};
+import { useScrollDirection } from "@/hooks/useViewportWidth";
 
 // --- モバイル幅判定フック ---
 // Tailwind の `md:` ブレークポイント(768px)と合わせている。
@@ -2701,7 +2676,9 @@ export const PostOverlay = ({ isOpen, onClose, initialQuotedPost, mapLocation }:
 // 影響を受けないようにすることで、iPhoneのPWAやモバイル幅Chromeで表示されない不具合を解消する。
 // 非表示状態は scale/opacity に加えて pointer-events も切ることで、
 // 見えない状態のボタンがタップを奪ってしまう副作用も防ぐ。
-const FloatingComposeButton = ({ hidden, onOpen }: { hidden: boolean; onOpen: () => void }) => {
+const FloatingComposeButton = ({ hidden: routeHidden, onOpen }: { hidden: boolean; onOpen: () => void }) => {
+  const visible=useScrollDirection();
+  const hidden=routeHidden||!visible;
   if (typeof document === 'undefined') return null;
 
   return createPortal(
@@ -2740,7 +2717,6 @@ const AppContent = () => {
     setPostModalOpen(false);
     setOverlayQuotedPost(undefined);
   }, []);
-  const isFABVisible = useScrollDirection();
   const { pathname } = useLocation();
 
   // 大文字小文字の違い（/CHAT または /chat）を許容するため、小文字に変換して判定
@@ -2752,7 +2728,7 @@ const isPostDetailPage = lowerPath.includes("/post/");
 const isMediaPage = lowerPath === "/media" || lowerPath.startsWith("/media/");
 
 // いずれかの非表示対象ページであるか、またはスクロールによって非表示にするか
-const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage || isMediaPage || isPostDetailPage || lowerPath === '/topics' || lowerPath === '/maps' || /\/messages(?:\/|$)/.test(lowerPath);
+const shouldHideFAB = isChatPage || isAuthPage || isTermsPage || isMediaPage || isPostDetailPage || lowerPath === '/topics' || lowerPath === '/maps' || /\/messages(?:\/|$)/.test(lowerPath);
 
   return (
     <PostOverlayContext.Provider value={openPostOverlay}>
@@ -2782,6 +2758,8 @@ const shouldHideFAB = !isFABVisible || isChatPage || isAuthPage || isTermsPage |
             <Route path="/post/:id" element={<Suspense fallback={<RouteLoading />}><PostDetail /></Suspense>} />
             <Route path="/post/:postId/activity" element={<Suspense fallback={<RouteLoading />}><PostActivity /></Suspense>} />
             <Route path="/u/:username" element={<Suspense fallback={<RouteLoading />}><Profile /></Suspense>} />
+            <Route path="/watch-history" element={<Suspense fallback={<RouteLoading />}><WatchHistory /></Suspense>} />
+            <Route path="/u/:username/watch-history" element={<Suspense fallback={<RouteLoading />}><WatchHistory /></Suspense>} />
             <Route path="/u/:username/about" element={<Suspense fallback={<RouteLoading />}><AccountAboutPage /></Suspense>} />
             <Route path="/u/:username/followers_following" element={<Suspense fallback={<RouteLoading />}><FollowersFollowingPage /></Suspense>} />
             <Route path="/settings" element={<Suspense fallback={<RouteLoading />}><Settings /></Suspense>} />

@@ -1,5 +1,5 @@
 import {render,screen,cleanup} from '@testing-library/react';import{expect,it,afterEach}from'vitest';
-import {ExternalPostDetails}from'./ExternalPostDetails';import{ProviderVerificationBadge}from'@/components/common/ProviderVerificationBadge';
+import { ExternalPostDetails } from "@/components/feed/QuotedPost";import { ProviderVerificationBadge } from "@/components/common/OfficialBadge";
 import type{PostWithAuthor}from'@/types';
 afterEach(cleanup);
 it('does not render view, repost, quote or bookmark summary text',()=>{const {container}=render(<ExternalPostDetails post={{externalDetails:{views:4811,reposts:0,quotes:0,bookmarks:0}} as PostWithAuthor}/>);expect(container).toBeEmptyDOMElement();});

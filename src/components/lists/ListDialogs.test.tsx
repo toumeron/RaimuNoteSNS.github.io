@@ -33,3 +33,17 @@ it('keeps list editing above page controls and follows the keyboard viewport',()
   view.unmount();
  }finally{if(original)Object.defineProperty(window,'visualViewport',original);else delete window.visualViewport;}
 });
+it('allows new members below 500 and disables only additions at capacity',()=>{
+ const original=list.members;
+ try{
+  const member={id:'new',username:'new',displayName:'New',avatarUrl:'',bio:''};
+  list.members=Array.from({length:499},(_,i)=>({id:`member-${i}`,username:`member-${i}`,displayName:`Member ${i}`}));
+  const view=mount(<ProfileListPicker member={member} onClose={vi.fn()}/>);
+  expect(screen.getByRole('checkbox')).toBeEnabled();view.unmount();
+  list.members=[...list.members,{id:'new',username:'new',displayName:'New'}];
+  const full=mount(<ProfileListPicker member={{...member,id:'another'}} onClose={vi.fn()}/>);
+  expect(screen.getByRole('checkbox')).toBeDisabled();full.unmount();
+  mount(<ProfileListPicker member={member} onClose={vi.fn()}/>);
+  expect(screen.getByRole('checkbox')).toBeEnabled();
+ }finally{list.members=original;}
+});

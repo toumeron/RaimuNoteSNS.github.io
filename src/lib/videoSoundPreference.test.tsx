@@ -1,6 +1,6 @@
 import {act,cleanup,renderHook} from '@testing-library/react';
 import {afterEach,beforeEach,expect,it} from 'vitest';
-import {readVideoMuted,useVideoMutedPreference} from './videoSoundPreference';
+import { readVideoMuted, useVideoMutedPreference } from "@/lib/hlsPlayback";
 beforeEach(()=>localStorage.clear());afterEach(cleanup);
 it('shares the last explicit mute choice across players and reopening',()=>{
  const first=renderHook(()=>useVideoMutedPreference()),second=renderHook(()=>useVideoMutedPreference());

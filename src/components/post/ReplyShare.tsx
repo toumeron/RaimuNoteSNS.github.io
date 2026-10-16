@@ -1,4 +1,4 @@
-import {displayUsername} from '@/lib/displayUsername';
+import { displayUsername } from "@/lib/format";
 import type { PostWithAuthor } from '@/types';
 import '@/components/post/post-actions.css';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';

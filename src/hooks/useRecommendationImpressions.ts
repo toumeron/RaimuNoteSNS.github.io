@@ -1,4 +1,5 @@
-import { recordLearnedRecommendation } from '@/api/learned-recommendations';
+import {observePostElements} from '@/lib/observePostElements';
+import { recordLearnedRecommendation } from "@/api/topics";
 import { useEffect } from 'react';
 import { recordRecommendationImpression } from '@/lib/recommendations';
 
@@ -24,25 +25,18 @@ export function useRecommendationImpressions(enabled:boolean,viewerId:string|nul
         },1500));
       }
     },{threshold:[0,.05,.1,.15,.2,.4,.6,.8,1]});
-    const scan=()=>{
-      for(const element of observed.keys()) if(!element.isConnected) {observer.unobserve(element);observed.delete(element);clear(element);}
-      for(const element of document.querySelectorAll('[data-lime-recommendation-post]')) {
-        const id=element.getAttribute('data-lime-recommendation-post');
-        if(observed.has(element)&&observed.get(element)===id)continue;
-        clear(element);observer.unobserve(element);observed.set(element,id);observer.observe(element);
-      }
-      for(const element of timers.keys()) if(!element.isConnected) clear(element);
-    };
+    const stopTracking=observePostElements('data-lime-recommendation-post',element=>{
+      const id=element.getAttribute('data-lime-recommendation-post');
+      if(observed.has(element)&&observed.get(element)===id)return;
+      clear(element);observer.unobserve(element);observed.set(element,id);observer.observe(element);
+    },element=>{observer.unobserve(element);observed.delete(element);clear(element);});
     const visibility=()=>{
       if(document.hidden) for(const element of timers.keys()) clear(element);
       else {observer.disconnect();document.querySelectorAll('[data-lime-recommendation-post]').forEach(element=>observer.observe(element));}
     };
-    const mutations=new MutationObserver(scan);
-    mutations.observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['data-lime-recommendation-post']});
     document.addEventListener('visibilitychange',visibility);
-    scan();
     return ()=>{
-      observer.disconnect();mutations.disconnect();
+      observer.disconnect();stopTracking();
       document.removeEventListener('visibilitychange',visibility);
       for(const element of timers.keys()) clear(element);
     };

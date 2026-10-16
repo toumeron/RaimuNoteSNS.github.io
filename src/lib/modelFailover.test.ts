@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { requestModelWithFailover, CLOUDFLARE_FALLBACK_MODEL } from '../../supabase/functions/_shared/modelFailover';
+import { requestModelWithFailover, CLOUDFLARE_FALLBACK_MODEL } from "./../../supabase/functions/_shared/chatContext.ts";
 const config = { token: 'test-cf-token', accountId: 'a'.repeat(32) };
 const json = () => new Response(JSON.stringify({choices:[{message:{content:'返答'}}]}));
 const stream = (text='返答') => new Response(`data: ${JSON.stringify({choices:[{delta:{content:text}}]})}\n\ndata: [DONE]\n\n`);
@@ -30,7 +30,7 @@ it('does not loop or expose secrets if both providers fail, and honors cancellat
   await expect(requestModelWithFailover('groq-key',{},config,controller.signal)).rejects.toHaveProperty('name','AbortError');expect(fetcher).toHaveBeenCalledOnce();
 });
 
-import {parseFriendResponse} from '../../supabase/functions/_shared/friendReaction';
+import { parseFriendResponse } from "./../../supabase/functions/_shared/chatContext.ts";
 const visibleAnswer={acceptText:(text:string)=>!!parseFriendResponse(text).reply.trim()};
 it('fails over a completed tag-only stream before delivering it to LimeAI',async()=>{
  const fetcher=vi.fn().mockResolvedValueOnce(stream('<image-query>fixture noodles</image-query>')).mockResolvedValueOnce(stream('<image-query>noodles</image-query>料理についての返答です。'));vi.stubGlobal('fetch',fetcher);

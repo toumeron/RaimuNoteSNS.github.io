@@ -4,7 +4,7 @@ import { MemoryRouter, Link, Route, Routes } from 'react-router-dom';
 import { CallSessionProvider } from '../../src/components/chat/CallSessionProvider';
 import ChatPage from '../../src/pages/ChatPage';
 import '../../src/index.css';
-import { IncomingFriendCall } from '../../src/components/chat/IncomingFriendCall';
+import { IncomingFriendCall } from "@/components/chat/CallSessionProvider";
 import { FriendProfile } from '../../src/components/chat/FriendProfile';
 import { findAssistant } from '../../src/lib/aiFriends';
 import { defaultAvatarUrl } from '../../src/lib/aiFriends';

@@ -1,4 +1,4 @@
-import {displayUsername} from '@/lib/displayUsername';
+import { displayUsername } from "@/lib/format";
 import {Avatar,AvatarImage,AvatarFallback} from '@/components/ui/avatar';
 import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 import {useAutoPagination} from '@/hooks/use-mobile';
@@ -10,7 +10,7 @@ import {Lock,Pin,Plus,Loader2} from 'lucide-react';
 import {useAuth} from '@/hooks/useAuth';
 import {useLists,useList,useListFeed,useInvalidateLists} from '@/hooks/useLists';
 import {deleteList,setSavedList,searchLists,type UserList} from '@/api/lists';
-import {saveTimelineTabs,useTimelineTabs,type FeedTabValue} from '@/lib/timelineTabs';
+import { saveTimelineTabs, useTimelineTabs, type FeedTabValue } from "@/components/feed/TimelineTabBar";
 import {ListArt,ListEditor,ListMembers,ListDialog} from '@/components/lists/ListDialogs';
 import {Button} from '@/components/ui/button';
 import {PostCard} from '@/components/feed/PostCard';

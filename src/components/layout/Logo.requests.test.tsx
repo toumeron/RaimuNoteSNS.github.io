@@ -16,3 +16,14 @@ it('shares the entitlement request between logos and repeated focus events witho
  state.viewer='other';view.rerender(<QueryClientProvider client={client}><MemoryRouter><Logo/><Logo/></MemoryRouter></QueryClientProvider>);
  await waitFor(()=>expect(state.read).toHaveBeenCalledTimes(2));view.unmount();client.clear();
 });
+
+it('updates entitlement changes through events without a 100ms polling timer',async()=>{
+ const interval=vi.spyOn(window,'setInterval');
+ const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
+ const view=render(<QueryClientProvider client={client}><MemoryRouter><Logo/></MemoryRouter></QueryClientProvider>);
+ await waitFor(()=>expect(view.getByText('Pro')).toBeInTheDocument());
+ await act(async()=>{window.dispatchEvent(new CustomEvent('limepro-status-changed',{detail:{hasLimePro:false}}));});
+ expect(view.getByText('Note')).toBeInTheDocument();
+ expect(interval.mock.calls.filter(call=>call[1]===100)).toHaveLength(0);
+ view.unmount();client.clear();interval.mockRestore();
+});

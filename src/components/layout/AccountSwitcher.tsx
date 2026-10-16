@@ -1,5 +1,5 @@
 import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
-import { UnreadBadge } from "@/components/notifications/NotificationTabs";
+import { UnreadBadge } from "@/components/search/SearchExploreTabs";
 import { useState, type ReactElement } from 'react';
 import { Check, CircleEllipsis, Loader2, Plus, X } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';

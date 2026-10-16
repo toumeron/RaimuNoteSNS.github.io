@@ -1,12 +1,14 @@
-import {matchingTopics,type TopicId} from './topics';
-import {recommendationText} from './recommendationSignals';
-import {recommendationIdentity,recommendationFingerprint} from "@/lib/recommendationSignals";
-import {recommendationIsDismissed,recommendationTerms,type RecommendationPreferences} from './recommendations';
-import {recommendationIsEligible} from "@/lib/recommendationSignals";
-import type {PostWithAuthor} from '@/types';
+import { matchingTopics, type TopicId } from "@/lib/topics";
+import { recommendationText, recommendationIdentity, recommendationFingerprint, recommendationIsEligible } from "@/lib/recommendationSignals";
+import { recommendationIsDismissed, recommendationTerms, type RecommendationPreferences } from "@/lib/recommendations";
+import { type PostWithAuthor } from "@/types/index";
+import { type RecommendationCursor } from "@/api/recommendations";
+import { type getBalancedRecommendationPage } from "@/api/balanced-recommendations";
+import { restoreRecommendationVisuals, visualMatchesRecommendationTopic } from "@/lib/recommendationVisual";
 
+// topicRecommendations
 /** Content evidence outranks retrieval hints; a creator's bio is not post evidence. */
-export function topicPostRelevance(post:PostWithAuthor,topic:TopicId):number {
+function topicPostRelevance(post:PostWithAuthor,topic:TopicId):number {
  const visual=post.recommendationVisual;
  if(visual?.kind!=='unknown'&&visual?.topics.length&&!visual.topics.includes(topic)&&!matchingTopics(post.content).includes(topic))return 0;
  if(visual?.topics.includes(topic)&&visual.confidence>=.6)return 3;
@@ -14,7 +16,7 @@ export function topicPostRelevance(post:PostWithAuthor,topic:TopicId):number {
  return post.recommendationTopics?.includes(topic)?1:0;
 }
 /** Topic-only ranking. It deliberately does not consume the general feed's delivered history. */
-export function rankTopicPosts(posts:PostWithAuthor[],topic:TopicId,preferences:RecommendationPreferences,now:number):PostWithAuthor[] {
+function rankTopicPosts(posts:PostWithAuthor[],topic:TopicId,preferences:RecommendationPreferences,now:number):PostWithAuthor[] {
  const ids=new Set<string>(),fingerprints=new Set<string>();
  const score=(post:PostWithAuthor)=>{
   const age=Math.max(0,now-Date.parse(post.createdAt))/3600000;
@@ -29,3 +31,56 @@ export function rankTopicPosts(posts:PostWithAuthor[],topic:TopicId,preferences:
   ids.add(id);if(fingerprint)fingerprints.add(fingerprint);return true;
  }).sort((a,b)=>score(b)-score(a)||b.createdAt.localeCompare(a.createdAt)||recommendationIdentity(a).localeCompare(recommendationIdentity(b)));
 }
+
+// recommendationPaging
+function preserveRecommendationHistory(cursor:RecommendationCursor,shown:PostWithAuthor[]):RecommendationCursor {
+ const seen=[...new Set([...cursor.seen,...shown.flatMap(post=>[recommendationIdentity(post),...(recommendationFingerprint(post)?[recommendationFingerprint(post)!]:[])])])];
+ const allCounts={...(cursor.authorCounts??{})},shownCounts:Record<string,number>={};
+ for(const post of shown)shownCounts[post.userId]=(shownCounts[post.userId]??0)+1;
+ for(const [actor,count] of Object.entries(shownCounts))allCounts[actor]=Math.max(allCounts[actor]??0,count);
+ const counts={...(cursor.twitterAuthorCounts??{})},handles={...(cursor.twitterAuthorHandles??{})},visibleCounts:Record<string,number>={};
+ for(const post of shown)if(post.source==='x'||post.id.startsWith('x:')){visibleCounts[post.userId]=(visibleCounts[post.userId]??0)+1;handles[post.userId]=post.author.username;}
+ for(const [actor,count] of Object.entries(visibleCounts))counts[actor]=Math.max(counts[actor]??0,count);
+ const twitter=shown.filter(post=>post.source==='x'||post.id.startsWith('x:')).length;
+ return {...cursor,seen,authorCounts:allCounts,twitterAuthorCounts:counts,twitterAuthorHandles:handles,history:shown.slice(-20),providerTotals:{twitter,other:shown.length-twitter}};
+}
+function uniqueRecommendationPosts(posts:PostWithAuthor[],shown:PostWithAuthor[]=[]):PostWithAuthor[] {
+ const seen=new Set(shown.flatMap(post=>[recommendationIdentity(post),...(recommendationFingerprint(post)?[recommendationFingerprint(post)!]:[])]));
+ return posts.filter(post=>{
+  const id=recommendationIdentity(post),fingerprint=recommendationFingerprint(post);
+  if(seen.has(id)||fingerprint&&seen.has(fingerprint))return false;
+  seen.add(id);if(fingerprint)seen.add(fingerprint);return true;
+ });
+}
+
+// recommendationReserve
+type Page=Awaited<ReturnType<typeof getBalancedRecommendationPage>>;
+const KEY='lime-recommendation-reserve-v2';
+const MAX_AGE=120_000;
+/** Only an unconsumed, accepted reserve is persisted, scoped to the active account and sources. */
+function readRecommendationReserve(scope:string):Page|undefined{
+ try{
+  const entry=JSON.parse(sessionStorage.getItem(KEY)??'null');
+  if(!entry||entry.scope!==scope||Date.now()-entry.at>MAX_AGE||Date.now()<entry.at)return;
+  const page=entry.page;
+  if(!Array.isArray(page?.posts)||page.posts.length<20||!page.preferences?.authors||!page.preferences?.terms)return;
+  if(!page.posts.every((post:any)=>typeof post.id==='string'&&typeof post.userId==='string'&&post.author&&Array.isArray(post.imageUrls)))return;
+  if(page.next&&(!Array.isArray(page.next.remaining)||!Array.isArray(page.next.seen)||!Array.isArray(page.next.history)))return;
+  const posts=restoreRecommendationVisuals(page.posts);
+  if(posts.some(post=>{const visual=post.recommendationVisual;return !visual||['unknown','render-3d','vehicle'].includes(visual.kind)||visual.confidence<.25||visual.similarity<.24||page.preferences.followedTopics?.length&&!page.preferences.followedTopics.some((topic:any)=>visualMatchesRecommendationTopic(visual,topic));}))return;
+  return {...page,posts,preferences:{...page.preferences,visualOnly:true,allowUnverifiedMedia:false,likedSamples:restoreRecommendationVisuals(page.preferences.likedSamples??[])}};
+ }catch{return;}
+}
+function saveRecommendationReserve(scope:string,page:Page){
+ if(page.posts.length<20)return;
+ try{sessionStorage.setItem(KEY,JSON.stringify({scope,at:Date.now(),page}));}catch{}
+}
+function clearRecommendationReserve(){try{sessionStorage.removeItem(KEY);sessionStorage.removeItem('lime-recommendation-reserve-v1');}catch{}}
+
+export { topicPostRelevance };
+export { rankTopicPosts };
+export { preserveRecommendationHistory };
+export { uniqueRecommendationPosts };
+export { readRecommendationReserve };
+export { saveRecommendationReserve };
+export { clearRecommendationReserve };

@@ -1,4 +1,4 @@
-import {PrivateMediaImage} from '@/components/media/PrivateMediaImage';
+import { PrivateMediaImage } from "@/components/profile/ProfileMediaPreview";
 import { cn } from '@/lib/utils';
 
 export function PostImages({

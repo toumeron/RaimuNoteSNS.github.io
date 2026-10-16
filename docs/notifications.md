@@ -66,7 +66,7 @@ DBのPush送信トリガーは1つに整理した。専用の秘密情報をVaul
 
 - `node scripts/notifications-db-test.mjs`
 - `node --test server/*.test.mjs`
-- `npx vitest run src/api/notifications.test.ts src/lib/externalNotificationSources.test.ts src/lib/notificationDelivery.test.ts src/lib/pushWorker.test.ts`
+- `npx vitest run src/api/notifications.test.ts src/lib/externalNotificationSources.test.ts src/lib/notificationDelivery.test.ts src/lib/registerPwa.test.ts`
 - `deno test --allow-env supabase/functions/check-external-notifications/handler_test.ts`
 - `npx playwright test -c tests/profile-highlights/playwright.config.ts --workers=1`
 - `npx tsc --noEmit -p tsconfig.app.json` と `npm run build`

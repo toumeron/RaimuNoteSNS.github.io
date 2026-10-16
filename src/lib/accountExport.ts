@@ -7,7 +7,7 @@ import { supabase } from './supabase';
 import { readOfflineBookmarks } from './offlineBookmarks';
 import { savedPreviewImage } from "@/lib/linkPreview";
 import { stickerUrl, type CustomSticker } from './stickers';
-import { listModels } from './avatarModelStore';
+import { listModels } from "@/lib/avatarModels";
 type Row = Record<string, unknown>;
 export type AccountArchive = {
     version: number;

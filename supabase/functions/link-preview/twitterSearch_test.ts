@@ -6,3 +6,12 @@ Deno.test('rejects invalid queries, feeds and unbounded offsets',async()=>{for(c
 Deno.test('does not turn a changed or unavailable search response into an empty success',()=>{for(const html of ['<html>blocked</html>','<script id="__NEXT_DATA__">{}</script>']){let failed=false;try{parseTwitterSearchPage(html);}catch{failed=true;}if(!failed)throw new Error('Failure hidden');}});
 Deno.test('uses the upstream media tab for media searches instead of hydrating text-only conversation results',async()=>{const original=globalThis.fetch;globalThis.fetch=async(input)=>{const url=new URL(String(input));if(url.searchParams.get('mtype')!=='image'||url.searchParams.get('p')!=='media-test')throw new Error('Media filter missing');return new Response(html(['901','902']));};try{const page=await loadTwitterSearch('media-test','media',0);if(page.ids.length!==2)throw new Error('Missing media candidates');}finally{globalThis.fetch=original;}});
 Deno.test('recommendation media mode combines image filtering with popular results without changing normal media search',async()=>{const original=globalThis.fetch;globalThis.fetch=async(input)=>{const url=new URL(String(input));if(url.searchParams.get('mtype')!=='image'||url.searchParams.get('md')!=='h')throw new Error('Recommendation media sort missing');return new Response(html(['903','904']));};try{await loadTwitterSearch('popular-media-test','media-top',0);}finally{globalThis.fetch=original;}});
+
+Deno.test('supports twenty IDs per visible search load and preserves the next block boundary',async()=>{
+ const original=globalThis.fetch;globalThis.fetch=async()=>new Response(html(Array.from({length:40},(_,i)=>String(2000+i)),80));
+ try{
+  const first=await loadTwitterSearch('expanded-batch','top',0,20),second=await loadTwitterSearch('expanded-batch','top',20,20);
+  if(first.ids.length!==20||first.cursor!==20||second.ids.length!==20||second.ids[0]!=='2020'||second.cursor!==40)throw new Error('Expanded paging broken');
+  for(const limit of [0,21,-1,'20']){let rejected=false;try{await loadTwitterSearch('expanded-batch','top',0,limit);}catch{rejected=true;}if(!rejected)throw new Error('Invalid batch limit accepted');}
+ }finally{globalThis.fetch=original;}
+});

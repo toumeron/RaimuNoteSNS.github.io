@@ -1,4 +1,4 @@
-import {applyAccentTheme} from './lib/accentTheme';
+import { applyAccentTheme } from "@/lib/settingsSections";
 import { createRoot } from "react-dom/client";
 import { registerPwa } from "./lib/registerPwa";
 import App from "./App.tsx";

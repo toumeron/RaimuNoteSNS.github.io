@@ -1,6 +1,7 @@
-import {inlineVideoFrame} from '@/lib/inlineVideoFrame';
-import {useVideoMutedPreference} from '@/lib/videoSoundPreference';
-import {resolveExternalMp4} from '@/lib/externalVideoSource';
+import {useViewportWidth} from '@/hooks/useViewportWidth';
+import { inlineVideoFrame } from "@/lib/mediaThumbnail";
+import { useVideoMutedPreference } from "@/lib/hlsPlayback";
+import { resolveExternalMp4 } from "@/lib/mediaThumbnail";
 import {attachHls} from '@/lib/hlsPlayback';
 import {openMediaViewer} from '@/components/media/openMediaViewer';
 import type {PostWithAuthor} from '@/types';
@@ -11,9 +12,8 @@ import type {PostVideo} from '@/lib/postVideo';
 import './post-video.css';
 const clock=(seconds:number)=>`${Math.floor(Math.max(0,seconds)/60)}:${Math.floor(Math.max(0,seconds)%60).toString().padStart(2,'0')}`;
 export function PostVideoPlayer({video,postId,previewUrl,post,externalVideo,embedded=false}:{embedded?:boolean;externalVideo?:import('@/types').ExternalVideo;post?:PostWithAuthor;video:Pick<PostVideo,'duration'|'width'|'height'>;postId?:string;previewUrl?:string}){
- const [mobile,setMobile]=useState(()=>typeof window!=='undefined'&&window.innerWidth<768);
- useEffect(()=>{const query=window.matchMedia('(max-width:767px)');const update=()=>setMobile(window.innerWidth<768);query.addEventListener('change',update);return()=>query.removeEventListener('change',update);},[]);
- const compact=mobile||embedded;
+ const mobile=useViewportWidth(768);
+ const compact=mobile&&!embedded;
  const root=useRef<HTMLDivElement>(null),element=useRef<HTMLVideoElement>(null),timer=useRef<ReturnType<typeof setTimeout>>();
  useEffect(()=>{if(compact){element.current?.pause();if(externalVideo){pending.current?.abort();source.current=undefined;element.current?.removeAttribute('src');element.current?.load();}}},[compact,externalVideo?.playlist]);
  const source=useRef(previewUrl),busy=useRef(false),inside=useRef(false),keyboard=useRef(false);
@@ -67,11 +67,12 @@ export function PostVideoPlayer({video,postId,previewUrl,post,externalVideo,embe
  };
  const fullscreen=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else if(root.current?.requestFullscreen)await root.current.requestFullscreen();else (element.current as HTMLVideoElement&{webkitEnterFullscreen?:()=>void})?.webkitEnterFullscreen?.();}catch{setError('全画面表示を利用できません');}};
  const [frameWidth,frameHeight]=ratio.split('/').map(Number);
- return <div ref={root} style={full?undefined:inlineVideoFrame(frameWidth,frameHeight,mobile,embedded)} className="post-video-player mt-3 overflow-hidden rounded-2xl border border-border/60 bg-muted" onClick={e=>e.stopPropagation()} onPointerEnter={()=>{inside.current=true;reveal();}} onPointerMove={reveal} onPointerDown={()=>{keyboard.current=false;}} onPointerLeave={()=>{inside.current=false;clearTimeout(timer.current);setSettings(false);setControls(false);}} onFocusCapture={()=>{if(keyboard.current)reveal();}} onKeyDownCapture={()=>{keyboard.current=true;reveal();}} onKeyDown={e=>{if(e.target!==root.current)return;if(e.key===' '){e.preventDefault();void toggle();}}} tabIndex={0} aria-label="投稿動画">
-  <video key={`${postId??'preview'}:${previewUrl??''}`} ref={element} src={previewUrl} poster={externalVideo?undefined:poster} style={{aspectRatio:ratio}} onLoadedMetadata={e=>{const media=e.currentTarget;if(Number.isFinite(media.duration))setDuration(media.duration);if(media.videoWidth>0&&media.videoHeight>0)setRatio(`${media.videoWidth}/${media.videoHeight}`);}} playsInline muted={muted} preload="metadata" onClick={()=>void toggle()} onPlay={()=>{setPlaying(true);setStarted(true);reveal();}} onPause={()=>{setPlaying(false);setControls(inside.current||keyboard.current);}} onEnded={()=>{setPlaying(false);setControls(inside.current||keyboard.current);}} onTimeUpdate={e=>setTime(e.currentTarget.currentTime)} onError={()=>{if(source.current)setError('動画を読み込めませんでした');}}/>
+ const displayRatio=embedded&&!full&&frameHeight>frameWidth?'16/9':ratio;
+ return <div ref={root} style={{...(!full?inlineVideoFrame(frameWidth,frameHeight,mobile,embedded):{}),...(embedded?{backgroundColor:'black'}:{})}} className="post-video-player mt-3 overflow-hidden rounded-2xl border border-border/60 bg-muted" onClick={e=>e.stopPropagation()} onPointerEnter={()=>{inside.current=true;reveal();}} onPointerMove={reveal} onPointerDown={()=>{keyboard.current=false;}} onPointerLeave={()=>{inside.current=false;clearTimeout(timer.current);setSettings(false);setControls(false);}} onFocusCapture={()=>{if(keyboard.current)reveal();}} onKeyDownCapture={()=>{keyboard.current=true;reveal();}} onKeyDown={e=>{if(e.target!==root.current)return;if(e.key===' '){e.preventDefault();void toggle();}}} tabIndex={0} aria-label="投稿動画">
+  <video key={`${postId??'preview'}:${previewUrl??''}`} ref={element} src={previewUrl} poster={externalVideo?undefined:poster} style={{aspectRatio:displayRatio,objectFit:embedded&&started?'contain':'cover'}} onLoadedMetadata={e=>{const media=e.currentTarget;if(Number.isFinite(media.duration))setDuration(media.duration);if(media.videoWidth>0&&media.videoHeight>0)setRatio(`${media.videoWidth}/${media.videoHeight}`);}} playsInline muted={muted} preload="metadata" onClick={()=>void toggle()} onPlay={()=>{setPlaying(true);setStarted(true);reveal();}} onPause={()=>{setPlaying(false);setControls(inside.current||keyboard.current);}} onEnded={()=>{setPlaying(false);setControls(inside.current||keyboard.current);}} onTimeUpdate={e=>setTime(e.currentTarget.currentTime)} onError={()=>{if(source.current)setError('動画を読み込めませんでした');}}/>
   {externalVideo?.thumbnail&&(compact||!started)&&<img src={externalVideo.thumbnail} alt={externalVideo.alt??'動画のプレビュー'} referrerPolicy="no-referrer" className="absolute inset-0 h-full w-full object-cover" onClick={()=>void toggle()}/>}
   {(compact||!started||(!playing&&!controls))&&<button type="button" className="post-video-start" aria-label="動画を再生" onClick={()=>void toggle()}>{loading?<span className="post-video-loading"><Loader2 className="animate-spin"/></span>:<Play fill="currentColor"/>}</button>}
-  {!mobile&&duration>0&&(!started||!controls)&&<span className="post-video-duration">{clock(started?duration-time:duration)}</span>}
+  {(!mobile||embedded)&&duration>0&&(!started||!controls)&&<span className="post-video-duration">{clock(started?duration-time:duration)}</span>}
   {!compact&&started&&playing&&!controls&&<button type="button" className="post-video-mute" aria-label={muted?'音声をオン':'音声をオフ'} onClick={()=>setMuted(!muted)}>{muted?<VolumeOff/>:<Volume2/>}</button>}
   {!compact&&started&&<div className={`post-video-controls ${controls?'is-visible':''}`} aria-hidden={!controls} {...(!controls?{inert:''}:{})}>
    <input className="post-video-seek" type="range" min="0" max={duration} step="0.1" value={Math.min(time,duration)} aria-label="再生位置" onChange={e=>{if(element.current)element.current.currentTime=Number(e.target.value);setTime(Number(e.target.value));reveal();}} style={{'--progress':`${(duration?time/duration*100:0)}%`} as React.CSSProperties}/>

@@ -1,7 +1,7 @@
 import {afterEach,expect,it,vi} from 'vitest';
 import {render,screen,cleanup} from '@testing-library/react';
 vi.mock('@/components/YouTubeEmbed',()=>({YouTubeEmbed:({videoId}:{videoId:string})=><iframe title="YouTube video player" src={`https://www.youtube.com/embed/${videoId}`}/>}));
-import {DirectMessageContent,DirectMessageMedia,youtubeMessageId} from './DirectMessageContent';
+import { DirectMessageContent, DirectMessageMedia, youtubeMessageId } from "@/components/chat/DirectChatMessage";
 afterEach(cleanup);
 it('keeps the full destination while formatting a compact readable external link',()=>{
  const url='https://abema.tv/video/title/87-2101';render(<DirectMessageContent content={url}/>);expect(screen.getByRole('link')).toHaveAttribute('href',url);expect(screen.getByText('abema.tv')).toBeInTheDocument();expect(screen.getByText('abema.tv/video/title/87-2101')).toBeInTheDocument();

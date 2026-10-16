@@ -152,3 +152,49 @@
 @media(max-width:639px) {
   :is([data-lime-post-actions], [data-lime-comment-actions]) .tabular-nums { font-size:15px; }
 }
+
+/* Compact phone controls; keep the existing 32px tap targets. */
+@media (max-width: 767px) {
+  :is([data-lime-post-actions], [data-lime-comment-actions]) > :is(button, a),
+  :is([data-lime-post-actions], [data-lime-comment-actions]) > div > button,
+  :is([data-lime-post-actions], [data-lime-comment-actions]) [data-lime-post-action],
+  :is([data-lime-post-detail-card], [data-lime-comment-card]) :is([data-lime-post-actions], [data-lime-comment-actions]) :is([data-lime-post-action], .post-detail-mobile-reply-count, .post-detail-mobile-plus-button, .post-detail-mobile-share-button) {
+    min-width: 32px !important;
+    padding-inline: 6px !important;
+    gap: 5px !important;
+  }
+  :is([data-lime-post-card], [data-lime-post-detail-card], [data-lime-comment-card]) :is([data-lime-post-actions], [data-lime-comment-actions]) svg:not(.twitter-like-effects),
+  :is([data-lime-post-actions], [data-lime-comment-actions]) [data-lime-post-action="like"] > span:first-child {
+    width: 18px !important;
+    height: 18px !important;
+  }
+  :is([data-lime-post-actions], [data-lime-comment-actions]) .tabular-nums,
+  [data-lime-post-detail-card] .post-detail-mobile-action-row span {
+    font-size: 13px !important;
+  }
+}
+
+/* animated-count.css */
+.repost-count,.repost-count-layers { display: inline-grid; position: relative; overflow: hidden; line-height: 1; }
+.repost-count-old,.repost-count-new { grid-area: 1 / 1; will-change: transform; }
+.repost-count.is-up .repost-count-old { animation: repostCountOldUp .3s ease forwards; }
+.repost-count.is-up .repost-count-new { animation: repostCountNewUp .3s ease forwards; }
+.repost-count.is-down .repost-count-old { animation: repostCountOldDown .3s ease forwards; }
+.repost-count.is-down .repost-count-new { animation: repostCountNewDown .3s ease forwards; }
+@keyframes repostCountOldUp { from {transform:translateY(0)} to {transform:translateY(-100%)} }
+@keyframes repostCountNewUp { from {transform:translateY(100%)} to {transform:translateY(0)} }
+@keyframes repostCountOldDown { from {transform:translateY(0)} to {transform:translateY(100%)} }
+@keyframes repostCountNewDown { from {transform:translateY(-100%)} to {transform:translateY(0)} }
+
+/* post-schedule.css */
+.scheduled-post-dialog[data-state="open"] { animation: scheduled-dialog-in 180ms ease-out both; }
+.scheduled-post-dialog[data-state="closed"] { animation: scheduled-dialog-out 120ms ease-in both; }
+@keyframes scheduled-dialog-in { from { opacity: 0; transform: translate(-50%, -50%) scale(.97); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+@keyframes scheduled-dialog-out { from { opacity: 1; transform: translate(-50%, -50%); } to { opacity: 0; transform: translate(-50%, -50%) scale(.98); } }
+@media (max-width: 639px) {
+ .scheduled-post-dialog[data-state="open"] { animation-name: scheduled-mobile-in; }
+ .scheduled-post-dialog[data-state="closed"] { animation-name: scheduled-mobile-out; }
+ @keyframes scheduled-mobile-in { from { opacity: 0; transform: translate3d(0, 18px, 0); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
+ @keyframes scheduled-mobile-out { from { opacity: 1; transform: translate3d(0, 0, 0); } to { opacity: 0; transform: translate3d(0, 18px, 0); } }
+}
+@media (prefers-reduced-motion: reduce) { .scheduled-post-dialog[data-state] { animation: none; } }

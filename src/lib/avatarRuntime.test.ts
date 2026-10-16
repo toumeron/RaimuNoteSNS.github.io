@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { AnimationClip, BoxGeometry, Group, Mesh, MeshStandardMaterial, Texture } from "three";
-import { disposeAvatarObject, normalizeAvatarObject, selectIdleClip } from "./avatarRuntime";
-import { animateAvatarLight, avatarBackgroundLightness, measureAvatarLuminance, nextAvatarExposure } from "./avatarLighting";
-import { classifyAvatarMorph } from "./avatarMorphs";
+import { disposeAvatarObject, normalizeAvatarObject, selectIdleClip } from "@/lib/avatarRuntime";
+import { animateAvatarLight, avatarBackgroundLightness, measureAvatarLuminance, nextAvatarExposure, classifyAvatarMorph } from "@/lib/avatarModels";
+import { DEFAULT_COMPANION, readCompanion, updateCompanion, companionKey } from "@/lib/companionPreferences";
 
+describe("avatarRuntime", () => {
 describe("avatarRuntime", () => {
 describe('avatar runtime', () => {
   it('centers and grounds models without overwriting their authored rotation or scale', () => {
@@ -96,5 +97,16 @@ it('keeps unrelated facial morphs neutral and identifies RobotExpressive emotion
   expect(classifyAvatarMorph('extra')).toEqual({ vowel: null, emotion: null, blink: false });
   expect(classifyAvatarMorph('Surprised').emotion).toBe('surprised');
   expect(classifyAvatarMorph('Sad').emotion).toBe('sad');
+});
+});
+});
+
+describe("companionPreferences", () => {
+beforeEach(()=>localStorage.clear());
+it('keeps characters disabled by default and isolates selections per account',()=>{
+ expect(readCompanion('a')).toEqual(DEFAULT_COMPANION);updateCompanion('a',{enabled:true,modelId:'uploaded',x:70,y:80});expect(readCompanion('a').modelId).toBe('uploaded');expect(readCompanion('a').x).toBe(70);expect(readCompanion('b')).toEqual(DEFAULT_COMPANION);
+});
+it('recovers corrupt settings and bounds model size without restricting placement',()=>{
+ localStorage.setItem(companionKey('a'),'bad');expect(readCompanion('a')).toEqual(DEFAULT_COMPANION);localStorage.setItem(companionKey('a'),JSON.stringify({enabled:true,size:5000,x:'bad'}));expect(readCompanion('a').size).toBe(360);expect(readCompanion('a').x).toBeNull();updateCompanion('a',{x:-50,y:999,viewportWidth:390,viewportHeight:844});expect(readCompanion('a').x).toBe(-50);expect(readCompanion('a').y).toBe(999);
 });
 });

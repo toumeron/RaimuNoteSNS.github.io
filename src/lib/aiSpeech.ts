@@ -1,7 +1,7 @@
 import { supabase } from './supabase';
-import { getAudioPlaybackContext, unlockAudioPlayback } from './audioPlayback';
-import { CALM_FEMALE_VOICE_ID, PCM_SAMPLE_RATE, resolveVoiceId } from '../../supabase/functions/_shared/aiVoice';
-export { CALM_FEMALE_VOICE_ID, CALM_FEMALE_VOICE_NAME } from '../../supabase/functions/_shared/aiVoice';
+import { getAudioPlaybackContext, unlockAudioPlayback } from "@/lib/callTranscription";
+import { CALM_FEMALE_VOICE_ID, PCM_SAMPLE_RATE, resolveVoiceId } from "./../../supabase/functions/_shared/chatContext.ts";
+export { CALM_FEMALE_VOICE_ID, CALM_FEMALE_VOICE_NAME } from "./../../supabase/functions/_shared/chatContext.ts";
 
 export type VoiceOpts = {
   voiceURI?: string;

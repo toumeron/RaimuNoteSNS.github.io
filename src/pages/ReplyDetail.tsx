@@ -47,7 +47,7 @@ export function ReplyDetail({ commentId, post, mobileFlat }: { commentId: string
   return (
     <div>
       <style>{`
-        [data-lime-reply-chain] [data-lime-thread-item] {
+        [data-lime-reply-chain] [data-lime-thread-item]:not([data-lime-embedded]) {
           padding: 12px 0 !important;
           margin: 0 !important;
           border: 0 !important;

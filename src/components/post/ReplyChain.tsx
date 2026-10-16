@@ -12,7 +12,8 @@ export function ReplyChain({ children }: { children: ReactNode }) {
     const measure = () => {
       if (!active) return;
       const origin = host.getBoundingClientRect();
-      const avatars = [...host.querySelectorAll<HTMLElement>('[data-lime-thread-avatar]')].map(el => ({
+      const belongs=(element:Element)=>element.closest('[data-lime-reply-chain]')===host&&!element.closest('[data-lime-embedded]');
+      const avatars = [...host.querySelectorAll<HTMLElement>('[data-lime-thread-avatar]')].filter(belongs).map(el => ({
         rect: el.getBoundingClientRect(),
         owner: el.closest<HTMLElement>('[data-lime-conversation-comment]'),
       }));
@@ -28,6 +29,7 @@ export function ReplyChain({ children }: { children: ReactNode }) {
         if (connected) add(rect, rect.bottom + 8, following.rect.top - 8);
       });
       host.querySelectorAll<HTMLElement>('[data-lime-thread-more]').forEach(more => {
+        if(!belongs(more))return;
         const parentId = more.dataset.limeThreadMore;
         const parent = avatars.some(avatar => avatar.owner)
           ? avatars.find(avatar => avatar.owner?.dataset.limeConversationComment === parentId)
@@ -62,7 +64,7 @@ export function ReplyChain({ children }: { children: ReactNode }) {
   return (
     <div ref={ref} data-lime-reply-chain className="relative">
       <style>{`
-        [data-lime-reply-chain] [data-lime-thread-item] {
+        [data-lime-reply-chain] [data-lime-thread-item]:not([data-lime-embedded]) {
           padding: 12px 0 !important;
           margin: 0 !important;
           border: 0 !important;

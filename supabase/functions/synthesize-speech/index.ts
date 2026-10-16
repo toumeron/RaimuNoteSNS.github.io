@@ -1,5 +1,5 @@
 import { quota, boundedBody } from '../_shared/security.ts';
-import { CALM_FEMALE_VOICE_ID, PCM_SAMPLE_RATE } from '../_shared/aiVoice.ts';
+import { CALM_FEMALE_VOICE_ID, PCM_SAMPLE_RATE } from "./../_shared/chatContext.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const cors = {

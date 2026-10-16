@@ -1,4 +1,4 @@
-import {clearRecommendationReserve} from '@/lib/recommendationReserve';
+import { clearRecommendationReserve } from "@/lib/topicRecommendations";
 import {supabase} from '@/lib/supabase';
 import type {PostWithAuthor} from '@/types';
 import type {RecommendationFeedback} from '@/lib/recommendations';

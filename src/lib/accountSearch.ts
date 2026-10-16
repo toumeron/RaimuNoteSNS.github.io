@@ -4,7 +4,7 @@ import {searchExternalUsers} from './bluesky';
 import type {User} from '@/types';
 /** Shared with the search page and list member search. */
 export function searchProfileUser(row:Record<string,any>):User {
- return {id:row.id,username:row.username,displayName:row.display_name||row.displayName||'User',avatarUrl:row.avatar_url||row.avatarUrl||'',coverUrl:row.cover_url||'',createdAt:row.created_at||'',bio:row.bio||'',isOfficial:!!(row.is_official||row.isOfficial),isPrivate:!!(row.is_private||row.isPrivate)};
+ return {id:row.id,username:row.username,displayName:row.display_name||row.displayName||'User',avatarUrl:row.avatar_url||row.avatarUrl||'',coverUrl:row.cover_url||'',createdAt:row.created_at||'',bio:row.bio||'',isOfficial:!!(row.is_official||row.isOfficial),isPrivate:!!(row.is_private||row.isPrivate),providerVerification:row.providerVerification};
 }
 export async function searchAccounts(query:string,signal?:AbortSignal):Promise<User[]> {
  if (isAccountReadOnly()) return [];

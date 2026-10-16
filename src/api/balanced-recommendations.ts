@@ -2,7 +2,7 @@ import {createRecommendationCursor,getRecommendationPage,getRecommendationPrefer
 import {getRecommendationTwitterPage} from './recommendation-twitter';
 import {rankRecommendations} from '@/lib/recommendations';
 import {recommendationIdentity,recommendationFingerprint} from '@/lib/recommendationSignals';
-import {uniqueRecommendationPosts} from '@/lib/recommendationPaging';
+import { uniqueRecommendationPosts } from "@/lib/topicRecommendations";
 import {applyCachedRecommendationVisuals} from '@/lib/recommendationVisual';
 import {readRecommendationCatalog,applyCatalogRecommendationVisuals} from '@/lib/recommendationCatalog';
 import type {PostWithAuthor} from '@/types';
@@ -15,11 +15,7 @@ export async function getBalancedRecommendationPage(previous:RecommendationCurso
   options?.pageSize&&!previous.catalogRead?readRecommendationCatalog(signal):Promise.resolve([]),
  ]);
  if(options?.pageSize&&!previous.catalogRead)previous={...previous,catalogRead:true,remaining:uniqueRecommendationPosts(applyCatalogRecommendationVisuals([...previous.remaining,...catalog.filter(post=>!isTwitter(post))],catalog)),twitterRemaining:uniqueRecommendationPosts(applyCatalogRecommendationVisuals([...(previous.twitterRemaining??[]),...catalog.filter(isTwitter)],catalog))};
-<<<<<<< HEAD
- let preferences={...loadedPreferences,visualOnly:true};
-=======
  let preferences={...loadedPreferences,visualOnly:true,allowUnverifiedMedia:false};
->>>>>>> 374490cc (“update23”)
  preferences={...preferences,likedSamples:applyCatalogRecommendationVisuals(applyCachedRecommendationVisuals(preferences.likedSamples??[],true),catalog)};
  const candidates={...preferences,allowUnverifiedMedia:true};
  const pageSize=Math.max(2,Math.min(20,options?.pageSize??8)),pairTarget=Math.ceil(pageSize/2);
@@ -94,10 +90,6 @@ export async function getBalancedRecommendationPage(previous:RecommendationCurso
      completed.set(post.id,post);
      const merge=(row:PostWithAuthor)=>completed.get(row.id)??row;
      const current={...preferences,likedSamples:(preferences.likedSamples??[]).map(merge)};
-<<<<<<< HEAD
-     if(references.some(row=>!merge(row).recommendationVisual))return;
-=======
->>>>>>> 374490cc (“update23”)
      const candidates=raw.map(merge);
      const enough=(provider:boolean)=>new Set(rankRecommendations(candidates.filter(row=>isTwitter(row)===provider&&available(row)),current,viewer,Date.now(),previous.history,Infinity,true).map(row=>row.userId)).size>=target;
      if(enough(false)&&(!twitterEnabled||enough(true)))publishReady([...completed.values()]);
@@ -137,7 +129,8 @@ export async function getBalancedRecommendationPage(previous:RecommendationCurso
   for(const post of [...chosenX,...chosenOther])authorCounts[post.userId]=(authorCounts[post.userId]??0)+1;
   const committed=new Set([...chosenX,...chosenOther].map(post=>post.id));
   const accepted=new Set([...x,...other].map(post=>post.id));
-  const retain=(post:PostWithAuthor)=>accepted.has(post.id)||!post.recommendationVisual&&post.imageUrls.length>0;
+  const failedVisuals=new Set(posts.filter(post=>post.recommendationVisualStatus==='unavailable').map(post=>post.id));
+  const retain=(post:PostWithAuthor)=>!failedVisuals.has(post.id)&&(accepted.has(post.id)||!post.recommendationVisual&&post.imageUrls.length>0);
   const twitterLeft=posts.filter(post=>isTwitter(post)&&!committed.has(post.id)&&available(post)&&retain(post));
   const xFirst=!isTwitter(previous.history.at(-1)??({id:'',source:'lime'} as PostWithAuthor));
   for(let i=0;i<Math.max(chosenOther.length,chosenX.length);i++)for(const row of xFirst?[chosenX[i],chosenOther[i]]:[chosenOther[i],chosenX[i]])if(row)selected.push(row);

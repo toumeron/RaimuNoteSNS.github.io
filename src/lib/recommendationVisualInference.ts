@@ -1,12 +1,8 @@
 import type {PostWithAuthor} from '@/types';
 import {type TopicId} from './topics';
-<<<<<<< HEAD
-import {classifyRecommendationVisual,readVisualCache,writeVisualCache,type RecommendationVisual} from './recommendationVisual';
-=======
 import {classifyRecommendationVisual,readVisualCache,writeVisualCache,recommendationImageIdentity,type RecommendationVisual} from './recommendationVisual';
->>>>>>> 374490cc (“update23”)
 import {isDeferredPrivateMedia,resolvePrivateMediaUrl} from './privateMediaFetch';
-import {prepareRecommendationImage,recommendationThumbnailUrl} from './recommendationImageInput';
+import { prepareRecommendationImage, recommendationThumbnailUrl } from "@/lib/recommendationVisualQueue";
 
 export {classifyRecommendationVisual} from './recommendationVisual';
 
@@ -58,12 +54,9 @@ async function analyze(url:string,signal?:AbortSignal):Promise<RecommendationVis
  const result=classifyRecommendationVisual(vector);
  writeVisualCache(url,result);unavailableUntil.delete(identity);
  return result;
-<<<<<<< HEAD
-=======
  }catch(error){
   if(!signal?.aborted){unavailableUntil.set(identity,Date.now()+FAILURE_COOLDOWN);if(unavailableUntil.size>512)unavailableUntil.delete(unavailableUntil.keys().next().value!);}
   throw error;
->>>>>>> 374490cc (“update23”)
  }finally{prepared.release();}
 }
 /** Only on a requested feed page, in a worker. No upload of image pixels,

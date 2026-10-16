@@ -1,17 +1,17 @@
-import { useMemo } from 'react';
-import { Loader2, MoreHorizontal } from 'lucide-react';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import UserCard from './UserCard';
-import { useHiddenTrends } from "@/hooks/useTrends";
-import type { SearchExploreTab } from '@/hooks/useSearchExploreTab';
-import { latestNewsPerSource, type SearchNewsItem, type NewsSources } from '@/api/search-news';
-import type { User } from '@/types';
+import { useMemo, type ReactNode } from "react";
+import { Loader2, MoreHorizontal } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import UserCard from "@/components/search/UserCard";
+import { useHiddenTrends, type SearchExploreTab } from "@/hooks/useTrends";
+import { latestNewsPerSource, type SearchNewsItem, type NewsSources } from "@/api/search-news";
+import { type User } from "@/types/index";
+import { prepareExploreTrends, rankPersonalTrends, type ExploreTrend } from "@/lib/search-trends";
+import { type RecommendationPreferences } from "@/lib/recommendations";
+import "@/components/search/stock-market.css";
 
-import { prepareExploreTrends, rankPersonalTrends, type ExploreTrend } from '@/lib/search-trends';
-import type { RecommendationPreferences } from '@/lib/recommendations';
-
-export function SearchExploreContent({tab, preferences, viewerId, news, sources, trends, users, newsLoading, trendsLoading, usersLoading, onSearch, onNews}: {
+// SearchExploreContent
+function SearchExploreContent({tab, preferences, viewerId, news, sources, trends, users, newsLoading, trendsLoading, usersLoading, onSearch, onNews}: {
   tab: SearchExploreTab; preferences: RecommendationPreferences; viewerId: string | null; news: SearchNewsItem[]; sources: Record<string, NewsSources>; trends: ExploreTrend[]; users: User[];
   newsLoading: boolean; trendsLoading: boolean; usersLoading: boolean; onSearch: (title: string) => void; onNews: (id: string) => void;
 }) {
@@ -45,3 +45,12 @@ export function SearchExploreContent({tab, preferences, viewerId, news, sources,
     </section>}
   </div>;
 }
+
+// SearchPostRow
+/** Keep the separator on the full row; inset only its mobile post content. */
+function SearchPostRow({children}:{children:ReactNode}){
+ return <div data-lime-search-result-row className="relative min-w-0 border-b border-border/60 bg-transparent max-sm:px-4 sm:transition-colors sm:hover:bg-black/[0.01] sm:dark:hover:bg-white/[0.02]">{children}</div>;
+}
+
+export { SearchExploreContent };
+export { SearchPostRow };

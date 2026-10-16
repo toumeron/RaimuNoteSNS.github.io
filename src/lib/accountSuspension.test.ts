@@ -1,5 +1,8 @@
-import {afterEach,describe,expect,it,vi} from 'vitest';
-import {createSuspensionFetch,setAccountSuspended,SUSPENSION_EVENT} from './accountSuspension';
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createSuspensionFetch, setAccountSuspended, SUSPENSION_EVENT } from "@/lib/accountSuspension";
+import { companyReturnUrl } from "@/lib/companyLoginReturn";
+
+describe("accountSuspension", () => {
 afterEach(()=>setAccountSuspended(false));
 describe('suspended account transport',()=>{
  it('rejects writes and exposes feedback while preserving timeline, profile and media reads',async()=>{
@@ -29,4 +32,21 @@ describe('suspended account transport',()=>{
   const feedback=vi.fn();window.addEventListener(SUSPENSION_EVENT,feedback);
   try{const transport=vi.fn(async()=>Response.json({code:'ACCOUNT_SUSPENDED'},{status:403}));await createSuspensionFetch('https://db.test',transport)('https://db.test/rest/v1/posts',{method:'POST'});expect(transport).toHaveBeenCalledOnce();expect(feedback).toHaveBeenCalledOnce();}finally{window.removeEventListener(SUSPENSION_EVENT,feedback);}
  });
+});
+});
+
+describe("companyLoginReturn", () => {
+const origin = 'https://toumeron.github.io';
+it('preserves the original company page, query and anchor', () => {
+ expect(companyReturnUrl('/LimeNoteJP/company/profile/?tab=info#top', origin)).toBe(origin+'/LimeNoteJP/company/profile/?tab=info#top');
+});
+it('accepts an absolute URL on the same origin', () => {
+ expect(companyReturnUrl(origin+'/LimeNoteJP/', origin)).toBe(origin+'/LimeNoteJP/');
+});
+it('supports the same-origin development proxy', () => {
+ expect(companyReturnUrl('/LimeNoteJP/', 'http://localhost:5173')).toBe('http://localhost:5173/LimeNoteJP/');
+});
+it.each([null, '', '//evil.example/LimeNoteJP/', 'https://evil.example/LimeNoteJP/', 'javascript:alert(1)', '/RaimuNoteSNS.github.io/auth', '/LimeNoteJP-evil/', '/LimeNoteJP/../auth', 'https://user:password@toumeron.github.io/LimeNoteJP/'])('rejects an unapproved login return target %s', value => {
+ expect(companyReturnUrl(value, origin)).toBeNull();
+});
 });

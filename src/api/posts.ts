@@ -1,6 +1,6 @@
 import {uploadPostVideo,discardPostVideo,deleteVideoPost} from '@/lib/postVideoStorage';
 import type {PreparedVideo} from '@/lib/postVideo';
-import {validSchedule} from '@/lib/postSchedule';
+import { validSchedule } from "@/components/feed/ComposerIcon";
 import { isAccountReadOnly } from '@/lib/accountSuspension';
 import {preparePoll,discardPollImages} from './polls';
 import {validatePollDraft,type PollDraft} from '@/lib/polls';
@@ -500,6 +500,7 @@ export async function createPost(input: {
 
   const post = await getPostById(newId);
   if (!post) throw new Error('投稿の取得に失敗しました');
+  void import('./watchHistory').then(({recordAnimePost})=>recordAnimePost(userId,newId)).catch(()=>{});
   return post;
 }
 

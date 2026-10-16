@@ -274,15 +274,6 @@ it('does not freeze a 20-card batch after the twitter source is exhausted',async
  const page=await getBalancedRecommendationPage(previous,'exhausted-source',undefined,{pageSize:20});expect(page.posts).toHaveLength(20);expect(page.posts.every(row=>row.recommendationVisual?.topics.includes('science'))).toBe(true);
 });
 
-<<<<<<< HEAD
-it('retains unverified candidates after transient image startup failure without showing them as accepted',async()=>{
- const inference=await import('@/lib/recommendationVisualInference');
- const unknown={...post('bsky:retry-model'),recommendationVisual:undefined};
- mocks.native.mockResolvedValue({posts:[unknown],preferences:prefs,pendingAnalysis:false,automaticPaused:false,requestKey:1});mocks.twitter.mockResolvedValue({posts:[],next:undefined});
- const analyze=vi.spyOn(inference,'enrichRecommendationVisuals').mockResolvedValueOnce([{...unknown,recommendationVisualStatus:'unavailable'}]);
- try{
-  const first=await getBalancedRecommendationPage(createRecommendationCursor([]),'model-startup',undefined,{pageSize:20});expect(first.posts).toHaveLength(0);expect(first.next?.remaining.map(p=>p.id)).toContain(unknown.id);expect(first.next?.seen).not.toContain(unknown.id);
-=======
 it('discards failed pixels from the reserve while advancing a healthy source',async()=>{
  const inference=await import('@/lib/recommendationVisualInference');
  const unknown={...post('bsky:retry-model'),recommendationVisual:undefined};
@@ -290,6 +281,5 @@ it('discards failed pixels from the reserve while advancing a healthy source',as
  const analyze=vi.spyOn(inference,'enrichRecommendationVisuals').mockResolvedValueOnce([{...unknown,recommendationVisualStatus:'unavailable'}]);
  try{
   const first=await getBalancedRecommendationPage(createRecommendationCursor([]),'model-startup',undefined,{pageSize:20});expect(first.posts).toHaveLength(0);expect(first.next).toBeDefined();expect(first.next?.remaining.map(p=>p.id)).not.toContain(unknown.id);expect(first.automaticPaused).toBe(false);
->>>>>>> 374490cc (“update23”)
  }finally{analyze.mockRestore();}
 });

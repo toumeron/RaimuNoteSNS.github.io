@@ -80,12 +80,25 @@ it('does not apply the inline width constraint during fullscreen playback',()=>{
  finally{if(descriptor)Object.defineProperty(document,'fullscreenElement',descriptor);else delete (document as any).fullscreenElement;}
 });
 
-it('opens quoted video thumbnails in the shared viewer instead of squeezing playback controls into them',()=>{
+it.each([390,1024])('plays quoted portrait videos inline in a landscape crop at %spx',async width=>{
+ const descriptor=Object.getOwnPropertyDescriptor(window,'innerWidth')!;
+ Object.defineProperty(window,'innerWidth',{value:width,configurable:true});
  const opened=vi.fn();window.addEventListener('lime-open-media-viewer',opened);
  try{
-  const view=render(<PostVideoPlayer embedded postId="quoted-video" video={{duration:16,width:1080,height:1920}}/>);
+  const view=render(<PostVideoPlayer embedded previewUrl="blob:quote" postId="quoted-video" video={{duration:27,width:1080,height:1920}}/>);
+  const media=view.container.querySelector('video')!;
+  expect(screen.getByLabelText('投稿動画').style.width).toBe('100%');expect(media.style.aspectRatio).toBe('16/9');expect(media.style.objectFit).toBe('cover');expect(screen.getByText('0:27')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button',{name:'動画を再生'}));
-  expect(opened).toHaveBeenCalledTimes(1);expect(mocks.resolve).not.toHaveBeenCalled();
-  expect(view.container.querySelector('.post-video-controls')).toBeNull();
- }finally{window.removeEventListener('lime-open-media-viewer',opened);}
+  await screen.findByRole('button',{name:'一時停止'});
+  expect(media.style.aspectRatio).toBe('16/9');expect(media.style.objectFit).toBe('contain');expect(screen.getByLabelText('投稿動画').style.backgroundColor).toBe('black');
+  expect(opened).not.toHaveBeenCalled();expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
+  expect(mocks.resolve).not.toHaveBeenCalled();expect(view.container.querySelector('.post-video-controls')).not.toBeNull();
+ }finally{Object.defineProperty(window,'innerWidth',descriptor);window.removeEventListener('lime-open-media-viewer',opened);}
+});
+it('keeps quoted fullscreen video uncropped',()=>{
+ const descriptor=Object.getOwnPropertyDescriptor(document,'fullscreenElement');
+ const view=render(<PostVideoPlayer embedded previewUrl="blob:quote" video={{duration:27,width:1080,height:1920}}/>);
+ const root=screen.getByLabelText('投稿動画'),media=view.container.querySelector('video')!;
+ try{Object.defineProperty(document,'fullscreenElement',{configurable:true,value:root});fireEvent(document,new Event('fullscreenchange'));expect(root.style.width).toBe('');expect(media.style.aspectRatio).toBe('1080/1920');}
+ finally{if(descriptor)Object.defineProperty(document,'fullscreenElement',descriptor);else delete (document as any).fullscreenElement;}
 });

@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "LimeNote アニメ視聴履歴の移行",
+  "version": "1.1.0",
+  "description": "本人が開いたPrime Video・dアニメストア・ニコニコ動画・ABEMAの視聴履歴をLimeNoteへ移行します。",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "視聴履歴をLimeNoteへ"
+  },
+  "background": {
+    "service_worker": "service-worker.mjs",
+    "type": "module"
+  },
+  "optional_host_permissions": [
+    "https://toumeron.github.io/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://toumeron.github.io/RaimuNoteSNS.github.io/watch-history*",
+        "https://toumeron.github.io/RaimuNoteSNS.github.io/u/*/watch-history*",
+        "http://localhost/RaimuNoteSNS.github.io/watch-history*",
+        "http://localhost/RaimuNoteSNS.github.io/u/*/watch-history*",
+        "http://127.0.0.1/RaimuNoteSNS.github.io/watch-history*",
+        "http://127.0.0.1/RaimuNoteSNS.github.io/u/*/watch-history*"
+      ],
+      "js": [
+        "extractor.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

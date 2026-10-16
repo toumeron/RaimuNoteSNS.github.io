@@ -1,11 +1,43 @@
-import {setSavedList} from '@/api/lists';
-import {useInvalidateLists} from '@/hooks/useLists';
-import {toast} from 'sonner';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Plus, X, GripHorizontal, ArrowLeft, ArrowRight, Hash, ChevronDown, TrendingUp, Landmark, Volleyball, BriefcaseBusiness, Atom, Cpu, Brain, Palette, Pencil, Film, Gamepad2, Bitcoin, Plane, Tv, Utensils, GraduationCap, Cat, Music, Paintbrush, Shirt, Smile, HeartPulse } from 'lucide-react';
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { TIMELINE_TABS, TOPIC_TIMELINE_TABS, AVAILABLE_TIMELINE_TABS, useAvailableTimelineTabs, saveTimelineTabs, type FeedTabValue } from '@/lib/timelineTabs';
+import { setSavedList } from "@/api/lists";
+import { useInvalidateLists, useListCatalog } from "@/hooks/useLists";
+import { toast } from "sonner";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Plus, X, GripHorizontal, ArrowLeft, ArrowRight, Hash, ChevronDown, TrendingUp, Landmark, Volleyball, BriefcaseBusiness, Atom, Cpu, Brain, Palette, Pencil, Film, Gamepad2, Bitcoin, Plane, Tv, Utensils, GraduationCap, Cat, Music, Paintbrush, Shirt, Smile, HeartPulse } from "lucide-react";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { TOPICS, isTopicId, type TopicId } from "@/lib/topics";
 
+// timelineTabs
+type FeedTabValue = 'all'|'following'|'trending'|`topic:${TopicId}`|`list:${string}`;
+const TIMELINE_TABS: {value:FeedTabValue;label:string}[] = [
+  {value:'all',label:'最新'},{value:'following',label:'フォロー中'},{value:'trending',label:'トレンド'},
+];
+const TOPIC_TIMELINE_TABS = TOPICS.map(topic=>({value:`topic:${topic.id}` as FeedTabValue,label:topic.name}));
+const AVAILABLE_TIMELINE_TABS=[...TIMELINE_TABS,...TOPIC_TIMELINE_TABS];
+function feedTabTopic(value:string):TopicId|undefined { const id=value.startsWith('topic:')?value.slice(6):undefined;return isTopicId(id)?id:undefined; }
+function isFeedTabValue(value:unknown):value is FeedTabValue {return typeof value==='string'&&(AVAILABLE_TIMELINE_TABS.some(tab=>tab.value===value)||/^list:[0-9a-f-]{36}$/i.test(value));}
+const EVENT='lime-timeline-tabs-changed';
+const key=(owner?:string)=>`lime_timeline_tabs:${owner??'guest'}:v1`;
+function normalizeTimelineTabs(input:unknown):FeedTabValue[] {
+  const result=Array.isArray(input)?[...new Set(input.filter((id):id is FeedTabValue=>isFeedTabValue(id)))]:[];
+  return result.length?result:TIMELINE_TABS.map(t=>t.value);
+}
+function saveTimelineTabs(owner:string|undefined, ids:FeedTabValue[]) {
+  localStorage.setItem(key(owner),JSON.stringify(normalizeTimelineTabs(ids)));
+  window.dispatchEvent(new Event(EVENT));
+}
+function useAvailableTimelineTabs(owner?:string){const lists=useListCatalog(owner);return [...AVAILABLE_TIMELINE_TABS,...(lists.data??[]).map(list=>({value:`list:${list.id}` as FeedTabValue,label:list.name}))];}
+function useTimelineTabs(owner?:string) {
+  const available=useAvailableTimelineTabs(owner);
+  const raw=useSyncExternalStore(listener=>{
+    const storage=(e:StorageEvent)=>{if(e.key===key(owner)||e.key===null)listener();};
+    window.addEventListener(EVENT,listener);window.addEventListener('storage',storage);
+    return()=>{window.removeEventListener(EVENT,listener);window.removeEventListener('storage',storage);};
+  },()=>{try{return localStorage.getItem(key(owner));}catch{return null;}},()=>null);
+  let value:unknown;try{value=JSON.parse(raw??'null');}catch{value=null;}
+  return normalizeTimelineTabs(value).map(id=>available.find(t=>t.value===id)??{value:id,label:'リスト'});
+}
+
+// TimelineTabBar
 const topicIcons:Record<string,typeof Hash>={economy:TrendingUp,politics:Landmark,sports:Volleyball,business:BriefcaseBusiness,science:Atom,technology:Cpu,ai:Brain,art:Palette,'digital-illustration':Pencil,film:Film,games:Gamepad2,crypto:Bitcoin,travel:Plane,anime:Tv,food:Utensils,career:GraduationCap,pets:Cat,music:Music,design:Paintbrush,fashion:Shirt,memes:Smile,fitness:HeartPulse};
 function TopicIcon({value}:{value:FeedTabValue}) {const Icon=topicIcons[value.slice(6)]??Hash;return <Icon className="h-6 w-6"/>;}
 
@@ -20,7 +52,7 @@ const reorder = (tabs: Tab[], value: FeedTabValue, to: number) => {
   return result;
 };
 
-export function TimelineTabBar({ tabs, active, owner, onSelect, onDoubleClick, variant = 'mobile' }: {
+function TimelineTabBar({ tabs, active, owner, onSelect, onDoubleClick, variant = 'mobile' }: {
   tabs: Tab[]; active: FeedTabValue; owner?: string;
   onSelect: (value: FeedTabValue) => void;
   onDoubleClick: (value: FeedTabValue) => void;
@@ -244,3 +276,15 @@ export function TimelineTabBar({ tabs, active, owner, onSelect, onDoubleClick, v
     </DialogContent></Dialog>
   </>;
 }
+
+export { TimelineTabBar };
+export { feedTabTopic };
+export { isFeedTabValue };
+export { normalizeTimelineTabs };
+export { saveTimelineTabs };
+export { useAvailableTimelineTabs };
+export { useTimelineTabs };
+export type { FeedTabValue };
+export { TIMELINE_TABS };
+export { TOPIC_TIMELINE_TABS };
+export { AVAILABLE_TIMELINE_TABS };

@@ -1,10 +1,10 @@
-import {displayUsername} from '@/lib/displayUsername';
+import { displayUsername } from "@/lib/format";
 import {getExternalPostActivity,hasExternalActivity,type ActivityCursor} from '@/api/post-activity';
-import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
+import { ProviderVerificationBadge } from "@/components/common/OfficialBadge";
 import { randomUUID } from '@/lib/randomUUID';
 import {Loader2} from 'lucide-react';
 import {PostCardSkeleton} from '@/components/feed/PostCardSkeleton';
-import {Skeleton} from '@/components/ui/skeleton';
+import { Skeleton } from "@/components/ui/button";
 import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 import {supabase} from '@/lib/supabase';
 import {useEffect,useState,useRef} from 'react';
@@ -17,7 +17,7 @@ import {FollowButton} from '@/components/profile/FollowButton';
 import {PostCard} from '@/components/feed/PostCard';
 import {useAuth} from '@/hooks/useAuth';
 import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
-import './post-activity.css';
+import "@/components/layout/desktop-layout.css";
 
 const tabs=[{id:'quotes',label:'引用'},{id:'reposts',label:'リポスト'},{id:'likes',label:'いいね'}] as const;
 export default function PostActivity(){

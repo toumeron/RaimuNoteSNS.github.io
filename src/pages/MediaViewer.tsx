@@ -1,5 +1,5 @@
-import {displayUsername} from '@/lib/displayUsername';
-import {PrivateMediaImage} from '@/components/media/PrivateMediaImage';
+import { displayUsername } from "@/lib/format";
+import { PrivateMediaImage } from "@/components/profile/ProfileMediaPreview";
 import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
 import {splitMentionText} from '@/lib/utils';
 import { openMediaViewer } from '@/components/media/openMediaViewer';

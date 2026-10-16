@@ -231,3 +231,10 @@ it('excludes external sources from latest while retaining LimeNote quotes of the
  for(const source of ['x','bluesky','misskey'])expect(isLimeNoteTimelinePost({id:'post',source} as any)).toBe(false);
  for(const id of ['x:20','bsky:at://post','misskey:https://misskey.io/notes/test'])expect(isLimeNoteTimelinePost({id} as any)).toBe(false);
 });
+
+it('does not mistake an empty or failed trend scan for absence of trend posts',()=>{
+ for(const loading of [true,false])for(const fetching of [true,false])for(const error of [true,false]){
+  expect(showTimelineEmpty(loading,fetching,error,0,'trending')).toBe(false);
+ }
+ expect(showTimelineEmpty(false,false,false,0,'all')).toBe(true);
+});

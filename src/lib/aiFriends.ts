@@ -1,5 +1,7 @@
-import { randomUUID } from '@/lib/randomUUID';
-export type AssistantItem = {
+import { randomUUID } from "@/lib/randomUUID";
+
+// aiFriends
+type AssistantItem = {
   id: string
   slug: string | null
   name: string
@@ -61,12 +63,12 @@ const PRESETS: Preset[] = [
 
 ];
 
-export const AI_FRIENDS_CHANGED = 'lime-ai-friends-changed';
+const AI_FRIENDS_CHANGED = 'lime-ai-friends-changed';
 const key = (uid: string | null | undefined, name: string) => `limeai:${uid || 'guest'}:${name}`;
 function read<T>(uid: string | null | undefined, name: string, fallback: T): T { try { return JSON.parse(localStorage.getItem(key(uid,name)) || 'null') ?? fallback } catch { return fallback } }
 function readList<T>(uid: string | null | undefined, name: string): T[] { const data=read<unknown>(uid,name,[]);return Array.isArray(data)?data:[] }
 function write(uid: string | null | undefined, name: string, value: unknown) { localStorage.setItem(key(uid,name),JSON.stringify(value));window.dispatchEvent(new Event(AI_FRIENDS_CHANGED)); }
-export type AssistantDraft = {
+type AssistantDraft = {
   id?: string
   coverUrl?: string
   birthday?: string
@@ -79,11 +81,11 @@ export type AssistantDraft = {
   gender: 'female' | 'male'
 }
 
-export function loadCustomAssistants(uid?: string | null): AssistantItem[] {
+function loadCustomAssistants(uid?: string | null): AssistantItem[] {
   return readList<AssistantItem>(uid, 'assistants')
 }
 
-export function saveCustomAssistant(uid: string | null | undefined, draft: AssistantDraft): AssistantItem[] {
+function saveCustomAssistant(uid: string | null | undefined, draft: AssistantDraft): AssistantItem[] {
   const list = loadCustomAssistants(uid)
   if (draft.id) {
     const existing = list.find(a => a.id === draft.id) ?? BUILTIN_ASSISTANTS.find(a => a.id === draft.id)
@@ -113,19 +115,19 @@ export function saveCustomAssistant(uid: string | null | undefined, draft: Assis
   return next
 }
 
-export function deleteCustomAssistant(uid: string | null | undefined, id: string): AssistantItem[] {
+function deleteCustomAssistant(uid: string | null | undefined, id: string): AssistantItem[] {
   const next = loadCustomAssistants(uid).filter((a) => a.id !== id)
   write(uid, 'assistants', next)
   return next
 }
 
 /* ---------- キャラクターのアイコン画像 (ブラウザ内に保存) ---------- */
-export type AvatarMap = Record<string, string>
+type AvatarMap = Record<string, string>
 
-export const loadAvatars = (uid?: string | null) => read<AvatarMap>(uid, 'avatars', {})
+const loadAvatars = (uid?: string | null) => read<AvatarMap>(uid, 'avatars', {})
 
 /** 保存に成功したら true(容量超過などで失敗したら false) */
-export function saveAvatars(uid: string | null | undefined, map: AvatarMap): boolean {
+function saveAvatars(uid: string | null | undefined, map: AvatarMap): boolean {
   try {
     localStorage.setItem(key(uid, 'avatars'), JSON.stringify(map))
     window.dispatchEvent(new Event(AI_FRIENDS_CHANGED))
@@ -145,7 +147,7 @@ const AVATAR_COLORS: [string, string][] = [
 ]
 
 /** 初期アイコン(人のシルエット)。キャラクターIDごとに色が決まる */
-export function defaultAvatarUrl(seed: string): string {
+function defaultAvatarUrl(seed: string): string {
   let h = 0
   for (const ch of seed) h = (h * 31 + ch.charCodeAt(0)) >>> 0
   const [c1, c2] = AVATAR_COLORS[h % AVATAR_COLORS.length]
@@ -159,7 +161,7 @@ export function defaultAvatarUrl(seed: string): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
 }
 
-export const avatarOf = (a: { id: string }, avatars: AvatarMap) => avatars[a.id] || defaultAvatarUrl(a.id)
+const avatarOf = (a: { id: string }, avatars: AvatarMap) => avatars[a.id] || defaultAvatarUrl(a.id)
 
 const BUILTIN_ASSISTANTS: AssistantItem[] = PRESETS.map((p) => ({
   id: `builtin:${p.slug}`,
@@ -177,15 +179,60 @@ const BUILTIN_ASSISTANTS: AssistantItem[] = PRESETS.map((p) => ({
   rate: p.rate,
 }))
 
-export const listAssistants = (uid?: string | null): AssistantItem[] => {
+const listAssistants = (uid?: string | null): AssistantItem[] => {
  const saved=loadCustomAssistants(uid);
  return [...BUILTIN_ASSISTANTS.map(item=>saved.find(override=>override.id===item.id)??item),...saved.filter(item=>!BUILTIN_ASSISTANTS.some(builtin=>builtin.id===item.id))];
 }
 
-export const findAssistant = (uid: string | null | undefined, id: string | null | undefined) =>
+const findAssistant = (uid: string | null | undefined, id: string | null | undefined) =>
   id ? listAssistants(uid).find((a) => a.id === id) ?? null : null
 
 
-export const AI_CHAT_HISTORY_CHANGED = 'lime-ai-chat-history-changed';
+const AI_CHAT_HISTORY_CHANGED = 'lime-ai-chat-history-changed';
 
-export const AI_CHAT_DELETED = 'lime-ai-chat-deleted';
+const AI_CHAT_DELETED = 'lime-ai-chat-deleted';
+
+// groupFriendCall
+type FriendCallUtterance = { name: string; content: string };
+const GROUP_CALL_LISTEN = '[LISTEN]';
+const GROUP_CALL_INSTRUCTION = '\nこれは複数の友達とユーザーによるグループ音声通話です。会話記録の話者名を区別し、先にユーザーと他の友達の発言を最後まで聞いてから、自分として発言してください。自分への呼びかけ、質問への回答、自分ならではの意見がある場合にだけ、自然な口調で1〜2文、120文字以内で話してください。他の人の回答の繰り返し、不要な相づち、全員への一律の返答は不要です。今は聞くだけでよい場合は [LISTEN] だけを返してください。他の参加者やユーザーの発言を代弁しないでください。';
+
+/** Only one request and one spoken reply at a time; each next friend hears completed turns. */
+async function runGroupFriendTurn({ participants, history, userName, text, signal, ask, speak }: {
+  participants: AssistantItem[]; history: FriendCallUtterance[]; userName: string; text: string; signal: AbortSignal;
+  ask: (friend: AssistantItem, history: FriendCallUtterance[], signal: AbortSignal) => Promise<string>;
+  speak: (friend: AssistantItem, reply: string, signal: AbortSignal) => Promise<void>;
+}) {
+  if (signal.aborted) return;
+  history.push({ name: userName, content: text });
+  for (const friend of participants) {
+    if (signal.aborted) return;
+    const reply = (await ask(friend, history.slice(-20).map(turn => ({ ...turn })), signal)).trim();
+    if (signal.aborted) return;
+    if (!reply || reply === GROUP_CALL_LISTEN) continue;
+    await speak(friend, reply, signal);
+    if (signal.aborted) return;
+    history.push({ name: friend.name, content: reply });
+    if (history.length > 40) history.splice(0, history.length - 40);
+  }
+}
+
+export { loadCustomAssistants };
+export { saveCustomAssistant };
+export { deleteCustomAssistant };
+export { saveAvatars };
+export { defaultAvatarUrl };
+export type { AssistantItem };
+export { AI_FRIENDS_CHANGED };
+export type { AssistantDraft };
+export type { AvatarMap };
+export { loadAvatars };
+export { avatarOf };
+export { listAssistants };
+export { findAssistant };
+export { AI_CHAT_HISTORY_CHANGED };
+export { AI_CHAT_DELETED };
+export { runGroupFriendTurn };
+export type { FriendCallUtterance };
+export { GROUP_CALL_LISTEN };
+export { GROUP_CALL_INSTRUCTION };

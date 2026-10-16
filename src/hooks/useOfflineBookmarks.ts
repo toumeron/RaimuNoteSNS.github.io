@@ -1,5 +1,5 @@
 import {fetchLinkPreview,singlePreviewUrl,type LinkPreview} from '@/lib/linkPreview';
-import {spaceLinkIn} from '@/lib/spaceLinks';
+import { spaceLinkIn } from "@/lib/postPresentation";
 import {spaceRpc} from '@/api/spaces';
 import type {OfflineSpaceCard} from '@/lib/offlineBookmarks';
 import {useEffect,useRef,useState} from 'react';

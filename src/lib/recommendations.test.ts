@@ -1,7 +1,14 @@
 import { recommendationFingerprint } from "@/lib/recommendationSignals";
-import { beforeEach, expect, it } from 'vitest';
-import { addRecommendationInterest, rankRecommendations, recommendationTerms, recordRecommendationLike, readRecommendationLikes, recordRecommendationImpression, readRecommendationImpressions, scoreRecommendation } from './recommendations';
-import type { PostWithAuthor } from '@/types';
+import { beforeEach, expect, it, afterEach, vi } from "vitest";
+import { addRecommendationInterest, rankRecommendations, recommendationTerms, recordRecommendationLike, readRecommendationLikes, recordRecommendationImpression, readRecommendationImpressions, scoreRecommendation } from "@/lib/recommendations";
+import { type PostWithAuthor } from "@/types/index";
+import { createRecommendationCursor } from "@/api/recommendations";
+import { preserveRecommendationHistory, uniqueRecommendationPosts, readRecommendationReserve, saveRecommendationReserve, clearRecommendationReserve } from "@/lib/topicRecommendations";
+import visuals from "@/lib/fixtures/recommendationVisual.json";
+import document from "@/lib/fixtures/recommendationDocument.json";
+import { classifyRecommendationVisual } from "@/lib/recommendationVisual";
+
+describe("recommendations", () => {
 const post=(id:string,content:string,userId='author'):PostWithAuthor=>({id,content,userId,createdAt:'2026-10-03T00:00:00Z',likesCount:1,commentsCount:0,repostsCount:0,repostedByMe:false,likedByMe:false,imageUrls:[],author:{id:userId,username:userId} as any});
 beforeEach(()=>localStorage.clear());
 it('prioritizes subjects learned from engagement over unrelated popular posts',()=>{
@@ -431,4 +438,44 @@ it('does not let likes from a different topic disable a newly followed anime top
  const oldLike={...girl,id:'old-like',recommendationVisual:{...girl.recommendationVisual,kind:'food',topics:['food'] as any}};
  const preferences={visualOnly:true,authors:{},terms:{},followedTopics:['anime','food'] as any,likedSamples:[oldLike]};
  expect(rankRecommendations([girl],preferences,'new-topic-viewer').map(p=>p.id)).toEqual([girl.id]);
+});
+});
+
+describe("recommendationPaging", () => {
+const work=(id:string,url='https://images.example/work.jpg'):PostWithAuthor=>({id,userId:'creator',content:'作品',imageUrls:[url],createdAt:'2026-10-13',likesCount:0,commentsCount:0,repostsCount:0,likedByMe:false,repostedByMe:false,author:{id:'creator',username:'creator',displayName:'Creator',bio:'',avatarUrl:'',coverUrl:'',createdAt:'2026-10-13'}});
+it('keeps visible work identities and media fingerprints when creator discovery restarts',()=>{
+ const shown=work('bsky:original');const cursor=preserveRecommendationHistory(createRecommendationCursor([]),[shown]);
+ expect(cursor.seen).toContain(shown.id);expect(cursor.history).toEqual([shown]);
+ expect(uniqueRecommendationPosts([work('bsky:copy','https://images.example/work.jpg?w=900'),work('new','https://images.example/new.jpg')],[shown]).map(post=>post.id)).toEqual(['new']);
+});
+it('reconciles provider totals and recent creators with cards still visible after image filtering',()=>{
+ const cursor={...createRecommendationCursor([]),providerTotals:{twitter:4,other:4},history:[work('x:removed')]};
+ const shown=[work('x:kept'),work('bsky:kept','https://images.example/other.jpg')];
+ const next=preserveRecommendationHistory(cursor,shown);
+ expect(next.providerTotals).toEqual({twitter:1,other:1});expect(next.history).toEqual(shown);
+});
+it('does not forget a consumed creator budget when image filtering removes their cards',()=>{
+ const cursor={...createRecommendationCursor([]),twitterAuthorCounts:{'x-user:artist':3},twitterAuthorHandles:{'x-user:artist':'artist@twitter.com'}};
+ const next=preserveRecommendationHistory(cursor,[work('bsky:kept')]);
+ expect(next.twitterAuthorCounts?.['x-user:artist']).toBe(3);
+ expect(next.twitterAuthorHandles?.['x-user:artist']).toBe('artist@twitter.com');
+});
+});
+
+describe("recommendationReserve", () => {
+const page=(n=20)=>({posts:Array.from({length:n},(_,i)=>({id:'post-'+i,userId:'author-'+i,author:{id:'author-'+i},imageUrls:['https://example.com/'+i+'.jpg'],recommendationVisual:classifyRecommendationVisual(visuals.find(row=>row.name==='original-moe')!.vector)})),preferences:{authors:{},terms:{}},next:undefined} as any);
+afterEach(()=>{sessionStorage.clear();vi.restoreAllMocks();});
+it('retains only a complete reserve for the same account and sources',()=>{
+ saveRecommendationReserve('viewer:a',page(19));expect(readRecommendationReserve('viewer:a')).toBeUndefined();
+ saveRecommendationReserve('viewer:a',page());expect(readRecommendationReserve('viewer:a')?.posts).toHaveLength(20);expect(readRecommendationReserve('viewer:b')).toBeUndefined();clearRecommendationReserve();expect(readRecommendationReserve('viewer:a')).toBeUndefined();
+});
+it('expires prepared work after two minutes and rejects malformed checkpoints',()=>{
+ const now=Date.now();vi.spyOn(Date,'now').mockReturnValue(now);saveRecommendationReserve('viewer',page());vi.mocked(Date.now).mockReturnValue(now+120001);expect(readRecommendationReserve('viewer')).toBeUndefined();
+ sessionStorage.setItem('lime-recommendation-reserve-v1','broken');expect(readRecommendationReserve('viewer')).toBeUndefined();
+});
+
+it('rejects an old reserve that falsely labels the reported document as character artwork',()=>{
+ const old=page();old.posts[0].recommendationVisual={...old.posts[0].recommendationVisual,vector:document.vector};
+ saveRecommendationReserve('viewer',old);expect(readRecommendationReserve('viewer')).toBeUndefined();
+});
 });

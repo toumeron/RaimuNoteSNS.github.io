@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import { spaceLinkIn } from "@/lib/spaceLinks";
+import { spaceLinkIn } from "@/lib/postPresentation";
 
 export type LinkPreview={url:string;domain:string;title:string;image:string;description?:string};
 export function previewUrlMatches(first:string|null,second:string|undefined):boolean{

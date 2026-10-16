@@ -4,7 +4,7 @@ import * as Popover from '@radix-ui/react-popover';
 import * as AlertDialog from '@radix-ui/react-alert-dialog';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Switch } from '@/components/ui/switch';
+import { Switch } from "@/components/ui/button";
 import { toast } from 'sonner';
 import { spaceRpc, SPACE_EMOJIS, type SpaceState } from '@/api/spaces';
 import type { LiveSpace, SpeakerPolicy } from "@/components/spaces/SpaceProvider";

@@ -1,0 +1,91 @@
+.anime-history{padding:28px 24px 56px;min-width:0;min-height:80vh;color:hsl(var(--foreground));}
+.dark .anime-history{background:#000;color:#e4e4e4;}
+.anime-history-search{position:relative;margin:0 0 76px auto;display:flex;align-items:center;flex-direction:row-reverse;gap:14px;width:min(100%,360px);padding:15px 16px;background:hsl(var(--muted)/.5);border:1px solid hsl(var(--border));border-radius:7px;color:hsl(var(--muted-foreground));}
+.dark .anime-history-search{background:#171717;border-color:#343434;color:#c7c7c7;}
+.anime-history-search>button{display:grid;place-items:center;flex-shrink:0;}
+.anime-history-search input{width:100%;min-width:0;background:transparent;outline:none;font-size:17px;}
+.anime-history-search:focus-within{outline:2px solid hsl(var(--ring));outline-offset:2px;}
+.anime-history-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:36px;}
+.anime-history h1{font-size:30px;font-weight:750;letter-spacing:-.04em;line-height:1.4;}
+.anime-history button:focus-visible,.anime-history a:focus-visible{outline:2px solid hsl(var(--ring));outline-offset:3px;}
+.anime-history button:disabled{opacity:.5;cursor:default;}
+.anime-history-list{list-style:none;padding:0;margin:0;border-radius:8px;overflow:hidden;background:hsl(var(--muted)/.7);}
+.dark .anime-history-list{background:#202020;}
+.anime-history-list>li{border-bottom:1px solid hsl(var(--border));}
+.dark .anime-history-list>li{border-color:#3a3a3a;}
+.anime-history-list>li:last-child{border-bottom:0;}
+.anime-history-row{display:grid;grid-template-columns:29% minmax(0,1fr);gap:24px;width:100%;padding:24px;text-align:left;align-items:start;}
+.anime-history-row:hover{background:rgba(127,127,127,.04);}
+.anime-history-image{display:flex;align-items:center;justify-content:center;aspect-ratio:16/9;overflow:hidden;border-radius:6px;background:hsl(var(--muted));color:hsl(var(--muted-foreground));}
+.dark .anime-history-image{background:#2a2a2a;}
+.anime-history-image img{width:100%;height:100%;object-fit:cover;}
+.anime-history-image>svg{width:30px;height:30px;opacity:.5;}
+.anime-history-details{min-width:0;overflow-wrap:anywhere;}
+.anime-history-details h2{font-size:clamp(17px,1.65vw,25px);font-weight:700;line-height:1.5;letter-spacing:-.02em;}
+.anime-history-series{font-size:14px;margin-bottom:10px;color:hsl(var(--muted-foreground));}
+.dark .anime-history-series,.dark .anime-history-date{color:#939393;}
+.anime-history-date{margin-top:10px;font-size:14px;color:hsl(var(--muted-foreground));}
+.anime-history-empty{padding:64px 12px;text-align:center;color:hsl(var(--muted-foreground));font-size:14px;line-height:1.9;}
+.anime-history-dialog{max-height:88dvh;overflow-y:auto;max-width:560px;}
+.anime-history-field{font-size:13px;display:flex;flex-direction:column;gap:8px;}
+.anime-history-field select,.anime-history-field input{border:1px solid hsl(var(--border));background:hsl(var(--background));padding:10px;border-radius:6px;max-width:100%;min-width:0;color-scheme:light dark;}
+.anime-history-import{max-height:45dvh;overflow:auto;}
+.anime-history-import>div{padding:12px 0;border-bottom:1px solid hsl(var(--border));}
+.anime-history-import label{display:flex;gap:10px;align-items:start;font-size:13px;}
+.anime-history-import small{display:block;color:hsl(var(--muted-foreground));font-size:11px;margin-top:5px;}
+@media(max-width:639px){
+ .anime-history{padding:20px 16px 40px;}
+ .anime-history-search{margin-bottom:46px;padding:12px 14px;width:min(100%,310px);}
+ .anime-history-search>button{display:grid;place-items:center;flex-shrink:0;}
+.anime-history-search input{font-size:15px;}
+ .anime-history-heading{margin-bottom:26px;}
+ .anime-history h1{font-size:26px;}
+ .anime-history-row{grid-template-columns:34% minmax(0,1fr);gap:15px;padding:18px 15px;}
+ .anime-history-details h2{font-size:16px;}
+ .anime-history-series{font-size:12px;margin-bottom:6px;}
+ .anime-history-date{font-size:11px;margin-top:7px;}
+}
+
+.anime-history-suggestions{position:absolute;top:calc(100% + 8px);left:0;right:0;z-index:80;max-height:390px;overflow:auto;border:1px solid hsl(var(--border));border-radius:7px;background:hsl(var(--background));box-shadow:0 12px 32px #0003;color:hsl(var(--foreground));text-align:left;}
+.anime-history-suggestions>button,.anime-history-suggestions>a{display:flex;align-items:center;width:100%;gap:12px;padding:12px 14px;text-align:left;font-size:13px;}
+.anime-history-suggestions>button:hover,.anime-history-suggestions>a:hover{background:hsl(var(--muted));}
+.anime-history-suggestions p{font-size:12px;line-height:1.7;padding:14px;}
+.anime-history-suggestion .anime-history-image{width:76px;flex-shrink:0;}
+.anime-history-suggestion small{display:block;font-size:10px;margin-top:4px;color:hsl(var(--muted-foreground));}
+
+.anime-history-stack{position:relative;isolation:isolate;margin-right:18px;margin-bottom:18px;}
+.anime-history-stack:before,.anime-history-stack:after{content:"";position:absolute;inset:0;border-radius:6px;z-index:-1;background:#999;transform:translate(9px,9px);}
+.anime-history-stack:before{background:#707070;transform:translate(18px,18px);z-index:-2;}
+.anime-history-stack .anime-history-image{border:3px solid #fff;}
+.anime-history-group{grid-template-columns:35% minmax(0,1fr);gap:36px;padding-bottom:28px;}
+.anime-history-group h2{font-size:clamp(19px,2.9vw,36px);line-height:1.45;}
+@media(max-width:639px){.anime-history-group{grid-template-columns:34% minmax(0,1fr);gap:15px;}.anime-history-group h2{font-size:16px;}}
+
+.anime-history-item{position:relative;}
+.anime-history-item:has(.anime-history-delete) .anime-history-details{padding-right:42px;}
+.anime-history-delete{position:absolute;right:20px;top:50%;transform:translateY(-50%);display:grid;place-items:center;width:44px;height:44px;border-radius:6px;opacity:0;visibility:hidden;pointer-events:none;color:inherit;}
+.anime-history-item:has(:focus-visible) .anime-history-delete,.anime-history-touched .anime-history-delete{opacity:1;visibility:visible;pointer-events:auto;}
+@media(hover:hover){
+ .anime-history-item:hover{background:rgba(127,127,127,.14);}
+ .anime-history-item:hover .anime-history-delete{opacity:1;visibility:visible;pointer-events:auto;}
+}
+@media(max-width:639px){
+ .anime-history-add-backdrop{display:none;}
+ .anime-history-dialog.anime-history-add-screen{inset:0!important;transform:none!important;width:100%;max-width:none;height:100dvh;max-height:none;border:0;border-radius:0;box-shadow:none;align-content:start;gap:24px;padding:calc(24px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom));animation:none!important;}
+ .anime-history-add-screen>h2{padding-right:28px;line-height:1.5;}
+ .anime-history-add-screen>.neutral-dismiss{top:calc(20px + env(safe-area-inset-top));right:20px;}
+ .anime-history-delete{right:8px;}
+}
+
+.anime-history-profile{display:flex;align-items:center;gap:16px;margin:8px 0 36px;min-width:0;}
+.anime-history-profile .anime-history-profile-avatar{width:64px;height:64px;flex-shrink:0;font-size:24px;}
+.anime-history-profile-identity{min-width:0;}
+.anime-history-profile-name{display:flex;align-items:center;gap:6px;min-width:0;}
+.anime-history-profile-name h1{font-size:24px;font-weight:750;letter-spacing:-.025em;overflow-wrap:anywhere;}
+.anime-history-profile-badge{width:20px;height:20px;flex-shrink:0;}
+.anime-history-profile-identity>p{color:hsl(var(--muted-foreground));font-size:15px;margin-top:4px;overflow-wrap:anywhere;}
+@media(max-width:639px){.anime-history-profile{gap:12px;margin:4px 0 28px;}.anime-history-profile .anime-history-profile-avatar{width:48px;height:48px;font-size:20px;}.anime-history-profile-name{gap:6px;}.anime-history-profile-name h1{font-size:20px;}.anime-history-profile-identity>p{font-size:14px;}.anime-history-profile-badge{width:18px;height:18px;}}
+
+.anime-history-tools{display:flex;justify-content:flex-end;gap:14px;margin-top:20px;color:hsl(var(--muted-foreground));font-size:11px;line-height:1.5;}
+.anime-history-tools>a,.anime-history-tools>button{padding:5px 0;background:none;border:0;font:inherit;}
+.anime-history-tools>a:hover,.anime-history-tools>button:hover{text-decoration:underline;}
