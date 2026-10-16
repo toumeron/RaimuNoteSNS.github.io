@@ -2,8 +2,11 @@ name: Prepare public recommendation images
 on:
   workflow_call:
   workflow_dispatch:
+<<<<<<< HEAD
   schedule:
     - cron: '17 * * * *'
+=======
+>>>>>>> 374490cc (“update23”)
 concurrency:
   group: recommendation-catalog
   cancel-in-progress: false

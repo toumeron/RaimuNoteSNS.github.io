@@ -1,6 +1,10 @@
 import type {PostWithAuthor} from '@/types';
 import {type TopicId} from './topics';
+<<<<<<< HEAD
 import {classifyRecommendationVisual,readVisualCache,writeVisualCache,type RecommendationVisual} from './recommendationVisual';
+=======
+import {classifyRecommendationVisual,readVisualCache,writeVisualCache,recommendationImageIdentity,type RecommendationVisual} from './recommendationVisual';
+>>>>>>> 374490cc (“update23”)
 import {isDeferredPrivateMedia,resolvePrivateMediaUrl} from './privateMediaFetch';
 import {prepareRecommendationImage,recommendationThumbnailUrl} from './recommendationImageInput';
 
@@ -10,6 +14,9 @@ let worker:Worker|undefined;
 let idleTimer:ReturnType<typeof setTimeout>|undefined;
 export function idleRecommendationVisualWorker(){clearTimeout(idleTimer);idleTimer=setTimeout(releaseRecommendationVisualWorker,120000);}
 export function warmRecommendationVisualWorker(){if(typeof Worker==='undefined')return;visualWorker().postMessage({warm:true});idleRecommendationVisualWorker();}
+// A failed public image must not be fetched again on every scroll page.
+const unavailableUntil=new Map<string,number>();
+const FAILURE_COOLDOWN=60_000;
 let nextId=0;
 const pending=new Map<number,{resolve:(vector:number[])=>void;reject:(error:Error)=>void}>();
 /** Release the WASM heap and model after a bounded analysis job. */
@@ -32,6 +39,8 @@ function visualWorker():Worker {
 async function analyze(url:string,signal?:AbortSignal):Promise<RecommendationVisual> {
  if(signal?.aborted)throw signal.reason;
  const cached=readVisualCache(url);if(cached)return cached;
+ const identity=recommendationImageIdentity(url);
+ if((unavailableUntil.get(identity)??0)>Date.now())throw new Error('Image unavailable');
  const id=nextId++;
  const imageUrl=isDeferredPrivateMedia(url)?await resolvePrivateMediaUrl(url):url;
  if(signal?.aborted)throw signal.reason;
@@ -47,8 +56,14 @@ async function analyze(url:string,signal?:AbortSignal):Promise<RecommendationVis
   try{visualWorker().postMessage({id,url:prepared.url});}catch(error){pending.delete(id);signal?.removeEventListener('abort',cancel);reject(error);}
  });
  const result=classifyRecommendationVisual(vector);
- writeVisualCache(url,result);
+ writeVisualCache(url,result);unavailableUntil.delete(identity);
  return result;
+<<<<<<< HEAD
+=======
+ }catch(error){
+  if(!signal?.aborted){unavailableUntil.set(identity,Date.now()+FAILURE_COOLDOWN);if(unavailableUntil.size>512)unavailableUntil.delete(unavailableUntil.keys().next().value!);}
+  throw error;
+>>>>>>> 374490cc (“update23”)
  }finally{prepared.release();}
 }
 /** Only on a requested feed page, in a worker. No upload of image pixels,

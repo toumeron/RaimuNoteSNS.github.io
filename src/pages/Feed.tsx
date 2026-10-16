@@ -1,5 +1,6 @@
+import {createTwitterTrendCursor,getTwitterTrendPage,type TwitterTrendCursor} from '@/api/twitter-trends';
 import { SuspensionNotice } from '@/components/account/AccountSuspension';
-import {isTimelinePost,showTimelineEmpty} from "@/lib/timelinePaging";
+import {isTimelinePost,isLimeNoteTimelinePost,showTimelineEmpty} from "@/lib/timelinePaging";
 import {useListFeed} from '@/hooks/useLists';
 import {useTopicFeed} from '@/hooks/useTopicFeed';
 import {isFeedTabValue,feedTabTopic,useTimelineTabs,type FeedTabValue} from '@/lib/timelineTabs';
@@ -9,22 +10,17 @@ import { useInView } from 'react-intersection-observer';
 import { useQuery,useQueryClient } from '@tanstack/react-query';
 import {getTopicPreferences,topicsKey} from '@/api/topics';
 import {recommendationIdentity,recommendationFingerprint} from "@/lib/recommendationSignals";
-import {recommendationIsEligible} from "@/lib/recommendationSignals";
-import {recommendationTopicAffinity} from '@/lib/recommendationSignals';
 import {useAuth} from '@/hooks/useAuth';
 import { PostComposer } from '@/components/feed/PostComposer';
 import { PostCard } from '@/components/feed/PostCard';
 import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
-import { useRecommendedFeed } from '@/hooks/useRecommendedFeed';
 import { useTimelineContinuation } from '@/hooks/useTimelineContinuation';
 import { useTimelineFeed } from '@/hooks/useTimelineFeed';
-import { normalizeTimelineBlueskyPost } from '@/lib/timelinePaging';
 import { useIsPWA, TIMELINE_PAGINATION_MARGIN } from "@/hooks/use-mobile";
 import { supabase } from '@/lib/supabase';
 import { getPostById } from '@/api/posts';
 import type { PostWithAuthor } from '@/types';
 import {
-  fetchTrendingJapaneseBlueskyPosts,
   mergePostsByCreatedAt,
 } from '@/lib/bluesky';
 
@@ -75,8 +71,7 @@ type TimelineVisualDesignCache = {
   themeSourceUrl: string | null;
 };
 
-// 最新/フォロー中に加えて、Blueskyの日本語トレンド投稿(いいね500以上)を
-// ランダムに表示する「トレンド」タブを追加。
+// ホームは時系列・フォロー中・Twitterの人気投稿・リスト・トピックで構成する。
 type FeedTab = FeedTabValue;
 
 
@@ -94,7 +89,6 @@ const ESTIMATED_POST_HEIGHT = 360;
 const VIRTUAL_OVERSCAN = 4;
 const MIN_VIRTUALIZED_POSTS = 12;
 // トレンドタブで1回に取得する件数の目安。
-const TRENDING_PAGE_LIMIT = 30;
 
 // 最新/フォロー中/トレンドの選択状態はヘッダー側に移設したため、Feed側はこのキーと
 // カスタムイベント('lime-active-feed-tab-changed')経由で状態を受け取るだけにする。
@@ -248,25 +242,25 @@ export default function Feed() {
     all: [],
     following: [],
     trending: [],
-    recommended: [],
   });
-  // --- トレンドタブ(Bluesky・日本語・いいね500以上・ランダム表示)用の状態 ---
+  // --- トレンドタブ(Twitter・トピック別・いいね1,000件以上)用の状態 ---
   const [trendingPosts, setTrendingPosts] = useState<PostWithAuthor[]>([]);
   const [trendingLoading, setTrendingLoading] = useState(false);
   const [trendingHasMore, setTrendingHasMore] = useState(true);
   const trendingLoadingRef = useRef(false);
   const trendingRequestIdRef = useRef(0);
-  const trendingCursorRef = useRef<string | null>(null);
+  const trendingCursorRef = useRef<TwitterTrendCursor | null>(null);
   const trendingHasMoreRef = useRef(true);
+  const trendingControllerRef=useRef<AbortController|null>(null);
+  useEffect(()=>()=>{trendingRequestIdRef.current++;trendingControllerRef.current?.abort();trendingLoadingRef.current=false;},[user?.id]);
 
   const selectedList=activeTab.startsWith('list:')?activeTab.slice(5):undefined;
   const listFeed=useListFeed(selectedList);
   const selectedTopic=feedTabTopic(activeTab);
-  const isRankedTab=activeTab==='recommended'||!!selectedTopic;
-  const timelineFeed = useTimelineFeed(activeTab === 'following' ? 'following' : 'all', !isRankedTab&&!selectedList);
-  const generalRecommendedFeed = useRecommendedFeed(activeTab==='recommended');
+  const isRankedTab=!!selectedTopic;
+  const timelineFeed = useTimelineFeed(activeTab === 'following' ? 'following' : 'all', activeTab==='all'||activeTab==='following');
   const topicFeed=useTopicFeed(selectedTopic);
-  const rankedFeed=selectedTopic?topicFeed:generalRecommendedFeed;
+  const rankedFeed=topicFeed;
   const {data:topicPreferences}=useQuery({queryKey:topicsKey(user?.id),queryFn:()=>getTopicPreferences(user!.id),enabled:activeTab==='trending'&&!!user,staleTime:0});
   const {
     data,
@@ -317,49 +311,47 @@ export default function Feed() {
   );
 
   // トレンドタブのときはLime投稿・時系列Bluesky投稿と混ぜず、
-  // トレンド専用に取得したランダム順の投稿だけをそのまま表示する
-  // (createdAt順に並び替えてしまうと「ランダム表示」の意図が崩れるため)。
+  // トレンド専用に取得した人気投稿だけを表示する。
   const allPosts = useMemo(() => {
-    if (activeTab === 'trending') return topicPreferences ? trendingPosts.filter(isTimelinePost).filter(post=>recommendationIsEligible(post,topicPreferences.followed)).sort((a,b)=>recommendationTopicAffinity(b,topicPreferences)-recommendationTopicAffinity(a,topicPreferences)) : trendingPosts.filter(isTimelinePost);
+    if (activeTab === 'trending') return trendingPosts.filter(isTimelinePost);
     if (isRankedTab||selectedList) return fetchedPosts;
-    return mergePostsByCreatedAt(limePosts).filter(isTimelinePost);
+    return mergePostsByCreatedAt(limePosts).filter(isTimelinePost).filter(post=>activeTab!=='all'||isLimeNoteTimelinePost(post));
   }, [activeTab, limePosts, trendingPosts, fetchedPosts,topicPreferences]);
   const firstAnimatedPostIds=useRef<Set<string>|null>(null);
   if(shouldPlayInitialFloatAnimation&&allPosts.length&&!firstAnimatedPostIds.current)firstAnimatedPostIds.current=new Set(allPosts.map(post=>post.id));
   const hasPosts=allPosts.length>0;
 
-  const normalizeBlueskyPostForFeed = useCallback(normalizeTimelineBlueskyPost, []);
 
-  // トレンドタブ用: Bluesky検索(日本語・いいね500以上)からランダムな投稿を取得する。
+  // トレンドは明示したトピックとTwitterのいいね1,000件以上の条件だけで取得する。
   // reset=true で1ページ目からやり直し(タブ初回表示・引っ張って更新時)、
   // reset=false で「もっと読み込む」として続きを取得する。
   const loadTrendingPosts = useCallback(async (reset = false) => {
-    if (trendingLoadingRef.current) return;
+    if (trendingLoadingRef.current || user && !topicPreferences) return;
     if (!reset && !trendingHasMoreRef.current) return;
 
     const requestId = ++trendingRequestIdRef.current;
+    const controller=new AbortController();trendingControllerRef.current=controller;
     trendingLoadingRef.current = true;
     setTrendingLoading(true);
 
     if (reset) {
+      setTrendingPosts([]);
       trendingCursorRef.current = null;
       trendingHasMoreRef.current = true;
       setTrendingHasMore(true);
     }
 
     try {
-      const page = await fetchTrendingJapaneseBlueskyPosts({
-        cursor: reset ? null : trendingCursorRef.current,
-        limit: TRENDING_PAGE_LIMIT,
-      });
+      const cursor=trendingCursorRef.current??createTwitterTrendCursor(topicPreferences??{followed:[],dismissed:[]});
+      const page=await getTwitterTrendPage(cursor,controller.signal);
 
       if (requestId !== trendingRequestIdRef.current) return;
 
-      trendingCursorRef.current = page.cursor;
-      trendingHasMoreRef.current = Boolean(page.cursor) && page.posts.length > 0;
+      trendingCursorRef.current = page.next??null;
+      trendingHasMoreRef.current = Boolean(page.next);
       setTrendingHasMore(trendingHasMoreRef.current);
 
-      const normalized = page.posts.map(normalizeBlueskyPostForFeed);
+      const normalized = page.posts;
 
       setTrendingPosts((current) => {
         const base = reset ? [] : current;
@@ -375,26 +367,29 @@ export default function Feed() {
         return merged;
       });
     } catch (error) {
-      console.error('Fetch trending Bluesky posts failed:', error);
-      if (reset && requestId === trendingRequestIdRef.current) {
-        setTrendingPosts([]);
+      if(controller.signal.aborted)return;
+      console.error('Fetch trending twitter posts failed:', error);
+      if (requestId === trendingRequestIdRef.current) {
+        if(reset)setTrendingPosts([]);
         trendingHasMoreRef.current = false;
         setTrendingHasMore(false);
       }
     } finally {
       if (requestId === trendingRequestIdRef.current) {
         trendingLoadingRef.current = false;
+        trendingControllerRef.current=null;
         setTrendingLoading(false);
       }
     }
-  }, [normalizeBlueskyPostForFeed]);
+  }, [user?.id,topicPreferences]);
 
-  // トレンドタブへ切り替えた最初のタイミングで1回だけ読み込む。
-  useEffect(() => {
-    if (activeTab === 'trending' && trendingPosts.length === 0 && !trendingLoadingRef.current) {
-      void loadTrendingPosts(true);
-    }
-  }, [activeTab, trendingPosts.length, loadTrendingPosts]);
+  const trendingScope=JSON.stringify([user?.id??null,topicPreferences?.followed??[],topicPreferences?.dismissed??[]]);
+  const loadedTrendingScope=useRef<string|null>(null);
+  useEffect(()=>{
+    if(activeTab!=='trending'||user&&!topicPreferences||trendingLoadingRef.current||loadedTrendingScope.current===trendingScope)return;
+    loadedTrendingScope.current=trendingScope;
+    void loadTrendingPosts(true);
+  },[activeTab,trendingScope,topicPreferences,trendingLoading,loadTrendingPosts]);
 
   useEffect(() => {
     let cancelled = false;
@@ -907,8 +902,12 @@ export default function Feed() {
         if (activeTab === 'trending') {
           await loadTrendingPosts(true);
         } else if(isRankedTab){
+<<<<<<< HEAD
           if(selectedTopic)await queryClient.resetQueries({queryKey:['feed','topic',user?.id??null,selectedTopic]});
           else await queryClient.invalidateQueries({queryKey:['feed','recommended']});
+=======
+          await queryClient.resetQueries({queryKey:['feed','topic',user?.id??null,selectedTopic]});
+>>>>>>> 374490cc (“update23”)
         } else {
           await Promise.all([
             queryClient.invalidateQueries({ queryKey: ['posts'] }),
@@ -1497,7 +1496,11 @@ export default function Feed() {
       ? 'まだ投稿がありません'
       : activeTab === 'following'
         ? 'フォロー中の投稿はありません'
+<<<<<<< HEAD
         : selectedList?'リストのメンバーの投稿がまだありません':isRankedTab ? selectedTopic?'このトピックの投稿がまだありません':'' : 'トレンドの投稿がまだありません';
+=======
+        : selectedList?'リストのメンバーの投稿がまだありません':isRankedTab ? 'このトピックの投稿がまだありません' : 'トレンドの投稿がまだありません';
+>>>>>>> 374490cc (“update23”)
 
   return (
     <div
@@ -1701,7 +1704,7 @@ export default function Feed() {
             {/* スマホ専用の LimeNoteBeta ボックス */}
             <span className="ribbon-tag sm:hidden">
               <Sparkles className="h-3 w-3" />
-              LimeNote 2.9.0
+              LimeNote 2.9.1
             </span>
           </div>
 
@@ -1710,7 +1713,7 @@ export default function Feed() {
         {/* PC専用の LimeNoteBeta ボックス */}
         <span className="ribbon-tag hidden sm:inline-flex">
           <Sparkles className="h-3 w-3" />
-          LimeNote 2.9.0
+          LimeNote 2.9.1
         </span>
       </div>
 
@@ -1741,7 +1744,11 @@ export default function Feed() {
           </div>
         )}
 
+<<<<<<< HEAD
         {showTimelineEmpty(isInitialLoading,isBusyLoadingMore,isError,allPosts.length,activeTab) && (
+=======
+        {showTimelineEmpty(isInitialLoading,isBusyLoadingMore,isError,allPosts.length,activeTab) && (activeTab!=='trending'||!trendingHasMore) && (
+>>>>>>> 374490cc (“update23”)
           <div className="rounded-3xl border border-dashed border-border/50 bg-card/40 p-10 text-center text-muted-foreground">
             {emptyStateMessage}
           </div>

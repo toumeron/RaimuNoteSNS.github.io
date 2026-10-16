@@ -58,3 +58,13 @@ it('renders supplied metadata when URL normalization adds the root slash',()=>{
  render(<QueryClientProvider client={new QueryClient()}><Card/></QueryClientProvider>);
  expect(screen.getByRole('link',{name:preview.title})).toHaveAttribute('href','https://example.com/');expect(invoke).not.toHaveBeenCalled();
 });
+<<<<<<< HEAD
+=======
+
+it.each([{imageUrls:['https://example.com/attached.jpg']},{video:{url:'video.mp4'}},{externalVideo:{url:'video.m3u8'}},{embedded:true}])('does not render or request provided URL previews for media or quotes: %s',async extra=>{
+ const {canShowPostLinkPreview}=await import('@/lib/postPresentation');
+ function Card(){const state=useLinkPreview(preview.url,canShowPostLinkPreview(extra,extra.embedded),preview);return <LinkPreviewCard {...state}/>;}
+ const view=render(<QueryClientProvider client={new QueryClient()}><Card/></QueryClientProvider>);
+ expect(view.container.querySelector('[data-link-preview]')).toBeNull();expect(invoke).not.toHaveBeenCalled();view.unmount();
+});
+>>>>>>> 374490cc (“update23”)

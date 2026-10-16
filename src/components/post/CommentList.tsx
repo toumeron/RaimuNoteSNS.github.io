@@ -1,3 +1,7 @@
+import {displayUsername} from '@/lib/displayUsername';
+import {canShowPostLinkPreview,hasAttachedPostVideo} from '@/lib/postPresentation';
+import {PostSourceLabel} from '@/components/post/PostSourceLabel';
+import {PrivateMediaImage} from '@/components/media/PrivateMediaImage';
 import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
 import {twitterReplyUrl} from '@/lib/fxTwitter';
 import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
@@ -466,7 +470,7 @@ export function CommentCard({
       const imageUrl = `https://res.cloudinary.com/dveiikhhw/image/upload/${cleanPublicId}.${customEmoji.format}`;
 
       return (
-        <img
+        <PrivateMediaImage
           src={imageUrl}
           alt={customEmoji.name}
           className={className}
@@ -502,15 +506,15 @@ export function CommentCard({
     return name.includes(searchQuery.toLowerCase());
   });
 
-  const youtubeId = getYouTubeId(comment.content);
-  const linkPreview=useLinkPreview(comment.content);
+  const youtubeId = hasAttachedPostVideo(externalPost)?null:getYouTubeId(comment.content);
+  const linkPreview=useLinkPreview(comment.content,canShowPostLinkPreview({...comment,linkPreview:externalPost?.linkPreview,video:externalPost?.video,externalVideo:externalPost?.externalVideo},embedded),externalPost?.linkPreview,!externalPost);
 
   const spotifyUrls = comment.content.match(spotifyRegex) || [];
   const extractedImageUrls = comment.content.match(imageRegex) || [];
-  const allImageUrls = [...new Set([...(comment.imageUrls ?? []), ...extractedImageUrls])].slice(0, 4);
+  const allImageUrls = [...new Set([...(comment.imageUrls ?? []).filter(url=>url!==externalPost?.linkPreview?.image), ...extractedImageUrls])].slice(0, 4);
 
   let displayContent = comment.content;
-  displayContent = displayContent.replace(/(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|embed\/|shorts\/)?([a-zA-Z0-9_-]{11})([^?\s\n]*)?(\S+)?/g, '');
+  displayContent = displayContent.replace(/(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|embed\/|shorts\/)?([a-zA-Z0-9_-]{11})([^?\s\n]*)?(\S+)?/g, youtubeId?'':'$&');
   displayContent = displayContent.replace(imageRegex, '');
   displayContent = displayContent.replace(spotifyRegex, '');
   displayContent = linkPreview.text(displayContent.trim());
@@ -725,7 +729,7 @@ export function CommentCard({
 
           {comment.author.isPrivate && <PrivateAccountBadge/>}
           <ProviderVerificationBadge verification={externalPost?.author.providerVerification} className="h-[1.1em] w-[1.1em] shrink-0 transform translate-y-[1px]"/>{comment.author.isOfficial && (
-            <img
+            <PrivateMediaImage
               src={`${import.meta.env.BASE_URL}verified.png`}
               alt="Official"
               className="h-[1.1em] w-[1.1em] shrink-0 transform translate-y-[1px]"
@@ -734,7 +738,7 @@ export function CommentCard({
         </div>
 
         <p className="text-[15px] text-muted-foreground leading-none">
-          @{comment.author.username}
+          @{displayUsername(comment.author.username)}
         </p>
       </div>
 
@@ -787,8 +791,8 @@ export function CommentCard({
                       >
                         {mediaPresentation && <button onClick={() => navigate(replyUrl)} className="flex w-full items-center rounded-lg px-3 py-2 text-sm font-bold hover:bg-muted"><LinkIcon className="h-4 w-4" />ポストに移動</button>}
                         {mediaDownload && <button onClick={() => {setShowMenu(false);mediaDownload();}} className="flex w-full items-center rounded-lg px-3 py-2 text-sm font-bold hover:bg-muted"><Download className="h-4 w-4" />画像を保存</button>}
-                        {!externalPost && <button onClick={(event) => { event.stopPropagation(); navigate(`/post/${comment.postId}/activity?reply=${encodeURIComponent(comment.id)}`); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"><ChartBarBig className="h-4 w-4" />ポストアクティビティ</button>}
-                        {isMyComment && (
+                        {(!externalPost || externalPost.id.startsWith('bsky:') || /^x:\d+$/.test(externalPost.id)) && <button onClick={(event) => { event.stopPropagation(); navigate(externalPost?`/post/${encodeURIComponent(externalPost.id)}/activity`:`/post/${comment.postId}/activity?reply=${encodeURIComponent(comment.id)}`); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"><ChartBarBig className="h-4 w-4" />ポストアクティビティ</button>}
+                        {isMyComment && !externalPost && (
                         <button
                           onClick={handleDelete}
                           className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-destructive hover:bg-destructive/10 transition-colors border-t border-border/50 mt-1"
@@ -848,7 +852,7 @@ export function CommentCard({
                                   </span>
 
                                   <span className="text-[10px] text-muted-foreground/70 truncate leading-none">
-                                    @{u.username}
+                                    @{displayUsername(u.username)}
                                   </span>
                                 </div>
                               </div>
@@ -1277,7 +1281,7 @@ export function CommentCard({
 
                         {comment.author.isPrivate && <PrivateAccountBadge/>}
           <ProviderVerificationBadge verification={externalPost?.author.providerVerification} className="h-4 w-4 shrink-0 transform translate-y-[0.5px]"/>{comment.author.isOfficial && (
-                          <img
+                          <PrivateMediaImage
                             src={`${import.meta.env.BASE_URL}verified.png`}
                             alt="Official"
                             className="h-4 w-4 shrink-0 transform translate-y-[0.5px]"
@@ -1292,7 +1296,7 @@ export function CommentCard({
                 </HoverCard>
 
                 <span className={detail ? `w-full truncate text-xs text-muted-foreground ${mobileFlat ? 'post-detail-mobile-username' : ''}` : 'truncate text-base text-muted-foreground ml-1 opacity-80 shrink'}>
-                  @{comment.author.username}
+                  @{displayUsername(comment.author.username)}
                 </span>
 
                 {!detail && <span className="text-muted-foreground mx-1 shrink-0">·</span>}
@@ -1302,12 +1306,12 @@ export function CommentCard({
                 </span>}
               </div>
 
-              {!embedded && !externalPost && replyMenu}
+              {!embedded && (!externalPost || externalPost.id.startsWith('bsky:') || /^x:\d+$/.test(externalPost.id)) && replyMenu}
             </div>
 
             <div data-lime-post-body data-lime-post-has-images={allImageUrls.length > 0 || undefined} className={detail ? "col-span-2 min-w-0" : undefined}>
               <div>
-                {replyToUsername && <p className="mb-1 text-sm text-muted-foreground">返信先: <Link className="text-primary hover:underline" to={`/u/${replyToUsername}`} onClick={event => event.stopPropagation()}>@{replyToUsername}</Link>さん</p>}
+                {replyToUsername && <p className="mb-1 text-sm text-muted-foreground">返信先: <Link className="text-primary hover:underline" to={`/u/${replyToUsername}`} onClick={event => event.stopPropagation()}>@{displayUsername(replyToUsername)}</Link>さん</p>}
                 {displayContent && (
                   <p className={detail ? `mt-4 whitespace-pre-wrap break-words text-lg leading-relaxed text-foreground ${mobileFlat ? 'post-detail-mobile-content' : ''}` : isMobile ? 'whitespace-pre-wrap break-words text-[16px] leading-normal text-foreground mt-1' : 'whitespace-pre-wrap break-words text-base leading-relaxed text-foreground mt-1'}>
                     {renderContentWithMentions(displayContent)}
@@ -1326,7 +1330,7 @@ export function CommentCard({
               </div>
 
               <LinkPreviewCard {...linkPreview} />
-              {externalPost?.externalVideo&&<PostVideoPlayer postId={externalPost.id} post={externalPost} video={externalPost.externalVideo} externalVideo={externalPost.externalVideo}/>}
+              {externalPost?.externalVideo&&<PostVideoPlayer embedded={embedded} postId={externalPost.id} post={externalPost} video={externalPost.externalVideo} externalVideo={externalPost.externalVideo}/>}
               {externalPost&&<ExternalPostDetails post={externalPost}/>}
               {youtubeId && (
                 <div onClick={(e) => e.stopPropagation()} className="mt-3">
@@ -1343,13 +1347,14 @@ export function CommentCard({
               )}
 
               {allImageUrls.length === 1 && !failedUrls.includes(allImageUrls[0]) ? (
-                <div className="mt-3 flex max-w-full justify-start" onClick={(e) => e.stopPropagation()}>
+                <div data-lime-post-images={allImageUrls.length>0||undefined} className="mt-3 flex max-w-full justify-start" onClick={(e) => e.stopPropagation()}>
                   <button type="button" data-lime-single-post-image aria-label="画像を拡大表示" className="block max-w-full cursor-zoom-in overflow-hidden rounded-2xl border border-border/50 bg-black/[0.025] text-left shadow-none dark:bg-white/[0.035]" style={singleImageFrameStyle} onClick={(e) => handleImageClick(e, allImageUrls[0])}>
-                    <img src={allImageUrls[0]} alt={externalPost?.imageAltTexts?.[0]||"返信画像"} referrerPolicy={externalPost?.source==='x'?'no-referrer':undefined} className="block select-none" style={{ width: '100%', height: 'auto', objectFit: 'contain' }} draggable={false} loading="lazy" decoding="async" onLoad={(e) => { const image = e.currentTarget; if (image.naturalWidth && image.naturalHeight) setImageSize({ url: allImageUrls[0], width: image.naturalWidth, height: image.naturalHeight }); }} onError={() => setFailedUrls((prev) => prev.includes(allImageUrls[0]) ? prev : [...prev, allImageUrls[0]])} />
+                    <PrivateMediaImage src={allImageUrls[0]} alt={externalPost?.imageAltTexts?.[0]||"返信画像"} referrerPolicy={externalPost?.source==='x'?'no-referrer':undefined} className="block select-none" style={{ width: '100%', height: 'auto', objectFit: 'contain' }} draggable={false} loading="lazy" decoding="async" onLoad={(e) => { const image = e.currentTarget; if (image.naturalWidth && image.naturalHeight) setImageSize({ url: allImageUrls[0], width: image.naturalWidth, height: image.naturalHeight }); }} onError={() => setFailedUrls((prev) => prev.includes(allImageUrls[0]) ? prev : [...prev, allImageUrls[0]])} />
                   </button>
                 </div>
               ) : allImageUrls.length > 1 && (
                 <div
+                  data-lime-post-images={allImageUrls.length>0||undefined}
                   className="cursor-zoom-in"
                   onClick={(e) => {
                     const target = e.target as HTMLElement;
@@ -1378,6 +1383,7 @@ export function CommentCard({
             {replyReactions}
 
             {detail && <p className={`col-span-2 mt-4 text-xs text-muted-foreground ${mobileFlat ? 'post-detail-mobile-meta' : ''}`} title={formatDate(comment.createdAt)}>{formatDate(comment.createdAt)} · {formatRelative(comment.createdAt)}{comment.clientName && <><span className="mx-1">·</span><span className="text-primary/80 font-medium">{comment.clientName}</span></>}</p>}
+            {!embedded&&externalPost&&<PostSourceLabel post={externalPost} small={useMobilePresentation}/>}
             {replyActions}
           </div>
         </div>

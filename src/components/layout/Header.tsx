@@ -1,3 +1,4 @@
+import {displayUsername} from '@/lib/displayUsername';
 import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
 import {MOBILE_DRAWER_EDGE_ZONE,isMobileDrawerBlocked} from '@/lib/mobileDrawerGesture';
 import {ProfileListPicker} from '@/components/lists/ListDialogs';
@@ -84,7 +85,6 @@ const ACTIVE_FEED_TAB_CHANGED_EVENT = 'lime-active-feed-tab-changed';
 const FEED_TABS: Array<{ value: FeedTabValue; label: string }> = [
   { value: 'all', label: '最新' },
   { value: 'following', label: 'フォロー中' },
-  { value: 'recommended', label: 'おすすめ' },
   { value: 'trending', label: 'トレンド' },
 ];
 
@@ -2704,7 +2704,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
                           />
                         )}
                       </span>
-                      <span className="truncate text-[13px] text-[rgb(83,100,113)] dark:text-gray-400">@{row.user.username}</span>
+                      <span className="truncate text-[13px] text-[rgb(83,100,113)] dark:text-gray-400">@{displayUsername(row.user.username)}</span>
                     </div>
                   </>
                 )}
@@ -2925,7 +2925,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
                     {user.displayName}{user.isPrivate && <PrivateAccountBadge/>}
                   </div>
                   <div className={cn("truncate text-[15px] font-medium leading-tight", sidebarMutedText)}>
-                    @{user.username}
+                    @{displayUsername(user.username)}
                   </div>
                 </div>
                 {!desktopLayout && <MobileAccountShortcuts onDone={() => setIsMobileSidebarOpen(false)} />}
@@ -3566,7 +3566,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
               else if (settingsGroup) setSettingsParams(previous => { const next = new URLSearchParams(previous); next.delete('group'); return next; });
               else window.history.state?.idx > 0 ? navigate(-1) : navigate('/');
             }}><ArrowLeft className="h-5 w-5" /></Button>
-            <div data-lime-settings-mobile-title className="ml-2 min-w-0 flex-1"><h1 className="truncate text-xl font-bold">{settingsSection?.label ?? settingsGroup?.label ?? '設定'}</h1><span className="text-xs text-muted-foreground">@{user?.username}</span></div>
+            <div data-lime-settings-mobile-title className="ml-2 min-w-0 flex-1"><h1 className="truncate text-xl font-bold">{settingsSection?.label ?? settingsGroup?.label ?? '設定'}</h1><span className="text-xs text-muted-foreground">@{displayUsername(user?.username)}</span></div>
           </> : isListsPage ? <ListHeaderActions/> : isTopicsPage ? <>
             <Button variant="ghost" size="icon" className="shrink-0 rounded-full" aria-label="戻る" onClick={() => window.history.state?.idx > 0 ? navigate(-1) : navigate('/')}><ArrowLeft className="h-5 w-5" /></Button>
             <h1 className="ml-2 min-w-0 flex-1 text-xl font-bold">トピック</h1>
@@ -3659,5 +3659,5 @@ export function DirectMessagePanelHeader({children,actions,back,className=''}:{c
 
 /** Profile relationship list uses the existing Header module's panel chrome. */
 export function ProfileListHeader({name,username,back}:{name:string;username:string;back:()=>void}){
- return <header className="follow-list-heading"><button type="button" aria-label="戻る" onClick={back}><ArrowLeft size={22}/></button><div><h1>{name}</h1><p>@{username}</p></div></header>;
+ return <header className="follow-list-heading"><button type="button" aria-label="戻る" onClick={back}><ArrowLeft size={22}/></button><div><h1>{name}</h1><p>@{displayUsername(username)}</p></div></header>;
 }

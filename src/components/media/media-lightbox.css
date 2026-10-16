@@ -180,3 +180,18 @@ body:has(.lime-media-lightbox) [data-radix-popper-content-wrapper] [role=menu]{b
 
 .lime-video-mode.lime-media-zoomed .lime-media-stage{inset:0}
 .lime-video-frame>video{transform-origin:center;will-change:transform}
+
+/* Move immediately while the next source is fetched, without queuing more swipes. */
+.lime-video-transitioning .lime-media-bottom{visibility:hidden;pointer-events:none}
+.lime-video-leaving-down{animation:lime-video-leave-down .22s ease-in forwards}
+.lime-video-leaving-up{animation:lime-video-leave-up .22s ease-in forwards}
+.lime-video-pending{position:absolute;inset:0;display:grid;place-items:center;background:#000;pointer-events:none}
+.lime-video-pending-down{animation:lime-video-enter-down .22s ease-out}
+.lime-video-pending-up{animation:lime-video-enter-up .22s ease-out}
+@keyframes lime-video-leave-down{to{translate:0 100%;opacity:0}}
+@keyframes lime-video-leave-up{to{translate:0 -100%;opacity:0}}
+@keyframes lime-video-enter-down{from{translate:0 -100%}to{translate:0 0}}
+@keyframes lime-video-enter-up{from{translate:0 100%}to{translate:0 0}}
+@media(prefers-reduced-motion:reduce){.lime-video-leaving-down,.lime-video-leaving-up{animation:none;visibility:hidden}.lime-video-pending{animation:none}}
+
+.lime-video-transitioning .lime-video-frame{pointer-events:none}

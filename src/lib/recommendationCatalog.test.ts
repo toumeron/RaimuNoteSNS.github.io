@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 import {beforeEach,expect,it} from 'vitest';
+=======
+import {afterEach,beforeEach,expect,it,vi} from 'vitest';
+>>>>>>> 374490cc (“update23”)
 import fixtures from './fixtures/recommendationVisual.json';
 import {classifyRecommendationVisual} from './recommendationVisual';
 import {parseRecommendationCatalog,RECOMMENDATION_CATALOG_MAX_AGE,applyCatalogRecommendationVisuals} from './recommendationCatalog';
@@ -31,3 +35,24 @@ it('reuses a catalog vector for the identical image, without treating another wo
  ],catalogRows);
  expect(rows[0].recommendationVisual).toEqual(visual);expect(rows[1].recommendationVisual).toBeUndefined();
 });
+<<<<<<< HEAD
+=======
+
+afterEach(()=>{vi.unstubAllEnvs();vi.unstubAllGlobals();vi.useRealTimers();});
+it('delivers real verified bootstrap pixels while an external refresh never settles',async()=>{
+ vi.resetModules();vi.stubEnv('VITE_RECOMMENDATION_CATALOG_URL','https://catalog.example/catalog.json');
+ vi.stubEnv('VITE_RECOMMENDATION_BOOTSTRAP',JSON.stringify(catalog({generatedAt:new Date().toISOString()})));
+ const fetch=vi.fn(()=>new Promise(()=>{}));vi.stubGlobal('fetch',fetch);
+ const {readRecommendationCatalog}=await import('./recommendationCatalog');
+ const result=await Promise.race([readRecommendationCatalog(),new Promise<never>((_,reject)=>setTimeout(()=>reject(new Error('blocked by network')),100))]);
+ expect(result).toHaveLength(1);expect(result[0].recommendationVisual!.kind).toBe('moe');expect(fetch).toHaveBeenCalledTimes(1);
+});
+it('keeps verified cards available when the refresh fails after the cache interval',async()=>{
+ vi.useFakeTimers();vi.resetModules();vi.stubEnv('VITE_RECOMMENDATION_CATALOG_URL','https://catalog.example/catalog.json');
+ vi.stubEnv('VITE_RECOMMENDATION_BOOTSTRAP',JSON.stringify(catalog({generatedAt:new Date().toISOString()})));
+ vi.stubGlobal('fetch',vi.fn(async()=>{throw new Error('offline');}));
+ const {readRecommendationCatalog}=await import('./recommendationCatalog');
+ expect(await readRecommendationCatalog()).toHaveLength(1);await vi.advanceTimersByTimeAsync(60001);
+ expect(await readRecommendationCatalog()).toHaveLength(1);
+});
+>>>>>>> 374490cc (“update23”)

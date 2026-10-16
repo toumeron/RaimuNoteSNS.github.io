@@ -1,9 +1,9 @@
 import {useListCatalog} from '@/hooks/useLists';
 import { useSyncExternalStore } from 'react';
 import {TOPICS,isTopicId,type TopicId} from './topics';
-export type FeedTabValue = 'all'|'following'|'recommended'|'trending'|`topic:${TopicId}`|`list:${string}`;
+export type FeedTabValue = 'all'|'following'|'trending'|`topic:${TopicId}`|`list:${string}`;
 export const TIMELINE_TABS: {value:FeedTabValue;label:string}[] = [
-  {value:'all',label:'最新'},{value:'following',label:'フォロー中'},{value:'recommended',label:'おすすめ'},{value:'trending',label:'トレンド'},
+  {value:'all',label:'最新'},{value:'following',label:'フォロー中'},{value:'trending',label:'トレンド'},
 ];
 export const TOPIC_TIMELINE_TABS = TOPICS.map(topic=>({value:`topic:${topic.id}` as FeedTabValue,label:topic.name}));
 export const AVAILABLE_TIMELINE_TABS=[...TIMELINE_TABS,...TOPIC_TIMELINE_TABS];

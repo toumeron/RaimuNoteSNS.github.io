@@ -1,3 +1,4 @@
+import { uniqueProfileMediaPosts } from './profileReplyThreads';
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { buildProfileReplyThreads } from "./profileReplyThreads";
 import { profilePostIdentity, selectProfilePosts, collectProfilePages, externalProfileReplyThread } from "@/lib/profileReplyThreads";
@@ -188,4 +189,44 @@ it('keeps latest-page ties in the same descending ID order as database reads',()
  const second=selectProfilePosts(posts,'all','latest').slice(20,40);
  expect([...first,...second].map(post=>post.id)).toEqual(posts.map(post=>post.id));
  expect(new Set([...first,...second].map(post=>post.id)).size).toBe(40);
+});
+
+it('shows media only once across original, repost, and repeated profile pages',()=>{
+ const original={id:'x:2110440180142498036'},repost={...original,profileRepostedBy:'Google'};
+ expect(uniqueProfileMediaPosts([original,repost,{...original},{id:'other'}])).toEqual([original,{id:'other'}]);
+});
+
+it('excludes twitter reposts from profile media before deduplication, retaining own media and quotes',()=>{
+ const own={id:'x:10',source:'x',userId:'x-user:1'},repost={...own,profileRepostedBy:'x-user:1'},quote={...own,id:'x:11',isQuote:true};
+ expect(uniqueProfileMediaPosts([repost,own,{...own},quote,{...own,id:'x:12',userId:'x-user:2'},{...own,id:'x:13',externalRepostedBy:{id:'x-user:1'}}],'x-user:1')).toEqual([own,quote]);
+ const bluesky={id:'bsky:1',source:'bluesky',profileRepostedBy:'other'};
+ expect(uniqueProfileMediaPosts([bluesky])).toEqual([bluesky]);
+});
+
+describe('twitter authored-post filter',()=>{
+ const profile='x-user:1';
+ const own={id:'x:501',userId:profile,source:'x',createdAt:'2026-10-16',likesCount:1};
+ const quote={...own,id:'x:502',isQuote:true,parentPost:{id:'x:400',userId:'x-user:2'}};
+ const attributed={...own,id:'x:503',userId:'x-user:2',profileRepostedBy:profile};
+ const providerOnly={...own,id:'x:504',externalRepostedBy:{id:profile}};
+ const missingAttribution={...own,id:'x:505',userId:'x-user:2'};
+ const reply={...own,id:'x:506',externalReplyToId:'x:400'};
+ const entries=[own,quote,attributed,providerOnly,missingAttribution,reply];
+ for(const sort of ['latest','popular'] as const){
+  it(`excludes reposts with partial/cached metadata using the ${sort} filter`,()=>{
+   expect(new Set(selectProfilePosts(entries,'posts',sort,profile).map(p=>p.id))).toEqual(new Set([own.id,quote.id]));
+   expect(selectProfilePosts(entries,'all',sort,profile)).toHaveLength(entries.length);
+  });
+  it(`applies the same rule to wrapped profile rows using ${sort}`,()=>{
+   const rows=entries.map(post=>({post,sortAt:post.createdAt}));
+   expect(new Set(selectProfilePosts(rows,'posts',sort,profile).map(row=>row.post.id))).toEqual(new Set([own.id,quote.id]));
+  });
+ }
+ it('retains the original but excludes a self repost of that same post',()=>{
+  expect(selectProfilePosts([{post:own},{post:{...own,externalRepostedBy:{id:profile}}}],'posts','latest',profile)).toEqual([{post:own}]);
+ });
+ it('falls back to author identity on cached records without userId',()=>{
+  const ownAuthor={id:'x:507',author:{id:profile}},otherAuthor={id:'x:508',author:{id:'x-user:2'}};
+  expect(selectProfilePosts([otherAuthor,ownAuthor],'posts','latest',profile)).toEqual([ownAuthor]);
+ });
 });

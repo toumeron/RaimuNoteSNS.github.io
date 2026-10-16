@@ -24,7 +24,7 @@ it('deduplicates across buffered responses without counting duplicates toward th
  read.mockResolvedValueOnce(page(['a','b'],1)).mockResolvedValueOnce(page(['b','c'],2)).mockResolvedValueOnce(page(['d','e','f'],3));
  expect((await getRecommendationContinuation(cursor,null)).posts.map(row=>row.id)).toEqual(['a','b','c','d','e','f']);
 });
-it.each([{automaticPaused:true},{pendingAnalysis:true},{next:undefined},{twitterError:new Error('network')},{visualError:new Error('pixels')}])('stops on a source or analysis boundary: %s',async boundary=>{
+it.each([{automaticPaused:true},{pendingAnalysis:true},{next:undefined}])('stops on a source or analysis boundary: %s',async boundary=>{
  read.mockResolvedValue(page(['a'],1,boundary));
  expect((await getRecommendationContinuation(cursor,null)).posts).toHaveLength(1);expect(read).toHaveBeenCalledTimes(1);
 });
@@ -37,3 +37,11 @@ it('prepares a production reserve of 20 verified cards instead of stopping at si
  read.mockResolvedValueOnce(page(Array.from({length:8},(_,i)=>'first-'+i),1)).mockResolvedValueOnce(page(Array.from({length:8},(_,i)=>'second-'+i),2)).mockResolvedValueOnce(page(Array.from({length:4},(_,i)=>'third-'+i),3));
  const result=await readContinuation(cursor,null);expect(result.posts).toHaveLength(20);expect(read).toHaveBeenCalledTimes(3);expect(read.mock.calls.map(call=>call[3]?.pageSize)).toEqual([20,12,4]);expect(result.next?.pageKey).toBe(3);
 });
+<<<<<<< HEAD
+=======
+
+it.each(['twitterError','visualError'])('continues a healthy advancing cursor after a failed source: %s',async key=>{
+ read.mockResolvedValueOnce(page(['a'],1,{[key]:new Error('unavailable')})).mockResolvedValueOnce(page(['b','c','d','e','f'],2));
+ const result=await getRecommendationContinuation(cursor,null);expect(result.posts).toHaveLength(6);expect(read).toHaveBeenCalledTimes(2);
+});
+>>>>>>> 374490cc (“update23”)

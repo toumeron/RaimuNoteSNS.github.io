@@ -1,3 +1,4 @@
+import {clearRecommendationReserve} from '@/lib/recommendationReserve';
 import type {RecommendationFeedback} from '@/lib/recommendations';
 import {supabase} from '@/lib/supabase';
 import {isTopicId,type TopicId,type TopicPreferences} from '@/lib/topics';
@@ -10,5 +11,5 @@ export async function getTopicPreferences(userId:string,signal?:AbortSignal):Pro
 }
 export async function updateTopicPreferences(ids:TopicId[],status:'follow'|'dismiss'|'clear'):Promise<void> {
  const {error}=await supabase.rpc('update_topic_preferences',{topic_ids:ids,disposition:status});
- if(error)throw error;
+ if(error)throw error;clearRecommendationReserve();
 }

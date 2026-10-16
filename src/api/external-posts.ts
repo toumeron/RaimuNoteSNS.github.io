@@ -1,3 +1,4 @@
+import {externalRead} from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 import { getCurrentUserId } from '@/lib/currentUser';
 import { fetchBlueskyPost } from '@/lib/bluesky';
@@ -5,17 +6,25 @@ import type { PostWithAuthor } from '@/types';
 
 export const isExternalPostId = (id: string) => id.startsWith('bsky:at://') || /^x:\d{2,20}$/.test(id) || /^misskey:https:\/\/misskey[.]io\/notes\/[A-Za-z0-9]+$/.test(id);
 
-export async function getExternalRepostState(postId: string) {
-  const userId = await getCurrentUserId();
-  const [shares, quotes, own] = await Promise.all([
-    supabase.from('external_reposts').select('*', { count: 'exact', head: true }).eq('post_id', postId),
-    supabase.from('posts').select('*', { count: 'exact', head: true }).eq('quoted_external_post->>id', postId),
-    userId ? supabase.from('external_reposts').select('post_id').eq('post_id', postId).eq('user_id', userId).maybeSingle() : Promise.resolve({ data: null, error: null }),
-  ]);
-  if (shares.error) throw shares.error;
-  if (quotes.error) throw quotes.error;
-  if (own.error) throw own.error;
-  return { repostsCount: (shares.count ?? 0) + (quotes.count ?? 0), repostedByMe: Boolean(own.data) };
+// Repost metadata is supplementary. Bound concurrent reads and stop a failing
+// backend from receiving another three requests for every card/remount.
+let repostReadFailure:{until:number;error:unknown}|undefined;
+export async function getExternalRepostState(postId: string, signal?:AbortSignal) {
+ return externalRead(async()=>{
+  signal?.throwIfAborted();
+  if(repostReadFailure&&repostReadFailure.until>Date.now())throw repostReadFailure.error;
+  try{
+   const userId=await getCurrentUserId();
+   const read=<T extends {abortSignal:(signal:AbortSignal)=>T}>(query:T)=>signal?query.abortSignal(signal):query;
+   const [shares,quotes,own]=await Promise.all([
+    read(supabase.from('external_reposts').select('*',{count:'exact',head:true}).eq('post_id',postId)),
+    read(supabase.from('posts').select('*',{count:'exact',head:true}).eq('quoted_external_post->>id',postId)),
+    userId?read(supabase.from('external_reposts').select('post_id').eq('post_id',postId).eq('user_id',userId)).maybeSingle():Promise.resolve({data:null,error:null}),
+   ]);
+   if(shares.error)throw shares.error;if(quotes.error)throw quotes.error;if(own.error)throw own.error;
+   return {repostsCount:(shares.count??0)+(quotes.count??0),repostedByMe:Boolean(own.data)};
+  }catch(error){if(!signal?.aborted)repostReadFailure={until:Date.now()+15_000,error};throw error;}
+ },signal,'supplementary');
 }
 
 export async function getExternalPost(id: string): Promise<PostWithAuthor | null> {

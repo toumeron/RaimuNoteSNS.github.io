@@ -7,7 +7,7 @@ import {recommendationIdentity,recommendationFingerprint} from "@/lib/recommenda
 import {recommendationIsEligible,recommendationMatchesFollowedTopics,hasCuratedArtworkSource,hasDeclaredArtworkContext} from "@/lib/recommendationSignals";
 import {isDeclaredGeneratedArt} from "@/lib/recommendationSignals";
 import {recommendationOriginLanguages,recommendationTopicAffinity,recommendationTopicSignals,recommendationText} from './recommendationSignals';
-import {visualSimilarity as directVisualSimilarity,createVisualSimilarityComparator,readVisualCache,applyCachedRecommendationVisuals,visualMatchesRecommendationTopic} from './recommendationVisual';
+import {visualSimilarity as directVisualSimilarity,createVisualSimilarityComparator,readVisualCache,applyCachedRecommendationVisuals,visualMatchesRecommendationTopic,restoreRecommendationVisuals} from './recommendationVisual';
 
 // The scope ends with each scoring pass: no stale cache after feedback changes.
 let compareVisual:ReturnType<typeof createVisualSimilarityComparator>|undefined;
@@ -444,8 +444,15 @@ function rankRecommendationsInternal(posts:PostWithAuthor[], preferences:Recomme
   return [...result,...candidates.map(candidate=>candidate.post)];
 }
 const preferenceKey=(viewerId:string|null)=>`lime_recommendation_likes:${viewerId ?? 'guest'}`;
+const restoredLikes=new Map<string,{raw:string;posts:(PostWithAuthor&{engagedAt?:string})[]}>();
 export function readRecommendationLikes(viewerId:string|null):(PostWithAuthor & {engagedAt?:string})[] {
-  try { const data=JSON.parse(localStorage.getItem(preferenceKey(viewerId)) ?? '[]'); return Array.isArray(data)?applyCachedRecommendationVisuals(data.filter(p=>p && typeof p.id==='string' && typeof p.content==='string').slice(0,100)):[]; } catch {return [];}
+  try {
+   const key=preferenceKey(viewerId),raw=localStorage.getItem(key)??'[]',previous=restoredLikes.get(key);
+   if(previous?.raw===raw)return applyCachedRecommendationVisuals(previous.posts);
+   const data=JSON.parse(raw),posts=Array.isArray(data)?restoreRecommendationVisuals(data.filter(p=>p&&typeof p.id==='string'&&typeof p.content==='string').slice(0,100)):[];
+   restoredLikes.set(key,{raw,posts});if(restoredLikes.size>3)restoredLikes.delete(restoredLikes.keys().next().value!);
+   return applyCachedRecommendationVisuals(posts);
+  } catch {return [];}
 }
 const likedIdsKey=(viewerId:string|null)=>`lime_recommendation_liked_ids:${viewerId ?? 'guest'}`;
 export function readRecommendationLikedIds(viewerId:string|null):string[] {

@@ -1,3 +1,8 @@
+import {displayUsername} from '@/lib/displayUsername';
+import {nextTwitterReplyCursor} from '@/lib/twitterReplyPaging';
+import {canShowPostLinkPreview,hasAttachedPostVideo} from '@/lib/postPresentation';
+import {PostSourceLabel} from '@/components/post/PostSourceLabel';
+import {PrivateMediaImage} from '@/components/media/PrivateMediaImage';
 import {xConversationPage,twitterReplyUrl} from '@/lib/fxTwitter';
 import {ExternalPostDetails} from '@/components/feed/ExternalPostDetails';
 import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
@@ -198,7 +203,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
   const { id = '' } = useParams();
   const isBlueskyPost = isBlueskyPostLike({ id });
   const isTwitterPost=/^x:\d+$/.test(id);
-  const twitterThread=useInfiniteQuery({queryKey:['twitter-conversation',id],initialPageParam:null as string|null,queryFn:({pageParam,signal})=>xConversationPage(id,pageParam,signal),getNextPageParam:page=>page.cursor??undefined,enabled:isTwitterPost,staleTime:60000,retry:false,refetchOnWindowFocus:false});
+  const twitterThread=useInfiniteQuery({queryKey:['twitter-conversation',id,'pagination-v2'],initialPageParam:null as string|null,queryFn:({pageParam,signal})=>xConversationPage(id,pageParam,signal),getNextPageParam:(page,pages,pageParam,pageParams)=>nextTwitterReplyCursor(page,pages,pageParam,pageParams),enabled:isTwitterPost,staleTime:60000,retry:false,refetchOnWindowFocus:false});
   const { data: limeData, isLoading: isLimeLoading, isError: isLimeError } = usePost(isBlueskyPost ? '' : id);
   const { data: otherThread, isLoading: otherLoading, isError: otherError, isSuccess: otherSuccess } = useQuery({
     queryKey: ['bluesky-post', id],
@@ -628,7 +633,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
         : `custom_emojis/${customEmoji.public_id}`;
 
       const imageUrl = `https://res.cloudinary.com/dveiikhhw/image/upload/${cleanPublicId}.${customEmoji.format}`;
-      return <img src={imageUrl} alt={customEmoji.name} className={className} />;
+      return <PrivateMediaImage src={imageUrl} alt={customEmoji.name} className={className} />;
     }
     return <span className="text-lg leading-none select-none">{emojiStr}</span>;
   };
@@ -736,8 +741,8 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
   const extractedImageUrls = data?.content.match(imageRegex) || [];
 
   // YouTube IDの抽出（画像URLの合体判定より先に算出しておく）
-  const youtubeId = data ? getYouTubeId(data.content) : null;
-  const linkPreview=useLinkPreview(data?.content??'',true,data?.linkPreview,!isBlueskyPost);
+  const youtubeId = data&&!hasAttachedPostVideo(data) ? getYouTubeId(data.content) : null;
+  const linkPreview=useLinkPreview(data?.content??'',!!data&&canShowPostLinkPreview(data),data?.linkPreview,!isBlueskyPost);
 
   // 元々の画像配列と、本文から抽出した画像を合体させ、最大4枚に制限
   // ただし、BlueskyのYouTubeリンクは外部リンクカードのサムネイル画像が
@@ -747,7 +752,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
   const allImageUrls = data
     ? (isBlueskyPost && youtubeId)
       ? []
-      : [...(data.imageUrls || []).filter(url=>url!==linkPreview.preview?.image), ...extractedImageUrls].slice(0, 4)
+      : [...(data.imageUrls || []).filter(url=>url!==data.linkPreview?.image&&url!==linkPreview.preview?.image), ...extractedImageUrls].slice(0, 4)
     : [];
   const singleImageUrl = allImageUrls.length === 1 ? allImageUrls[0] : null;
 
@@ -817,7 +822,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
   // 本文の加工（YouTube URLと画像URLを除去）
   const displayContent = (data && (youtubeId || extractedImageUrls.length > 0))
     ? data.content
-        .replace(/(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|embed\/|shorts\/)?([a-zA-Z0-9_-]{11})([^?\s\n]*)?(\S+)?/g, '')
+        .replace(/(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|embed\/|shorts\/)?([a-zA-Z0-9_-]{11})([^?\s\n]*)?(\S+)?/g, youtubeId?'':'$&')
         .replace(imageRegex, '')
         .trim()
     : data?.content;
@@ -862,12 +867,12 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
     e.stopPropagation();
     if (!data) return;
 
-    if (isBlueskyPost) {
+    if (isBlueskyPost && data.id.startsWith('misskey:')) {
       if (blueskyPostUrl) openExternalUrl(blueskyPostUrl);
       setShowMenu(false);
       return;
     }
-    navigate(`/post/${data.id}/activity`);
+    navigate(`/post/${encodeURIComponent(data.id)}/activity`);
     setShowMenu(false);
   };
 
@@ -1568,7 +1573,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                     {data.author.displayName}
                   </span>
                   {data.author.isPrivate && <PrivateAccountBadge/>}<ProviderVerificationBadge verification={data.author.providerVerification} className="h-4 w-4 shrink-0 transform translate-y-[0.5px]"/>{data.author.isOfficial && (
-                    <img 
+                    <PrivateMediaImage
                       src={`${import.meta.env.BASE_URL}verified.png`}
                       alt="Official" 
                       className="h-4 w-4 shrink-0 transform translate-y-[0.5px]"
@@ -1577,7 +1582,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                   )}
                 </Link>
                 <p className={`truncate text-xs text-muted-foreground ${useMobileThreadLayout ? 'post-detail-mobile-username' : ''}`}>
-                  @{data.author.username}
+                  @{displayUsername(data.author.username)}
                 </p>
               </div>
             </div>
@@ -1640,7 +1645,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                         className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
                       >
                         <ChartBarBig className="h-4 w-4" />
-                        {isBlueskyPost ? (id.startsWith('x:') ? 'twitterで見る' : id.startsWith('misskey:') ? 'Misskeyで見る' : 'Blueskyで見る') : 'ポストアクティビティー'}
+                        {id.startsWith('misskey:') ? 'Misskeyで見る' : 'ポストアクティビティー'}
                       </button>
 
                       {isMyPost && !isBlueskyPost && !('replyId' in data && data.replyId) && <PinPostMenuButton userId={data.userId} postId={data.id} onClose={()=>setShowMenu(false)}/>}
@@ -1711,14 +1716,6 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
             </div>
           )}
 
-          {/* Bluesky由来の投稿であることを示すインジケーター */}
-          {isBlueskyPost && (
-            <div className="flex items-center gap-1 mt-1.5 text-muted-foreground/70">
-              <Globe className="h-3.5 w-3.5" />
-              <span className="text-[15px] font-medium">{id.startsWith('x:') ? 'twitter' : id.startsWith('misskey:') ? 'Misskey' : 'Bluesky'}</span>
-            </div>
-          )}
-
           <LinkPreviewCard {...linkPreview} />
           {/* YouTube埋め込みを追加 */}
           {youtubeId && <YouTubeEmbed videoId={youtubeId} />}
@@ -1732,7 +1729,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                 onClick={(e) => handleImageClick(e, singleImageUrl)}
                 aria-label="画像を拡大表示"
               >
-                <img
+                <PrivateMediaImage
                   referrerPolicy={data.source==='x'?'no-referrer':undefined} src={singleImageUrl}
                   alt={data.imageAltTexts?.[0]||"投稿画像"}
                   className="block select-none"
@@ -1842,7 +1839,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                                   {u.displayName}
                                 </span>
                                 <span className="text-[10px] text-muted-foreground/70 truncate leading-none">
-                                  @{u.username}
+                                  @{displayUsername(u.username)}
                                 </span>
                               </div>
                             </div>
@@ -1857,6 +1854,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
             </div>
           )}
 
+          <PostSourceLabel post={data as PostWithAuthor} small={useMobilePresentation}/>
           <div data-lime-post-actions className={useMobilePresentation ? "mt-3 flex items-center gap-1 relative h-9 post-detail-mobile-action-row" : "mt-3 flex items-center gap-1 border-t border-border/60 pt-3 relative h-9"}>
             <div onClick={(e) => e.stopPropagation()} className={`flex items-center h-full ${useMobilePresentation ? 'post-detail-mobile-action-hit' : ''}`}>
               {isBlueskyPost ? (
@@ -2280,7 +2278,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                           {isSending ? '送信中...' : target.displayName}
                         </span>
                         <span className="mt-0.5 w-full truncate text-[11px] text-muted-foreground">
-                          @{target.username}
+                          @{displayUsername(target.username)}
                         </span>
                       </button>
                     );

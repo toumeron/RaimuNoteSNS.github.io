@@ -1,8 +1,12 @@
+import {displayUsername} from '@/lib/displayUsername';
+import {usePrivateMediaUrl} from './PrivateMediaImage';
+import {useVideoMutedPreference} from '@/lib/videoSoundPreference';
+import {resolvePrivateMediaUrl} from '@/lib/privateMediaFetch';
 import {getTwitterVideoPage,type TwitterVideoCursor} from '@/api/twitter-videos';
 import {twitterReplyUrl} from '@/lib/fxTwitter';
 import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
 import {VideoLightboxPlayer} from './VideoLightboxPlayer';
-import {videoSelections,videoSwipeDirection} from './videoSequence';
+import {videoSelections,videoSwipeDirection,mergeVideoQueue} from './videoSequence';
 import { PostPoll } from '@/components/feed/PostPoll';
 import {useCachedChatImage} from '@/lib/chatImageCache';
 import {forwardRef,type ImgHTMLAttributes} from 'react';
@@ -32,7 +36,7 @@ import { MEDIA_VIEWER_EVENT, type MediaViewerSelection } from './openMediaViewer
 import './media-lightbox.css';
 import { containSize, clampPan, focalPan, pinchZoom } from './mediaGeometry';
 
-const CachedLightboxImage=forwardRef<HTMLImageElement,ImgHTMLAttributes<HTMLImageElement>&{account?:string}>(({src,account,...props},ref)=>{const cached=useCachedChatImage(src??'',account);return <img {...props} ref={ref} src={cached||undefined}/>});
+const CachedLightboxImage=forwardRef<HTMLImageElement,ImgHTMLAttributes<HTMLImageElement>&{account?:string}>(({src,account,...props},ref)=>{const resolved=usePrivateMediaUrl(src);const cached=useCachedChatImage(resolved??'',account);return <img {...props} ref={ref} src={cached||undefined}/>});
 
 export function MediaLightboxRoot() {
   const [selection, setSelection] = useState<MediaViewerSelection | null>(null);
@@ -51,9 +55,11 @@ export function MediaLightbox({ selection: initialSelection, onClose }: { select
   const [selection,setSelection]=useState(initialSelection);
   const videoMode=!!selection.video;
   const [videoHost,setVideoHost]=useState<HTMLDivElement|null>(null);
-  const [videoMuted,setVideoMuted]=useState(true),[videoRate,setVideoRate]=useState(1),[videoDirection,setVideoDirection]=useState(0),[videoNotice,setVideoNotice]=useState(''),[videoAdvancing,setVideoAdvancing]=useState(false);
+  const [videoMuted,setVideoMuted]=useVideoMutedPreference();
+  const [videoRate,setVideoRate]=useState(1),[videoDirection,setVideoDirection]=useState(0),[videoNotice,setVideoNotice]=useState(''),[videoAdvancing,setVideoAdvancing]=useState(false);
+  const [videoTransition,setVideoTransition]=useState(0);
   const videoSource=useRef(''),videoBusy=useRef(false),videoPointers=useRef(new Map<number,{x:number;y:number}>()),videoGesture=useRef<{x:number;y:number;panX:number;panY:number;scale:number;distance:number;focal:{x:number;y:number};moved:boolean;pinched:boolean}|null>(null),suppressVideoClick=useRef(0);
-  const advanceVideoRef=useRef<(delta:number)=>Promise<void>>(async()=>{});
+  const advanceVideoRef=useRef<(delta:number,motion?:number)=>Promise<void>>(async()=>{});
   const { user } = useAuth();
   const videoFeed=useInfiniteQuery({
     queryKey:['media-video-feed',user?.id],initialPageParam:undefined as FeedCursor|undefined,
@@ -61,7 +67,7 @@ export function MediaLightbox({ selection: initialSelection, onClose }: { select
     enabled:!!initialSelection.video?.postId,staleTime:60_000,retry:1,refetchOnWindowFocus:false,
   });
   const twitterVideos=useInfiniteQuery({
-    queryKey:['media-twitter-videos',user?.id],initialPageParam:undefined as TwitterVideoCursor|undefined,
+    queryKey:['media-twitter-videos-v4',user?.id],initialPageParam:undefined as TwitterVideoCursor|undefined,
     queryFn:({pageParam,signal})=>getTwitterVideoPage(user!.id,pageParam,signal),getNextPageParam:page=>page.nextCursor??undefined,
     enabled:videoMode&&!!user?.id&&!initialSelection.offline,staleTime:60_000,retry:false,refetchOnWindowFocus:false,
   });
@@ -71,10 +77,22 @@ export function MediaLightbox({ selection: initialSelection, onClose }: { select
     return videoSelections(initialSelection,[{posts:Array.from({length:Math.max(a.length,b.length)},(_,i)=>[b[i]?.post,a[i]?.post]).flat().filter((post):post is PostWithAuthor=>!!post)}]);
   };
   const videoQueueRef=useRef<MediaViewerSelection[]>([initialSelection]);
-  const incoming=queuedVideos(),known=new Set(videoQueueRef.current.map(item=>item.video?.postId??item.url));
-  for(const item of incoming)if(!known.has(item.video?.postId??item.url)){known.add(item.video?.postId??item.url);videoQueueRef.current.push(item);}
+  const watchedVideoCount=useRef(1);
+  watchedVideoCount.current=Math.max(watchedVideoCount.current,videoQueueRef.current.findIndex(item=>(item.video?.postId??item.url)===(selection.video?.postId??selection.url))+1);
+  const incoming=mergeVideoQueue(videoQueueRef.current,selection,queuedVideos(),watchedVideoCount.current);
+  videoQueueRef.current.splice(0,videoQueueRef.current.length,...incoming);
   const videoQueue=videoQueueRef.current;
   const videoIndex=videoQueue.findIndex(item=>(item.video?.postId??item.url)===(selection.video?.postId??selection.url));
+  const pendingTwitter=videoQueue.slice(videoIndex+1).filter(item=>item.post?.source==='x'||item.video?.postId?.startsWith('x:')).length;
+  const twitterRetryIndex=useRef(-1);
+  useEffect(()=>{
+    if(!videoMode||!user||initialSelection.offline||twitterVideos.isFetching||!twitterVideos.hasNextPage||pendingTwitter>=2)return;
+    // Photo-only pages do not fill the video reserve. Bound work per gesture,
+    // then replenish again as viewing advances; there is no session page cap.
+    if((twitterVideos.data?.pages.length??0)>=6+watchedVideoCount.current)return;
+    if(twitterVideos.isError){if(twitterRetryIndex.current===videoIndex)return;twitterRetryIndex.current=videoIndex;}
+    void twitterVideos.fetchNextPage({cancelRefetch:false});
+  },[videoMode,user?.id,initialSelection.offline,twitterVideos.isFetching,twitterVideos.hasNextPage,twitterVideos.isError,twitterVideos.data?.pages.length,pendingTwitter,videoIndex]);
   const openPostOverlay = usePostOverlay();
   const offline = useContext(OfflineBookmarkContext);
   const id = selection.post?.id ?? selection.postId ?? '';
@@ -87,30 +105,42 @@ export function MediaLightbox({ selection: initialSelection, onClose }: { select
   const sourcePost = postQuery.data ?? selection.post;
   const [likeState, setLikeState] = useState<{ liked: boolean; count: number;postId:string } | null>(null);
   const post = useMemo(() => sourcePost && likeState?.postId===id ? { ...sourcePost, likedByMe: likeState.liked, likesCount: likeState.count } : sourcePost, [sourcePost, likeState,id]);
-  advanceVideoRef.current=async(delta:number)=>{
+  advanceVideoRef.current=async(delta:number,motion=delta)=>{
     if(videoBusy.current)return;
     videoBusy.current=true;setVideoAdvancing(true);setVideoNotice('');
     try{
       let queue=videoQueue,next=videoIndex+delta;
       if(next>=queue.length&&delta>0&&initialSelection.video?.postId&&(videoFeed.isPending||videoFeed.isError&&!videoFeed.data||videoFeed.hasNextPage||!!user&&(twitterVideos.isPending||twitterVideos.isError&&!twitterVideos.data||twitterVideos.hasNextPage))){
+        setVideoTransition(motion);setSwipeOffset(0);
         // Skip a bounded number of image-only/filtered pages, retaining cursors for the next swipe.
         for(let scan=0;scan<3&&next>=queue.length;scan++){
-          const results=await Promise.allSettled([
+          const reads=[
             videoFeed.isPending||videoFeed.isError&&!videoFeed.data?videoFeed.refetch({cancelRefetch:false}):videoFeed.hasNextPage?videoFeed.fetchNextPage({cancelRefetch:false}):Promise.resolve(null),
             !user||initialSelection.offline?Promise.resolve(null):twitterVideos.isPending||twitterVideos.isError&&!twitterVideos.data?twitterVideos.refetch({cancelRefetch:false}):twitterVideos.hasNextPage?twitterVideos.fetchNextPage({cancelRefetch:false}):Promise.resolve(null),
-          ]);
-          const native=results[0].status==='fulfilled'?results[0].value:null,external=results[1].status==='fulfilled'?results[1].value:null;
-          const candidates=queuedVideos(native?.data??videoFeed.data,external?.data??twitterVideos.data),seen=new Set(queue.map(item=>item.video?.postId??item.url));
-          for(const item of candidates)if(!seen.has(item.video?.postId??item.url)){seen.add(item.video?.postId??item.url);queue.push(item);}
+          ];
+          // A ready twitter slide must not wait for a stalled native request.
+          const results=await new Promise<PromiseSettledResult<Awaited<typeof reads[number]>>[]>(resolve=>{
+            const settled:PromiseSettledResult<Awaited<typeof reads[number]>>[]=[];let finished=0;
+            const check=()=>{
+              const native=settled[0]?.status==='fulfilled'?settled[0].value:null,external=settled[1]?.status==='fulfilled'?settled[1].value:null;
+              const known=new Set(queue.map(item=>item.video?.postId??item.url));
+              const available=queuedVideos(native?.data??videoFeed.data,external?.data??twitterVideos.data).some(item=>!known.has(item.video?.postId??item.url));
+              if(next<queue.length||available||finished===reads.length)resolve([...settled]);
+            };
+            reads.forEach((read,index)=>void read.then(value=>{settled[index]={status:'fulfilled',value};finished++;check();},reason=>{settled[index]={status:'rejected',reason};finished++;check();}));
+          });
+          const native=results[0]?.status==='fulfilled'?results[0].value:null,external=results[1]?.status==='fulfilled'?results[1].value:null;
+          const candidates=mergeVideoQueue(queue,selection,queuedVideos(native?.data??videoFeed.data,external?.data??twitterVideos.data),watchedVideoCount.current);
+          queue.splice(0,queue.length,...candidates);
           if(!native&&!external)break;
           if(next>=queue.length&&(native?.isError||external?.isError))throw native?.error??external?.error;
           if(!native?.hasNextPage&&!external?.hasNextPage)break;
         }
       }
       if(next<0||!queue[next]){setVideoNotice(delta>0?(videoFeed.hasNextPage?'':''):'');return;}
-      videoSource.current='';setLikeState(null);setVideoDirection(delta);setSelection(queue[next]);setZoom(1);setPan({x:0,y:0});setSwipeOffset(0);setControls(true);setDetails(true);
+      videoSource.current='';setLikeState(null);setVideoDirection(motion);setSelection(queue[next]);setZoom(1);setPan({x:0,y:0});setSwipeOffset(0);setControls(true);setDetails(true);
     }catch{setVideoNotice('動画を読み込めませんでした。もう一度お試しください');}
-    finally{videoBusy.current=false;setVideoAdvancing(false);}
+    finally{videoBusy.current=false;setVideoAdvancing(false);setVideoTransition(0);}
   };
   const media = selection.media?.length ? selection.media : [...new Set([...(post?.imageUrls ?? []), selection.url])].map(src => ({ src, type: 'image' as const }));
   const [index, setIndex] = useState(0);
@@ -249,7 +279,8 @@ export function MediaLightbox({ selection: initialSelection, onClose }: { select
     if (!current || current.type === 'youtube') return;
     try {
       const source=videoMode?videoSource.current:current.src;if(!source){toast.error('動画の読み込みが完了してからお試しください');return;}
-      const response = await fetch(source);
+      const resolved=await resolvePrivateMediaUrl(source);if(!resolved)throw new Error('download');
+      const response = await fetch(resolved);
       if (!response.ok) throw new Error('download');
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
@@ -264,13 +295,15 @@ export function MediaLightbox({ selection: initialSelection, onClose }: { select
   const actions = () => <div className="lime-media-actions" {...(offline ? { inert: '' } : {})}>{postControls('actions')}</div>;
   const author = post ? <div className="lime-media-author">
     <Link className="lime-media-avatar" to={`/u/${post.author.username}`}><Avatar><AvatarImage src={post.author.avatarUrl} /><AvatarFallback>{post.author.displayName.slice(0, 1)}</AvatarFallback></Avatar></Link>
-    <Link to={`/u/${post.author.username}`} className="lime-media-name"><strong><span className="lime-media-display-name">{post.author.displayName}</span>{post.author.isPrivate && <PrivateAccountBadge/>}<ProviderVerificationBadge verification={post.author.providerVerification}/>{post.author.isOfficial && <img src={`${import.meta.env.BASE_URL}verified.png`} alt="認証済み" />}</strong><span className="lime-media-username">@{post.author.username}</span></Link>
+    <Link to={`/u/${post.author.username}`} className="lime-media-name"><strong><span className="lime-media-display-name">{post.author.displayName}</span>{post.author.isPrivate && <PrivateAccountBadge/>}<ProviderVerificationBadge verification={post.author.providerVerification}/>{post.author.isOfficial && <img src={`${import.meta.env.BASE_URL}verified.png`} alt="認証済み" />}</strong><span className="lime-media-username">@{displayUsername(post.author.username)}</span></Link>
     {user && user.id !== post.userId && <div className="lime-media-follow"><FollowButton userId={post.author.id} /></div>}
   </div> : null;
   const replies = post && !external && !offline && replyPostId ? <><div ref={replyRef}><CommentForm postId={replyPostId} parentCommentId={post.replyId ?? null} variant="mediaViewer" replyTo={post} /></div><CommentList postId={replyPostId} parentCommentId={post.replyId ?? null} mobileFlat /></> : null;
-  return createPortal(<PostOverlayContext.Provider value={quotedPost => { onClose(); openPostOverlay(quotedPost); }}><div ref={root} className={`lime-media-lightbox ${videoMode?'lime-video-mode':''} ${closing ? 'lime-media-closing' : ''} ${zoom > 1 ? 'lime-media-zoomed' : ''} ${controls ? '' : 'lime-media-controls-hidden'} ${details ? '' : 'lime-media-details-hidden'}`} role="dialog" aria-modal="true" aria-busy={videoMode?videoAdvancing:undefined} aria-label={videoMode?'動画を拡大表示':'メディアを拡大表示'}
+  return createPortal(<PostOverlayContext.Provider value={quotedPost => { onClose(); openPostOverlay(quotedPost); }}><div ref={root} className={`lime-media-lightbox ${videoMode?'lime-video-mode':''} ${videoTransition?'lime-video-transitioning':''} ${closing ? 'lime-media-closing' : ''} ${zoom > 1 ? 'lime-media-zoomed' : ''} ${controls ? '' : 'lime-media-controls-hidden'} ${details ? '' : 'lime-media-details-hidden'}`} role="dialog" aria-modal="true" aria-busy={videoMode?videoAdvancing:undefined} aria-label={videoMode?'動画を拡大表示':'メディアを拡大表示'}
     onPointerDownCapture={event=>{
-      if(!videoMode||event.button!==0||!(event.target as Element).closest('.lime-media-stage')||(event.target as Element).closest('button,input,select,a,textarea'))return;
+      if(!videoMode||videoBusy.current||event.button!==0)return;
+      const control=(event.target as Element).closest('button,input,select,a,textarea');
+      if(control&&!control.matches('.lime-video-overlay-play'))return;
       videoPointers.current.set(event.pointerId,{x:event.clientX,y:event.clientY});
       const points=[...videoPointers.current.values()],current=transform.current,rect=stage.current!.getBoundingClientRect();
       if(points.length===1)videoGesture.current={x:event.clientX,y:event.clientY,panX:current.pan.x,panY:current.pan.y,scale:current.zoom,distance:0,focal:{x:0,y:0},moved:false,pinched:false};
@@ -301,10 +334,10 @@ export function MediaLightbox({ selection: initialSelection, onClose }: { select
       videoGesture.current=null;setSwipeOffset(0);
       if(g.moved||g.pinched){
         suppressVideoClick.current=Date.now()+350;event.preventDefault();
-        if(!g.pinched&&transform.current.zoom===1){const direction=videoSwipeDirection(event.clientX-g.x,event.clientY-g.y);if(direction)void advanceVideoRef.current(direction);}
+        if(!g.pinched&&transform.current.zoom===1){const direction=videoSwipeDirection(event.clientX-g.x,event.clientY-g.y);if(direction)void advanceVideoRef.current(direction,event.clientY>=g.y?1:-1);}
       }
     }} onPointerCancelCapture={()=>{videoPointers.current.clear();videoGesture.current=null;setSwipeOffset(0);}}
-    onClickCapture={event=>{if(videoMode&&Date.now()<suppressVideoClick.current&&(event.target as Element).closest('.lime-media-stage')){event.preventDefault();event.stopPropagation();}}}>
+    onClickCapture={event=>{const control=(event.target as Element).closest('button,input,select,a,textarea');if(videoMode&&Date.now()<suppressVideoClick.current&&(!control||control.matches('.lime-video-overlay-play'))){event.preventDefault();event.stopPropagation();}}}>
     <section className="lime-media-main dark" onClick={event => { if (event.target === event.currentTarget) close(); }}>
       <header className="lime-media-top">
         <button ref={closeButton} aria-label={videoMode?'動画を閉じる':'画像を閉じる'} onClick={close}><X className="lime-media-desktop-close" /><ArrowLeft className="lime-media-mobile-back" /></button>
@@ -372,13 +405,14 @@ export function MediaLightbox({ selection: initialSelection, onClose }: { select
           }
           else setSwipeOffset(0);
         }} onPointerCancel={() => { pointers.current.clear(); setSwipeOffset(0); }}>
-        {videoMode&&selection.video?<div key={id||selection.url} className={`lime-video-frame ${videoDirection>0?'lime-video-forward':videoDirection<0?'lime-video-backward':''}`} style={{transform:`translateY(${swipeOffset}px)`}}>
-          <VideoLightboxPlayer selection={selection.video} host={videoHost} muted={videoMuted} onMutedChange={setVideoMuted} rate={videoRate} onRateChange={setVideoRate} onSource={url=>{videoSource.current=url;}} zoom={zoom} pan={pan} onTap={toggle=>{clearTimeout(tapTimer.current);tapTimer.current=setTimeout(()=>{if(window.matchMedia('(max-width: 767px)').matches)setControls(value=>!value);else toggle();},220);}}/>
+        {videoMode&&selection.video?<div key={id||selection.url} aria-hidden={!!videoTransition||undefined} className={`lime-video-frame ${videoTransition>0?'lime-video-leaving-down':videoTransition<0?'lime-video-leaving-up':''} ${videoDirection>0?'lime-video-forward':videoDirection<0?'lime-video-backward':''}`} style={{transform:`translateY(${swipeOffset}px)`}}>
+          <VideoLightboxPlayer suspended={!!videoTransition} selection={selection.video} host={videoHost} muted={videoMuted} onMutedChange={setVideoMuted} rate={videoRate} onRateChange={setVideoRate} onSource={url=>{videoSource.current=url;}} zoom={zoom} pan={pan} onTap={toggle=>{clearTimeout(tapTimer.current);tapTimer.current=setTimeout(()=>{if(window.matchMedia('(max-width: 767px)').matches)setControls(value=>!value);else toggle();},220);}}/>
         </div>:imageFailed ? <p>画像を読み込めませんでした。<button onClick={() => setImageFailed(false)}>再試行</button></p> : current?.type === 'youtube' ?
           <iframe src={`https://www.youtube-nocookie.com/embed/${current.youtubeId}?autoplay=1&rel=0&playsinline=1`} title="YouTube" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen /> : current?.type === 'video' ?
           <video src={current.src} controls playsInline /> : <div ref={track} className="lime-media-image-track" style={{ transform: `translateX(${swipeOffset}px)` }}>
             {media.map((item, itemIndex) => (!item.type || item.type === 'image') && <CachedLightboxImage referrerPolicy={post?.source==='x'?'no-referrer':undefined} account={user?.id} key={item.src} ref={itemIndex === index ? image : undefined} className={itemIndex === index ? undefined : 'lime-media-adjacent'} src={item.src} alt={itemIndex === index ? `拡大画像 ${index + 1}` : ''} aria-hidden={itemIndex !== index || undefined} draggable={false} onError={() => { if (itemIndex === index) setImageFailed(true); }} style={{ transform: itemIndex === index ? `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` : `translateX(${(itemIndex - index) * 100}%)` }} />)}
           </div>}
+        {!!videoTransition&&<div className={`lime-video-pending ${videoTransition>0?'lime-video-pending-down':'lime-video-pending-up'}`} role="status" aria-label="次の動画を読み込み中"><Loader2 className="animate-spin"/></div>}
       </div>
       {!videoMode&&index > 0 && <button className="lime-media-prev" aria-label="前の画像" onClick={() => move(-1)}><ChevronLeft /></button>}
       {!videoMode&&index < media.length - 1 && <button className="lime-media-next" aria-label="次の画像" onClick={() => move(1)}><ChevronRight /></button>}

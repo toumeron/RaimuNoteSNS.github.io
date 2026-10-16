@@ -1,3 +1,4 @@
+import {displayUsername} from '@/lib/displayUsername';
 import { useAutoPagination } from '@/hooks/use-mobile';
 import {useEffect} from 'react';
 import {externalProfileMetadata} from '@/lib/externalProfileMetadata';
@@ -45,7 +46,7 @@ export default function FollowersFollowingPage(){
    {target.isPending||target.data&&list.isPending?<div className="follow-list-status" role="status"><Loader2 className="animate-spin" size={24}/><p>読み込み中…</p></div>:target.isError||list.isError?<div className="follow-list-status" role="alert"><AlertTriangle size={24}/><p>一覧を読み込めませんでした。</p><button onClick={()=>void (target.isError?target.refetch():list.refetch())}>再試行</button></div>:!target.data?<div className="follow-list-status"><p>ユーザーが見つかりませんでした。</p></div>:<>
     {users.map(user=><article key={user.id} className="follow-list-row" aria-label={user.displayName}>
      <Link className="follow-list-avatar" to={`/u/${encodeURIComponent(user.username)}`} aria-label={`${user.displayName}のプロフィール`}><Avatar><AvatarImage src={user.avatarUrl} alt=""/><AvatarFallback>{user.displayName.slice(0,1)}</AvatarFallback></Avatar></Link>
-     <div className="follow-list-user"><div className="follow-list-identity"><Link to={`/u/${encodeURIComponent(user.username)}`}><span className="follow-list-name"><span className="follow-list-display">{user.displayName}</span>{user.isPrivate&&<PrivateAccountBadge/>}{user.isOfficial&&<img src={`${import.meta.env.BASE_URL}verified.png`} alt="認証済み"/>}</span><span className="follow-list-handle">@{user.username}</span></Link>{user.id!==viewer?.id&&<div className="follow-list-action"><FollowButton userId={user.id} externalProfile={user.id.startsWith('did:')||user.id.startsWith('misskey-user:')?user:undefined}/></div>}</div>{user.bio&&<Bio text={user.bio}/>}</div>
+     <div className="follow-list-user"><div className="follow-list-identity"><Link to={`/u/${encodeURIComponent(user.username)}`}><span className="follow-list-name"><span className="follow-list-display">{user.displayName}</span>{user.isPrivate&&<PrivateAccountBadge/>}{user.isOfficial&&<img src={`${import.meta.env.BASE_URL}verified.png`} alt="認証済み"/>}</span><span className="follow-list-handle">@{displayUsername(user.username)}</span></Link>{user.id!==viewer?.id&&<div className="follow-list-action"><FollowButton userId={user.id} externalProfile={user.id.startsWith('did:')||user.id.startsWith('misskey-user:')?user:undefined}/></div>}</div>{user.bio&&<Bio text={user.bio}/>}</div>
     </article>)}
     {!users.length&&!list.hasNextPage&&<div className="follow-list-status"><p>{tab==='known'?'知り合いのフォロワーはいません':tab==='following'?'まだ誰もフォローしていません':'まだフォロワーはいません'}</p></div>}
     <div ref={pageEnd} className="h-px" aria-hidden="true" />

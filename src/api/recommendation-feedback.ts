@@ -1,3 +1,4 @@
+import {clearRecommendationReserve} from '@/lib/recommendationReserve';
 import {supabase} from '@/lib/supabase';
 import type {PostWithAuthor} from '@/types';
 import type {RecommendationFeedback} from '@/lib/recommendations';
@@ -8,7 +9,7 @@ export function createRecommendationFeedback(post:PostWithAuthor):Recommendation
 }
 export async function dismissRecommendation(post:PostWithAuthor):Promise<RecommendationFeedback>{
  const feedback=createRecommendationFeedback(post);
- const {error}=await supabase.rpc('dismiss_recommendation',{feedback});if(error)throw error;return feedback;
+ const {error}=await supabase.rpc('dismiss_recommendation',{feedback});if(error)throw error;clearRecommendationReserve();return feedback;
 }
 
 /** Enrich only an existing dismissal; preserve its date and never recreate one. */

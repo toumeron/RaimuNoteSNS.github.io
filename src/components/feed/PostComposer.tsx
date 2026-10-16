@@ -1,3 +1,5 @@
+import {displayUsername} from '@/lib/displayUsername';
+import {PrivateMediaImage} from '@/components/media/PrivateMediaImage';
 import {composerMediaDrop,isVideoAttachment} from '@/lib/composerMediaDrop';
 import {preparePostVideo,type PreparedVideo} from '@/lib/postVideo';
 import {PostVideoPlayer} from '@/components/video/PostVideoPlayer';
@@ -1546,7 +1548,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
                       {result.display_name || result.username}
                     </span>
                     <span className="text-xs text-muted-foreground leading-none">
-                      @{result.username}
+                      @{displayUsername(result.username)}
                     </span>
                   </div>
                 </button>
@@ -1595,7 +1597,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
             <div className="grid grid-cols-2 gap-2">
               {previews.map((src, i) => (
                 <div key={src} className="relative overflow-hidden rounded-2xl border border-border/60">
-                  <img src={src} alt="" className="aspect-square w-full object-cover" />
+                  <PrivateMediaImage src={src} alt="" className="aspect-square w-full object-cover" />
                   <button
                     type="button"
                     onClick={() => openImageEditor(i)}

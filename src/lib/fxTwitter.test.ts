@@ -30,3 +30,32 @@ it('maps provider verification, polls and repost attribution without assigning L
  const mapped=mapXPost({...post('30'),author:{...post().author,verification:{verified:true,type:'organization'}},views:4811,quotes:0,bookmarks:0,reposted_by:{id:'123',name:'紹介者',screen_name:'reader'},poll:{choices:[{label:'A',count:2},{label:'B',count:3}],total_votes:5,ends_at:'2026-10-20T00:00:00Z'}})!;
  expect(mapped.author.providerVerification).toEqual({provider:'twitter',type:'organization'});expect(mapped.author.isOfficial).toBe(false);expect(mapped.author.username).toBe('X@twitter.com');expect(mapped.externalDetails?.poll?.options[1]).toEqual({label:'B',votes:3});expect(mapped.externalRepostedBy?.displayName).toBe('紹介者');
 });
+
+it('keeps original posts and repost activities separate, but removes repeated copies of the same activity',async()=>{
+ const original=post('89001'),repost={...original,reposted_by:{id:'999',name:'Reader',screen_name:'reader'}};
+ vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({code:200,results:[original,repost,{...repost}],cursor:{bottom:'activity-next'}}))));
+ const page=await xFeed({actor:'activity_reader@twitter.com',includeReposts:true});
+ expect(page.posts).toHaveLength(2);expect(page.posts[0].profileRepostedBy).toBeUndefined();expect(page.posts[1].profileRepostedBy).toBe('x-user:999');expect(page.cursor).toBe('activity-next');
+});
+it('excludes reposted media while retaining the original and authored quote media',async()=>{
+ const repost={...post('89002'),reposted_by:{id:'999',name:'Reader',screen_name:'reader'}};
+ const original=post('89002'),quote={...post('89003'),quote:post('89004')};
+ vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({code:200,results:[repost,original,quote],cursor:{bottom:'media-next'}}))));
+ const page=await xFeed({actor:'media_reader@twitter.com',filter:'posts_with_media',includeReposts:true});
+ expect(page.posts.map(p=>p.id)).toEqual(['x:89002','x:89003']);expect(page.posts.every(p=>!p.profileRepostedBy)).toBe(true);expect(page.posts[1].isQuote).toBe(true);expect(page.cursor).toBe('media-next');
+});
+it('honors an explicit no-reposts profile request',async()=>{
+ vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({code:200,results:[{...post('89005'),reposted_by:{id:'999',name:'Reader',screen_name:'reader'}},post('89006')]}))));
+ expect((await xFeed({actor:'no_reposts@twitter.com',includeReposts:false})).posts.map(p=>p.id)).toEqual(['x:89006']);
+});
+
+it('preserves source repost totals in the post, quote, and normalized timeline',async()=>{
+ const {normalizeTimelineBlueskyPost}=await import('./timelinePaging');
+ const mapped=mapXPost({...post('880001'),reposts:150,quote:{...post('880002'),reposts:35}})!;
+ expect(mapped.repostsCount).toBe(150);expect(mapped.externalDetails?.reposts).toBe(150);expect(mapped.parentPost?.repostsCount).toBe(35);expect(normalizeTimelineBlueskyPost(mapped).repostsCount).toBe(150);
+});
+it('removes a phantom continuation when the source declares zero replies',async()=>{
+ const {xConversationPage}=await import('./fxTwitter');
+ vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({code:200,status:{...post('880003'),replies:0},replies:[post('880004')],cursor:{bottom:'phantom'}}))));
+ const result=await xConversationPage('x:880003');expect(result.totalReplies).toBe(0);expect(result.cursor).toBeNull();
+});

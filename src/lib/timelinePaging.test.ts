@@ -26,6 +26,11 @@ function sourcesFor(lime: PostWithAuthor[], bluesky: Record<string, PostWithAuth
   };
 }
 
+it('starts followed twitter accounts alongside Bluesky instead of behind the entire account list',()=>{
+ const cursor=createTimelineCursor(['a.bsky.social','b.bsky.social','c.bsky.social','artist@twitter.com','other@twitter.com']);
+ expect(Object.keys(cursor.bluesky)).toEqual(['artist@twitter.com','a.bsky.social','other@twitter.com','b.bsky.social','c.bsky.social']);
+});
+
 describe('paired chronological timeline pagination', () => {
   it('continues both sources past the third load with no lost posts or reordered earlier pages', async () => {
     const lime = Array.from({ length: 80 }, (_, i) => post(`lime-${i}`, 200 - i * 2));
@@ -119,6 +124,31 @@ describe('paired chronological timeline pagination', () => {
   });
 });
 
+it('returns a resumable cursor after two filtered source pages instead of scanning indefinitely',async()=>{
+ const sources=sourcesFor([post('native-waiting',5)],{});
+ let calls=0;
+ sources.bluesky=vi.fn(async()=>{calls++;return calls<=2?{posts:[],cursor:String(calls)}:{posts:mapped([post('blue-ready',6)]),cursor:null};});
+ const first=await loadTimelinePage(createTimelineCursor(['author']),sources);
+ expect(sources.bluesky).toHaveBeenCalledTimes(2);expect(first.posts.map(post=>post.id)).toEqual(['native-waiting']);
+ const second=await loadTimelinePage(first.next!,sources);
+ expect(second.posts.map(post=>post.id)).toEqual(['blue-ready']);expect(second.next).toBeUndefined();
+});
+
+it('publishes ready native posts at one second and reuses the same slow external request',async()=>{
+ vi.useFakeTimers();
+ let release!:(page:BlueskyAuthorFeedPage)=>void;
+ const sources:TimelineSources={lime:vi.fn(async()=>[post('fast-native',3)]),bluesky:vi.fn(()=>new Promise<BlueskyAuthorFeedPage>(resolve=>{release=resolve;}))};
+ try{
+ let ready=false;const firstRequest=loadTimelinePage(createTimelineCursor(['slow']),sources).then(page=>{ready=true;return page;});
+ await vi.advanceTimersByTimeAsync(999);expect(ready).toBe(false);
+ await vi.advanceTimersByTimeAsync(1);const first=await firstRequest;
+ expect(first.posts.map(post=>post.id)).toEqual(['fast-native']);expect(sources.bluesky).toHaveBeenCalledTimes(1);
+ const secondRequest=loadTimelinePage(first.next!,sources);
+ release({posts:mapped([post('slow-external',2)]),cursor:null});
+ expect((await secondRequest).posts.map(post=>post.id)).toEqual(['slow-external']);expect(sources.bluesky).toHaveBeenCalledTimes(1);
+ }finally{vi.useRealTimers();}
+});
+
 it('bounds supplementary reads while publishing a single chronological page',async()=>{
   let active=0,maximum=0;
   const sources:TimelineSources={
@@ -188,4 +218,16 @@ it('retains distinct notification events even when IDs coincide across owners',a
  const page=await mergeAccountPage(['a','b'],null,async id=>({items:[{id,time:id==='a'?2:1}]}),compare,i=>i.id,20);
  expect(page.items).toHaveLength(2);
 });
+});
+
+it('never labels an empty recommendation scan as no recommendations',()=>{
+ for(const loading of [true,false])for(const fetching of [true,false])for(const error of [true,false])expect(showTimelineEmpty(loading,fetching,error,0,'recommended')).toBe(false);
+ expect(showTimelineEmpty(false,false,false,0,'all')).toBe(true);
+});
+
+it('excludes external sources from latest while retaining LimeNote quotes of them',async()=>{
+ const {isLimeNoteTimelinePost}=await import('./timelinePaging');
+ expect(isLimeNoteTimelinePost({id:'native',isQuote:true,parentPost:{id:'x:20'}} as any)).toBe(true);
+ for(const source of ['x','bluesky','misskey'])expect(isLimeNoteTimelinePost({id:'post',source} as any)).toBe(false);
+ for(const id of ['x:20','bsky:at://post','misskey:https://misskey.io/notes/test'])expect(isLimeNoteTimelinePost({id} as any)).toBe(false);
 });

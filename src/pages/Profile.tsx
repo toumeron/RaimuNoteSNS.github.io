@@ -1,6 +1,11 @@
+import {PostVideoPlayer} from '@/components/video/PostVideoPlayer';
+import {displayUsername} from '@/lib/displayUsername';
+import {canShowPostLinkPreview,hasAttachedPostVideo} from '@/lib/postPresentation';
+import { uniqueProfileMediaPosts } from '@/lib/profileReplyThreads';
+import {PrivateMediaImage} from '@/components/media/PrivateMediaImage';
 import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
 import {twitterAvatarUrl} from '@/lib/twitterAvatar';
-import {PostVideoThumbnail} from '@/components/video/PostVideoThumbnail';
+import {ProfileMediaPreview} from '@/components/profile/ProfileMediaPreview';
 import { PostPoll } from '@/components/feed/PostPoll';
 import { SuspensionNotice } from '@/components/account/AccountSuspension';
 import { collectProfilePages } from "@/lib/profileReplyThreads";
@@ -594,9 +599,9 @@ const getSpotifyUrls = (content: string) => {
   return content.match(spotifyRegex) || [];
 };
 
-const stripPreviewUrls = (content: string) => {
+const stripPreviewUrls = (content: string,keepYouTube=false) => {
   return content
-    .replace(youtubeUrlRegex, '')
+    .replace(youtubeUrlRegex, keepYouTube?'$&':'')
     .replace(imageRegex, '')
     .replace(spotifyRegex, '')
     .trim();
@@ -877,7 +882,7 @@ const ProfileThreadEmbeds = memo(function ProfileThreadEmbeds({
   onImageError: (url: string) => void;
 }) {
   const content = item?.content ?? '';
-  const youtubeId = getYouTubeId(content);
+  const youtubeId = hasAttachedPostVideo(item)?null:getYouTubeId(content);
   const spotifyUrls = getSpotifyUrls(content);
   const allImageUrls = getImageUrlsFromItem(item);
   const singleImageUrl = allImageUrls.length === 1 ? allImageUrls[0] : null;
@@ -959,13 +964,14 @@ const ProfileThreadEmbeds = memo(function ProfileThreadEmbeds({
     <>
       {item.poll && <PostPoll post={normalizePost(item)} />}
       <SpacePostCard content={content} />
-      <PostLinkPreview content={content} />
+      {canShowPostLinkPreview({...item,content,imageUrls:allImageUrls})&&<PostLinkPreview content={content} />}
       {youtubeId && (
         <div className="mt-3" onClick={(e) => e.stopPropagation()}>
           <YouTubeEmbed videoId={youtubeId} />
         </div>
       )}
 
+      {(item.video||item.externalVideo)&&<PostVideoPlayer postId={item.id} post={normalizePost(item)} video={item.video||item.externalVideo} externalVideo={item.externalVideo}/>}
       {spotifyUrls.length > 0 && (
         <div className="mt-3 space-y-2" onClick={(e) => e.stopPropagation()}>
           {spotifyUrls.map((url, idx) => (
@@ -987,7 +993,7 @@ const ProfileThreadEmbeds = memo(function ProfileThreadEmbeds({
             }}
             aria-label="画像を拡大表示"
           >
-            <img
+            <PrivateMediaImage
               src={singleImageUrl}
               alt="投稿画像"
               className="block select-none"
@@ -1060,7 +1066,7 @@ const ProfileThreadAuthorLine = memo(function ProfileThreadAuthorLine({
           {!!(author?.isPrivate ?? author?.is_private) && <PrivateAccountBadge />}
           <ProviderVerificationBadge verification={author?.providerVerification} className="h-4 w-4 shrink-0 transform translate-y-[0.5px]"/>
           {isOfficial && (
-            <img
+            <PrivateMediaImage
               src={`${import.meta.env.BASE_URL}verified.png`}
               alt="Official"
               className="h-4 w-4 shrink-0 transform translate-y-[0.5px]"
@@ -1071,7 +1077,7 @@ const ProfileThreadAuthorLine = memo(function ProfileThreadAuthorLine({
       </Link>
 
       <span className="truncate text-[16px] text-muted-foreground ml-1 opacity-80 shrink sm:text-base">
-        @{username}
+        @{displayUsername(username)}
       </span>
       <span className="text-muted-foreground mx-1 shrink-0">·</span>
       <span className="text-[16px] text-muted-foreground whitespace-nowrap shrink-0 sm:text-sm">
@@ -1386,7 +1392,7 @@ const ProfileReactionButton = memo(function ProfileReactionButton({
         : `custom_emojis/${customEmoji.public_id}`;
 
       const imageUrl = `https://res.cloudinary.com/dveiikhhw/image/upload/${cleanPublicId}.${customEmoji.format}`;
-      return <img src={imageUrl} alt={customEmoji.name} className={className} loading="lazy" decoding="async" />;
+      return <PrivateMediaImage src={imageUrl} alt={customEmoji.name} className={className} loading="lazy" decoding="async" />;
     }
 
     return <span className="select-none text-lg leading-none">{emojiStr}</span>;
@@ -1640,7 +1646,7 @@ const ProfileThreadReactionBadges = memo(function ProfileThreadReactionBadges({
           : `custom_emojis/${customEmoji.public_id}`;
 
         return (
-          <img
+          <PrivateMediaImage
             src={`https://res.cloudinary.com/dveiikhhw/image/upload/${cleanPublicId}.${customEmoji.format}`}
             alt={customEmoji.name}
             className="h-5 w-5 object-contain"
@@ -2181,7 +2187,7 @@ const ProfileShareButton = memo(function ProfileShareButton({
                           {isSending ? '送信中...' : target.displayName}
                         </span>
                         <span className="mt-0.5 w-full truncate text-[11px] text-muted-foreground">
-                          @{target.username}
+                          @{displayUsername(target.username)}
                         </span>
                       </button>
                     );
@@ -2304,7 +2310,7 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
   const comments = thread.comments?.length ? thread.comments : [thread.comment];
   const primaryComment = comments[0] ?? thread.comment;
   const parentRawContent = parent?.content ?? '';
-  const parentContent = stripPreviewUrls(spaceLinkIn(parentRawContent)?.text ?? parentRawContent);
+  const parentContent = stripPreviewUrls(spaceLinkIn(parentRawContent)?.text ?? parentRawContent,hasAttachedPostVideo(parent));
   const parentDisplayName = parentAuthor?.displayName ?? parentAuthor?.display_name ?? parentAuthor?.username ?? 'ユーザー';
   const clippedParentContent = parentContent.length > 120 ? `${parentContent.slice(0, 120)}...` : parentContent;
   const threadAvatarClassName = "h-11 w-11 translate-y-1";
@@ -2417,14 +2423,14 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
         </div>
       ) : (
         <div className="mb-3 rounded-2xl border border-dashed border-border/70 px-4 py-3 text-sm text-muted-foreground sm:bg-muted/20">
-          返信のつながりを表示できませんでした。
+          🐈
         </div>
       )}
 
       {comments.map((comment, commentIndex) => {
         const commentAuthor = comment.author;
         const replyRawContent = comment.content ?? '';
-        const replyContent = stripPreviewUrls(spaceLinkIn(replyRawContent)?.text ?? replyRawContent);
+        const replyContent = stripPreviewUrls(spaceLinkIn(replyRawContent)?.text ?? replyRawContent,hasAttachedPostVideo(comment));
         const commentDisplayName = commentAuthor?.displayName ?? commentAuthor?.display_name ?? commentAuthor?.username ?? 'ユーザー';
 
         return (
@@ -2452,7 +2458,7 @@ const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
             <div className="min-w-0">
               <div className="flex items-center justify-between">
                 <ProfileThreadAuthorLine author={commentAuthor} createdAt={comment.createdAt} />
-                {!comment.externalPost && <DropdownMenu><DropdownMenuTrigger asChild><button type="button" aria-label="コメントのメニュー" onClick={event => event.stopPropagation()} className="p-1 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"><MoreHorizontal className="h-5 w-5" /></button></DropdownMenuTrigger><DropdownMenuContent align="end" className="w-44 rounded-xl border border-border bg-card p-1 shadow-lg"><DropdownMenuItem asChild className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted focus:bg-muted focus:text-foreground transition-colors"><button type="button" onClick={() => navigate(`/post/${comment.postId}/activity?reply=${encodeURIComponent(comment.id)}`)}><ChartBarBig className="h-4 w-4" />ポストアクティビティ</button></DropdownMenuItem></DropdownMenuContent></DropdownMenu>}
+                {(!comment.externalPost || comment.externalPost.id.startsWith('bsky:') || /^x:\d+$/.test(comment.externalPost.id)) && <DropdownMenu><DropdownMenuTrigger asChild><button type="button" aria-label="コメントのメニュー" onClick={event => event.stopPropagation()} className="p-1 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"><MoreHorizontal className="h-5 w-5" /></button></DropdownMenuTrigger><DropdownMenuContent align="end" className="w-44 rounded-xl border border-border bg-card p-1 shadow-lg"><DropdownMenuItem asChild className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted focus:bg-muted focus:text-foreground transition-colors"><button type="button" onClick={() => navigate(comment.externalPost?`/post/${encodeURIComponent(comment.externalPost.id)}/activity`:`/post/${comment.postId}/activity?reply=${encodeURIComponent(comment.id)}`)}><ChartBarBig className="h-4 w-4" />ポストアクティビティ</button></DropdownMenuItem></DropdownMenuContent></DropdownMenu>}
               </div>
 
               {replyContent ? (
@@ -2520,34 +2526,9 @@ const PROFILE_VIRTUALIZATION_ROOT_MARGIN = '1600px 0px 1600px 0px';
 // メディアタブは3列のCSS Gridなので、アイテム側に余計なラッパーを
 // 挟むとグリッドの列構成が崩れてしまう（＝見た目が変わってしまう）。
 // そのためグリッドセルの div 自体は常にマウントしたまま維持し、
-// 中の <img> だけを画面から遠いときに外して bg-muted の背景だけを
+// 中の <PrivateMediaImage> だけを画面から遠いときに外して bg-muted の背景だけを
 // 見せる（読み込み待ち時と同じ見た目のまま）ことでレイアウトに
 // 一切影響を与えずに画像のデコード済みメモリだけを解放する。
-const ProfileVirtualizedMediaImage = memo(function ProfileVirtualizedMediaImage({
-  src,
-}: {
-  src: string;
-}) {
-  const { ref, inView } = useInView({
-    initialInView: true,
-    rootMargin: PROFILE_VIRTUALIZATION_ROOT_MARGIN,
-  });
-
-  return (
-    <div ref={ref} className="h-full w-full">
-      {inView ? (
-        <img
-          referrerPolicy={/^https:\/\/pbs[.]twimg[.]com\//.test(src)?'no-referrer':undefined} src={src}
-          alt=""
-          className="h-full w-full object-cover"
-          loading="lazy"
-          decoding="async"
-        />
-      ) : null}
-    </div>
-  );
-});
-
 const PROFILE_PAGE_STYLES = `
           @media (max-width: 639px) {
             [data-lime-profile-page] { background: hsl(var(--background)); box-shadow: -16px 0 hsl(var(--background)), 16px 0 hsl(var(--background)); }
@@ -2878,6 +2859,8 @@ async function fetchNativeProfileReplies(user: User, limit?: number, signal?: Ab
         return {threads: nextReplies, hasMore: limit != null && comments.length >= limit};
 }
 
+const selectExternalProfileFeed=(data:{pages:Awaited<ReturnType<typeof fetchBlueskyAuthorFeed>>[]})=>({posts:data.pages.flatMap(page=>page.posts),cursor:data.pages.at(-1)?.cursor??null});
+
 export default function Profile() {
   const queryClient = useQueryClient();
   const { user: viewer } = useAuth();
@@ -2945,6 +2928,7 @@ export default function Profile() {
   });
   const userLoading = isLimeUserLoading || (!limeUser && isBlueskyProfileLoading);
   const userError = !userLoading && !user && (isLimeUserError || isBlueskyProfileError);
+  const externalFeedFilter=activeTab==='media'?'posts_with_media':'posts_with_replies';
   const {
     data: blueskyFeed,
     isLoading: isBlueskyFeedLoading,
@@ -2954,11 +2938,11 @@ export default function Profile() {
     hasNextPage:hasExternalNextPage,
     isFetchingNextPage:isFetchingExternalNextPage,
   } = useInfiniteQuery({
-    queryKey: ['bluesky-profile-feed', username, 'posts_with_replies', 'with-reposts'],
+    queryKey: ['bluesky-profile-feed', username, externalFeedFilter, activeTab==='media'?'own-media-v1':'with-reposts-v2'],
     initialPageParam:null as string|null,
-    queryFn: ({ signal,pageParam }) => fetchBlueskyAuthorFeed({ actor: username, cursor:pageParam,limit:20,filter:'posts_with_replies',includeReposts:true,signal }),
+    queryFn: ({ signal,pageParam }) => fetchBlueskyAuthorFeed({ actor: username, cursor:pageParam,limit:20,filter:externalFeedFilter,includeReposts:activeTab!=='media',signal }),
     getNextPageParam:page=>page.cursor ?? undefined,
-    select:data=>({posts:data.pages.flatMap(page=>page.posts),cursor:data.pages.at(-1)?.cursor ?? null}),
+    select:selectExternalProfileFeed,
     enabled: isBlueskyProfile && !popularActive,
     staleTime: 1000 * 60,
   });
@@ -3170,7 +3154,7 @@ export default function Profile() {
   // props や state に依存しない純粋関数のため、ファイル先頭のモジュール
   // スコープへ移動済み（レンダーの度に関数を再生成しないための軽量化）。
 
-  const pages = popularActive ? [popularityQuery.data ?? EMPTY_ARRAY] : isBlueskyProfile ? [blueskyFeed?.posts ?? EMPTY_ARRAY] : profileData?.pages ?? EMPTY_ARRAY;
+  const pages = useMemo(()=>popularActive ? [popularityQuery.data ?? EMPTY_ARRAY] : isBlueskyProfile ? [blueskyFeed?.posts ?? EMPTY_ARRAY] : profileData?.pages ?? EMPTY_ARRAY,[popularActive,popularityQuery.data,isBlueskyProfile,blueskyFeed?.posts,profileData?.pages]);
   const flatPageItems = useMemo(
     () => pages.flatMap((page: any) => (Array.isArray(page) ? page : [])),
     [pages]
@@ -3195,8 +3179,7 @@ export default function Profile() {
     }
 
     if (activeTab === 'media') {
-      return flatPageItems.flatMap((rawPost: any) => {
-        const p: any | null = normalizePost(rawPost);
+      return uniqueProfileMediaPosts(flatPageItems.map(normalizePost).filter(Boolean),user?.id).flatMap((p: any) => {
         if (!p) return [];
 
         const dbImages = Array.isArray(p.imageUrls)
@@ -3224,7 +3207,7 @@ export default function Profile() {
 
     if (activeTab === 'highlights') return uniquePostsById(flatPageItems);
 
-    if (popularActive || !isBlueskyProfile) return selectProfilePosts(flatPageItems, postFilter, postSort);
+    if (popularActive || !isBlueskyProfile) return selectProfilePosts(flatPageItems, postFilter, postSort, user?.id);
 
     const ownPosts: ProfilePostItem[] = uniquePostsById(flatPageItems).filter((post: any) => !isBlueskyProfile || !post.externalReplyToId || post.profileRepostedBy).map((post: any) => ({
       __profileItemType: PROFILE_POST_ITEM,
@@ -3239,8 +3222,8 @@ export default function Profile() {
       reply,
     }));
 
-    return selectProfilePosts([...ownPosts, ...replies], postFilter, postSort);
-  }, [activeTab, flatPageItems, isBlueskyProfile, popularActive, postFilter, postSort]);
+    return selectProfilePosts([...ownPosts, ...replies], postFilter, postSort, user?.id);
+  }, [activeTab, flatPageItems, isBlueskyProfile, popularActive, postFilter, postSort, user?.id]);
 
   const items = popularActive ? rankedItems.slice(0, popularVisibleCount) : rankedItems;
   const revealPopularPage = useCallback(() => { setPopularVisibleCount(count => count + 20); }, []);
@@ -3493,7 +3476,7 @@ export default function Profile() {
                   className="relative aspect-square cursor-pointer overflow-hidden rounded-md bg-muted animate-float-up md:rounded-xl"
                   onClick={() => p.isVideo ? openMediaViewer({url:`video:${p.post.id}`,post:p.post,postId:p.post.id,video:{postId:p.post.id,video:(p.post.video || p.post.externalVideo)!,externalVideo:p.post.externalVideo}}) : openMediaViewer({ url: p.displayImageUrl, post: p.post })}
                 >
-                  {p.isVideo?<PostVideoThumbnail postId={p.post.id} duration={(p.post.video || p.post.externalVideo)!.duration} thumbnail={p.post.externalVideo?.thumbnail} external={!!p.post.externalVideo}/>:<ProfileVirtualizedMediaImage src={p.displayImageUrl} />}
+                  {p.isVideo?<ProfileMediaPreview postId={p.post.id} duration={(p.post.video || p.post.externalVideo)!.duration} thumbnail={p.post.externalVideo?.thumbnail} external={!!p.post.externalVideo}/>:<ProfileMediaPreview src={p.displayImageUrl} />}
 
                   {p.isMulti && (
                     <div className="absolute right-1.5 top-1.5 rounded-md bg-black/40 p-1 backdrop-blur-sm">

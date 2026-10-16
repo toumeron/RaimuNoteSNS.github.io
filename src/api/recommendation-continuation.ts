@@ -8,7 +8,11 @@ export async function getRecommendationContinuation(cursor:RecommendationCursor,
  let page=await getBalancedRecommendationPage(cursor,viewer,signal,{pageSize:target});
  let posts=page.posts;
  onReady?.({...page,posts});
+<<<<<<< HEAD
  for(let reads=1;reads<maxReads&&posts.length<target&&page.next&&!page.automaticPaused&&!page.pendingAnalysis&&!page.twitterError&&!page.visualError;reads++){
+=======
+ for(let reads=1;reads<maxReads&&posts.length<target&&page.next&&!page.automaticPaused&&!page.pendingAnalysis;reads++){
+>>>>>>> 374490cc (“update23”)
   if(signal?.aborted)throw signal.reason;
   page=await getBalancedRecommendationPage(page.next,viewer,signal,{pageSize:Math.max(2,target-posts.length)});
   posts=uniqueRecommendationPosts([...posts,...page.posts]);

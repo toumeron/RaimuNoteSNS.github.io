@@ -11,6 +11,7 @@ export function recommendationThumbnailUrl(raw:string):string|null{
  return null;
 }
 
+<<<<<<< HEAD
 /** Use the existing authenticated image reader for the public CDN's missing CORS header. */
 export async function prepareRecommendationImage(raw:string,signal?:AbortSignal):Promise<{url:string;release:()=>void}>{
  const thumbnail=recommendationThumbnailUrl(raw);
@@ -31,4 +32,11 @@ export async function prepareRecommendationImage(raw:string,signal?:AbortSignal)
   return {url,release:()=>URL.revokeObjectURL(url)};
  }catch(error){if(signal?.aborted)throw error;return fallback;}
  finally{clearTimeout(timer);signal?.removeEventListener('abort',abort);}
+=======
+/** Public pixels never consume the URL-preview/search quota. The worker reads
+ * Bluesky blobs from the creator's public PDS when the CDN lacks CORS. */
+export async function prepareRecommendationImage(raw:string,signal?:AbortSignal):Promise<{url:string;release:()=>void}>{
+ if(signal?.aborted)throw signal.reason;
+ return {url:recommendationThumbnailUrl(raw)??raw,release:()=>{}};
+>>>>>>> 374490cc (“update23”)
 }

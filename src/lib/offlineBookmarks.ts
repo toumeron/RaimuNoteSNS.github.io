@@ -1,3 +1,4 @@
+import {isDeferredPrivateMedia,resolvePrivateMediaUrl} from './privateMediaFetch';
 import { randomUUID } from '@/lib/randomUUID';
 import {boundedResponseBlob,ResponseTooLarge} from './boundedResponse';
 import {supabase} from './supabase';
@@ -73,7 +74,7 @@ export async function writeOfflineBookmarks(value:OfflineBookmarks){
 export function bookmarkAssetUrls(posts:PostWithAuthor[]):string[] {
   const urls=new Set<string>();
   const visit=(value:unknown,key='')=>{
-    if(typeof value==='string' && /image|avatar|cover|thumb/i.test(key) && /^https?:\/\//.test(value))urls.add(value);
+    if(typeof value==='string' && /image|avatar|cover|thumb/i.test(key) && (/^https?:\/\//.test(value)||isDeferredPrivateMedia(value)))urls.add(value);
     else if(Array.isArray(value))value.forEach(item=>visit(item,key));
     else if(value && typeof value==='object')Object.entries(value).forEach(([name,item])=>visit(item,name));
   };
@@ -82,7 +83,8 @@ export function bookmarkAssetUrls(posts:PostWithAuthor[]):string[] {
 }
 async function downloadImage(url:string,signal:AbortSignal){
  try{
-  const response=await fetch(url,{signal,credentials:'omit',referrerPolicy:'no-referrer'});
+  const resolved=await resolvePrivateMediaUrl(url);if(!resolved)throw new Error('画像を取得できませんでした');
+  const response=await fetch(resolved,{signal,credentials:'omit',referrerPolicy:'no-referrer'});
   if(!response.ok)throw new Error('画像を保存できませんでした。もう一度お試しください');
   if(!response.headers.get('content-type')?.startsWith('image/'))throw new Error('画像データを取得できませんでした');
   const blob=await boundedResponseBlob(response,16*1024*1024);

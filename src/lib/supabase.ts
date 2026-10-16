@@ -16,7 +16,7 @@ const transport = import.meta.env.DEV && typeof window !== 'undefined'
  * import して利用することが可能になります。
  */
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-  global: { fetch: createPrivateMediaFetch(supabaseUrl, createSuspensionFetch(supabaseUrl, transport)) },
+  global: { fetch: createPrivateMediaFetch(supabaseUrl, createSuspensionFetch(supabaseUrl, transport), true) },
   auth: {
     persistSession: true,
     autoRefreshToken: true,

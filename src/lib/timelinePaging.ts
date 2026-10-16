@@ -17,9 +17,12 @@ export type TimelineSources = {
 };
 
 export function createTimelineCursor(handles: string[]): TimelineCursor {
+  const twitter=(handle:string)=>/@(?:twitter|x)\.com$/i.test(handle)||handle.startsWith('x-user:');
+  const pools=[handles.filter(twitter),handles.filter(handle=>!twitter(handle))];
+  const ordered=Array.from({length:Math.max(0,...pools.map(pool=>pool.length))},(_,index)=>pools.flatMap(pool=>pool[index]?[pool[index]]:[])).flat();
   return {
     lime: { page: 0, done: false, posts: [] },
-    bluesky: Object.fromEntries(handles.map(handle => [handle, { cursor: null, done: false, posts: [] }])),
+    bluesky: Object.fromEntries(ordered.map(handle => [handle, { cursor: null, done: false, posts: [] }])),
   };
 }
 
@@ -31,7 +34,7 @@ export function normalizeTimelineBlueskyPost(post: BlueskyAuthorFeedPage['posts'
     likedByMe: post.likedByMe, likesCount: post.likesCount, commentsCount: post.commentsCount,
     isBot: post.isBot,
     ...(post.is_bot !== undefined ? { is_bot: post.is_bot } : {}),
-    repostsCount: 0, repostedByMe: false,
+    repostsCount: post.externalDetails?.reposts??post.repostsCount??0, repostedByMe: false,
     author: {
       id: post.author.id, username: post.author.username, displayName: post.author.displayName,
       avatarUrl: post.author.avatarUrl, coverUrl: '', isOfficial: false, providerVerification: post.author.providerVerification,
@@ -43,67 +46,127 @@ export function normalizeTimelineBlueskyPost(post: BlueskyAuthorFeedPage['posts'
 const newestFirst = (a: PostWithAuthor, b: PostWithAuthor) =>
   Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.id.localeCompare(a.id);
 
-// Each source keeps a small lookahead buffer. Before choosing the next post we
-// must know the head of every unfinished source. This prevents older Bluesky
-// posts being displayed ahead of Lime posts that have not been fetched yet.
+type SourceResult = Partial<SourceCursor> & {page?:number;before?:FeedCursor;cursor?:string|null};
+type SourceRead = {settled:boolean;result?:SourceResult;error?:unknown;promise:Promise<void>};
+const pendingReads=new WeakMap<SourceCursor,SourceRead>();
+let activeAuthorReads=0;
+const authorReads:Array<()=>void>=[];
+function readAuthor<T>(load:()=>Promise<T>):Promise<T>{
+ return new Promise((resolve,reject)=>{
+  const start=()=>{
+   activeAuthorReads++;
+   void load().then(resolve,reject).finally(()=>{activeAuthorReads--;authorReads.shift()?.();});
+  };
+  if(activeAuthorReads<2)start();else authorReads.push(start);
+ });
+}
+function sourceRead(state:SourceCursor,load:()=>Promise<SourceResult>):SourceRead{
+ const existing=pendingReads.get(state);if(existing)return existing;
+ const job={settled:false,promise:null as unknown as Promise<void>} as SourceRead;
+ job.promise=load().then(result=>{job.result=result;},error=>{job.error=error;}).finally(()=>{job.settled=true;});
+ pendingReads.set(state,job);return job;
+}
+export function watchTimelineSources(cursor:TimelineCursor,onReady:()=>void):()=>void{
+ let active=true;
+ const jobs=new Set([cursor.lime,...Object.values(cursor.bluesky)].map(state=>pendingReads.get(state)).filter((job):job is SourceRead=>!!job));
+ for(const job of jobs)void job.promise.then(()=>{if(active)onReady();});
+ return()=>{active=false;};
+}
+/** Publish already-started source responses without starting another page read. */
+export function collectReadyTimelineSources(previous:TimelineCursor):TimelinePage|undefined{
+ let changed=false;
+ const posts:PostWithAuthor[]=[];
+ const collect=<T extends SourceCursor>(old:T):T=>{
+  const state={...old,posts:[...old.posts]},job=pendingReads.get(old);
+  if(!job)return state;
+  if(!job.settled){pendingReads.set(state,job);return state;}
+  changed=true;
+  if(job.error)return state; // Keep the original position for an ordinary retry.
+  Object.assign(state,job.result,{posts:[]});
+  posts.push(...(job.result?.posts??[]).filter(isTimelinePost));
+  return state;
+ };
+ const lime=collect(previous.lime),bluesky=Object.fromEntries(Object.entries(previous.bluesky).map(([handle,state])=>[handle,collect(state)]));
+ if(!changed)return undefined;
+ const states=[lime,...Object.values(bluesky)];
+ return {posts:posts.sort(newestFirst),next:states.some(state=>!state.done||state.posts.length)?{lime,bluesky}:undefined};
+}
+/** Keep slow reads for the next page without making ready posts wait for every account. */
 export async function loadTimelinePage(previous: TimelineCursor, sources: TimelineSources): Promise<TimelinePage> {
-  // Work on a copy so failures/cancelled queries cannot advance any cursor.
-  const lime = { ...previous.lime, posts: [...previous.lime.posts] };
-  const bluesky = Object.fromEntries(Object.entries(previous.bluesky).map(([handle, state]) =>
-    [handle, { ...state, posts: [...state.posts] }],
-  ));
-  const states = [lime, ...Object.values(bluesky)];
-  const posts: PostWithAuthor[] = [];
-  const seen = new Set<string>();
-
-  while (posts.length < TIMELINE_PAGE_SIZE) {
-    const requests: Array<()=>Promise<void>> = [];
-    if (!lime.done && lime.posts.length === 0) {
-      requests.push(()=>sources.lime(lime.page, SOURCE_PAGE_SIZE, lime.before).then(rows => {
-        lime.page += 1;
-        lime.done = rows.length < SOURCE_PAGE_SIZE;
-        const ordered = [...rows].sort(newestFirst);
-        lime.posts.push(...ordered);
-        const oldest = ordered[ordered.length - 1];
-        if (oldest) lime.before = { createdAt: oldest.createdAt, id: oldest.id };
-      }));
-    }
-    for (const [handle, state] of Object.entries(bluesky)) {
-      if (state.done || state.posts.length > 0) continue;
-      requests.push(()=>sources.bluesky(handle, state.cursor, SOURCE_PAGE_SIZE).then(page => {
-        if (page.cursor && page.cursor === state.cursor) throw new Error(`Bluesky cursor did not advance for ${handle}`);
-        state.cursor = page.cursor;
-        // A filtered/empty page can still have another page. Only the cursor
-        // tells us this source is exhausted.
-        state.done = !page.cursor;
-        state.posts.push(...page.posts.map(normalizeTimelineBlueskyPost).sort(newestFirst));
-      }));
-    }
-    // Independent reads start together; neither source is published early.
-    // One page is committed atomically, with only two source pages in flight.
-    let nextRequest=0;
-    await Promise.all(Array.from({length:Math.min(2,requests.length)},async()=>{
-      while(nextRequest<requests.length)await requests[nextRequest++]();
-    }));
-    if (states.some(state => !state.done && state.posts.length === 0)) continue;
-    const available = states.filter(state => state.posts.length > 0);
-    if (available.length === 0) break;
-    available.sort((a, b) => newestFirst(a.posts[0], b.posts[0]));
-    const post = available[0].posts.shift()!;
-    if (seen.has(post.id) || !isTimelinePost(post)) continue;
-    seen.add(post.id);
-    posts.push(post);
+ const started=Date.now();
+ const copy=<T extends SourceCursor>(old:T):T=>{
+  const state={...old,posts:[...old.posts]};
+  const pending=pendingReads.get(old);if(pending&&!pending.error)pendingReads.set(state,pending);
+  return state;
+ };
+ const lime=copy(previous.lime);
+ const bluesky=Object.fromEntries(Object.entries(previous.bluesky).map(([handle,state])=>[handle,copy(state)]));
+ const states=[lime,...Object.values(bluesky)],posts:PostWithAuthor[]=[],seen=new Set<string>();
+ const reads=new Map<SourceCursor,number>();
+ while(posts.length<TIMELINE_PAGE_SIZE){
+  const missing=states.filter(state=>!state.done&&!state.posts.length);
+  const jobs:Array<{state:SourceCursor;job:SourceRead}>=[];
+  for(const state of missing){
+   if((reads.get(state)??0)>=2||Date.now()-started>=1000&&!pendingReads.has(state))continue;
+   const existing=pendingReads.get(state);
+   const job=sourceRead(state,()=>{
+    if(state===lime)return sources.lime(lime.page,SOURCE_PAGE_SIZE,lime.before).then(rows=>{
+     const ordered=[...rows].sort(newestFirst),oldest=ordered.at(-1);
+     return {page:lime.page+1,done:rows.length<SOURCE_PAGE_SIZE,posts:ordered,...(oldest?{before:{createdAt:oldest.createdAt,id:oldest.id}}:{})};
+    });
+    const [handle,blue]=Object.entries(bluesky).find(([,value])=>value===state)!;
+    return readAuthor(()=>sources.bluesky(handle,blue.cursor,SOURCE_PAGE_SIZE)).then(page=>{
+     if(page.cursor&&page.cursor===blue.cursor)throw new Error(`Bluesky cursor did not advance for ${handle}`);
+     return {cursor:page.cursor,done:!page.cursor,posts:page.posts.map(normalizeTimelineBlueskyPost).sort(newestFirst)};
+    });
+   });
+   if(!existing)reads.set(state,(reads.get(state)??0)+1);
+   jobs.push({state,job});
   }
-
-  const hasMore = states.some(state => !state.done || state.posts.length > 0);
-  return { posts, next: hasMore ? { lime, bluesky } : undefined };
+  if(jobs.length){
+   const remaining=1000-(Date.now()-started);
+   let timer:ReturnType<typeof setTimeout>|undefined;
+   try{if(remaining>0)await Promise.race([Promise.all(jobs.map(({job})=>job.promise)),new Promise<void>(resolve=>{timer=setTimeout(resolve,remaining);})]);}
+   finally{clearTimeout(timer);}
+   for(const {state,job} of jobs)if(job.settled){
+    pendingReads.delete(state);
+    if(job.error)throw job.error;
+    Object.assign(state,{...job.result,posts:[...(job.result?.posts??[])]});
+   }
+  }
+  const available=states.filter(state=>state.posts.length);
+  if(!available.length){
+   if(jobs.some(({job})=>!job.settled)||missing.some(state=>(reads.get(state)??0)>=2)||Date.now()-started>=1000)break;
+   if(states.some(state=>!state.done))continue;
+   break;
+  }
+  // Fast sources retain chronological merging. After the display budget,
+  // delayed accounts join later through their preserved, shared pending read.
+  available.sort((a,b)=>newestFirst(a.posts[0],b.posts[0]));
+  const post=available[0].posts.shift()!;
+  if(seen.has(post.id)||!isTimelinePost(post))continue;
+  seen.add(post.id);posts.push(post);
+ }
+ const hasMore=states.some(state=>!state.done||state.posts.length);
+ return {posts,next:hasMore?{lime,bluesky}:undefined};
 }
 
 /** Replies stay on reply/profile screens. Quotes remain timeline posts. */
 export function isTimelinePost(post:PostWithAuthor):boolean {
  return !post.replyId&&!post.replyPostId&&!post.externalReplyToId&&!(post.parentId&&!post.isQuote);
 }
+<<<<<<< HEAD
 /** Exhausted initial scans can still have a cursor; they must show an empty state. */
 export function showTimelineEmpty(loading:boolean,fetching:boolean,error:boolean,count:number,tab?:string):boolean {
  return tab!=='recommended'&&!loading&&!fetching&&!error&&count===0;
+=======
+/** A recommendation scan is not evidence that personalized posts do not exist. */
+export function showTimelineEmpty(loading:boolean,fetching:boolean,error:boolean,count:number,tab?:string):boolean {
+ return tab!=='recommended'&&!loading&&!fetching&&!error&&count===0;
+}
+
+/** Latest is LimeNote-only; a native quote may still contain an external parent. */
+export function isLimeNoteTimelinePost(post:PostWithAuthor):boolean{
+ return (!post.source||post.source==='lime')&&!/^(?:bsky:|misskey:|x:)/.test(post.id);
+>>>>>>> 374490cc (“update23”)
 }

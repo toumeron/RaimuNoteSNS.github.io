@@ -44,11 +44,16 @@ export function profilePostIdentity(post: {id: string; profileRepostedBy?: strin
 }
 
 /** Quotes are authored posts; only reply/repost activity is excluded. */
-export function selectProfilePosts<T>(items: T[], filter: PostTabFilter, sort: PostTabSort): T[] {
+export function selectProfilePosts<T>(items: T[], filter: PostTabFilter, sort: PostTabSort, profileId?: string): T[] {
   const postOf = (item: any) => item.post ?? item.reply?.comment ?? item;
   const selected = items.filter((item: any) => {
     const post = postOf(item);
-    return filter === 'all' || (!item.reply && !post.replyId && !post.externalReplyToId && !post.profileRepostedBy);
+    if (filter === 'all') return true;
+    const activity = post.externalPost ?? post;
+    if (item.reply || post.replyId || post.externalReplyToId || post.profileRepostedBy || post.externalRepostedBy || activity.profileRepostedBy || activity.externalRepostedBy) return false;
+    // Cached provider records can lack repost attribution. A twitter profile's
+    // authored-post filter must still reject another account's posts.
+    return !profileId?.startsWith('x-user:') || (activity.userId ?? activity.user_id ?? activity.author?.id) === profileId;
   });
   const time = (item: any) => Date.parse(item.sortAt ?? postOf(item).createdAt ?? postOf(item).created_at ?? '') || 0;
   const likes = (item: any) => Number(postOf(item).likesCount ?? postOf(item).likes_count ?? 0);
@@ -73,4 +78,10 @@ export async function collectProfilePages<T, C>(load: (cursor: C | null) => Prom
     }
   } while (cursor !== null);
   return posts;
+}
+
+/** A repost and the original share one media tile; page boundaries may repeat both. */
+export function uniqueProfileMediaPosts<T extends {id:string;source?:string;userId?:string;profileRepostedBy?:string;externalRepostedBy?:unknown}>(posts:T[],profileId?:string):T[]{
+ const seen=new Set<string>();
+ return posts.filter(post=>{if(post.source==='x'&&(post.profileRepostedBy||post.externalRepostedBy||profileId&&post.userId!==profileId))return false;if(seen.has(post.id))return false;seen.add(post.id);return true;});
 }

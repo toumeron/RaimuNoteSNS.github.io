@@ -36,7 +36,7 @@ export function recommendationImageIdentity(url:string):string{
 export function readVisualCache(url:string):RecommendationVisual|undefined{
  if(!restored){restored=true;try{
   const rows=JSON.parse(localStorage.getItem(cacheKey)??'[]');
-  for(const [key,result] of rows)if(typeof key==='string'&&result?.version===1&&typeof result.kind==='string'&&Array.isArray(result.topics)&&result.topics.every(isTopicId)&&Number.isFinite(result.confidence)&&Array.isArray(result.vector)&&result.vector.length===512&&result.vector.every(Number.isFinite))cache.set(key,result.classifierVersion===3?result:classifyRecommendationVisual(result.vector));
+  for(const [key,result] of rows)if(typeof key==='string'&&result?.version===1&&typeof result.kind==='string'&&Array.isArray(result.topics)&&result.topics.every(isTopicId)&&Number.isFinite(result.confidence)&&Array.isArray(result.vector)&&result.vector.length===512&&result.vector.every(Number.isFinite))cache.set(key,classifyRecommendationVisual(result.vector));
  }catch{/* Public-media cache is optional. */}}
  return cache.get(recommendationImageIdentity(url));
 }
@@ -48,6 +48,16 @@ export function writeVisualCache(url:string,result:RecommendationVisual):void{
 export function applyCachedRecommendationVisuals(posts:PostWithAuthor[],upgrade=false):PostWithAuthor[]{
  return posts.map(post=>{const previous=post.recommendationVisual??(post.imageUrls?.[0]?readVisualCache(post.imageUrls[0]):undefined);const visual=previous&&upgrade&&previous.classifierVersion!==3?classifyRecommendationVisual(previous.vector):previous;return visual?{...post,recommendationVisual:visual,recommendationVisualStatus:'checked'}:post;});
 }
+/** Classifier labels in storage may predate the current prototypes even when
+ * their format version is unchanged. Restore from vectors, not saved labels. */
+export function restoreRecommendationVisuals(posts:PostWithAuthor[]):PostWithAuthor[]{
+ return posts.map(post=>{
+  const vector=post.recommendationVisual?.vector;if(vector?.length!==512)return post;
+  let visual=restoredVectors.get(vector);if(!visual){visual=classifyRecommendationVisual(vector);restoredVectors.set(vector,visual);}
+  return {...post,recommendationVisual:visual};
+ });
+}
+const restoredVectors=new WeakMap<number[],RecommendationVisual>();
 
 /** Do not download an 85 MiB model while opening a timeline. */
 export async function hasInstalledVisualModel():Promise<boolean>{

@@ -14,6 +14,11 @@ import { getConfiguredExternalHandles } from '@/lib/bluesky';
 import {recommendationIsDismissed,recordRecommendationDelivery,selectRecommendationLikeSamples,readRecommendationLikedIds} from '@/lib/recommendations';
 import {dismissRecommendation,createRecommendationFeedback} from '@/api/recommendation-feedback';
 import {useEffect,useCallback,useRef,useState,useMemo} from 'react';
+<<<<<<< HEAD
+=======
+import {enrichExternalLike} from '@/api/external-likes';
+import {recommendationImageIdentity} from '@/lib/recommendationVisual';
+>>>>>>> 374490cc (“update23”)
 export function useRecommendedFeed(enabled:boolean) {
   const {user,loading}=useAuth();
   const handlesValue=getConfiguredExternalHandles();
@@ -22,13 +27,17 @@ export function useRecommendedFeed(enabled:boolean) {
   const reserveScope=JSON.stringify([user?.id??null,handles]);
   const restoredReserve=useMemo(()=>({page:user?readRecommendationReserve(reserveScope):undefined}),[reserveScope]);
   const queryClient=useQueryClient();
+<<<<<<< HEAD
   const queryKey=['feed','recommended','scoring-v51-catalog-batch20',user?.id ?? null,handles];
+=======
+  const queryKey=['feed','recommended','scoring-v52-verified-catalog',user?.id ?? null,handles];
+>>>>>>> 374490cc (“update23”)
   useRecommendationImpressions(enabled && !loading,user?.id ?? null);
   type Cursor=ReturnType<typeof createRecommendationCursor>;
   type Page=Awaited<ReturnType<typeof getBalancedRecommendationPage>>;
   const initialScanLimit=useRef(8);
   const [historyRevision,setHistoryRevision]=useState(0);
-  const warmPage=useRef<{cursor:Cursor;controller:AbortController;promise:Promise<Page>;settled:boolean;ready?:Page}|null>(null);
+  const warmPage=useRef<{cursor:Cursor;controller:AbortController;promise:Promise<Page>;settled:boolean;ready?:Page;first?:Promise<Page>}|null>(null);
   const clearWarmPage=()=>{warmPage.current?.controller.abort();warmPage.current=null;};
   const query=useInfiniteQuery({
     queryKey,
@@ -44,18 +53,31 @@ export function useRecommendedFeed(enabled:boolean) {
         // Do not hold ready cards behind the next network/image-analysis pass.
         // Aborting that unfinished pass leaves its input cursor safe to resume.
         const ready=matches?warm.ready:undefined;
+<<<<<<< HEAD
         const deliverReady=!!ready&&ready.posts.length>0;
         if(deliverReady&&!warm!.settled)warm!.controller.abort();
         const restored=!pageParam.pageKey&&!pageParam.history.length?restoredReserve.page:undefined;
         restoredReserve.page=undefined;
         const loaded=restored??(deliverReady?ready!:await (matches?warm.promise:getBalancedRecommendationPage(pageParam,user?.id??null,signal,{pageSize:20})));
+=======
+        const deliverReady=!!ready;
+        if(deliverReady&&!warm!.settled)warm!.controller.abort();
+        const restored=!pageParam.pageKey&&!pageParam.history.length?restoredReserve.page:undefined;
+        restoredReserve.page=undefined;
+        const loaded=restored??(deliverReady?ready!:await (matches?Promise.race([warm.first??warm.promise,warm.promise]):getBalancedRecommendationPage(pageParam,user?.id??null,signal,{pageSize:20})));
+        if(matches&&!warm.settled)warm.controller.abort();
+>>>>>>> 374490cc (“update23”)
         clearRecommendationReserve();
         if(signal.aborted)throw signal.reason;
         // A warmed page does not mark posts delivered until it is consumed.
         // Fresh feedback remains authoritative after background history hydration.
         const latest=queryClient.getQueryData<{pages:Page[]}>(queryKey)?.pages.at(-1)?.preferences;
         const topicPreferences=queryClient.getQueryData<TopicPreferences&{recommendationFeedback?:RecommendationFeedback[]}>(topicsKey(user?.id));
+<<<<<<< HEAD
         const preferences={...(pageParam.preferences?(latest??pageParam.preferences):loaded.preferences),...(topicPreferences?{followedTopics:topicPreferences.followed,dismissedTopics:topicPreferences.dismissed,feedback:topicPreferences.recommendationFeedback}:{}),visualOnly:true};
+=======
+        const preferences={...(pageParam.preferences?(latest??pageParam.preferences):loaded.preferences),...(topicPreferences?{followedTopics:topicPreferences.followed,dismissedTopics:topicPreferences.dismissed,feedback:topicPreferences.recommendationFeedback}:{}),visualOnly:true,allowUnverifiedMedia:false};
+>>>>>>> 374490cc (“update23”)
         const locallyLiked=new Set(readRecommendationLikedIds(user?.id??null));
         const foundNewCreator=Object.entries(preferences.authors).some(([author,weight])=>weight>0&&!(loaded.preferences.authors[author]>0));
         const keep=(post:import('@/types').PostWithAuthor)=>!recommendationIsDismissed(post,preferences)&&!preferences.likedPostIds?.includes(post.id)&&!locallyLiked.has(post.id);
@@ -87,12 +109,48 @@ export function useRecommendedFeed(enabled:boolean) {
     gcTime:300000,
   });
 
+<<<<<<< HEAD
+=======
+  const referenceJob=useRef<AbortController|null>(null);
+  const checkedReferences=useRef(new Set<string>());
+  useEffect(()=>()=>{referenceJob.current?.abort();referenceJob.current=null;checkedReferences.current.clear();},[user?.id]);
+  useEffect(()=>{
+    if(!enabled||loading||query.isFetching||referenceJob.current)return;
+    const last=query.data?.pages.at(-1);if(!last?.posts.length)return;
+    const references=(last.preferences.likedSamples??[]).filter(post=>!post.recommendationVisual&&post.imageUrls[0]&&!checkedReferences.current.has(recommendationImageIdentity(post.imageUrls[0]))).slice(0,2);
+    if(!references.length)return;
+    const controller=new AbortController();referenceJob.current=controller;
+    const timer=window.setTimeout(()=>{
+      const timeout=window.setTimeout(()=>controller.abort(new DOMException('Reference analysis deadline','TimeoutError')),30000);
+      references.forEach(post=>checkedReferences.current.add(recommendationImageIdentity(post.imageUrls[0])));
+      void import('@/lib/recommendationVisualInference').then(async module=>{
+        const checked=await module.enrichRecommendationVisuals(references,last.preferences.followedTopics??[],controller.signal,undefined,references.length);
+        if(controller.signal.aborted)return;
+        const results=new Map(checked.filter(post=>post.recommendationVisual).map(post=>[post.id,post]));
+        if(!results.size)return;
+        queryClient.setQueryData<NonNullable<typeof query.data>>(queryKey,data=>data?{...data,pages:data.pages.map(page=>{
+          const preferences={...page.preferences,allowUnverifiedMedia:false,likedSamples:(page.preferences.likedSamples??[]).map(post=>results.has(post.id)?{...post,recommendationVisual:results.get(post.id)!.recommendationVisual}:post)};
+          return {...page,preferences,next:page.next?{...page.next,preferences}:undefined};
+        })}:data);
+        if(user)for(const post of results.values())void enrichExternalLike(post,user.id).catch(()=>{});
+      }).catch(()=>{}).finally(()=>{window.clearTimeout(timeout);void import('@/lib/recommendationVisualInference').then(module=>module.releaseRecommendationVisualWorker());if(referenceJob.current===controller)referenceJob.current=null;});
+    },250);
+    controller.signal.addEventListener('abort',()=>window.clearTimeout(timer),{once:true});
+  },[enabled,loading,user?.id,query.isFetching,query.data?.pages.at(-1)?.requestKey,historyRevision]);
+
+>>>>>>> 374490cc (“update23”)
   useEffect(()=>{
     if(enabled||loading||!user||query.data||warmPage.current)return;
     const controller=new AbortController();
     const cached=restoredReserve.page;
+<<<<<<< HEAD
     const job={cursor:initialCursor,controller,promise:null as unknown as Promise<Page>,settled:false,ready:undefined as Page|undefined};
     job.promise=(cached?Promise.resolve(cached):getRecommendationContinuation(initialCursor,user.id,controller.signal,page=>{job.ready=page;saveRecommendationReserve(reserveScope,page);})).then(page=>{job.ready=page;return page;}).finally(()=>{job.settled=true;});
+=======
+    const job={cursor:initialCursor,controller,promise:null as unknown as Promise<Page>,settled:false,ready:undefined as Page|undefined,first:undefined as Promise<Page>|undefined};
+    let publishFirst!:(page:Page)=>void;job.first=new Promise(resolve=>{publishFirst=resolve;});
+    job.promise=(cached?Promise.resolve(cached):getRecommendationContinuation(initialCursor,user.id,controller.signal,page=>{job.ready=page;publishFirst(page);saveRecommendationReserve(reserveScope,page);})).then(page=>{job.ready=page;publishFirst(page);return page;}).finally(()=>{job.settled=true;});
+>>>>>>> 374490cc (“update23”)
     warmPage.current=job;void job.promise.catch(()=>{if(warmPage.current===job)warmPage.current=null;});
   },[enabled,loading,user?.id,initialCursor,query.data]);
   const foregroundRead=useRef(query.isFetching);foregroundRead.current=query.isFetching;
@@ -106,7 +164,7 @@ export function useRecommendedFeed(enabled:boolean) {
     // Saved interests hydrate separately from the bounded pixel-analysis worker,
     // so neither history nor model loading holds the first page.
     let timer:number;
-    const hydrate=()=>{if(controller.signal.aborted)return;if(foregroundRead.current&&!screenEmpty.current||warmPage.current&&!warmPage.current.settled){timer=window.setTimeout(hydrate,200);return;}void getRecommendationPreferences(user?.id??null,undefined,controller.signal).then(preferences=>{
+    const hydrate=()=>{if(controller.signal.aborted)return;if(foregroundRead.current&&!screenEmpty.current){timer=window.setTimeout(hydrate,200);return;}void getRecommendationPreferences(user?.id??null,undefined,controller.signal).then(preferences=>{
       if(controller.signal.aborted)return;completedHistory.current=true;
       let resume=false;
       queryClient.setQueryData<NonNullable<typeof query.data>>(queryKey,data=>{
@@ -114,7 +172,7 @@ export function useRecommendedFeed(enabled:boolean) {
         const last=data.pages.at(-1);
         const foundNewCreator=Object.entries(preferences.authors).some(([author,weight])=>weight>0&&!(last?.preferences.authors[author]>0));
         const pages=data.pages.map(page=>{
-          const merged={...preferences,visualOnly:true,authors:{...page.preferences.authors,...preferences.authors},likedPostIds:[...new Set([...(preferences.likedPostIds??[]),...(page.preferences.likedPostIds??[])])],likedSamples:selectRecommendationLikeSamples([...(preferences.likedSamples??[]),...(page.preferences.likedSamples??[])]),feedback:[...(page.preferences.feedback??[]),...(preferences.feedback??[])].filter((row,index,rows)=>rows.findIndex(old=>old.id===row.id)===index)};
+          const merged={...preferences,visualOnly:true,allowUnverifiedMedia:false,authors:{...page.preferences.authors,...preferences.authors},likedPostIds:[...new Set([...(preferences.likedPostIds??[]),...(page.preferences.likedPostIds??[])])],likedSamples:selectRecommendationLikeSamples([...(preferences.likedSamples??[]),...(page.preferences.likedSamples??[])]),feedback:[...(page.preferences.feedback??[]),...(preferences.feedback??[])].filter((row,index,rows)=>rows.findIndex(old=>old.id===row.id)===index)};
           const keep=(post:import('@/types').PostWithAuthor)=>!recommendationIsDismissed(post,merged);
           // History hydration removes rejected work without reordering cards.
           return {...page,preferences:merged,posts:page.posts.filter(keep),next:page.next?{...page.next,preferences:merged,remaining:page.next.remaining.filter(keep)}:undefined};
@@ -150,8 +208,14 @@ export function useRecommendedFeed(enabled:boolean) {
     const timer=window.setTimeout(()=>{
       if(warmPage.current||queryClient.getQueryState(queryKey)?.fetchStatus==='fetching')return;
       const controller=new AbortController();
+<<<<<<< HEAD
       const job={cursor,controller,promise:null as unknown as Promise<Page>,settled:false,ready:undefined as Page|undefined};
       job.promise=getRecommendationContinuation(cursor,user?.id??null,controller.signal,page=>{job.ready=page;saveRecommendationReserve(reserveScope,page);}).finally(()=>{job.settled=true;});
+=======
+      const job={cursor,controller,promise:null as unknown as Promise<Page>,settled:false,ready:undefined as Page|undefined,first:undefined as Promise<Page>|undefined};
+      let publishFirst!:(page:Page)=>void;job.first=new Promise(resolve=>{publishFirst=resolve;});
+      job.promise=getRecommendationContinuation(cursor,user?.id??null,controller.signal,page=>{job.ready=page;publishFirst(page);saveRecommendationReserve(reserveScope,page);}).finally(()=>{job.settled=true;});
+>>>>>>> 374490cc (“update23”)
       // Prefetch failures are handled by the ordinary visible page read.
       void job.promise.catch(()=>{if(warmPage.current===job)warmPage.current=null;});
       warmPage.current=job;

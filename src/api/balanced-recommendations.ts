@@ -15,7 +15,11 @@ export async function getBalancedRecommendationPage(previous:RecommendationCurso
   options?.pageSize&&!previous.catalogRead?readRecommendationCatalog(signal):Promise.resolve([]),
  ]);
  if(options?.pageSize&&!previous.catalogRead)previous={...previous,catalogRead:true,remaining:uniqueRecommendationPosts(applyCatalogRecommendationVisuals([...previous.remaining,...catalog.filter(post=>!isTwitter(post))],catalog)),twitterRemaining:uniqueRecommendationPosts(applyCatalogRecommendationVisuals([...(previous.twitterRemaining??[]),...catalog.filter(isTwitter)],catalog))};
+<<<<<<< HEAD
  let preferences={...loadedPreferences,visualOnly:true};
+=======
+ let preferences={...loadedPreferences,visualOnly:true,allowUnverifiedMedia:false};
+>>>>>>> 374490cc (“update23”)
  preferences={...preferences,likedSamples:applyCatalogRecommendationVisuals(applyCachedRecommendationVisuals(preferences.likedSamples??[],true),catalog)};
  const candidates={...preferences,allowUnverifiedMedia:true};
  const pageSize=Math.max(2,Math.min(20,options?.pageSize??8)),pairTarget=Math.ceil(pageSize/2);
@@ -59,8 +63,9 @@ export async function getBalancedRecommendationPage(previous:RecommendationCurso
   if(signal?.aborted)throw signal.reason;
   let raw=applyCachedRecommendationVisuals(uniqueRecommendationPosts([...native.posts,...(options?.pageSize?native.next?.remaining??[]:[]),...previous.remaining.filter(post=>!post.recommendationVisual&&post.imageUrls.length>0),...remaining].filter(unseen),previous.history),true);
   preferences={...preferences,likedSamples:applyCachedRecommendationVisuals(preferences.likedSamples??[],true)};
-  const references=preferences.likedSamples.slice(0,2);
-  const analysis:PostWithAuthor[]=[...references.filter(post=>!post.recommendationVisual)];
+  // Historical preference images are analysed separately after cards render.
+  // Only unverified candidate pixels belong on the candidate acquisition path.
+  const analysis:PostWithAuthor[]=[];
   for(const provider of [true,false]){
    const verified=new Set(rankRecommendations(raw.filter(post=>isTwitter(post)===provider&&available(post)),preferences,viewer,Date.now(),previous.history,Infinity,true).map(post=>post.userId));
    // Cached, accepted pairs can be shown immediately. Do not make their
@@ -89,7 +94,10 @@ export async function getBalancedRecommendationPage(previous:RecommendationCurso
      completed.set(post.id,post);
      const merge=(row:PostWithAuthor)=>completed.get(row.id)??row;
      const current={...preferences,likedSamples:(preferences.likedSamples??[]).map(merge)};
+<<<<<<< HEAD
      if(references.some(row=>!merge(row).recommendationVisual))return;
+=======
+>>>>>>> 374490cc (“update23”)
      const candidates=raw.map(merge);
      const enough=(provider:boolean)=>new Set(rankRecommendations(candidates.filter(row=>isTwitter(row)===provider&&available(row)),current,viewer,Date.now(),previous.history,Infinity,true).map(row=>row.userId)).size>=target;
      if(enough(false)&&(!twitterEnabled||enough(true)))publishReady([...completed.values()]);
@@ -147,6 +155,6 @@ export async function getBalancedRecommendationPage(previous:RecommendationCurso
   const position=(value:RecommendationCursor)=>JSON.stringify([value.lime,value.trending,value.authors,value.topics,value.nativeAuthors,value.topicDiscovery]);
   const progressed=selected.length>0||!!base.next&&position(base.next)!==position(previous)||JSON.stringify(cursor)!==JSON.stringify(previous.twitterCursor)||done!==previous.twitterDone;
   if(next)next.stalledPages=progressed?0:(previous.stalledPages??0)+1;
-  return {...base,automaticPaused:!!visualError&&!selected.length||!!base.automaticPaused&&!selected.length||!progressed&&!!next&&(next.stalledPages??0)>=2,posts:selected,next,twitterError,visualError};
+  return {...base,automaticPaused:!!base.automaticPaused&&!selected.length&&(done||!twitterEnabled)&&!twitterLeft.length||!progressed&&!!next&&(next.stalledPages??0)>=2,posts:selected,next,twitterError,visualError};
  }finally{clearTimeout(timer!);signal?.removeEventListener('abort',abort);controller.abort();}
 }

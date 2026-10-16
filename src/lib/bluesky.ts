@@ -552,6 +552,7 @@ export type BlueskyMappedPost = {
   visibility: 'public';
   likedByMe: boolean;
   likesCount: number;
+  repostsCount?: number;
   commentsCount: number;
   isBot: boolean;
   is_bot?: boolean;
@@ -663,6 +664,7 @@ type BlueskyFeedItem = {
     embed?: BlueskyEmbed;
     labels?:Array<{val?:string}>;
     likeCount?: number;
+    repostCount?: number;
     replyCount?: number;
     indexedAt?: string;
   };
@@ -943,6 +945,8 @@ export function mapBlueskyFeedItemToPost(item: BlueskyFeedItem): BlueskyMappedPo
     visibility: 'public',
     likedByMe: false,
     likesCount: post.likeCount ?? 0,
+    repostsCount: post.repostCount ?? 0,
+    externalDetails: {reposts: post.repostCount ?? 0},
     commentsCount: post.replyCount ?? 0,
     isBot: false,
     cid: post.cid || '',
@@ -1592,4 +1596,17 @@ export async function searchExternalUsers(query:string,options:{includeBluesky?:
   return [...new Map(users.map(user=>[user.id,user])).values()]
     .sort((a,b)=>accountSearchScore(b,normalized)-accountSearchScore(a,normalized))
     .slice(0,options.limit ?? 3);
+}
+
+/** Read activity on demand, using the same public AppView fallback as other reads. */
+export async function fetchBlueskyPostActivity(postId:string,tab:'quotes'|'reposts'|'likes',cursor?:string|null,signal?:AbortSignal){
+ const uri=getBlueskyUriFromPostId(postId);if(!uri)throw new Error('投稿IDが無効です');
+ const endpoint=tab==='quotes'?'getQuotes':tab==='reposts'?'getRepostedBy':'getLikes';
+ const params=new URLSearchParams({uri,limit:'50'});if(cursor)params.set('cursor',cursor);
+ const response=await fetchBlueskySearchEndpoint(`app.bsky.feed.${endpoint}`,params,signal,'interactive');
+ if(!response.ok)throw new Error(`Bluesky activity failed: ${response.status}`);
+ const data=await response.json();
+ const users=(tab==='likes'?(data.likes??[]).map((like:{actor:BlueskyActorProfile})=>like.actor):data.repostedBy??[]).map(mapBlueskyActorProfile).filter((user:BlueskyProfile|null):user is BlueskyProfile=>!!user);
+ const posts=(data.posts??[]).map((post:BlueskyFeedItem['post'])=>mapBlueskyFeedItemToPost({post})).filter((post:BlueskyMappedPost|null):post is BlueskyMappedPost=>!!post);
+ return {users,posts,cursor:data.cursor&&data.cursor!==cursor?data.cursor:null};
 }
