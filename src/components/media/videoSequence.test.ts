@@ -11,3 +11,8 @@ it('advances downward, goes back upward, and rejects taps and horizontal/diagona
  expect(videoSwipeDirection(5,100)).toBe(1);expect(videoSwipeDirection(5,-100)).toBe(-1);
  for(const [x,y] of [[1,20],[110,90],[100,5]])expect(videoSwipeDirection(x,y)).toBe(0);
 });
+
+it('keeps twitter video sources in the sequence without requiring native storage metadata',()=>{
+ const externalVideo={playlist:'https://video.example/tweet.m3u8',format:'hls' as const,...video};const post={id:'x:123',externalVideo} as PostWithAuthor;
+ const items=videoSelections({url:'video:a',video:{postId:'a',video}},[{posts:[post,post]}]);expect(items).toHaveLength(2);expect(items[1].video?.externalVideo).toEqual(externalVideo);
+});

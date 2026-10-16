@@ -10,7 +10,7 @@ export const TOPICS = [
   {id:'digital-illustration',name:'デジタルイラスト',description:'イラスト',queries:['ファンアート','オリキャラ'],terms:['デジタルイラスト','萌えイラスト','ファンアート','オリキャラ','オリジナルキャラクター','キャラクターイラスト','fanart','fan art']},
   {id:'film',name:'映画/テレビ',description:'映画・テレビ・ドラマ',queries:['映画','ドラマ'],terms:['映画','テレビ','ドラマ','俳優','監督','cinema','movie','film']},
   {id:'games',name:'ゲーム',description:'ゲーム・eスポーツ',queries:['ゲーム','ゲーム実況'],terms:['ゲーム','任天堂','ポケモン','スプラトゥーン','モンハン','playstation','steam','gaming','game']},
-  {id:'crypto',name:'仮想通貨',description:'暗号資産・ブロックチェーン',queries:['仮想通貨','ビットコイン'],terms:['仮想通貨','暗号資産','ビットコイン','ブロックチェーン','bitcoin','ethereum','crypto']},
+  {id:'crypto',name:'仮想通貨',description:'暗号資産・ブロックチェーン',queries:['仮想通貨','ビットコイン'],terms:['仮想通貨','暗号資産','ビットコイン','ブロックチェーン','bitcoin','ethereum','crypto','nft','web3','opensea']},
   {id:'travel',name:'旅行',description:'旅・観光',queries:['旅行','観光'],terms:['旅行','観光','旅先','温泉','ホテル','travel','trip','tourism']},
   {id:'anime',name:'アニメ',description:'アニメ・漫画',queries:['アニメ','漫画'],terms:['アニメ','漫画','マンガ','声優','anime','manga']},
   {id:'food',name:'グルメ',description:'料理・食べ物',queries:['グルメ','料理'],terms:['グルメ','料理','食べ物','ラーメン','レシピ','カフェ','スイーツ','food','cooking','recipe']},

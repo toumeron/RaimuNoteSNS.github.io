@@ -66,3 +66,24 @@ it('retains a liked image URL and full sample when an ID-only state synchronizat
  expect(createVisualSimilarityComparator()(a,b)).toBeCloseTo(visualSimilarity(a,b),12);
  expect(compare(a,Array(512).fill(NaN))).toBe(0);expect(compare(a,[])).toBe(0);
  });
+it('does not turn an uncertain pixel classification into a confident rejection of creator-supported art',()=>{
+ const candidate=post('x:991','original-moe',{author:{id:'x-user:991',username:'artist@twitter.com',bio:'イラストレーター'} as any,source:'x',content:'#ファンアート',recommendationTopics:['digital-illustration'],recommendationVisual:{version:1,kind:'unknown',topics:[],confidence:0,similarity:.1,vector:Array(512).fill(0)}});
+ expect(recommendationIsEligible(candidate,['digital-illustration'])).toBe(true);expect(candidate.recommendationVisual?.kind).toBe('unknown');
+ expect(recommendationIsEligible({...candidate,recommendationVisual:visual('pets')},['digital-illustration'])).toBe(false);
+});
+it('classifies the supplied mascot picture from its measured pixels as 3D rather than trusting character-art captions',async()=>{
+ const regression=(await import('./fixtures/recommendationVisualRegression.json')).default;
+ const visual=classifyRecommendationVisual(regression.render3d);
+ expect(visual.kind).toBe('render-3d');expect(visual.classifierVersion).toBe(3);
+ const prefs={visualOnly:true,authors:{},terms:{オリジナルキャラクター:9999},followedTopics:['digital-illustration'] as TopicId[]};
+ for(const source of ['bluesky','x'] as const){
+  const candidate={id:source+':render-regression',userId:source+':creator',source,content:'#オリジナルキャラクター #ファンアート',imageUrls:['https://images.example/render-regression.jpg'],createdAt:new Date().toISOString(),likesCount:99999,commentsCount:0,repostsCount:0,likedByMe:false,repostedByMe:false,recommendationVisual:visual,author:{id:source+':creator',username:'artist',bio:'イラストレーター'}} as PostWithAuthor;
+  expect(rankRecommendations([candidate],prefs,'regression-viewer')).toEqual([]);
+ }
+});
+it('has an independent animal-drawing class rather than treating all drawings as anime people',async()=>{
+ const prototypes=(await import('./recommendationVisualPrototypes.json')).default;
+ const animal=prototypes.prototypes.find(row=>row.id==='animal-illustration')!;
+ const classified=classifyRecommendationVisual(animal.vectors[0]);
+ expect(classified.kind).toBe('animal-illustration');expect(classified.topics).not.toContain('digital-illustration');
+});

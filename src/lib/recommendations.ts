@@ -1,3 +1,4 @@
+import {isTimelinePost} from './timelinePaging';
 import {recordRecommendationEngagement} from "@/lib/recommendationSignals";
 import {matchingTopics} from './topics';
 import type { PostWithAuthor } from '@/types';
@@ -6,7 +7,7 @@ import {recommendationIdentity,recommendationFingerprint} from "@/lib/recommenda
 import {recommendationIsEligible,recommendationMatchesFollowedTopics,hasCuratedArtworkSource,hasDeclaredArtworkContext} from "@/lib/recommendationSignals";
 import {isDeclaredGeneratedArt} from "@/lib/recommendationSignals";
 import {recommendationOriginLanguages,recommendationTopicAffinity,recommendationTopicSignals,recommendationText} from './recommendationSignals';
-import {visualSimilarity as directVisualSimilarity,createVisualSimilarityComparator,readVisualCache,applyCachedRecommendationVisuals} from './recommendationVisual';
+import {visualSimilarity as directVisualSimilarity,createVisualSimilarityComparator,readVisualCache,applyCachedRecommendationVisuals,visualMatchesRecommendationTopic} from './recommendationVisual';
 
 // The scope ends with each scoring pass: no stale cache after feedback changes.
 let compareVisual:ReturnType<typeof createVisualSimilarityComparator>|undefined;
@@ -17,6 +18,8 @@ function withScoringComparisons<T>(read:()=>T):T{
 }
 export type RecommendationFeedback={id:string;userId:string;fingerprint?:string;topics?:TopicId[];vector?:number[];imageUrls?:string[];visualKind?:string;createdAt:string};
 export type RecommendationPreferences = {
+  visualOnly?:boolean;
+  allowUnverifiedMedia?:boolean;
   authors: Record<string, number>;
   terms: Record<string, number>;
   recentAuthors?: Record<string, number>;
@@ -25,6 +28,7 @@ export type RecommendationPreferences = {
   likedPostIds?: string[];
   followedTopics?: TopicId[];
   dismissedTopics?: TopicId[];
+  authorHandles?:Record<string,string>;
   authorLanguages?:Record<string,string[]>;
   authorTopics?:Record<string,Partial<Record<TopicId,number>>>;
   visualInterests?:number[][];
@@ -38,7 +42,7 @@ export function selectRecommendationLikeSamples(rows:(PostWithAuthor & {engagedA
  const selected:typeof rows=[],rest:typeof rows=[];
  for(const row of unique){if(!authors.has(row.userId)&&selected.length<limit){authors.add(row.userId);selected.push(row);}else rest.push(row);}
  for(const row of rest){if(selected.length>=limit)break;selected.push(row);}
- return selected.map(row=>({id:row.id,userId:row.userId,content:row.content.slice(0,2000),imageUrls:row.imageUrls.slice(0,4),imageAltTexts:row.imageAltTexts?.slice(0,4),source:row.source,languages:row.languages,recommendationLanguages:row.recommendationLanguages,recommendationTopics:row.recommendationTopics,recommendationAuthorTopics:row.recommendationAuthorTopics,recommendationSources:row.recommendationSources,recommendationVisual:row.recommendationVisual,engagedAt:row.engagedAt,author:{id:row.userId,bio:row.author?.bio,displayName:row.author?.displayName}} as PostWithAuthor & {engagedAt?:string}));
+ return selected.map(row=>({id:row.id,userId:row.userId,content:row.content.slice(0,2000),imageUrls:row.imageUrls.slice(0,4),imageAltTexts:row.imageAltTexts?.slice(0,4),source:row.source,languages:row.languages,recommendationLanguages:row.recommendationLanguages,recommendationTopics:row.recommendationTopics,recommendationAuthorTopics:row.recommendationAuthorTopics,recommendationSources:row.recommendationSources,recommendationVisual:row.recommendationVisual,engagedAt:row.engagedAt,author:{id:row.userId,username:row.author?.username,bio:row.author?.bio,displayName:row.author?.displayName}} as PostWithAuthor & {engagedAt?:string}));
 }
 const stopWords = new Set(['です','ます','した','して','する','ある','いる','これ','それ','ため','さん','こと','よう','今日','昨日','今回','自分','本当','こちら','みんな','https','http','www','com','the','and','with','this','that']);
 const concepts = [
@@ -61,7 +65,7 @@ export function recommendationTerms(content: string): string[] {
   if(termCache.size>=512)termCache.delete(termCache.keys().next().value!);
   termCache.set(text,terms);return [...terms];
 }
-export function addRecommendationInterest(preferences: RecommendationPreferences, post: {content?:string;userId?:string;user_id?:string;imageAltTexts?:string[];recommendationTopics?:string[];recommendationAuthorTopics?:string[];recommendationVisual?:PostWithAuthor['recommendationVisual'];linkPreview?:{title?:string;description?:string};languages?:string[];recommendationLanguages?:string[];author?:{id?:string;bio?:string;displayName?:string}}, weight:number, eventAt?:string, now=Date.now()) {
+export function addRecommendationInterest(preferences: RecommendationPreferences, post: {content?:string;userId?:string;user_id?:string;imageAltTexts?:string[];recommendationTopics?:string[];recommendationAuthorTopics?:string[];recommendationVisual?:PostWithAuthor['recommendationVisual'];linkPreview?:{title?:string;description?:string};languages?:string[];recommendationLanguages?:string[];author?:{id?:string;username?:string;bio?:string;displayName?:string}}, weight:number, eventAt?:string, now=Date.now()) {
   const timestamp=eventAt ? Date.parse(eventAt) : now;
   const age=Number.isFinite(timestamp)?Math.max(0,(now-timestamp)/86400000):30;
   const longWeight=weight*Math.pow(0.5,age/60);
@@ -71,6 +75,7 @@ export function addRecommendationInterest(preferences: RecommendationPreferences
   if(post.recommendationVisual?.vector.length===512){preferences.visualInterests??=[];if(preferences.visualInterests.length<24)preferences.visualInterests.push(post.recommendationVisual.vector);}
   const author=post.userId ?? post.user_id ?? post.author?.id;
   if(author) {
+    if(post.author?.username){preferences.authorHandles??={};preferences.authorHandles[author]=post.author.username;}
     preferences.authors[author]=(preferences.authors[author] ?? 0)+longWeight;
     preferences.recentAuthors[author]=(preferences.recentAuthors[author] ?? 0)+recentWeight;
     preferences.authorLanguages??={};
@@ -92,6 +97,7 @@ export function addRecommendationInterest(preferences: RecommendationPreferences
   }
 }
 export function recommendationQueries(preferences:RecommendationPreferences):string[] {
+  if(preferences.visualOnly)return [];
   const explicit=TOPICS.filter(topic=>preferences.followedTopics?.includes(topic.id)).map(topic=>topic.queries[0]);
   const learned=Object.entries(preferences.terms).filter(([term])=>!term.startsWith('topic:') && topicAffinity(term,{dismissed:preferences.dismissedTopics})>=0)
     .sort((a,b)=>(b[1]+(preferences.recentTerms?.[b[0]] ?? 0))-(a[1]+(preferences.recentTerms?.[a[0]] ?? 0)))
@@ -187,6 +193,11 @@ function prepareScoringContext(preferences:RecommendationPreferences,idf:Record<
 }
 export function scoreRecommendation(post:PostWithAuthor,preferences:RecommendationPreferences,viewerId:string|null,context:ScoringContext={}):RecommendationScore {
   const now=context.now ?? Date.now();
+  if(preferences.visualOnly){
+   const visual=post.recommendationVisual,similarity=visual?positiveImageSimilarity(post,preferences):0;
+   const follow=Number(!!preferences.followedAuthors?.includes(post.userId));
+   return {interest:0,recentInterest:0,author:0,follow,freshness:0,quality:0,seenPenalty:0,spamPenalty:0,selfPenalty:0,total:100*similarity+8*follow};
+  }
   const relevanceText=recommendationText(post);
   const terms=recommendationTerms(relevanceText);
   const timestamp=Date.parse(post.createdAt);
@@ -276,7 +287,50 @@ export function recommendationIsDismissed(post:PostWithAuthor,preferences:Recomm
 export function rankRecommendations(posts:PostWithAuthor[], preferences:RecommendationPreferences, viewerId:string|null, now=Date.now(), history:PostWithAuthor[]=[],rankLimit=Infinity,includeReserved=false):PostWithAuthor[] {
  return withScoringComparisons(()=>rankRecommendationsInternal(posts,preferences,viewerId,now,history,rankLimit,includeReserved));
 }
+/** Home recommendations deliberately do not inspect captions, tags, alt text or biographies. */
+function rankVisualRecommendations(posts:PostWithAuthor[],preferences:RecommendationPreferences,viewer:string|null,now:number,history:PostWithAuthor[],limit:number,includeReserved:boolean):PostWithAuthor[]{
+ const impressions=readRecommendationImpressions(viewer,now),deliveries=readRecommendationDeliveries(viewer,now);
+ const seen=new Set(history.flatMap(post=>[recommendationIdentity(post),recommendationFingerprint(post)].filter(Boolean)));
+ const liked=new Set([...(preferences.likedPostIds??[]),...readRecommendationLikes(viewer).map(post=>post.id)]);
+ const feedback=activeRecommendationFeedback(preferences,now);
+ const references=applyCachedRecommendationVisuals(preferences.likedSamples??[],true).filter(post=>post.recommendationVisual&&post.recommendationVisual.kind!=='unknown');
+ const referencesFor=(visual:NonNullable<PostWithAuthor['recommendationVisual']>)=>{
+  const topics=(preferences.followedTopics??[]).filter(topic=>visualMatchesRecommendationTopic(visual,topic));
+  return topics.length?references.filter(reference=>topics.some(topic=>visualMatchesRecommendationTopic(reference.recommendationVisual!,topic))):references;
+ };
+ const ranked:PostWithAuthor[]=[];
+ for(const post of applyCachedRecommendationVisuals(posts,true)){
+  if(!isTimelinePost(post))continue;
+  const id=recommendationIdentity(post),fingerprint=recommendationFingerprint(post),visual=post.recommendationVisual;
+  if(seen.has(id)||fingerprint&&seen.has(fingerprint)||liked.has(post.id)||post.likedByMe||impressions[id]||fingerprint&&impressions[fingerprint])continue;
+  if(!includeReserved&&(deliveries[id]||fingerprint&&Object.values(deliveries).some(row=>row.fingerprint===fingerprint)))continue;
+  if(feedback.some(row=>row.id===id||row.userId===post.userId||!!fingerprint&&row.fingerprint===fingerprint))continue;
+  if(visual){
+   if(visual.kind==='unknown'||visual.kind==='render-3d'||visual.kind==='vehicle'||visual.confidence<.25||visual.similarity<.24)continue;
+   if(preferences.dismissedTopics?.some(topic=>visualMatchesRecommendationTopic(visual,topic)))continue;
+   // Explicit topics remain a requirement even when liked-image references exist.
+   if(preferences.followedTopics?.length&&!preferences.followedTopics.some(topic=>visualMatchesRecommendationTopic(visual,topic)))continue;
+   const relatedReferences=referencesFor(visual);
+   const similar=relatedReferences.filter(reference=>reference.recommendationVisual!.kind===visual.kind);
+   const positive=Math.max(0,...similar.map(reference=>visualSimilarity(reference.recommendationVisual!.vector,visual.vector)));
+   if(relatedReferences.length&&(!similar.length||positive<.65))continue;
+
+   const negative=imageFeedbackSimilarity(post,feedback);
+   if(negative>=.7&&negative>positive+.04)continue;
+  }else if(!preferences.allowUnverifiedMedia||!post.imageUrls.length||post.recommendationVisualStatus==='unavailable')continue;
+  seen.add(id);if(fingerprint)seen.add(fingerprint);ranked.push(post);
+ }
+ const score=(post:PostWithAuthor)=>{
+  const visual=post.recommendationVisual;
+  const similarity=visual?Math.max(0,...referencesFor(visual).map(reference=>visualSimilarity(reference.recommendationVisual!.vector,visual.vector)),...(preferences.visualInterests??[]).map(vector=>visualSimilarity(vector,visual.vector))):0;
+  const age=Math.floor(Math.max(0,(now-Date.parse(post.createdAt))/3600000));
+  return 100*similarity+8*Number(!!preferences.followedAuthors?.includes(post.userId))+4*(1-Math.exp(-(preferences.authors[post.userId]??0)/8))+2*Math.pow(.5,(Number.isFinite(age)?age:168)/48);
+ };
+ return ranked.sort((a,b)=>score(b)-score(a)).slice(0,limit);
+}
+
 function rankRecommendationsInternal(posts:PostWithAuthor[], preferences:RecommendationPreferences, viewerId:string|null, now:number, history:PostWithAuthor[],rankLimit:number,includeReserved:boolean):PostWithAuthor[] {
+  if(preferences.visualOnly)return rankVisualRecommendations(posts,preferences,viewerId,now,history,rankLimit,includeReserved);
   const impressions=readRecommendationImpressions(viewerId,now);
   const deliveries=readRecommendationDeliveries(viewerId,now);
   const deliveredFingerprints=new Set(Object.values(deliveries).map(row=>row.fingerprint).filter(Boolean));

@@ -1,9 +1,9 @@
-vi.mock('@/lib/fxTwitter',()=>({searchXPage:async()=>({posts:[],cursor:null})}));
+vi.mock('@/lib/fxTwitter',()=>({searchXPage:async(term:string,options:any)=>{fixture.twitterCalls.push({term,...options});if(fixture.twitterDelay)await new Promise(resolve=>setTimeout(resolve,fixture.twitterDelay));return {posts:fixture.twitterRows,cursor:null};}}));
 import {recordRecommendationLike as recordCloudLikeTest} from '@/lib/recommendations';
 import { beforeEach, expect, it, vi } from 'vitest';
-const fixture=vi.hoisted(()=>({authorDelay:0,sizes:[] as number[],cloudLikes:[] as any[],feedback:[] as any[],likedId:'',limeFail:false,blueFail:false,preferencesFail:false,limeSize:2,limeCalls:0,authorCalls:[] as string[],topicCalls:[] as string[],searchCalls:[] as string[],targeted:false,followedTopics:[] as string[],dismissedTopics:[] as string[],discoveryTopics:[] as string[],topicFeedRows:{} as Record<string,any[]>,authorRows:{} as Record<string,any[]>,authorPages:{} as Record<string,any[][]>,misskeyRows:[] as any[],misskeyFail:false,feedFail:false,topicFeedContinues:false,slowTrending:false,slowFeed:false,slowHistory:false,slowTopics:false}));
+const fixture=vi.hoisted(()=>({followRows:[] as any[],followDelay:0,followReads:0,twitterRows:[] as any[],twitterCalls:[] as any[],twitterDelay:0,authorDelay:0,sizes:[] as number[],cloudLikes:[] as any[],feedback:[] as any[],likedId:'',limeFail:false,blueFail:false,preferencesFail:false,limeSize:2,limeCalls:0,authorCalls:[] as string[],topicCalls:[] as string[],searchCalls:[] as string[],targeted:false,followedTopics:[] as string[],dismissedTopics:[] as string[],discoveryTopics:[] as string[],topicFeedRows:{} as Record<string,any[]>,authorRows:{} as Record<string,any[]>,authorPages:{} as Record<string,any[][]>,misskeyRows:[] as any[],misskeyFail:false,feedFail:false,topicFeedContinues:false,slowTrending:false,slowFeed:false,slowHistory:false,slowTopics:false}));
 vi.mock('@/lib/misskey',()=>({fetchMisskeyTopicPosts:async()=>{if(fixture.misskeyFail)throw new Error('misskey unavailable');return ({posts:fixture.misskeyRows.length?fixture.misskeyRows:fixture.targeted?[source('misskey:targeted','猫の写真')]:[],cursor:null});}}));
-vi.mock('@/lib/supabase',()=>({supabase:{from:(table:string)=>{const b={select:()=>b,abortSignal:()=>b,eq:()=>b,order:()=>b,limit:()=>b,range:(start:number,end:number)=>{b.window=[start,end];return b;},window:[0,199],maybeSingle:async()=>{if(fixture.slowTopics)await new Promise(resolve=>setTimeout(resolve,2500));return ({data:{followed_topics:fixture.followedTopics,dismissed_topics:fixture.dismissedTopics,recommendation_feedback:fixture.feedback},error:fixture.preferencesFail?new Error('prefs unavailable'):null});},then:async(resolve:any)=>{if(fixture.slowHistory)await new Promise(done=>setTimeout(done,6000));return Promise.resolve({data:table==='likes'?(fixture.cloudLikes.length?fixture.cloudLikes.slice(b.window[0],b.window[1]+1):[{posts:{id:fixture.likedId,user_id:'cat-author',content:'猫の写真'}}]):[],error:fixture.preferencesFail?new Error('prefs unavailable'):null}).then(resolve);}};return b;}}}));
+vi.mock('@/lib/supabase',()=>({supabase:{from:(table:string)=>{const b={select:()=>b,abortSignal:()=>b,eq:()=>b,order:()=>b,limit:()=>b,range:(start:number,end:number)=>{b.window=[start,end];return b;},window:[0,199],maybeSingle:async()=>{if(fixture.slowTopics)await new Promise(resolve=>setTimeout(resolve,2500));return ({data:{followed_topics:fixture.followedTopics,dismissed_topics:fixture.dismissedTopics,recommendation_feedback:fixture.feedback},error:fixture.preferencesFail?new Error('prefs unavailable'):null});},then:async(resolve:any)=>{if(table==='follows'){fixture.followReads++;if(fixture.followDelay)await new Promise(done=>setTimeout(done,fixture.followDelay));}if(fixture.slowHistory&&table!=='follows')await new Promise(done=>setTimeout(done,6000));return Promise.resolve({data:table==='follows'?fixture.followRows:table==='likes'?(fixture.cloudLikes.length?fixture.cloudLikes.slice(b.window[0],b.window[1]+1):[{posts:{id:fixture.likedId,user_id:'cat-author',content:'猫の写真'}}]):[],error:fixture.preferencesFail?new Error('prefs unavailable'):null}).then(resolve);}};return b;}}}));
 const source=(id:string,content:string)=>({id,userId:id,languages:['ja'],content,createdAt:'2026-10-03T00:00:00Z',likesCount:1,commentsCount:0,likedByMe:false,repostsCount:0,repostedByMe:false,imageUrls:[],author:{id,username:id}});
 vi.mock('./posts',()=>({searchPosts:async(query:string)=>{fixture.searchCalls.push(query);return fixture.targeted?[source('targeted-lime','猫の写真')]:[];},getPostsByUser:async()=>[],getFeed:async(_page:number,limit:number)=>{fixture.sizes.push(limit);fixture.limeCalls++;if(fixture.limeFail)throw new Error('lime failed');return fixture.limeSize>2?Array.from({length:fixture.limeSize},(_,i)=>source(`lime-${i}`,'猫の写真')):[source('lime-cat','猫の写真'),source('lime-sports','サッカー速報')];}}));
 vi.mock('@/lib/bluesky',()=>({fetchBlueskyLikedPosts:async()=>[],discoverBlueskyTopicFeeds:async(topic:string)=>{fixture.discoveryTopics.push(topic);return fixture.topicFeedRows[topic]?[`feed:${topic}`,...(fixture.slowFeed?[`slow:${topic}`]:[])]:[];},fetchBlueskyTopicFeed:async({topic,feed}:any)=>{if(feed?.startsWith("slow:"))await new Promise(resolve=>setTimeout(resolve,6000));if(fixture.feedFail)throw new Error('topic feed failed');return {posts:(fixture.topicFeedRows[topic]??[]).map(post=>({...post,recommendationTopics:[topic]})),cursor:fixture.topicFeedContinues?'next':null};},fetchBlueskyAuthorFeed:async({actor,cursor,limit}:any)=>{fixture.sizes.push(limit);fixture.authorCalls.push(actor);if(fixture.authorDelay)await new Promise(resolve=>setTimeout(resolve,fixture.authorDelay));const pages=fixture.authorPages[actor];const index=Number(cursor??0);return pages?{posts:pages[index]??[],cursor:index+1<pages.length?String(index+1):null}:{posts:fixture.authorRows[actor]??[],cursor:null};},fetchBlueskyTopicPosts:async({query}:any)=>{fixture.topicCalls.push(query);return {posts:fixture.targeted?[source('bsky:targeted','猫の写真')]:[],cursor:null};},fetchTrendingJapaneseBlueskyPosts:async()=>{if(fixture.slowTrending)await new Promise(resolve=>setTimeout(resolve,6000));if(fixture.blueFail)throw new Error('blue failed');return {posts:[source('bsky:cat','猫の写真')],cursor:null};}}));
@@ -29,7 +29,7 @@ it('retains a completed topic feed when another feed for the same topic misses t
   const snapshot=JSON.stringify(page.next);await vi.advanceTimersByTimeAsync(7000);expect(JSON.stringify(page.next)).toBe(snapshot);
  }finally{vi.useRealTimers();}
 });
-beforeEach(()=>{fixture.authorDelay=0;fixture.sizes=[];fixture.cloudLikes=[];fixture.feedback=[];fixture.likedId='';fixture.limeFail=false;fixture.blueFail=false;fixture.preferencesFail=false;fixture.limeSize=2;fixture.limeCalls=0;fixture.authorCalls=[];fixture.topicCalls=[];fixture.searchCalls=[];fixture.targeted=false;fixture.followedTopics=[];fixture.dismissedTopics=[];fixture.discoveryTopics=[];fixture.topicFeedRows={};fixture.authorRows={};fixture.authorPages={};fixture.misskeyRows=[];fixture.misskeyFail=false;fixture.feedFail=false;fixture.topicFeedContinues=false;fixture.slowTrending=false;fixture.slowFeed=false;fixture.slowHistory=false;fixture.slowTopics=false;localStorage.clear();});
+beforeEach(()=>{fixture.followRows=[];fixture.followDelay=0;fixture.followReads=0;fixture.twitterRows=[];fixture.twitterCalls=[];fixture.twitterDelay=0;fixture.authorDelay=0;fixture.sizes=[];fixture.cloudLikes=[];fixture.feedback=[];fixture.likedId='';fixture.limeFail=false;fixture.blueFail=false;fixture.preferencesFail=false;fixture.limeSize=2;fixture.limeCalls=0;fixture.authorCalls=[];fixture.topicCalls=[];fixture.searchCalls=[];fixture.targeted=false;fixture.followedTopics=[];fixture.dismissedTopics=[];fixture.discoveryTopics=[];fixture.topicFeedRows={};fixture.authorRows={};fixture.authorPages={};fixture.misskeyRows=[];fixture.misskeyFail=false;fixture.feedFail=false;fixture.topicFeedContinues=false;fixture.slowTrending=false;fixture.slowFeed=false;fixture.slowHistory=false;fixture.slowTopics=false;localStorage.clear();});
 it.each(['science','sports','food','music','art'])('retrieves keyword-free posts from a %s feed and ranks them before unrelated discovery',async topic=>{
  fixture.followedTopics=[topic];fixture.topicFeedRows[topic]=[{...source('bsky:media-only',''),imageUrls:['https://images.example/media.jpg'],recommendationVisual:checked(topic)}];
  const page=await getRecommendationPage(createRecommendationCursor([]),'viewer');
@@ -145,7 +145,7 @@ it('returns a cold digital page without awaiting pixel inference and rejects a k
 it('uses explicit topics even when old likes/history take six seconds',async()=>{
  vi.useFakeTimers();try{
  fixture.slowHistory=true;fixture.followedTopics=['digital-illustration'];fixture.topicFeedRows['digital-illustration']=[{...source('bsky:qualified',''),imageUrls:['https://images.example/qualified.jpg'],recommendationVisual:checked('digital-illustration')}];
- const pending=getRecommendationPage(createRecommendationCursor([]),'viewer');await vi.advanceTimersByTimeAsync(6500);const page=await pending;
+ let settled=false;const pending=getRecommendationPage(createRecommendationCursor([]),'viewer').then(page=>{settled=true;return page;});await vi.advanceTimersByTimeAsync(300);expect(settled).toBe(true);const page=await pending;
  expect(page.preferences.followedTopics).toEqual(['digital-illustration']);expect(page.posts.map(row=>row.id)).toEqual(['bsky:qualified']);
  await vi.advanceTimersByTimeAsync(7000);expect(page.posts.map(row=>row.id)).toEqual(['bsky:qualified']);
  }finally{vi.useRealTimers();}
@@ -278,7 +278,7 @@ it('topic feed rotation is not cursor progress when repeated reads time out',asy
  try{
   let cursor=createRecommendationCursor([]);cursor.lime.done=true;cursor.trending.done=true;cursor.preferences={authors:{},terms:{},followedTopics:['science']};
   cursor.topicDiscovery={science:{feeds:['slow:science'],positions:{'slow:science':{cursor:null,done:false}},done:false}};
-  cursor.topics={科学:{limePage:0,limeDone:true,blueCursor:null,blueDone:true,misskeyDone:true}};
+  cursor.topics={科学:{limePage:0,limeDone:true,blueCursor:null,blueDone:true,misskeyDone:true}};cursor.twitterDiscovery={科学:{cursor:null,done:true}};
   for(let i=0;i<3;i++){
    const pending=getRecommendationPage(cursor,'viewer');await vi.advanceTimersByTimeAsync(5100);const page=await pending;
    expect(page.posts).toEqual([]);expect(page.automaticPaused).toBe(i===2);cursor=page.next!;
@@ -314,7 +314,7 @@ it('keeps a healthy two-second creator read alive when it is the only eligible s
   fixture.authorDelay=2000;const actor='did:plc:healthy';
   fixture.authorPages[actor]=Array.from({length:2},(_,i)=>[{...source(`bsky:healthy-${i}`,''),userId:actor,imageUrls:[`https://images.example/healthy-${i}.jpg`],recommendationVisual:checked('science')}]);
   let cursor=createRecommendationCursor([]);cursor.lime.done=true;cursor.trending.done=true;cursor.preferences={authors:{[actor]:10},terms:{},followedTopics:['science']};
-  cursor.topics={科学:{limePage:0,limeDone:true,blueCursor:null,blueDone:true,misskeyDone:true}};cursor.topicDiscovery={science:{feeds:[],positions:{},done:true}};
+  cursor.topics={科学:{limePage:0,limeDone:true,blueCursor:null,blueDone:true,misskeyDone:true}};cursor.twitterDiscovery={科学:{cursor:null,done:true}};cursor.topicDiscovery={science:{feeds:[],positions:{},done:true}};
   for(let i=0;i<2;i++){
    let settled=false;const pending=getRecommendationPage(cursor,'viewer').then(page=>{settled=true;return page;});
    await vi.advanceTimersByTimeAsync(1600);expect(settled).toBe(false);
@@ -373,7 +373,7 @@ it('does not end a feed while unshown relevant works remain from the recent crea
  const {recommendationQueries}=await import('@/lib/recommendations');
  cursor.topics=Object.fromEntries(recommendationQueries(cursor.preferences).map(term=>[term,{limePage:0,limeDone:true,blueCursor:null,blueDone:true,misskeyCursor:null,misskeyDone:true}]));
  const works=Array.from({length:19},(_,i)=>({...source(`bsky:unshown-science-${i}`,'科学の研究'),userId:actor,imageUrls:[`https://images.example/science-${i}.jpg`],author:{id:actor,username:'creator',displayName:'Creator',bio:'',avatarUrl:'',coverUrl:'',createdAt:'2026-10-13'}}));
- cursor.history=works.slice(0,3);cursor.seen=cursor.history.map(post=>post.id);cursor.remaining=works.slice(3);
+ cursor.twitterDiscovery={科学:{cursor:null,done:true}};cursor.history=works.slice(0,3);cursor.seen=cursor.history.map(post=>post.id);cursor.remaining=works.slice(3);
  const first=await getRecommendationPage(cursor,'viewer');
  expect(first.posts).toHaveLength(8);expect(first.next).toBeDefined();
  const second=await getRecommendationPage(first.next!,'viewer');
@@ -417,4 +417,57 @@ it('discovers posts from twitter creators learned from likes',async()=>{
  const cursor=createRecommendationCursor([]);cursor.preferences={authors:{'x-user:123':10},terms:{},likedSamples:[],likedPostIds:[]} as any;
  fixture.authorRows['x-user:123']=[{...source('x:2100000000000000001','科学の研究'),source:'x',userId:'x-user:123'}];
  const page=await getRecommendationPage(cursor,'viewer');expect(fixture.authorCalls).toContain('x-user:123');expect(page.posts.map(post=>post.id)).toContain('x:2100000000000000001');
+});
+
+it('discovers relevant twitter art by followed topic without requiring a previously liked twitter creator',async()=>{
+ fixture.followedTopics=['digital-illustration'];fixture.twitterDelay=400;
+ fixture.twitterRows=[{...source('x:2110900000000000001','#ファンアート'),source:'x',userId:'x-user:artist',imageUrls:['https://images.example/art.jpg'],author:{id:'x-user:artist',username:'artist@twitter.com',bio:'イラストレーター'}},{...source('x:2110900000000000002','今日のペット #ファンアート'),source:'x',imageUrls:['https://images.example/pet.jpg'],recommendationVisual:checked('pets')}];
+ const first=await getRecommendationPage(createRecommendationCursor([]),'viewer');
+ expect(fixture.twitterCalls).toHaveLength(0);
+ const page=await getRecommendationPage(first.next!,'viewer');
+ expect(fixture.twitterCalls).toEqual([expect.objectContaining({term:'ファンアート',feed:'latest',preferAlternative:true})]);
+ expect(page.posts.map(post=>post.id)).toContain('x:2110900000000000001');expect(page.posts.map(post=>post.id)).not.toContain('x:2110900000000000002');
+ expect(page.posts.find(post=>post.id==='x:2110900000000000001')?.source).toBe('x');
+});
+it('includes preference lookup in the five-second page deadline',async()=>{
+ vi.useFakeTimers();try{
+ fixture.slowTopics=true;fixture.slowTrending=true;const cursor=createRecommendationCursor([]);cursor.lime.done=true;
+ let settled=false;const pending=getRecommendationPage(cursor,'viewer').then(page=>{settled=true;return page;});
+ await vi.advanceTimersByTimeAsync(4900);expect(settled).toBe(false);
+ await vi.advanceTimersByTimeAsync(110);expect(settled).toBe(true);const page=await pending;expect(page.next?.trending.done).toBe(false);
+ await vi.advanceTimersByTimeAsync(6000);
+ }finally{vi.useRealTimers();}
+});
+
+it('waits for explicit follows on first load, resolves handle-only twitter rows, and reads follows only once',async()=>{
+ vi.useFakeTimers();try{
+ fixture.followedTopics=['digital-illustration'];fixture.followDelay=40;fixture.slowHistory=true;
+ fixture.followRows=[{followee_id:null,external_provider:'x',external_handle:'artist',external_profile:null},{followee_id:null,external_provider:'x',external_handle:'other@twitter.com',external_profile:{id:'x-user:500'}}];
+ const pending=getRecommendationPreferences('follow-viewer',()=>{});
+ await vi.advanceTimersByTimeAsync(60);const prefs=await pending;
+ expect(prefs.followedAuthors).toEqual(['artist@twitter.com','x-user:500']);
+ expect(prefs.authors['artist@twitter.com']).toBe(3);expect(fixture.followReads).toBe(1);
+ }finally{vi.useRealTimers();}
+});
+it('leaves twitter creator reads to the balanced loader instead of requesting the same creator twice',async()=>{
+ const previous=createRecommendationCursor(['x-user:500']);previous.preferences={authors:{'x-user:500':3},terms:{},followedAuthors:['x-user:500']};
+ await getRecommendationPage(previous,'viewer',undefined,{deferTwitter:true});
+ expect(fixture.authorCalls).not.toContain('x-user:500');
+});
+it('pixel-only refresh preserves twitter continuation and consumed author budgets when native sources are exhausted',()=>{
+ const cursor=createRecommendationCursor([]);cursor.lime.done=true;cursor.trending.done=true;
+ cursor.twitterDone=false;cursor.twitterCursor={round:4,positions:{science:{cursor:'twitter-next',done:false}}};
+ cursor.twitterAuthorCounts={'x-user:seen':3};cursor.authorCounts={'x-user:seen':3};
+ cursor.twitterRemaining=[{...source('x:32100','科学の研究'),author:{id:'held-author',username:'held',displayName:'Held',bio:'',avatarUrl:'',coverUrl:'',createdAt:'2026-10-01'},source:'x',imageUrls:['https://images.example/held-science.jpg']}];
+ const preferences={authors:{},terms:{},followedTopics:['science'] as any};
+ cursor.preferences=preferences;cursor.topicDiscovery={science:{feeds:[],positions:{},done:true}};
+ const visible={...source('bsky:science-visible','科学の研究'),author:{id:'visible-author',username:'visible',displayName:'Visible',bio:'',avatarUrl:'',coverUrl:'',createdAt:'2026-10-01'},imageUrls:['https://images.example/visible-science.jpg']};
+ const page={posts:[visible],next:cursor,preferences,pendingAnalysis:false,requestKey:900};
+ const refreshed=refreshRecommendationVisualPage(page,'pixel-state-viewer',{...visible,recommendationVisual:checked('science')},false);
+ expect(refreshed.next?.twitterCursor).toEqual(cursor.twitterCursor);
+ expect(refreshed.next?.twitterDone).toBe(false);
+ expect(refreshed.next?.twitterRemaining).toEqual(cursor.twitterRemaining);
+ expect(refreshed.next?.twitterAuthorCounts).toEqual({'x-user:seen':3});
+ expect(refreshed.next?.authorCounts).toEqual({'x-user:seen':3});
+ expect(page.next.twitterCursor.positions.science.cursor).toBe('twitter-next');
 });

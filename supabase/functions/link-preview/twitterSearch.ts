@@ -9,12 +9,12 @@ export function parseTwitterSearchPage(html:string):{ids:string[];total:number}{
 }
 export async function loadTwitterSearch(query:unknown,feed:unknown,offset:unknown){
  if(typeof query!=='string'||!query.trim()||query.length>500)throw new Error('Invalid query');
- if(!['latest','top','media'].includes(String(feed)))throw new Error('Invalid feed');
+ if(!['latest','top','media','media-top'].includes(String(feed)))throw new Error('Invalid feed');
  if(typeof offset!=='number'||!Number.isInteger(offset)||offset<0||offset>1000)throw new Error('Invalid cursor');
  const block=Math.floor(offset/40)*40,key=JSON.stringify([query,feed,block]);
  let saved=cache.get(key);
  if(!saved||saved.until<Date.now()){
-  const params=new URLSearchParams({p:query,ei:'UTF-8',b:String(block)});if(feed==='top')params.set('md','h');
+  const params=new URLSearchParams({p:query,ei:'UTF-8',b:String(block)});if(feed==='top'||feed==='media-top')params.set('md','h');if(feed==='media'||feed==='media-top')params.set('mtype','image');
   const response=await fetch(`https://search.yahoo.co.jp/realtime/search?${params}`,{headers:{Accept:'text/html'},redirect:'error',signal:AbortSignal.timeout(10000)});
   if(!response.ok)throw new Error(`Search HTTP ${response.status}`);
   const reader=response.body?.getReader();if(!reader)throw new Error('Empty search');const chunks:Uint8Array[]=[];let size=0;

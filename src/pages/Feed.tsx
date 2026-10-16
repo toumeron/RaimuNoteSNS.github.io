@@ -1756,6 +1756,14 @@ export default function Feed() {
           <div style={{ height: `${virtualRange.bottomSpacer}px` }} aria-hidden="true" />
         )}
 
+        {activeTab==='recommended'&&generalRecommendedFeed.visualError&&(<p role="status" className="px-4 py-3 text-sm text-muted-foreground">画像を判定できませんでした。未判定の投稿は表示していません。<button type="button" className="ml-2 text-primary hover:underline" onClick={()=>void generalRecommendedFeed.retryTwitter()}>再試行</button></p>)}
+        {activeTab==='recommended'&&generalRecommendedFeed.twitterError&&(
+          <p role="status" className="px-4 py-3 text-sm text-muted-foreground">
+            {generalRecommendedFeed.twitterError.name==='TimeoutError'?'twitterの読み込みに時間がかかっています。':'twitterのおすすめを取得できませんでした。'}
+            <button type="button" className="ml-2 text-primary hover:underline" onClick={()=>void generalRecommendedFeed.retryTwitter()}>再試行</button>
+          </p>
+        )}
+
         <div ref={ref} className="py-10 flex justify-center">
           {isBusyLoadingMore && !(isRankedTab&&isInitialLoading) ? (
             <div className="w-full"><PostCardSkeleton/></div>

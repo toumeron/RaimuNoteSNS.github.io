@@ -55,30 +55,32 @@ export async function xConversationPage(id:string,cursor?:string|null,signal?:Ab
  const post=raw?build(raw):null;
  const ancestorIds=new Set<string>();let ancestor=post?.externalReplyParent;while(ancestor&&!ancestorIds.has(ancestor.id)){ancestorIds.add(ancestor.id);ancestor=ancestor.externalReplyParent;}
  const replies=[...new Map([...(data.replies??[]),...(data.thread??[])].map(row=>{const mapped=mapXPost(row);return [row.id,mapped&&{...mapped,externalReplyToId:mapped.externalReplyToId??parsed}];})).values()].filter((row):row is NonNullable<typeof row>=>!!row&&row.id!==parsed&&!ancestorIds.has(row.id));
- return {post,replies,cursor:data.cursor?.bottom&&data.cursor.bottom!==cursor?data.cursor.bottom:null};
+ return {post,replies,cursor:replies.length>0&&data.cursor?.bottom&&data.cursor.bottom!==cursor?data.cursor.bottom:null};
 }
 export async function xThread(id:string,signal?:AbortSignal):Promise<BlueskyPostThread>{
  const parsed=xPostId(id);if(!parsed)return {post:null,replies:[]};
  const data=await request(`status/${parsed.slice(2)}`,signal,12000,'interactive');return {post:data.status||data.tweet?mapXPost((data.status||data.tweet)!):null,replies:[]};
 }
 let searchUnavailableUntil=0;
-async function alternativeSearch(query:string,options:{cursor?:string|null;feed?:'latest'|'top'|'media';signal?:AbortSignal}){
+async function alternativeSearch(query:string,options:{cursor?:string|null;feed?:'latest'|'top'|'media'|'media-top';signal?:AbortSignal;limit?:number}){
  const offset=options.cursor?.startsWith('yahoo:')?Number(options.cursor.slice(6)):0;
  if(!Number.isInteger(offset)||offset<0||offset>1000)throw new Error('検索カーソルが無効です');
  const page=await relayTwitterSearch(query,options.feed??'latest',offset,options.signal);
+ const ids=page.ids.slice(0,Math.max(1,Math.min(6,options.limit??6)));
  const results:BlueskyMappedPost[]=[];let index=0;
- await Promise.all(Array.from({length:Math.min(2,page.ids.length)},async()=>{while(index<page.ids.length){const id=page.ids[index++];try{const item=await xThread(`x:${id}`,options.signal);if(item.post)results.push(item.post);}catch(error){if(options.signal?.aborted)throw error;}}}));
+ await Promise.all(Array.from({length:Math.min(2,ids.length)},async()=>{while(index<ids.length){const id=ids[index++];try{const item=await xThread(`x:${id}`,options.signal);if(item.post)results.push(item.post);}catch(error){if(options.signal?.aborted)throw error;}}}));
  if(page.ids.length&&!results.length)throw new Error('twitterの投稿情報を取得できませんでした');
  const byId=new Map(results.map(post=>[post.id,post]));
- return {posts:page.ids.flatMap(id=>byId.has(`x:${id}`)?[byId.get(`x:${id}`)!]:[]),cursor:page.cursor!==null?`yahoo:${page.cursor}`:null};
+ const next=ids.length<page.ids.length?offset+ids.length:page.cursor;
+ return {posts:ids.flatMap(id=>byId.has(`x:${id}`)?[byId.get(`x:${id}`)!]:[]),cursor:next!==null?`yahoo:${next}`:null};
 }
-export async function searchXPage(query:string,options:{cursor?:string|null;feed?:'latest'|'top'|'media';signal?:AbortSignal}={}){
+export async function searchXPage(query:string,options:{cursor?:string|null;feed?:'latest'|'top'|'media'|'media-top';signal?:AbortSignal;preferAlternative?:boolean;limit?:number}={}){
  const id=xPostId(query);if(id){const data=await xThread(id,options.signal);return {posts:data.post?[data.post]:[],cursor:null};}
  const q=query.replace(/(?:^|\s)source:(?:x|twitter)(?=\s|$)/gi,' ').replace(/(from:|to:)([\w]{1,15})@(?:x|twitter)\.com/gi,'$1$2').trim();
  if(!q)return {posts:[],cursor:null};
  const authorOnly=q.match(/^\(?from:([A-Za-z0-9_]{1,15})\)?(?: filter:(media|images|videos))?$/);
  if(authorOnly){const page=await xFeed({actor:`${authorOnly[1]}@twitter.com`,cursor:options.cursor,filter:authorOnly[2]||options.feed==='media'?'posts_with_media':'posts_with_replies',signal:options.signal});return {posts:page.posts,cursor:page.cursor};}
- if(options.cursor?.startsWith('yahoo:')||(!options.cursor&&Date.now()<searchUnavailableUntil))return alternativeSearch(q,options);
+ if(options.preferAlternative||options.cursor?.startsWith('yahoo:')||(!options.cursor&&Date.now()<searchUnavailableUntil))return alternativeSearch(q,options);
  const params=new URLSearchParams({q,count:'20',feed:options.feed??'latest'});if(options.cursor)params.set('cursor',options.cursor);
  let data:FxPage;
  try{data=await request(`search?${params}`,options.signal,4000,'interactive');}catch(error){if(options.signal?.aborted||error instanceof Error&&error.message.includes('(429)'))throw error;searchUnavailableUntil=Date.now()+60000;return alternativeSearch(q,options);}

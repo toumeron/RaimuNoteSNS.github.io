@@ -1,3 +1,4 @@
+import {getTwitterVideoPage,type TwitterVideoCursor} from '@/api/twitter-videos';
 import {twitterReplyUrl} from '@/lib/fxTwitter';
 import {ProviderVerificationBadge} from '@/components/common/ProviderVerificationBadge';
 import {VideoLightboxPlayer} from './VideoLightboxPlayer';
@@ -57,9 +58,22 @@ export function MediaLightbox({ selection: initialSelection, onClose }: { select
   const videoFeed=useInfiniteQuery({
     queryKey:['media-video-feed',user?.id],initialPageParam:undefined as FeedCursor|undefined,
     queryFn:({pageParam,signal})=>getVideoFeed(pageParam,signal),getNextPageParam:page=>page.nextCursor??undefined,
-    enabled:!!initialSelection.video?.postId&&!initialSelection.video?.externalVideo,staleTime:60_000,retry:1,refetchOnWindowFocus:false,
+    enabled:!!initialSelection.video?.postId,staleTime:60_000,retry:1,refetchOnWindowFocus:false,
   });
-  const videoQueue=useMemo(()=>videoSelections(initialSelection,initialSelection.video?.externalVideo?undefined:videoFeed.data?.pages),[initialSelection,videoFeed.data]);
+  const twitterVideos=useInfiniteQuery({
+    queryKey:['media-twitter-videos',user?.id],initialPageParam:undefined as TwitterVideoCursor|undefined,
+    queryFn:({pageParam,signal})=>getTwitterVideoPage(user!.id,pageParam,signal),getNextPageParam:page=>page.nextCursor??undefined,
+    enabled:videoMode&&!!user?.id&&!initialSelection.offline,staleTime:60_000,retry:false,refetchOnWindowFocus:false,
+  });
+  const queuedVideos=(native:typeof videoFeed.data=videoFeed.data,twitter:typeof twitterVideos.data=twitterVideos.data)=>{
+    const a=videoSelections(initialSelection,native?.pages).slice(1),b=videoSelections(initialSelection,twitter?.pages).slice(1);
+    // Append new candidates; fetching another page must never reorder visited slides.
+    return videoSelections(initialSelection,[{posts:Array.from({length:Math.max(a.length,b.length)},(_,i)=>[b[i]?.post,a[i]?.post]).flat().filter((post):post is PostWithAuthor=>!!post)}]);
+  };
+  const videoQueueRef=useRef<MediaViewerSelection[]>([initialSelection]);
+  const incoming=queuedVideos(),known=new Set(videoQueueRef.current.map(item=>item.video?.postId??item.url));
+  for(const item of incoming)if(!known.has(item.video?.postId??item.url)){known.add(item.video?.postId??item.url);videoQueueRef.current.push(item);}
+  const videoQueue=videoQueueRef.current;
   const videoIndex=videoQueue.findIndex(item=>(item.video?.postId??item.url)===(selection.video?.postId??selection.url));
   const openPostOverlay = usePostOverlay();
   const offline = useContext(OfflineBookmarkContext);
@@ -78,13 +92,19 @@ export function MediaLightbox({ selection: initialSelection, onClose }: { select
     videoBusy.current=true;setVideoAdvancing(true);setVideoNotice('');
     try{
       let queue=videoQueue,next=videoIndex+delta;
-      if(next>=queue.length&&delta>0&&initialSelection.video?.postId&&!initialSelection.video?.externalVideo){
-        if(videoFeed.isPending||videoFeed.isError&&!videoFeed.data){
-          const result=await videoFeed.refetch({cancelRefetch:false});if(result.isError)throw result.error;
-          queue=videoSelections(initialSelection,result.data?.pages);
-        }else if(videoFeed.hasNextPage){
-          const result=await videoFeed.fetchNextPage({cancelRefetch:false});if(result.isError)throw result.error;
-          queue=videoSelections(initialSelection,result.data?.pages);
+      if(next>=queue.length&&delta>0&&initialSelection.video?.postId&&(videoFeed.isPending||videoFeed.isError&&!videoFeed.data||videoFeed.hasNextPage||!!user&&(twitterVideos.isPending||twitterVideos.isError&&!twitterVideos.data||twitterVideos.hasNextPage))){
+        // Skip a bounded number of image-only/filtered pages, retaining cursors for the next swipe.
+        for(let scan=0;scan<3&&next>=queue.length;scan++){
+          const results=await Promise.allSettled([
+            videoFeed.isPending||videoFeed.isError&&!videoFeed.data?videoFeed.refetch({cancelRefetch:false}):videoFeed.hasNextPage?videoFeed.fetchNextPage({cancelRefetch:false}):Promise.resolve(null),
+            !user||initialSelection.offline?Promise.resolve(null):twitterVideos.isPending||twitterVideos.isError&&!twitterVideos.data?twitterVideos.refetch({cancelRefetch:false}):twitterVideos.hasNextPage?twitterVideos.fetchNextPage({cancelRefetch:false}):Promise.resolve(null),
+          ]);
+          const native=results[0].status==='fulfilled'?results[0].value:null,external=results[1].status==='fulfilled'?results[1].value:null;
+          const candidates=queuedVideos(native?.data??videoFeed.data,external?.data??twitterVideos.data),seen=new Set(queue.map(item=>item.video?.postId??item.url));
+          for(const item of candidates)if(!seen.has(item.video?.postId??item.url)){seen.add(item.video?.postId??item.url);queue.push(item);}
+          if(!native&&!external)break;
+          if(next>=queue.length&&(native?.isError||external?.isError))throw native?.error??external?.error;
+          if(!native?.hasNextPage&&!external?.hasNextPage)break;
         }
       }
       if(next<0||!queue[next]){setVideoNotice(delta>0?(videoFeed.hasNextPage?'':''):'');return;}
@@ -353,7 +373,7 @@ export function MediaLightbox({ selection: initialSelection, onClose }: { select
           else setSwipeOffset(0);
         }} onPointerCancel={() => { pointers.current.clear(); setSwipeOffset(0); }}>
         {videoMode&&selection.video?<div key={id||selection.url} className={`lime-video-frame ${videoDirection>0?'lime-video-forward':videoDirection<0?'lime-video-backward':''}`} style={{transform:`translateY(${swipeOffset}px)`}}>
-          <VideoLightboxPlayer selection={selection.video} host={videoHost} muted={videoMuted} onMutedChange={setVideoMuted} rate={videoRate} onRateChange={setVideoRate} onSource={url=>{videoSource.current=url;}} zoom={zoom} pan={pan} onTap={toggle=>{clearTimeout(tapTimer.current);tapTimer.current=setTimeout(toggle,220);}}/>
+          <VideoLightboxPlayer selection={selection.video} host={videoHost} muted={videoMuted} onMutedChange={setVideoMuted} rate={videoRate} onRateChange={setVideoRate} onSource={url=>{videoSource.current=url;}} zoom={zoom} pan={pan} onTap={toggle=>{clearTimeout(tapTimer.current);tapTimer.current=setTimeout(()=>{if(window.matchMedia('(max-width: 767px)').matches)setControls(value=>!value);else toggle();},220);}}/>
         </div>:imageFailed ? <p>画像を読み込めませんでした。<button onClick={() => setImageFailed(false)}>再試行</button></p> : current?.type === 'youtube' ?
           <iframe src={`https://www.youtube-nocookie.com/embed/${current.youtubeId}?autoplay=1&rel=0&playsinline=1`} title="YouTube" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen /> : current?.type === 'video' ?
           <video src={current.src} controls playsInline /> : <div ref={track} className="lime-media-image-track" style={{ transform: `translateX(${swipeOffset}px)` }}>

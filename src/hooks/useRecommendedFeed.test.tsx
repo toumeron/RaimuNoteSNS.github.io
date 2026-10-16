@@ -2,11 +2,12 @@ import {act,cleanup,renderHook,waitFor} from '@testing-library/react';
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
 import {afterEach,expect,it,vi} from 'vitest';
 import type {PostWithAuthor} from '@/types';
-const mocks=vi.hoisted(()=>({enrich:vi.fn(),saveLike:vi.fn(async()=>{}),saveNegative:vi.fn(async()=>{})}));
-const work=(id:string,userId:string):PostWithAuthor=>({id,userId,content:'',imageUrls:[`https://example.com/${id}.jpg`],createdAt:'2026-10-09T00:00:00Z',likesCount:0,repostsCount:0,commentsCount:0,likedByMe:false,repostedByMe:false,languages:['ja'],recommendationTopics:['digital-illustration'],author:{id:userId,username:userId} as any});
+const mocks=vi.hoisted(()=>({enrich:vi.fn(),saveLike:vi.fn(async()=>{}),saveNegative:vi.fn(async()=>{}),twitter:vi.fn(async(..._args:unknown[])=>({posts:[],next:undefined}))}));
+const work=(id:string,userId:string):PostWithAuthor=>({id,userId,content:'',imageUrls:[`https://example.com/${id}.jpg`],createdAt:'2026-10-09T00:00:00Z',likesCount:0,repostsCount:0,commentsCount:0,likedByMe:false,repostedByMe:false,languages:['ja'],recommendationTopics:['digital-illustration'],recommendationVisual:{version:1,classifierVersion:3,kind:'moe',topics:['digital-illustration'],confidence:.9,similarity:.5,vector:Array.from({length:512},(_,i)=>Number(i===0))},author:{id:userId,username:userId} as any});
 const positive=work('bsky:positive','favorite');
 const negative=work('bsky:negative','unwanted');
 const candidate=work('bsky:candidate','unfamiliar');
+vi.mock('@/api/recommendation-twitter',()=>({getRecommendationTwitterPage:(...args:unknown[])=>mocks.twitter(...args)}));
 vi.mock('./useAuth',()=>({useAuth:()=>({user:{id:'pixel-viewer'},loading:false})}));
 vi.mock('./useRecommendationImpressions',()=>({useRecommendationImpressions:()=>{}}));
 vi.mock('@/lib/bluesky',()=>({getConfiguredExternalHandles:()=>[],fetchBlueskyPost:async()=>null}));
@@ -19,11 +20,11 @@ vi.mock('@/api/recommendations',async original=>{
 });
 vi.mock('@/lib/recommendationVisualInference',()=>({releaseRecommendationVisualWorker:vi.fn(),enrichRecommendationVisuals:async(posts:PostWithAuthor[],_topics:any,_signal:any,checked:any)=>{
  mocks.enrich(posts);
- return posts.map(post=>{const vector=Array(512).fill(0);vector[post.id===positive.id?0:1]=1;const result={...post,recommendationVisual:{version:1,kind:post.id===positive.id?'moe':'male-character',topics:post.id===positive.id?['digital-illustration']:['art'],confidence:.9,similarity:.3,vector},recommendationVisualStatus:'checked'};checked(result);return result;});
+ return posts.map(post=>{const vector=Array(512).fill(0);vector[post.id===positive.id?0:1]=1;const result={...post,recommendationVisual:{version:1,classifierVersion:3,kind:post.id===positive.id?'moe':'male-character',topics:post.id===positive.id?['digital-illustration']:['art'],confidence:.9,similarity:.3,vector},recommendationVisualStatus:'checked'};checked(result);return result;});
 }}));
 import {useRecommendedFeed} from './useRecommendedFeed';
-afterEach(()=>{cleanup();localStorage.clear();vi.clearAllMocks();});
-it('loads saved preference evidence without invoking or downloading the large image model',async()=>{
+afterEach(()=>{cleanup();localStorage.clear();vi.clearAllMocks();mocks.twitter.mockReset().mockResolvedValue({posts:[],next:undefined});});
+it('loads saved preference evidence even when Worker-based pixel analysis is unavailable',async()=>{
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
  const {result}=renderHook(()=>useRecommendedFeed(true),{wrapper:({children})=><QueryClientProvider client={client}>{children}</QueryClientProvider>});
  await waitFor(()=>expect(result.current.data?.pages[0].posts).toHaveLength(1));
@@ -68,6 +69,7 @@ it('keeps cached pages on remount instead of restarting the entire infinite feed
 });
 
 it('does not eagerly fetch twenty posts once the first screen has six usable cards',async()=>{
+ vi.mocked((await import('@/api/recommendations')).getRecommendationPreferences).mockResolvedValueOnce({authors:{},terms:{}});
  const {getRecommendationPage,createRecommendationCursor}=await import('@/api/recommendations');
  vi.mocked(getRecommendationPage).mockResolvedValueOnce({posts:Array.from({length:6},(_,i)=>({...candidate,id:`card-${i}`,imageUrls:[`https://images.example/card-${i}.jpg`]})),preferences:{authors:{},terms:{}},next:createRecommendationCursor([]),pendingAnalysis:false,automaticPaused:false,requestKey:2});
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
@@ -78,7 +80,8 @@ it('does not eagerly fetch twenty posts once the first screen has six usable car
  view.unmount();client.clear();
 });
 
- it('warms only one small page and reuses it on the second and third visible loads',async()=>{
+ it('reuses one reserve job on the second and third visible loads',async()=>{
+ vi.mocked((await import('@/api/recommendations')).getRecommendationPreferences).mockResolvedValueOnce({authors:{},terms:{}});
  const {getRecommendationPage,createRecommendationCursor}=await import('@/api/recommendations');
  const {readRecommendationDeliveries}=await import('@/lib/recommendations');
  const firstCursor={...createRecommendationCursor([]),pageKey:101},secondCursor={...createRecommendationCursor([]),pageKey:102};
@@ -99,12 +102,41 @@ it('does not eagerly fetch twenty posts once the first screen has six usable car
  view.unmount();client.clear();
  });
 
+it('prepares multiple sparse responses before scrolling and commits the ready reserve together',async()=>{
+ const api=await import('@/api/recommendations');
+ vi.mocked(api.getRecommendationPreferences).mockResolvedValueOnce({authors:{},terms:{}});
+ const make=(prefix:string,count:number,key:number)=>({posts:Array.from({length:count},(_,i)=>work(`${prefix}-${i}`,`${prefix}-author-${i}`)),preferences:{authors:{},terms:{}},next:{...api.createRecommendationCursor([]),pageKey:key},pendingAnalysis:false,automaticPaused:false,requestKey:key});
+ vi.mocked(api.getRecommendationPage).mockResolvedValueOnce(make('screen',6,401)).mockResolvedValueOnce(make('reserve1',2,402)).mockResolvedValueOnce(make('reserve2',2,403)).mockResolvedValueOnce(make('reserve3',2,404));
+ const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
+ const view=renderHook(()=>useRecommendedFeed(true),{wrapper:({children})=><QueryClientProvider client={client}>{children}</QueryClientProvider>});
+ await waitFor(()=>expect(api.getRecommendationPage).toHaveBeenCalledTimes(4));
+ expect(view.result.current.data?.pages.map(page=>page.posts.length)).toEqual([6]);
+ await act(async()=>{await view.result.current.fetchNextPage({cancelRefetch:false});});
+ await waitFor(()=>expect(view.result.current.data?.pages.map(page=>page.posts.length)).toEqual([6,6]));
+ expect(api.getRecommendationPage).toHaveBeenCalledTimes(4);
+ view.unmount();client.clear();
+});
+
+it('immediately consumes ready reserve cards while the next background read is stalled',async()=>{
+ const api=await import('@/api/recommendations');
+ vi.mocked(api.getRecommendationPreferences).mockResolvedValueOnce({authors:{},terms:{}});
+ const make=(prefix:string,count:number,key:number)=>({posts:Array.from({length:count},(_,i)=>work(`${prefix}-${i}`,`${prefix}-author-${i}`)),preferences:{authors:{},terms:{}},next:{...api.createRecommendationCursor([]),pageKey:key},pendingAnalysis:false,automaticPaused:false,requestKey:key});
+ vi.mocked(api.getRecommendationPage).mockResolvedValueOnce(make('ready-screen',6,501)).mockResolvedValueOnce(make('ready-reserve',2,502)).mockImplementationOnce((_cursor,_viewer,signal)=>new Promise((_resolve,reject)=>{signal?.addEventListener('abort',()=>reject(signal.reason),{once:true});}));
+ const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
+ const view=renderHook(()=>useRecommendedFeed(true),{wrapper:({children})=><QueryClientProvider client={client}>{children}</QueryClientProvider>});
+ await waitFor(()=>expect(api.getRecommendationPage).toHaveBeenCalledTimes(3));
+ await act(async()=>{await view.result.current.fetchNextPage({cancelRefetch:false});});
+ await waitFor(()=>expect(view.result.current.data?.pages.map(page=>page.posts.length)).toEqual([6,2]));
+ expect(view.result.current.data?.pages.at(-1)?.next?.pageKey).toBe(502);
+ view.unmount();client.clear();
+});
+
 it.each([true,false])('resumes an empty first screen with pending sources=%s when full history discovers a new creator',async(hasNext)=>{
  const api=await import('@/api/recommendations');
  const cursor=api.createRecommendationCursor([]);cursor.preferences={authors:{},terms:{}};cursor.stalledPages=3;
  const pages=Array.from({length:8},(_,i)=>({posts:[],preferences:{authors:{},terms:{}},next:hasNext?cursor:undefined,pendingAnalysis:false,automaticPaused:i===7,requestKey:100+i}));
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
- const key=['feed','recommended','scoring-v38-curated-discovery','pixel-viewer',[]];
+ const key=['feed','recommended','scoring-v49-ready-reserve','pixel-viewer',[]];
  client.setQueryData(key,{pages,pageParams:Array(8).fill(cursor)});
  vi.mocked(api.getRecommendationPreferences).mockResolvedValueOnce({authors:{'new-creator':10},terms:{}});
  vi.mocked(api.getRecommendationPage).mockResolvedValueOnce({posts:[work('bsky:restored','new-creator')],preferences:{authors:{'new-creator':10},terms:{}},next:undefined,pendingAnalysis:false,automaticPaused:false,requestKey:200});
@@ -119,7 +151,7 @@ it('does not lose hydrated creator preferences when an older empty read complete
  const api=await import('@/api/recommendations');const cursor=api.createRecommendationCursor([]);cursor.preferences={authors:{},terms:{}};
  let release!:(value:any)=>void;
  vi.mocked(api.getRecommendationPage).mockResolvedValueOnce({posts:[],preferences:{authors:{},terms:{}},next:cursor,pendingAnalysis:false,automaticPaused:false,requestKey:300}).mockImplementationOnce(()=>new Promise(resolve=>{release=resolve;})).mockResolvedValueOnce({posts:[work('bsky:late-history','new-creator')],preferences:{authors:{'new-creator':10},terms:{}},next:undefined,pendingAnalysis:false,automaticPaused:false,requestKey:302});
- vi.mocked(api.getRecommendationPreferences).mockResolvedValueOnce({authors:{'new-creator':10},terms:{}});
+ vi.mocked(api.getRecommendationPreferences).mockResolvedValueOnce({authors:{},terms:{}}).mockResolvedValueOnce({authors:{'new-creator':10},terms:{}});
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
  const view=renderHook(()=>useRecommendedFeed(true),{wrapper:({children})=><QueryClientProvider client={client}>{children}</QueryClientProvider>});
  await waitFor(()=>expect(api.getRecommendationPage).toHaveBeenCalledTimes(2));
@@ -133,7 +165,7 @@ it('does not lose hydrated creator preferences when an older empty read complete
 it('uses fresh initial preferences on refresh instead of an older cached dismissal',async()=>{
  const api=await import('@/api/recommendations');const cursor=api.createRecommendationCursor([]);
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
- const key=['feed','recommended','scoring-v38-curated-discovery','pixel-viewer',[]];
+ const key=['feed','recommended','scoring-v49-ready-reserve','pixel-viewer',[]];
  const old={authors:{},terms:{},feedback:[{id:'old-dismissal',userId:'new-creator',createdAt:'2026-10-01T00:00:00Z'}]};
  client.setQueryData(key,{pages:[{posts:[],preferences:old,next:undefined,pendingAnalysis:false,automaticPaused:false,requestKey:400}],pageParams:[cursor]});
  vi.mocked(api.getRecommendationPage).mockResolvedValueOnce({posts:[work('bsky:fresh-initial','new-creator')],preferences:{authors:{'new-creator':10},terms:{}},next:undefined,pendingAnalysis:false,automaticPaused:false,requestKey:401});
@@ -149,7 +181,7 @@ it('finishes an empty initial scan with retained source cursors and allows a vis
  const cursor=api.createRecommendationCursor([]);cursor.preferences={authors:{},terms:{}};
  const pages=Array.from({length:8},(_,i)=>({posts:[],preferences:{authors:{},terms:{}},next:cursor,pendingAnalysis:false,automaticPaused:false,requestKey:500+i}));
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
- client.setQueryData(['feed','recommended','scoring-v38-curated-discovery','pixel-viewer',[]],{pages,pageParams:Array(8).fill(cursor)});
+ client.setQueryData(['feed','recommended','scoring-v49-ready-reserve','pixel-viewer',[]],{pages,pageParams:Array(8).fill(cursor)});
  const view=renderHook(()=>useRecommendedFeed(true),{wrapper:({children})=><QueryClientProvider client={client}>{children}</QueryClientProvider>});
  expect(view.result.current.hasNextPage).toBe(true);
  expect(view.result.current.isFilling).toBe(false);
@@ -162,7 +194,7 @@ it('finishes an empty initial scan with retained source cursors and allows a vis
 it('continues beyond the initial empty-scan budget when only a few posts are visible and sources remain',async()=>{
  const api=await import('@/api/recommendations');const cursor=api.createRecommendationCursor([]);cursor.preferences={authors:{},terms:{}};
  const pages=Array.from({length:8},(_,i)=>({posts:i===0?[{...candidate,id:'shown-one'},{...candidate,id:'shown-two'}]:[],preferences:cursor.preferences!,next:cursor,pendingAnalysis:false,automaticPaused:false,requestKey:800+i}));
- const client=new QueryClient({defaultOptions:{queries:{retry:false}}});client.setQueryData(['feed','recommended','scoring-v38-curated-discovery','pixel-viewer',[]],{pages,pageParams:Array(8).fill(cursor)});
+ const client=new QueryClient({defaultOptions:{queries:{retry:false}}});client.setQueryData(['feed','recommended','scoring-v49-ready-reserve','pixel-viewer',[]],{pages,pageParams:Array(8).fill(cursor)});
  const view=renderHook(()=>useRecommendedFeed(true),{wrapper:({children})=><QueryClientProvider client={client}>{children}</QueryClientProvider>});
  await waitFor(()=>expect(api.getRecommendationPage).toHaveBeenCalled());
  await waitFor(()=>expect(view.result.current.data?.pages.length).toBeGreaterThan(8));view.unmount();client.clear();
@@ -173,7 +205,7 @@ it('drops work already shown when a warmed or resumed continuation returns it ag
  const shown={...candidate,id:'already-shown'};
  const prefs={authors:{},terms:{}};
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
- client.setQueryData(['feed','recommended','scoring-v38-curated-discovery','pixel-viewer',[]],{pages:[{posts:[shown],preferences:prefs,next:cursor,pendingAnalysis:false,automaticPaused:true,requestKey:1}],pageParams:[api.createRecommendationCursor([])]});
+ client.setQueryData(['feed','recommended','scoring-v49-ready-reserve','pixel-viewer',[]],{pages:[{posts:[shown],preferences:prefs,next:cursor,pendingAnalysis:false,automaticPaused:true,requestKey:1}],pageParams:[api.createRecommendationCursor([])]});
  vi.mocked(api.getRecommendationPage).mockResolvedValueOnce({posts:[shown,{...candidate,id:'another-copy'}],preferences:prefs,next:undefined,pendingAnalysis:false,automaticPaused:false,requestKey:2});
  const view=renderHook(()=>useRecommendedFeed(true),{wrapper:({children})=><QueryClientProvider client={client}>{children}</QueryClientProvider>});
  await act(async()=>{await view.result.current.fetchNextPage();});
@@ -182,6 +214,7 @@ it('drops work already shown when a warmed or resumed continuation returns it ag
 });
 
 it('continues past two filtered pages without another gesture and stops an empty cursor stream',async()=>{
+ vi.mocked((await import('@/api/recommendations')).getRecommendationPreferences).mockResolvedValueOnce({authors:{},terms:{}});
  const api=await import('@/api/recommendations');
  const {useTimelineContinuation}=await import('./useTimelineContinuation');
  let reads=0;
@@ -205,6 +238,7 @@ it('continues past two filtered pages without another gesture and stops an empty
 });
 
 it('does not silently stop after three healthy empty continuation pages',async()=>{
+ vi.mocked((await import('@/api/recommendations')).getRecommendationPreferences).mockResolvedValueOnce({authors:{},terms:{}});
  const api=await import('@/api/recommendations');const {useTimelineContinuation}=await import('./useTimelineContinuation');let reads=0;
  vi.mocked(api.getRecommendationPage).mockImplementation(async()=>{
   const key=++reads,cursor=api.createRecommendationCursor([]);cursor.pageKey=key;cursor.lime.page=key;cursor.preferences={authors:{},terms:{}};
@@ -213,4 +247,24 @@ it('does not silently stop after three healthy empty continuation pages',async()
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
  const view=renderHook(()=>{const feed=useRecommendedFeed(true);useTimelineContinuation({enabled:true,inView:true,hasNextPage:!!feed.hasNextPage,isFetching:feed.isFetching,isFetchNextPageError:feed.isFetchNextPageError,automaticPaused:feed.automaticPaused,scrollIntent:0,pageCount:feed.data?.pages.length??0,fetchNextPage:feed.fetchNextPage});return feed;},{wrapper:({children})=><QueryClientProvider client={client}>{children}</QueryClientProvider>});
  await waitFor(()=>expect(view.result.current.data?.pages.flatMap(page=>page.posts)).toHaveLength(6));expect(reads).toBe(5);view.unmount();client.clear();
+});
+it('includes twitter in the first committed page rather than appending it after a Bluesky-only first page',async()=>{
+ const api=await import('@/api/recommendations');const prefs={authors:{},terms:{},followedTopics:['digital-illustration'] as any};
+ vi.mocked(api.getRecommendationPage).mockResolvedValueOnce({posts:[candidate],preferences:prefs,next:undefined,pendingAnalysis:false,automaticPaused:false,requestKey:301});
+ let finish!:(value:any)=>void;mocks.twitter.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+ const client=new QueryClient({defaultOptions:{queries:{retry:false}}});const view=renderHook(()=>useRecommendedFeed(true),{wrapper:({children})=><QueryClientProvider client={client}>{children}</QueryClientProvider>});
+ await waitFor(()=>expect(mocks.twitter).toHaveBeenCalledTimes(1));expect(view.result.current.isPending).toBe(true);
+ const twitter={...work('x:900','x-user:900'),source:'x',content:'#ファンアート',author:{id:'x-user:900',username:'artist@twitter.com',bio:'お絵かきしています'}};
+ await act(async()=>{finish({posts:[twitter],next:undefined});});
+ await waitFor(()=>expect(view.result.current.data?.pages.flatMap(page=>page.posts).map(post=>post.id)).toEqual(['x:900',candidate.id]));
+ expect(api.getRecommendationPage).toHaveBeenCalledWith(expect.anything(),'pixel-viewer',expect.anything(),{deferTwitter:true});
+ view.unmount();client.clear();
+});
+it('advances a bounded number of empty twitter pages without requiring another scroll',async()=>{
+ const api=await import('@/api/recommendations'),prefs={authors:{},terms:{},followedTopics:['digital-illustration'] as any};
+ vi.mocked(api.getRecommendationPage).mockResolvedValueOnce({posts:[candidate],preferences:prefs,next:undefined,pendingAnalysis:false,automaticPaused:false,requestKey:302});
+ const twitter={...work('x:901','x-user:901'),source:'x',content:'#ファンアート',author:{id:'x-user:901',username:'artist@twitter.com',bio:'お絵描き'}};
+ mocks.twitter.mockResolvedValueOnce({posts:[],next:{round:1,positions:{}}} as any).mockResolvedValueOnce({posts:[],next:{round:2,positions:{}}} as any).mockResolvedValueOnce({posts:[twitter],next:undefined} as any);
+ const client=new QueryClient({defaultOptions:{queries:{retry:false}}}),view=renderHook(()=>useRecommendedFeed(true),{wrapper:({children})=><QueryClientProvider client={client}>{children}</QueryClientProvider>});
+ await waitFor(()=>expect(view.result.current.data?.pages.flatMap(page=>page.posts).map(post=>post.id)).toContain('x:901'));expect(mocks.twitter).toHaveBeenCalledTimes(3);view.unmount();client.clear();
 });

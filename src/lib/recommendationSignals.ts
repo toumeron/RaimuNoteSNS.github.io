@@ -14,15 +14,15 @@ export function recommendationTopicSignals(post:Signals):TopicId[] {
 }
 /** Work content overrides broad creator biographies and retrieval-feed labels. */
 export function hasCuratedArtworkSource(post:PostWithAuthor,followed:TopicId[]):boolean {
- if(!post.imageUrls.length||post.imageUrls.every(url=>url===post.linkPreview?.image)||isDeclaredGeneratedArt(post)||post.recommendationVisual)return false;
+ if(!post.imageUrls.length||post.imageUrls.every(url=>url===post.linkPreview?.image)||isDeclaredGeneratedArt(post)||(post.recommendationVisual&&post.recommendationVisual.kind!=='unknown'))return false;
  if(!(post.recommendationTopics??[]).some(topic=>(topic==='anime'||topic==='digital-illustration')&&followed.includes(topic)))return false;
  return (post.recommendationSources??[]).some(source=>/^at:\/\/did:[^/]+\/app\.bsky\.feed\.generator\/[^/]+$/.test(source));
 }
 /** Require both work-specific subject and creator evidence for twitter artwork. */
 export function hasDeclaredArtworkContext(post:PostWithAuthor,followed:TopicId[]):boolean {
- if(!(post.source==='x'||post.id.startsWith('x:'))||!post.imageUrls.length||post.recommendationVisual||isDeclaredGeneratedArt(post))return false;
- if(!/イラスト|絵描|漫画|アニメ|artist|illustrat|animation|manga/i.test(post.author?.bio??''))return false;
- return matchingTopics(recommendationText(post)).some(topic=>(topic==='anime'||topic==='digital-illustration')&&followed.includes(topic));
+ if(!(post.source==='x'||post.id.startsWith('x:'))||!post.imageUrls.length||(post.recommendationVisual&&post.recommendationVisual.kind!=='unknown')||isDeclaredGeneratedArt(post))return false;
+ if(!/イラストレーター|絵描|お絵(?:描|か)き|落書き|らくがき|漫画家|漫画描|アニメーター|絵(?:を)?描|イラスト.*(?:描|制作)|artist|illustrat|animator|drawing|sketch/i.test(post.author?.bio??''))return false;
+ return matchingTopics(recommendationText(post)).some(topic=>(topic==='anime'||topic==='digital-illustration')&&followed.includes(topic))||((post.recommendationSources??[]).some(source=>source.startsWith('twitter-interest:#'))&&(post.recommendationTopics??[]).some(topic=>(topic==='anime'||topic==='digital-illustration')&&followed.includes(topic)));
 }
 export function recommendationMatchesFollowedTopics(post:PostWithAuthor,followed:TopicId[]):boolean {
  if(!followed.length)return true;
@@ -35,7 +35,7 @@ export function recommendationMatchesFollowedTopics(post:PostWithAuthor,followed
  const specificTopics=workTopics.filter(topic=>topic!=='art');
  if(specificTopics.length)return specificTopics.some(topic=>followed.includes(topic));
  if(workTopics.length&&followed.includes('art'))return true;
- if(hasCuratedArtworkSource(post,followed))return true;
+ if(hasCuratedArtworkSource(post,followed)||hasDeclaredArtworkContext(post,followed))return true;
  // Image-only work may use a curated feed or learned creator subject, never a generic author affinity.
  const source=[...(post.recommendationTopics??[]),...(post.parentPost?.recommendationTopics??[])];
  // General illustration feeds also contain cars, landscapes and animals.
@@ -114,7 +114,14 @@ export function isDeclaredGeneratedArt(post:PostWithAuthor):boolean {
 
 const japanese=(text:string)=>/[\u3040-\u30ff]/.test(text);
 /** Language records take precedence over inferred origin. Country is never inferred from a name. */
+/** Crypto promotion is not character-art interest, even when its picture is a drawing. */
+export function isUnrelatedCryptoRecommendation(post:PostWithAuthor,followed:TopicId[]):boolean {
+ if(followed.includes('crypto'))return false;
+ const text=recommendationText(post).normalize('NFKC').replace(/(?:no|not|anti)[ -]?(?:NFTs?|crypto)|NFT(?:化)?(?:禁止|不可|お断り)|NFT(?:化)?(?:は|を)?(?:しない|しません)/gi,'');
+ return /\b(?:NFTs?|web3|opensea|rarible|ethereum|crypto|blockchain|minting)\b|暗号資産|仮想通貨|ミント(?:開始|販売)|エアドロップ/i.test(text)||/https?:\/\/(?:[^/]+\.)?(?:opensea\.io|foundation\.app|rarible\.com)\//i.test(post.content);
+}
 export function recommendationIsEligible(post:PostWithAuthor,followed:TopicId[]=[]):boolean {
+ if(isUnrelatedCryptoRecommendation(post,followed))return false;
  if(!isTimelinePost(post))return false;
  const external=post.source==='bluesky'||post.source==='misskey'||post.source==='x'||post.id.startsWith('bsky:')||post.id.startsWith('misskey:')||post.id.startsWith('x:');
  const signals=recommendationTopicSignals(post);
@@ -122,7 +129,7 @@ export function recommendationIsEligible(post:PostWithAuthor,followed:TopicId[]=
  const visual=post.recommendationVisual;
  if(followed.length&&visual&&visual.kind!=='unknown'&&visual.topics.length&&!visual.topics.some(topic=>followed.includes(topic)))return false;
  const digitalContext=post.recommendationTopics?.includes('digital-illustration')||post.recommendationAuthorTopics?.includes('digital-illustration')||hasDeclaredArtworkContext(post,followed);
- const digitalMatch=digital&&post.imageUrls.length>0&&!isDeclaredGeneratedArt(post)&&(visual?.kind==='moe'||(!visual&&!post.recommendationVisualStatus&&digitalContext));
+ const digitalMatch=digital&&post.imageUrls.length>0&&!isDeclaredGeneratedArt(post)&&(visual?.kind==='moe'||(!visual&&!post.recommendationVisualStatus&&digitalContext)||(visual?.kind==='unknown'&&(hasCuratedArtworkSource(post,followed)||hasDeclaredArtworkContext(post,followed))));
  // A generic art feed, a photograph, or an author's unrelated update is not digital illustration.
  if(digital&&!digitalMatch&&!signals.some(id=>id!=='digital-illustration'&&followed.includes(id)))return false;
  if(!external)return true;

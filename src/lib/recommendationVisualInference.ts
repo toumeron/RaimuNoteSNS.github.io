@@ -1,27 +1,23 @@
 import type {PostWithAuthor} from '@/types';
-import prototypes from './recommendationVisualPrototypes.json';
-import {isTopicId,type TopicId} from './topics';
-import {visualSimilarity,readVisualCache,writeVisualCache,type RecommendationVisual} from './recommendationVisual';
+import {type TopicId} from './topics';
+import {classifyRecommendationVisual,readVisualCache,writeVisualCache,type RecommendationVisual} from './recommendationVisual';
 
-/** Open-set classification: a nearest label is not evidence when all labels
- * are poor matches. Ambiguous media must not inherit a feed's full topic. */
-export function classifyRecommendationVisual(vector:number[]):RecommendationVisual {
- const ordered=prototypes.prototypes.map(row=>({...row,similarity:Math.max(...row.vectors.map(prototype=>visualSimilarity(vector,prototype)))})).sort((a,b)=>b.similarity-a.similarity);
- const first=ordered[0],margin=first.similarity-ordered[1].similarity;
- const confidence=first.similarity>=.24?Math.min(1,Math.max(0,margin)/.06):0;
- const certain=confidence>=.25;
- return {version:1,kind:certain?first.id:'unknown',topics:certain?first.topics.filter(isTopicId):[],confidence,similarity:first.similarity,vector};
-}
+export {classifyRecommendationVisual} from './recommendationVisual';
 
 let worker:Worker|undefined;
+let idleTimer:ReturnType<typeof setTimeout>|undefined;
+export function idleRecommendationVisualWorker(){clearTimeout(idleTimer);idleTimer=setTimeout(releaseRecommendationVisualWorker,120000);}
+export function warmRecommendationVisualWorker(){if(typeof Worker==='undefined')return;visualWorker().postMessage({warm:true});idleRecommendationVisualWorker();}
 let nextId=0;
 const pending=new Map<number,{resolve:(vector:number[])=>void;reject:(error:Error)=>void}>();
 /** Release the WASM heap and model after a bounded analysis job. */
 export function releaseRecommendationVisualWorker(){
+ clearTimeout(idleTimer);
  if(pending.size)return;
  worker?.terminate();worker=undefined;
 }
 function visualWorker():Worker {
+ clearTimeout(idleTimer);
  if(worker)return worker;
  worker=new Worker(new URL('./recommendationVisual.worker.ts',import.meta.url),{type:'module'});
  worker.onmessage=({data}:{data:{id:number;vector?:number[];error?:string}})=>{
@@ -49,7 +45,6 @@ async function analyze(url:string,signal?:AbortSignal):Promise<RecommendationVis
 /** Only on a requested feed page, in a worker. No upload of image pixels,
  * server inference, paid API, background loop or database is used. */
 export async function enrichRecommendationVisuals(posts:PostWithAuthor[],followed:TopicId[],signal?:AbortSignal,onChecked?:(post:PostWithAuthor)=>void,budget=32):Promise<PostWithAuthor[]> {
- if(!followed.length)return posts;
  if(typeof Worker==='undefined'){const rows=posts.map(post=>post.imageUrls.length&&!post.recommendationVisual?{...post,recommendationVisualStatus:'unavailable' as const}:post);rows.forEach(post=>onChecked?.(post));return rows;}
  const rows=posts.map(post=>({...post}));
  // Round-robin sources prevents a large feed from consuming the image budget.
@@ -67,12 +62,20 @@ export async function enrichRecommendationVisuals(posts:PostWithAuthor[],followe
    if(selected.length>=budget)break;const post=pool.shift();if(post)selected.push(post);
   }
  }
- for(const post of selected){
-  if(signal?.aborted)throw signal.reason;
-  try{post.recommendationVisual=await analyze(post.imageUrls[0],signal);post.recommendationVisualStatus='checked';}
-  catch(error){if(signal?.aborted)throw error;post.recommendationVisualStatus='unavailable';}
-  onChecked?.(post);
- }
+ let next=0;
+ const images=new Map<string,Promise<RecommendationVisual>>();
+ await Promise.all(Array.from({length:Math.min(3,selected.length)},async()=>{
+  while(next<selected.length){
+   const post=selected[next++];
+   if(signal?.aborted)throw signal.reason;
+   try{
+    const url=post.imageUrls[0];let result=images.get(url);
+    if(!result){result=analyze(url,signal);images.set(url,result);}
+    post.recommendationVisual=await result;post.recommendationVisualStatus='checked';
+   }catch(error){if(signal?.aborted)throw error;post.recommendationVisualStatus='unavailable';}
+   onChecked?.(post);
+  }
+ }));
  // Digital artwork requires positive visual evidence; an unexamined image
  // cannot be certified as character artwork by a tag or a source alone.
  return rows;

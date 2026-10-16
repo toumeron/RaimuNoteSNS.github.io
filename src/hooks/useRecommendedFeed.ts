@@ -1,9 +1,11 @@
+import {getBalancedRecommendationPage} from '@/api/balanced-recommendations';
+import {getRecommendationContinuation} from '@/api/recommendation-continuation';
 import {preserveRecommendationHistory,uniqueRecommendationPosts} from '@/lib/recommendationPaging';
 import {recordRecommendationEngagement} from "@/lib/recommendationSignals";
 import { useInfiniteQuery,useQueryClient } from '@tanstack/react-query';
 import { useRecommendationImpressions } from './useRecommendationImpressions';
 import { useAuth } from './useAuth';
-import { createRecommendationCursor, getRecommendationPage,getRecommendationPreferences } from '@/api/recommendations';
+import { createRecommendationCursor,getRecommendationPreferences } from '@/api/recommendations';
 import { getConfiguredExternalHandles } from '@/lib/bluesky';
 import {recommendationIsDismissed,recordRecommendationDelivery,selectRecommendationLikeSamples} from '@/lib/recommendations';
 import {dismissRecommendation,createRecommendationFeedback} from '@/api/recommendation-feedback';
@@ -12,13 +14,13 @@ export function useRecommendedFeed(enabled:boolean) {
   const {user,loading}=useAuth();
   const handles=getConfiguredExternalHandles();
   const queryClient=useQueryClient();
-  const queryKey=['feed','recommended','scoring-v38-curated-discovery',user?.id ?? null,handles];
+  const queryKey=['feed','recommended','scoring-v49-ready-reserve',user?.id ?? null,handles];
   useRecommendationImpressions(enabled && !loading,user?.id ?? null);
   type Cursor=ReturnType<typeof createRecommendationCursor>;
-  type Page=Awaited<ReturnType<typeof getRecommendationPage>>;
+  type Page=Awaited<ReturnType<typeof getBalancedRecommendationPage>>;
   const initialScanLimit=useRef(8);
   const [historyRevision,setHistoryRevision]=useState(0);
-  const warmPage=useRef<{cursor:Cursor;controller:AbortController;promise:Promise<Page>;settled:boolean}|null>(null);
+  const warmPage=useRef<{cursor:Cursor;controller:AbortController;promise:Promise<Page>;settled:boolean;ready?:Page}|null>(null);
   const clearWarmPage=()=>{warmPage.current?.controller.abort();warmPage.current=null;};
   const query=useInfiniteQuery({
     queryKey,
@@ -31,12 +33,16 @@ export function useRecommendedFeed(enabled:boolean) {
       const cancel=()=>warm?.controller.abort(signal.reason);
       if(matches)signal.addEventListener('abort',cancel,{once:true});
       try{
-        const loaded=await (matches?warm.promise:getRecommendationPage(pageParam,user?.id??null,signal));
+        // Do not hold ready cards behind the next network/image-analysis pass.
+        // Aborting that unfinished pass leaves its input cursor safe to resume.
+        const ready=matches?warm.ready:undefined;
+        if(ready?.posts.length&&!warm.settled)warm.controller.abort();
+        const loaded=ready?.posts.length?ready:await (matches?warm.promise:getBalancedRecommendationPage(pageParam,user?.id??null,signal));
         if(signal.aborted)throw signal.reason;
         // A warmed page does not mark posts delivered until it is consumed.
         // Fresh feedback remains authoritative after background history hydration.
         const latest=queryClient.getQueryData<{pages:Page[]}>(queryKey)?.pages.at(-1)?.preferences;
-        const preferences=pageParam.preferences?(latest??pageParam.preferences):loaded.preferences;
+        const preferences={...(pageParam.preferences?(latest??pageParam.preferences):loaded.preferences),visualOnly:true};
         const foundNewCreator=Object.entries(preferences.authors).some(([author,weight])=>weight>0&&!(loaded.preferences.authors[author]>0));
         const keep=(post:import('@/types').PostWithAuthor)=>!recommendationIsDismissed(post,preferences)&&!preferences.likedPostIds?.includes(post.id);
         // A response started before history hydration must not overwrite the
@@ -59,6 +65,7 @@ export function useRecommendedFeed(enabled:boolean) {
     refetchOnMount:false,
     gcTime:60000,
   });
+
   const foregroundRead=useRef(query.isFetching);foregroundRead.current=query.isFetching;
   const screenEmpty=useRef(true);screenEmpty.current=!query.data?.pages.some(page=>page.posts.length>0);
   const evidenceJob=useRef<AbortController|null>(null);
@@ -67,8 +74,8 @@ export function useRecommendedFeed(enabled:boolean) {
   useEffect(()=>{
     if(!enabled||loading||!query.data||query.isFetching&&!screenEmpty.current||completedHistory.current||evidenceJob.current)return;
     const controller=new AbortController();evidenceJob.current=controller;completedHistory.current=true;
-    // An on-device CLIP inference heap exceeds iOS PWA's practical memory
-    // budget. Use saved image evidence; never start/download that model here.
+    // Saved interests hydrate separately from the bounded pixel-analysis worker,
+    // so neither history nor model loading holds the first page.
     let timer:number;
     const hydrate=()=>{if(controller.signal.aborted)return;if(foregroundRead.current&&!screenEmpty.current||warmPage.current&&!warmPage.current.settled){timer=window.setTimeout(hydrate,200);return;}void getRecommendationPreferences(user?.id??null,undefined,controller.signal).then(preferences=>{
       if(controller.signal.aborted)return;completedHistory.current=true;
@@ -78,7 +85,7 @@ export function useRecommendedFeed(enabled:boolean) {
         const last=data.pages.at(-1);
         const foundNewCreator=Object.entries(preferences.authors).some(([author,weight])=>weight>0&&!(last?.preferences.authors[author]>0));
         const pages=data.pages.map(page=>{
-          const merged={...preferences,authors:{...page.preferences.authors,...preferences.authors},likedPostIds:[...new Set([...(preferences.likedPostIds??[]),...(page.preferences.likedPostIds??[])])],likedSamples:selectRecommendationLikeSamples([...(preferences.likedSamples??[]),...(page.preferences.likedSamples??[])]),feedback:[...(page.preferences.feedback??[]),...(preferences.feedback??[])].filter((row,index,rows)=>rows.findIndex(old=>old.id===row.id)===index)};
+          const merged={...preferences,visualOnly:true,authors:{...page.preferences.authors,...preferences.authors},likedPostIds:[...new Set([...(preferences.likedPostIds??[]),...(page.preferences.likedPostIds??[])])],likedSamples:selectRecommendationLikeSamples([...(preferences.likedSamples??[]),...(page.preferences.likedSamples??[])]),feedback:[...(page.preferences.feedback??[]),...(preferences.feedback??[])].filter((row,index,rows)=>rows.findIndex(old=>old.id===row.id)===index)};
           const keep=(post:import('@/types').PostWithAuthor)=>!recommendationIsDismissed(post,merged);
           // History hydration removes rejected work without reordering cards.
           return {...page,preferences:merged,posts:page.posts.filter(keep),next:page.next?{...page.next,preferences:merged,remaining:page.next.remaining.filter(keep)}:undefined};
@@ -109,13 +116,13 @@ export function useRecommendedFeed(enabled:boolean) {
     if(!enabled||loading||query.isFetching||query.isError||automaticPaused)return;
     const last=query.data?.pages.at(-1),cursor=last?.next;
     if(!cursor||count<6||warmPage.current)return;
-    // Prepare only ONE small continuation while the reader sees existing cards.
-    // Consuming that same promise cannot launch another copy or a large batch.
+    // Keep a reserve of usable cards, not just one potentially sparse response.
+    // A single shared job is reused if scrolling catches up with preparation.
     const timer=window.setTimeout(()=>{
       if(warmPage.current)return;
       const controller=new AbortController();
-      const job={cursor,controller,promise:null as unknown as Promise<Page>,settled:false};
-      job.promise=getRecommendationPage(cursor,user?.id??null,controller.signal).finally(()=>{job.settled=true;});
+      const job={cursor,controller,promise:null as unknown as Promise<Page>,settled:false,ready:undefined as Page|undefined};
+      job.promise=getRecommendationContinuation(cursor,user?.id??null,controller.signal,page=>{job.ready=page;}).finally(()=>{job.settled=true;});
       // Prefetch failures are handled by the ordinary visible page read.
       void job.promise.catch(()=>{if(warmPage.current===job)warmPage.current=null;});
       warmPage.current=job;
@@ -138,5 +145,5 @@ export function useRecommendedFeed(enabled:boolean) {
    void queryClient.invalidateQueries({queryKey:['recommendation-preferences',user?.id??null]});
   },[queryClient,user?.id,JSON.stringify(handles)]);
   const isFilling=enabled&&!loading&&!automaticPaused&&count<6&&!!query.hasNextPage&&!query.isError&&!query.isFetchNextPageError&&(query.data?.pages.length??0)<scanBudget;
-  return {...query,automaticPaused,isFilling,dismiss};
+  return {...query,visualError:query.data?.pages.at(-1)?.visualError,twitterError:query.data?.pages.at(-1)?.twitterError,retryTwitter:()=>query.fetchNextPage({cancelRefetch:false}),automaticPaused,isFilling,dismiss};
 }

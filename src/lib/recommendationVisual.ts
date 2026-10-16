@@ -1,6 +1,7 @@
+import prototypes from './recommendationVisualPrototypes.json';
 import type {PostWithAuthor} from '@/types';
 import {isTopicId,type TopicId} from './topics';
-export type RecommendationVisual={version:1;kind:string;topics:TopicId[];confidence:number;similarity:number;vector:number[]};
+export type RecommendationVisual={version:1;classifierVersion?:3;kind:string;topics:TopicId[];confidence:number;similarity:number;vector:number[]};
 export function visualSimilarity(a:number[],b:number[]):number {
  if(a.length!==512||b.length!==512||a.some(value=>!Number.isFinite(value))||b.some(value=>!Number.isFinite(value)))return 0;
  const length=Math.hypot(...a)*Math.hypot(...b);
@@ -33,17 +34,17 @@ function imageKey(url:string):string{
 export function readVisualCache(url:string):RecommendationVisual|undefined{
  if(!restored){restored=true;try{
   const rows=JSON.parse(localStorage.getItem(cacheKey)??'[]');
-  for(const [key,result] of rows)if(typeof key==='string'&&result?.version===1&&typeof result.kind==='string'&&Array.isArray(result.topics)&&result.topics.every(isTopicId)&&Number.isFinite(result.confidence)&&Array.isArray(result.vector)&&result.vector.length===512&&result.vector.every(Number.isFinite))cache.set(key,result);
+  for(const [key,result] of rows)if(typeof key==='string'&&result?.version===1&&typeof result.kind==='string'&&Array.isArray(result.topics)&&result.topics.every(isTopicId)&&Number.isFinite(result.confidence)&&Array.isArray(result.vector)&&result.vector.length===512&&result.vector.every(Number.isFinite))cache.set(key,result.classifierVersion===3?result:classifyRecommendationVisual(result.vector));
  }catch{/* Public-media cache is optional. */}}
  return cache.get(imageKey(url));
 }
 export function writeVisualCache(url:string,result:RecommendationVisual):void{
- cache.set(imageKey(url),result);if(cache.size>150)cache.delete(cache.keys().next().value!);
+ result={...result,classifierVersion:3};cache.set(imageKey(url),result);if(cache.size>150)cache.delete(cache.keys().next().value!);
  try{localStorage.setItem(cacheKey,JSON.stringify([...cache]));}catch{/* No private preferences depend on this cache. */}
 }
 /** Synchronous, small and model-free: never delay the first feed for inference. */
-export function applyCachedRecommendationVisuals(posts:PostWithAuthor[]):PostWithAuthor[]{
- return posts.map(post=>{const visual=post.recommendationVisual??(post.imageUrls?.[0]?readVisualCache(post.imageUrls[0]):undefined);return visual?{...post,recommendationVisual:visual,recommendationVisualStatus:'checked'}:post;});
+export function applyCachedRecommendationVisuals(posts:PostWithAuthor[],upgrade=false):PostWithAuthor[]{
+ return posts.map(post=>{const previous=post.recommendationVisual??(post.imageUrls?.[0]?readVisualCache(post.imageUrls[0]):undefined);const visual=previous&&upgrade&&previous.classifierVersion!==3?classifyRecommendationVisual(previous.vector):previous;return visual?{...post,recommendationVisual:visual,recommendationVisualStatus:'checked'}:post;});
 }
 
 /** Do not download an 85 MiB model while opening a timeline. */
@@ -54,4 +55,21 @@ export async function hasInstalledVisualModel():Promise<boolean>{
   const urls=keys.map(key=>key.url).filter(url=>url.includes('/Xenova/clip-vit-base-patch32/'));
   return urls.some(url=>url.endsWith('/onnx/vision_model_quantized.onnx'))&&urls.some(url=>url.endsWith('/preprocessor_config.json'))&&urls.some(url=>url.endsWith('/config.json'));
  }catch{return false;}
+}
+
+/** Open-set classification: a nearest label is not evidence when all labels
+ * are poor matches. Ambiguous media must not inherit a feed's full topic. */
+export function classifyRecommendationVisual(vector:number[]):RecommendationVisual {
+ const ordered=prototypes.prototypes.map(row=>({...row,similarity:Math.max(...row.vectors.map(prototype=>visualSimilarity(vector,prototype)))})).sort((a,b)=>b.similarity-a.similarity);
+ const first=ordered[0],margin=first.similarity-ordered[1].similarity;
+ const confidence=first.similarity>=.24?Math.min(1,Math.max(0,margin)/.06):0;
+ const certain=confidence>=.25;
+ return {version:1,classifierVersion:3,kind:certain?first.id:'unknown',topics:certain?first.topics.filter(isTopicId):[],confidence,similarity:first.similarity,vector};
+}
+
+/** Subject requirements for user-selected topics, independent of captions and feed labels. */
+export function visualMatchesRecommendationTopic(visual:RecommendationVisual,topic:TopicId):boolean {
+ if(topic==='digital-illustration')return ['moe','male-character'].includes(visual.kind);
+ if(topic==='anime')return ['moe','male-character','anime-screen'].includes(visual.kind);
+ return visual.topics.includes(topic);
 }

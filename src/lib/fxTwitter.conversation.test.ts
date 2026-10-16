@@ -28,3 +28,7 @@ it('uses the conversation endpoint through the shared external thread loader too
  const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({code:200,status:raw('151'),thread:[raw('151')],replies:[raw('152','151')]})));vi.stubGlobal('fetch',fetcher);
  const thread=await fetchBlueskyPostThread('x:151');expect(thread.replies.map(post=>post.id)).toEqual(['x:152']);expect(fetcher.mock.calls[0][0]).toContain('/conversation/151');
 });
+it('ends reply pagination when the response contains only the post and ancestors even if a cursor is present',async()=>{
+ vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({code:200,status:raw('171','170'),thread:[raw('170'),raw('171','170')],replies:[],cursor:{bottom:'phantom-next'}}))));
+ const page=await xConversationPage('x:171');expect(page.replies).toEqual([]);expect(page.cursor).toBeNull();expect(page.post?.externalReplyParent?.id).toBe('x:170');
+});

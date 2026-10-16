@@ -2187,7 +2187,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
             ) : (
               <CommentList postId={data.id} mobileFlat={useMobileThreadLayout} threadAuthorId={data.author.id} />
             )}
-            {isTwitterPost&&twitterThread.hasNextPage&&!twitterThread.isFetchNextPageError&&<button type="button" className="w-full p-4 text-primary hover:underline disabled:opacity-50" disabled={twitterThread.isFetchingNextPage} onClick={()=>void twitterThread.fetchNextPage()}>{twitterThread.isFetchingNextPage?'読み込み中…':'返信をさらに表示'}</button>}
+            {isTwitterPost&&twitterThread.hasNextPage&&!!blueskyThread?.replies.length&&!twitterThread.isFetchNextPageError&&<button type="button" className="w-full p-4 text-primary hover:underline disabled:opacity-50" disabled={twitterThread.isFetchingNextPage} onClick={()=>void twitterThread.fetchNextPage()}>{twitterThread.isFetchingNextPage?'読み込み中…':'返信をさらに表示'}</button>}
             {isTwitterPost&&twitterThread.isFetchNextPageError&&<button type="button" className="w-full p-4 text-primary" onClick={()=>void twitterThread.fetchNextPage()}>返信の読み込みを再試行</button>}
           </div>
         </>

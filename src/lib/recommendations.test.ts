@@ -382,3 +382,53 @@ it.each([true,false])('keeps several previously liked art creators with cached p
  const unknown={...fresh[0],id:'unfamiliar',userId:'unfamiliar',content:'ファンアート',imageUrls:['https://images.example/unfamiliar.jpg']};
  expect(rankRecommendations([...fresh,prose,unknown],prefs,'viewer').map(row=>row.id).sort()).toEqual(fresh.map(row=>row.id).sort());
 });
+it('rejects NFT promotion even with fan-art tags, artist biography and matching image pixels, without rejecting an NFT prohibition',()=>{
+ const base={...post('x:31001','#ファンアート NFT collection mint now','x-user:nft'),source:'x' as const,imageUrls:['https://images.example/nft.jpg'],languages:['ja'],author:{id:'x-user:nft',username:'artist@twitter.com',bio:'イラストレーター',displayName:'Artist',avatarUrl:'',coverUrl:'',createdAt:'2026-10-01'},recommendationVisual:{version:1 as const,kind:'moe' as const,topics:['digital-illustration'] as any,confidence:.99,similarity:.9,vector:Array(512).fill(0)}};
+ const preferences={authors:{'x-user:nft':10},terms:{},followedTopics:['digital-illustration'] as any,followedAuthors:['x-user:nft']};
+ expect(rankRecommendations([base],preferences,'nft-viewer')).toEqual([]);
+ const ordinary={...base,id:'x:31002',content:'#ファンアート NFT化禁止',imageUrls:['https://images.example/ordinary-art.jpg']};
+ expect(rankRecommendations([ordinary],preferences,'nft-viewer').map(p=>p.id)).toEqual([ordinary.id]);
+ const quote={...ordinary,id:'x:31003',content:'#ファンアート',parentPost:base};
+ expect(rankRecommendations([quote],preferences,'nft-viewer')).toEqual([]);
+});
+it('visual-only home ranking is invariant to captions, hashtags, biography and learned word weights',()=>{
+ const image={version:1 as const,classifierVersion:3 as const,kind:'moe',topics:['digital-illustration'] as any,confidence:.9,similarity:.4,vector:Array.from({length:512},(_,i)=>Number(i===0))};
+ const candidate={...post('x:41000','plain caption','artist'),imageUrls:['https://images.example/visual-only.jpg'],recommendationVisual:image};
+ const prefs={visualOnly:true,authors:{},terms:{ファンアート:999999},followedTopics:['digital-illustration'] as any};
+ const changed={...candidate,content:'#ファンアート #オリジナルキャラクター NFT 車 飛行機',imageAltTexts:['猫 旅行'],author:{...candidate.author,bio:'NFT artist 猫好き'}};
+ expect(scoreRecommendation(candidate,prefs,'pixel-only').total).toBe(scoreRecommendation(changed,prefs,'pixel-only').total);
+ expect(rankRecommendations([candidate],prefs,'pixel-only').map(p=>p.id)).toEqual(rankRecommendations([changed],prefs,'pixel-only').map(p=>p.id));
+ const unrelated={...changed,id:'x:41001',recommendationVisual:{...image,kind:'render-3d',topics:[]}};
+ expect(rankRecommendations([unrelated],prefs,'pixel-only')).toEqual([]);
+ const unchecked={...changed,id:'x:41002',recommendationVisual:undefined};
+ expect(rankRecommendations([unchecked],prefs,'pixel-only')).toEqual([]);
+ expect(rankRecommendations([unchecked],{...prefs,allowUnverifiedMedia:true},'pixel-only')).toHaveLength(1);
+ expect(rankRecommendations([{...candidate,externalReplyToId:'x:parent'}],prefs,'pixel-only')).toEqual([]);
+});
+it('keeps followed topics mandatory even when a different liked-image class is an exact pixel match',()=>{
+ const vector=Array.from({length:512},(_,i)=>Number(i===0));
+ const visual={version:1 as const,classifierVersion:3 as const,kind:'animal-illustration',topics:['art','pets'] as any,confidence:.95,similarity:.6,vector};
+ const pig={...post('x:51001','#ファンアート オリジナルキャラクター','animal-artist'),imageUrls:['https://images.example/pig.jpg'],recommendationVisual:visual};
+ const liked={...pig,id:'liked-animal',imageUrls:['https://images.example/liked-pig.jpg']};
+ const preferences={visualOnly:true,authors:{'animal-artist':99},terms:{},followedAuthors:['animal-artist'],followedTopics:['anime'] as any,likedSamples:[liked]};
+ expect(rankRecommendations([pig],preferences,'topic-subject-viewer')).toEqual([]);
+ expect(rankRecommendations([pig],{...preferences,followedTopics:['digital-illustration']},'topic-subject-viewer')).toEqual([]);
+ expect(rankRecommendations([pig],{...preferences,followedTopics:['pets']},'topic-subject-viewer')).toHaveLength(1);
+});
+it('distinguishes anime humans from animal drawings independently of broad illustration labels',()=>{
+ const vector=Array.from({length:512},(_,i)=>Number(i===0));
+ const visual={version:1 as const,classifierVersion:3 as const,kind:'moe',topics:['art','digital-illustration'] as any,confidence:.9,similarity:.5,vector};
+ const girl={...post('bsky:52001','','girl-artist'),imageUrls:['https://images.example/girl.jpg'],recommendationVisual:visual};
+ const pig={...girl,id:'bsky:52002',userId:'pig-artist',content:'#アニメ #ファンアート',imageUrls:['https://images.example/animal.jpg'],recommendationVisual:{...visual,kind:'animal-illustration',topics:['art','pets'] as any}};
+ const preferences={visualOnly:true,authors:{},terms:{},followedTopics:['anime'] as any,likedSamples:[{...girl,id:'liked-girl',imageUrls:['https://images.example/liked-girl.jpg']}]};
+ expect(rankRecommendations([pig,girl],preferences,'subject-viewer').map(p=>p.id)).toEqual([girl.id]);
+ expect(rankRecommendations([girl],{...preferences,likedSamples:[]},'subject-viewer')).toHaveLength(1);
+ expect(rankRecommendations([pig,girl],{...preferences,followedTopics:['art']},'subject-viewer').map(p=>p.id)).toEqual([girl.id]);
+});
+it('does not let likes from a different topic disable a newly followed anime topic',()=>{
+ const vector=Array.from({length:512},(_,i)=>Number(i===0));
+ const girl={...post('x:53000','','girl-artist'),imageUrls:['https://images.example/new-topic-girl.jpg'],recommendationVisual:{version:1 as const,classifierVersion:3 as const,kind:'moe',topics:['digital-illustration','art'] as any,confidence:.9,similarity:.5,vector}};
+ const oldLike={...girl,id:'old-like',recommendationVisual:{...girl.recommendationVisual,kind:'food',topics:['food'] as any}};
+ const preferences={visualOnly:true,authors:{},terms:{},followedTopics:['anime','food'] as any,likedSamples:[oldLike]};
+ expect(rankRecommendations([girl],preferences,'new-topic-viewer').map(p=>p.id)).toEqual([girl.id]);
+});

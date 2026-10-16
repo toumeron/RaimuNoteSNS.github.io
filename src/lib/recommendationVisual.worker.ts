@@ -1,5 +1,6 @@
 import {AutoProcessor,CLIPVisionModelWithProjection,RawImage,env,type Tensor} from '@huggingface/transformers';
 import prototypes from './recommendationVisualPrototypes.json';
+import {createRecommendationVisualQueue} from './recommendationVisualQueue';
 
 env.allowLocalModels=false;
 env.backends.onnx.wasm.numThreads=1;
@@ -8,7 +9,7 @@ function load(){
  engine??=Promise.all([
   AutoProcessor.from_pretrained(prototypes.model,{revision:prototypes.revision}),
   CLIPVisionModelWithProjection.from_pretrained(prototypes.model,{revision:prototypes.revision,dtype:'q8',device:'wasm'}),
- ]).then(([processor,model])=>({processor,model}));
+ ]).then(([processor,model])=>({processor,model})).catch(error=>{engine=undefined;throw error;});
  return engine;
 }
 const cancelled=new Set<number>();
@@ -36,15 +37,14 @@ async function imageBlob(url:string):Promise<Blob>{
  const blob=await response.blob();if(blob.size>8*1024*1024)throw new Error('Image too large');
  return blob;
 }
-let queue=Promise.resolve();
-self.onmessage=({data}:{data:{id:number;url:string;cancel?:number}})=>{
- if(data.cancel!==undefined){cancelled.add(data.cancel);return;}
- queue=queue.then(async()=>{
-  if(cancelled.delete(data.id))return;
-  try{
-   const blob=await imageBlob(data.url);
-   const {processor,model}=await load();
-   if(cancelled.delete(data.id))return;
+const run=createRecommendationVisualQueue({
+ load,
+ prepare:async(data:{id:number;url:string})=>{
+  if(cancelled.has(data.id))throw new Error('Cancelled');
+  return imageBlob(data.url);
+ },
+ infer:async({processor,model},blob,data)=>{
+   if(cancelled.has(data.id))throw new Error('Cancelled');
    // Bound decoded pixels before converting to a JS array (large comics can
    // otherwise allocate hundreds of MiB even though CLIP needs only 224 px).
    let image:RawImage;
@@ -59,8 +59,14 @@ self.onmessage=({data}:{data:{id:number;url:string;cancel?:number}})=>{
    const {image_embeds}=outputs;
    const raw=Array.from(image_embeds.data as Float32Array),length=Math.hypot(...raw);
    const vector=raw.map(value=>Number((value/length).toFixed(5)));
-   if(!cancelled.delete(data.id))self.postMessage({id:data.id,vector});
+   return vector;
    }finally{for(const tensor of Object.values(outputs??{}) as Tensor[])tensor.dispose?.();for(const tensor of Object.values(inputs) as Tensor[])tensor.dispose?.();}
-  }catch(error){if(!cancelled.delete(data.id))self.postMessage({id:data.id,error:error instanceof Error?error.message:'Image analysis unavailable'});}
+ }
+});
+self.onmessage=({data}:{data:{id:number;url:string;cancel?:number;warm?:boolean}})=>{
+ if(data.cancel!==undefined){cancelled.add(data.cancel);return;}
+ if(data.warm){void load().catch(()=>{});return;}
+ void run(data).then(vector=>{if(!cancelled.delete(data.id))self.postMessage({id:data.id,vector});},error=>{
+  if(!cancelled.delete(data.id))self.postMessage({id:data.id,error:error instanceof Error?error.message:'Image analysis unavailable'});
  });
 };
