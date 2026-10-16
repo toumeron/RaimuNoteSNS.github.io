@@ -5,7 +5,7 @@ import { cloudExternalHandles, saveExternalProviderHandles } from './externalAcc
 import {externalFetch, accountSearchScore} from './utils';
 import {isXActor,isXId,xFeed,xProfile,xThread,xConversationPage,xFollowList,configuredXHandles,searchX} from './fxTwitter';
 import { searchMisskey, configuredMisskeyHandles, isMisskeyActor, isMisskeyId, misskeyFeed, misskeyProfile, misskeyThread, misskeyFollowList, misskeyRequest, mapMisskeyNote, type MisskeyNote, misskeyEnabled, misskeyViewer, likeMisskey, unlikeMisskey, misskeyFollowState, followMisskey, unfollowMisskey } from './misskey';
-import {singlePreviewUrl,type LinkPreview} from './linkPreview';
+import {singlePreviewUrl,previewUrlMatches,type LinkPreview} from './linkPreview';
 import {TOPICS,matchingTopics,type TopicId} from './topics';
 import { ACTIVE_ACCOUNT_KEY } from './savedAccounts';
 // 初期状態ではBlueskyアカウントを1件も登録しない。
@@ -919,7 +919,7 @@ export function mapBlueskyFeedItemToPost(item: BlueskyFeedItem): BlueskyMappedPo
   const content = [contentFromFacets.trim(), ...extras].filter(Boolean).join('\n\n');
   const external=post.embed?.external??post.embed?.media?.external;
   let linkPreview:LinkPreview|undefined;
-  if((external?.title||external?.description)&&external.uri&&singlePreviewUrl(content)===external.uri&&(!external.thumb||/^https?:\/\//.test(external.thumb))){
+  if((external?.title||external?.description)&&external.uri&&previewUrlMatches(singlePreviewUrl(content),external.uri)&&(!external.thumb||/^https?:\/\//.test(external.thumb))){
     try{linkPreview={url:external.uri,domain:new URL(external.uri).hostname.replace(/^www\./,''),title:external.title||new URL(external.uri).hostname,image:external.thumb||'',description:external.description};}catch{/* Keep the text link. */}
   }
 

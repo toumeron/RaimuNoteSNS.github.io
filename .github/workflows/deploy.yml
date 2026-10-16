@@ -10,7 +10,12 @@ permissions:
   id-token: write
 
 jobs:
+  prepare-recommendations:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/recommendation-catalog.yml
   build-and-deploy:
+    needs: prepare-recommendations
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -32,6 +37,7 @@ jobs:
           cp dist/index.html dist/404.html
         env:
           VITE_RECOMMENDATION_RANKER_ENABLED: ${{ vars.VITE_RECOMMENDATION_RANKER_ENABLED }}
+          VITE_RECOMMENDATION_CATALOG_URL: https://raw.githubusercontent.com/toumeron/RaimuNoteSNS.github.io/generated/recommendations/catalog.json
           VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
           VITE_CLOUDINARY_CLOUD_NAME: ${{ vars.VITE_CLOUDINARY_CLOUD_NAME }}

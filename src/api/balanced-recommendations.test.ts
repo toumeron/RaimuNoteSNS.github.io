@@ -225,3 +225,61 @@ it('does not wait for additional twitter pages once the first mixed screen has e
  const page=await getBalancedRecommendationPage(createRecommendationCursor([]),'first-screen-ready');
  expect(page.posts.map(p=>p.source)).toEqual(['x','bluesky','x','bluesky']);expect(mocks.twitter).toHaveBeenCalledTimes(1);
 });
+
+it('does not delay cached verified pairs to analyze extra reserve images',async()=>{
+ const inference=await import('@/lib/recommendationVisualInference');
+ const analyze=vi.spyOn(inference,'enrichRecommendationVisuals');
+ mocks.native.mockResolvedValue({posts:[post('bsky:ready-a'),post('bsky:ready-b'),{...post('bsky:reserve-unknown'),recommendationVisual:undefined}],preferences:prefs,pendingAnalysis:false,automaticPaused:false,requestKey:1});
+ mocks.twitter.mockResolvedValue({posts:[post('x:81000'),post('x:81001'),{...post('x:81002'),recommendationVisual:undefined}],next:undefined});
+ try{const page=await getBalancedRecommendationPage(createRecommendationCursor([]),'cached-ready');
+ expect(page.posts.map(post=>post.source)).toEqual(['x','bluesky','x','bluesky']);expect(analyze).not.toHaveBeenCalled();
+ expect(page.next?.remaining.some(post=>post.id==='bsky:reserve-unknown')).toBe(true);expect(page.next?.twitterRemaining?.some(post=>post.id==='x:81002')).toBe(true);
+ }finally{analyze.mockRestore();}
+});
+
+it('publishes the first verified mixed pair without waiting for a stalled reserve analysis',async()=>{
+ const inference=await import('@/lib/recommendationVisualInference');
+ const tweets=[{...post('x:82000'),recommendationVisual:undefined},{...post('x:82001'),recommendationVisual:undefined}];
+ const blues=[{...post('bsky:partial-a'),recommendationVisual:undefined},{...post('bsky:partial-b'),recommendationVisual:undefined}];
+ mocks.native.mockResolvedValue({posts:blues,preferences:prefs,pendingAnalysis:false,automaticPaused:false,requestKey:1});mocks.twitter.mockResolvedValue({posts:tweets,next:undefined});
+ const analyze=vi.spyOn(inference,'enrichRecommendationVisuals').mockImplementationOnce(async(_rows,_topics,signal,onChecked)=>{
+  onChecked?.({...tweets[0],recommendationVisual:post('pixel').recommendationVisual});
+  onChecked?.({...blues[0],recommendationVisual:post('pixel').recommendationVisual});
+  return await new Promise((_resolve,reject)=>signal?.addEventListener('abort',()=>reject(signal.reason),{once:true}));
+ });
+ try{const page=await getBalancedRecommendationPage(createRecommendationCursor([]),'partial-ready');expect(page.posts.map(post=>post.source)).toEqual(['x','bluesky']);expect(page.next?.twitterRemaining).toHaveLength(1);expect(page.next?.remaining).toHaveLength(1);}
+ finally{analyze.mockRestore();}
+});
+it('returns 20 verified, diverse, balanced reserve cards within 500 ms without another source read',async()=>{
+ const previous=createRecommendationCursor([]);previous.preferences=prefs;
+ previous.remaining=Array.from({length:10},(_,i)=>post('bsky:fast-'+i));
+ previous.twitterRemaining=Array.from({length:10},(_,i)=>post('x:'+String(91000+i)));
+ const started=performance.now();const page=await getBalancedRecommendationPage(previous,'viewer',undefined,{pageSize:20});
+ expect(performance.now()-started).toBeLessThan(500);expect(page.posts).toHaveLength(20);expect(new Set(page.posts.map(p=>p.userId)).size).toBe(20);
+ expect(page.posts.filter(p=>p.source==='x')).toHaveLength(10);expect(page.posts.filter(p=>p.source==='bluesky')).toHaveLength(10);
+ expect(mocks.native).not.toHaveBeenCalled();expect(mocks.twitter).not.toHaveBeenCalled();expect(previous.seen).toEqual([]);
+});
+it('does not use unrelated cached work to fill a 20-card request',async()=>{
+ const previous=createRecommendationCursor([]);previous.preferences=prefs;
+ previous.remaining=Array.from({length:10},(_,i)=>post('bsky:quality-'+i));
+ const unrelated={...post('x:92999'),recommendationTopics:['crypto'],recommendationVisual:{...post('x:92999').recommendationVisual,kind:'crypto',topics:['crypto']}};
+ previous.twitterRemaining=[...Array.from({length:10},(_,i)=>post('x:'+String(92000+i))),unrelated];
+ const page=await getBalancedRecommendationPage(previous,'viewer',undefined,{pageSize:20});
+ expect(page.posts).toHaveLength(20);expect(page.posts.some(p=>p.id===unrelated.id)).toBe(false);expect(mocks.native).not.toHaveBeenCalled();expect(mocks.twitter).not.toHaveBeenCalled();
+});
+
+it('does not freeze a 20-card batch after the twitter source is exhausted',async()=>{
+ mocks.native.mockResolvedValue({posts:Array.from({length:20},(_,i)=>post('bsky:available-'+i)),preferences:prefs,pendingAnalysis:false,automaticPaused:false,requestKey:1});mocks.twitter.mockResolvedValue({posts:[],next:undefined});
+ const previous=createRecommendationCursor([]);previous.providerTotals={twitter:2,other:2};
+ const page=await getBalancedRecommendationPage(previous,'exhausted-source',undefined,{pageSize:20});expect(page.posts).toHaveLength(20);expect(page.posts.every(row=>row.recommendationVisual?.topics.includes('science'))).toBe(true);
+});
+
+it('retains unverified candidates after transient image startup failure without showing them as accepted',async()=>{
+ const inference=await import('@/lib/recommendationVisualInference');
+ const unknown={...post('bsky:retry-model'),recommendationVisual:undefined};
+ mocks.native.mockResolvedValue({posts:[unknown],preferences:prefs,pendingAnalysis:false,automaticPaused:false,requestKey:1});mocks.twitter.mockResolvedValue({posts:[],next:undefined});
+ const analyze=vi.spyOn(inference,'enrichRecommendationVisuals').mockResolvedValueOnce([{...unknown,recommendationVisualStatus:'unavailable'}]);
+ try{
+  const first=await getBalancedRecommendationPage(createRecommendationCursor([]),'model-startup',undefined,{pageSize:20});expect(first.posts).toHaveLength(0);expect(first.next?.remaining.map(p=>p.id)).toContain(unknown.id);expect(first.next?.seen).not.toContain(unknown.id);
+ }finally{analyze.mockRestore();}
+});

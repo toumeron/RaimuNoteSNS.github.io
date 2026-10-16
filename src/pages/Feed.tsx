@@ -907,7 +907,8 @@ export default function Feed() {
         if (activeTab === 'trending') {
           await loadTrendingPosts(true);
         } else if(isRankedTab){
-          await queryClient.resetQueries({queryKey:selectedTopic?['feed','topic',user?.id??null,selectedTopic]:['feed','recommended']});
+          if(selectedTopic)await queryClient.resetQueries({queryKey:['feed','topic',user?.id??null,selectedTopic]});
+          else await queryClient.invalidateQueries({queryKey:['feed','recommended']});
         } else {
           await Promise.all([
             queryClient.invalidateQueries({ queryKey: ['posts'] }),
@@ -1496,7 +1497,7 @@ export default function Feed() {
       ? 'まだ投稿がありません'
       : activeTab === 'following'
         ? 'フォロー中の投稿はありません'
-        : selectedList?'リストのメンバーの投稿がまだありません':isRankedTab ? selectedTopic?'このトピックの投稿がまだありません':'おすすめの投稿がまだありません' : 'トレンドの投稿がまだありません';
+        : selectedList?'リストのメンバーの投稿がまだありません':isRankedTab ? selectedTopic?'このトピックの投稿がまだありません':'' : 'トレンドの投稿がまだありません';
 
   return (
     <div
@@ -1740,7 +1741,7 @@ export default function Feed() {
           </div>
         )}
 
-        {showTimelineEmpty(isInitialLoading,isBusyLoadingMore,isError,allPosts.length) && (
+        {showTimelineEmpty(isInitialLoading,isBusyLoadingMore,isError,allPosts.length,activeTab) && (
           <div className="rounded-3xl border border-dashed border-border/50 bg-card/40 p-10 text-center text-muted-foreground">
             {emptyStateMessage}
           </div>
@@ -1756,21 +1757,9 @@ export default function Feed() {
           <div style={{ height: `${virtualRange.bottomSpacer}px` }} aria-hidden="true" />
         )}
 
-        {activeTab==='recommended'&&generalRecommendedFeed.visualError&&(<p role="status" className="px-4 py-3 text-sm text-muted-foreground">画像を判定できませんでした。未判定の投稿は表示していません。<button type="button" className="ml-2 text-primary hover:underline" onClick={()=>void generalRecommendedFeed.retryTwitter()}>再試行</button></p>)}
-        {activeTab==='recommended'&&generalRecommendedFeed.twitterError&&(
-          <p role="status" className="px-4 py-3 text-sm text-muted-foreground">
-            {generalRecommendedFeed.twitterError.name==='TimeoutError'?'twitterの読み込みに時間がかかっています。':'twitterのおすすめを取得できませんでした。'}
-            <button type="button" className="ml-2 text-primary hover:underline" onClick={()=>void generalRecommendedFeed.retryTwitter()}>再試行</button>
-          </p>
-        )}
-
         <div ref={ref} className="py-10 flex justify-center">
           {isBusyLoadingMore && !(isRankedTab&&isInitialLoading) ? (
             <div className="w-full"><PostCardSkeleton/></div>
-          ) : isRankedTab&&hasMoreToLoad&&(isFetchNextPageError||rankedFeed.automaticPaused) ? (
-            <p role="status" className="text-xs text-muted-foreground">
-              {isFetchNextPageError?'続きを取得できませんでした。':'取得に時間がかかっています。'}スクロールすると再試行します。
-            </p>
           ) : hasMoreToLoad ? (
             <div className="h-10" />
           ) : allPosts.length > 0 ? (

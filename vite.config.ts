@@ -1,6 +1,7 @@
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
+import {existsSync} from 'node:fs';
 import { VitePWA } from "vite-plugin-pwa";
 
 // https://vitejs.dev/config/
@@ -8,10 +9,12 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), 'VITE_');
   const supabaseUrl = process.env.VITE_SUPABASE_URL || env.VITE_SUPABASE_URL;
   return ({
+  define:{'import.meta.env.VITE_RECOMMENDATION_CATALOG_URL':JSON.stringify(env.VITE_RECOMMENDATION_CATALOG_URL||(existsSync('public/recommendations/catalog.json')?'/RaimuNoteSNS.github.io/recommendations/catalog.json':''))},
   // GitHub Pages用のベースパス設定
   base: "/RaimuNoteSNS.github.io/",
   build: { target: ["es2020", "safari16"] },
   worker: { format: 'es' },
+  optimizeDeps: { include: ['@huggingface/transformers'] },
   server: {
     host: "127.0.0.1",
     port: 8080,
@@ -32,6 +35,13 @@ export default defineConfig(({ mode }) => {
   },
   plugins: [
     react(),
+    {name:'recommendation-catalog-dev-ready',configureServer(server){
+      const catalog=path.resolve('public/recommendations/catalog.json');
+      if(existsSync(catalog))return;
+      server.watcher.add(path.dirname(catalog));
+      const ready=(file:string)=>{if(path.resolve(file)!==catalog)return;server.watcher.off('add',ready);void server.restart();};
+      server.watcher.on('add',ready);
+    }},
     VitePWA({
       registerType: "autoUpdate",
       injectRegister: false,

@@ -1,5 +1,33 @@
 # Daily recommendation training
 
+## Public image catalog
+
+`node scripts/recommendations/build-catalog.mjs` fetches public creator feeds and
+creator-linked twitter media, then runs the pinned q8 CLIP vision model on a
+Node.js CPU. It never uses post text to decide an image's subject, and never
+uploads account likes, follows, feedback or tokens. The client retains the same
+visual topic, positive/negative similarity, creator diversity and seen-post
+checks. Browser model loading is unnecessary when the catalog contains enough
+eligible candidates; unmatched history images and catalog misses still use the
+existing inference path.
+
+The generated local file `public/recommendations/catalog.json` is ignored by Git
+and detected by Vite at startup. Restart Vite after generating it for the first
+time. The public-only GitHub Actions workflow prepares a fresh artifact hourly
+and stores it on `generated/recommendations`, separate from `main` and Pages.
+It requires no cloud inference API or separate server. Failed collection,
+insufficient provider/creator diversity and stale artifacts fail closed. The
+frontend build uses `VITE_RECOMMENDATION_CATALOG_URL`; catalog entries expire
+after two hours. `RECOMMENDATION_CATALOG_FEEDS` and
+`RECOMMENDATION_CATALOG_AUTHORS` are optional public source configuration;
+defaults cover the existing artwork feeds and creators' own linked accounts.
+
+The workflow and frontend changes require an explicitly authorized publication
+before they affect the hosted application. No workflow, branch or deployment is
+created by merely editing these files locally. Cold-browser tests must record
+the catalog HTTP read separately from its server-side preparation; a local file
+measurement is not evidence of remote CDN or authenticated-profile latency.
+
 DB migrations, function deployment, Secrets and the daily workflow are activated separately from the Pages frontend release.
 
 ## Setup

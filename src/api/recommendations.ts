@@ -128,6 +128,7 @@ export type RecommendationCursor={
   topicAuthorLanguages?:Record<string,string[]>;
   history:PostWithAuthor[];
   pendingVisual?:PostWithAuthor[];
+  catalogRead?:boolean;
   remaining:PostWithAuthor[];seen:string[];preferences?:RecommendationPreferences;
 };
 export function createRecommendationCursor(handles:string[]):RecommendationCursor {

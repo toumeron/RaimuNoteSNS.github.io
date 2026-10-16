@@ -46,3 +46,4 @@ tests/avatar/local-models/
 .dev.vars
 .dev.vars.*
 .wrangler/
+public/recommendations/

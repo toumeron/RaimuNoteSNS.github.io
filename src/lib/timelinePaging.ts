@@ -104,6 +104,6 @@ export function isTimelinePost(post:PostWithAuthor):boolean {
  return !post.replyId&&!post.replyPostId&&!post.externalReplyToId&&!(post.parentId&&!post.isQuote);
 }
 /** Exhausted initial scans can still have a cursor; they must show an empty state. */
-export function showTimelineEmpty(loading:boolean,fetching:boolean,error:boolean,count:number):boolean {
- return !loading&&!fetching&&!error&&count===0;
+export function showTimelineEmpty(loading:boolean,fetching:boolean,error:boolean,count:number,tab?:string):boolean {
+ return tab!=='recommended'&&!loading&&!fetching&&!error&&count===0;
 }

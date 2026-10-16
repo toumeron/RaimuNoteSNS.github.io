@@ -28,6 +28,11 @@ describe('Bluesky external metadata',()=>{
   delete (item.post.embed.external as {thumb?:string}).thumb;expect(mapBlueskyFeedItemToPost(item)?.linkPreview?.image).toBe('');
   item.post.record.text+=' https://example.com/another';expect(mapBlueskyFeedItemToPost(item)?.linkPreview).toBeUndefined();
  });
+ it('preserves a supplied homepage card when its URL has no trailing slash',async()=>{
+  const {mapBlueskyFeedItemToPost}=await import('./bluesky');
+  const item={post:{uri:'at://did:plc:test/app.bsky.feed.post/home',author:{did:'did:plc:test',handle:'user.bsky.social'},record:{text:'https://example.com'},embed:{$type:'app.bsky.embed.external#view',external:{uri:'https://example.com',title:'Homepage'}}}};
+  expect(mapBlueskyFeedItemToPost(item)?.linkPreview?.title).toBe('Homepage');
+ });
 });
 
 describe('product preview metadata',()=>{
