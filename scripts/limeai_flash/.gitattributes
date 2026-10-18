@@ -1,0 +1,2 @@
+# Preserve exact public-source fixtures, including original whitespace.
+source_snapshot/** -whitespace

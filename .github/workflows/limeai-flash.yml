@@ -1,0 +1,69 @@
+name: Evaluate and package LimeAI-Flash
+on:
+  push:
+    branches: [codex/limeai-flash-evaluation]
+    paths:
+      - .github/workflows/limeai-flash.yml
+      - scripts/limeai_flash/**
+  workflow_dispatch:
+    inputs:
+      evaluation:
+        description: Fixed development questions only; never live user conversations
+        type: choice
+        options:
+          - full
+          - smoke
+        default: full
+permissions:
+  contents: read
+concurrency:
+  group: limeai-flash-evaluation
+  cancel-in-progress: false
+jobs:
+  evaluate:
+    # Public repositories use the free standard hosted runner. Do not consume
+    # paid/private-repository minutes for model execution.
+    if: ${{ github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      HF_HUB_DISABLE_TELEMETRY: '1'
+      HF_HUB_DISABLE_XET: '1'
+      LIMENOTE_SOURCE: ${{ github.workspace }}/scripts/limeai_flash/source_snapshot
+      OMP_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: scripts/limeai_flash/requirements.txt
+      - uses: actions/cache@v4
+        with:
+          path: scripts/limeai_flash/models
+          key: limeai-flash-qwen3-4b-50d427756c6b1b2fe0c0a10f67fbda1fc8e82c1b
+      - run: pip install -r scripts/limeai_flash/requirements.txt
+      - run: python scripts/limeai_flash/download_model.py
+      - run: python -m unittest discover -s scripts/limeai_flash -p 'test_*.py' -v
+      - name: Smoke test using fixed development questions
+        if: ${{ inputs.evaluation == 'smoke' }}
+        run: python scripts/limeai_flash/smoke.py
+      - name: Evaluate actual generated answers on fixed development questions
+        if: ${{ inputs.evaluation != 'smoke' }}
+        run: python scripts/limeai_flash/evaluate.py --out flash-evaluation.json
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && inputs.evaluation != 'smoke' }}
+        with:
+          name: limeai-flash-development-evaluation
+          path: flash-evaluation.json
+          if-no-files-found: warn
+          retention-days: 7
+      - run: python scripts/limeai_flash/bundle.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: limeai-flash-cloud-package
+          path: artifacts/limeai-flash-cloud
+          retention-days: 7

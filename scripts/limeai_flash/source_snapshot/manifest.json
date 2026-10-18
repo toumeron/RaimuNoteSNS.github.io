@@ -1,0 +1,13 @@
+{
+  "src/pages/ChatPage.tsx": "6fcf50f51aec63879f12e858abf08ad647586fe8a7db16c237e27958e7338849",
+  "supabase/functions/chat-gemma/index.ts": "52ad37510658ee7de9d79e2035f0eaade227a51b2354211ea6c905bc16bd7118",
+  "package.json": "9f37671b834a543ffbb85acf2bbe535a282dbbcfd373e07700678684f6c2a769",
+  "AGENTS.md": "77da993303949bdb24de4408f7a7ba6cb6b5be00bfb9cecdc4620f746803a505",
+  "src/lib/timelineTabs.ts": "9bf769af4565e297242eb250f36b1e6eef5623554332046a769e1f87bc798e16",
+  "src/api/twitter-trends.ts": "e6cbf504cd3ed1cc99d7f44a8d579458eef1fecb57d08b7da50817d8adc861af",
+  "src/lib/trendViews.ts": "751f56ae2053e5e70de7dbe80ee1b4dd12f59c83388a55177457897805c535ff",
+  "src/lib/localGemmaConfig.ts": "abe8ee2cbc94d22424aeff53f0015a0c66ffe533a4971669be8da73df85213ba",
+  "src/lib/localGemmaSessions.ts": "9481a717fbe0c4a9e2ac97dc510bfc69067b7ed4d858bb162b1441291b01ff75",
+  "src/components/post/PostSourceLabel.tsx": "a22e70de4704bd29a83ed53efda617841649dc4fe3c5b1e58e6573b5df8847ea",
+  "src/api/lists.ts": "aa446d95ab3063b1fad04226d464eb83d828e48d9a2fef3ef790ec0477ec7a85"
+}

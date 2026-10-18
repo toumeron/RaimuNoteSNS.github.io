@@ -1,0 +1,21 @@
+services:
+  inference:
+    build: .
+    restart: unless-stopped
+    env_file: /etc/limeai-flash.env
+    mem_limit: 8g
+    cpus: 2
+    expose: [8000]
+  https:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      FLASH_HOSTNAME: ${FLASH_HOSTNAME:?Set a hostname resolving to this VM}
+    ports: ['80:80', '443:443']
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+volumes:
+  caddy_data:
+  caddy_config:

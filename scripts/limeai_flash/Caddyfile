@@ -1,0 +1,6 @@
+{$FLASH_HOSTNAME} {
+    request_body {
+        max_size 256KB
+    }
+    reverse_proxy inference:8000
+}
