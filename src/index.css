@@ -856,16 +856,16 @@ body:has([data-lime-maps]) [data-lime-app-header] { display: none !important; }
 .lime-map-highway-number { font-weight: 700; display: block; padding: 0 6px; background: #42822d; color: #fff; }
 .lime-map-highway-name { display: block; padding: 0 6px; background: #8e8e89; color: #fff; }
 
-/* Avatar and a small pointer, with no decorative ring or heavy shadow. */
+/* Keep the pin background below its photo even when Leaflet CSS loads later. */
  .lime-map-avatar-pin-body { position: relative; width: 40px; height: 48px; }
-.lime-map-avatar-pin-body > svg { z-index: 0; position: absolute; inset: 0; width: 40px; height: 48px; overflow: visible; }
+.lime-map .lime-map-avatar-pin-body > svg { z-index: 0; position: absolute; inset: 0; width: 40px; height: 48px; overflow: visible; }
 .lime-map-avatar-pin-face { z-index: 1; position: absolute; top: 2px; left: 2px; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; overflow: hidden; background: #777e83; }
 .lime-map-avatar-pin-face img { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
 .lime-map-avatar-pin-fallback { color: white; font: 600 18px/1 sans-serif; }
 .lime-map-avatar-pin-count { z-index: 3; position: absolute; top: -3px; right: -5px; min-width: 16px; height: 16px; padding: 0 3px; display: grid; place-items: center; border: 1px solid white; border-radius: 999px; background: hsl(var(--primary,334 85% 60%)); color: white; font: 700 10px/1 sans-serif; }
 
 /* The photo extends beneath this continuous rim to hide raster/clip seams. */
-.lime-map-avatar-pin-body > .lime-map-avatar-pin-rim { z-index: 2; pointer-events: none; }
+.lime-map .lime-map-avatar-pin-body > .lime-map-avatar-pin-rim { z-index: 2; pointer-events: none; }
 
 /* Leaflet moves the same marker through zoom; opacity only handles cluster changes. */
 .lime-map-avatar-pin { transition: opacity 180ms ease; }

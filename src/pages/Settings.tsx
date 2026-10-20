@@ -1117,8 +1117,8 @@ export function ExternalFollowImport({userId,disabled=false,onBusyChange}:{userI
  };
  return <form onSubmit={start} data-lime-follow-import className="mt-5 space-y-3">
   <div className="grid gap-3 sm:grid-cols-2">
-   <div className="min-w-0 space-y-1"><Label htmlFor={id+'-twitter'}>TwitterのID</Label><Input id={id+'-twitter'} value={twitter} onChange={event=>setTwitter(event.target.value)} placeholder="@ユーザーID" autoComplete="off" autoCapitalize="none" spellCheck={false} disabled={busy||removing||disabled}/></div>
-   <div className="min-w-0 space-y-1"><Label htmlFor={id+'-bluesky'}>BlueskyのID</Label><Input id={id+'-bluesky'} value={bluesky} onChange={event=>setBluesky(event.target.value)} placeholder="name.bsky.social" autoComplete="off" autoCapitalize="none" spellCheck={false} disabled={busy||removing||disabled}/></div>
+   <div className="min-w-0 space-y-1"><Label htmlFor={id+'-twitter'}>TwitterのID</Label><Input id={id+'-twitter'} value={twitter} onChange={event=>setTwitter(event.target.value)} placeholder="@nakkar7" autoComplete="off" autoCapitalize="none" spellCheck={false} disabled={busy||removing||disabled}/></div>
+   <div className="min-w-0 space-y-1"><Label htmlFor={id+'-bluesky'}>BlueskyのID</Label><Input id={id+'-bluesky'} value={bluesky} onChange={event=>setBluesky(event.target.value)} placeholder="@nakkar7.bsky.social" autoComplete="off" autoCapitalize="none" spellCheck={false} disabled={busy||removing||disabled}/></div>
   </div>
   <div data-lime-follow-import-divider className="-mx-5 !mt-5 border-t border-border/60"/>
   <div className="flex flex-wrap items-center gap-2"><Button type="submit" className="rounded-full" disabled={busy||removing||disabled||!twitter.trim()&&!bluesky.trim()}>{busy?'引き継ぎ中…':'フォロー中のアカウントを引き継ぐ！'}</Button>{!!count.data&&<Button type="button" variant="outline" aria-label="引き継いだフォローを削除" className="rounded-full text-destructive" disabled={busy||removing||disabled} onClick={()=>void remove()}>{removing?'削除中…':'削除'}</Button>}{(busy||removing)&&<button type="button" className="text-sm text-muted-foreground" onClick={()=>running.current?.abort()}>中止</button>}</div>
