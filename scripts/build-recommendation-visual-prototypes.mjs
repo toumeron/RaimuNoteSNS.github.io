@@ -17,4 +17,7 @@ for(const row of rows){
  prototypes.push({id:row.id,topics:row.topics,vector,vectors:vectors.map(vector=>vector.map(value=>Number(value.toFixed(6))))});
 }
 await writeFile(new URL('../src/lib/recommendationVisualPrototypes.json',import.meta.url),JSON.stringify({model,revision,prototypes}));
+// Browser classification needs only these exact vectors, not the legacy centroid
+// or model-download metadata used by the worker/catalog builder.
+await writeFile(new URL('../src/lib/recommendationVisualClassifierData.json',import.meta.url),JSON.stringify({prototypes:prototypes.map(({id,topics,vectors})=>({id,topics,vectors}))}));
 console.log(`Generated ${prototypes.length} visual prototypes.`);

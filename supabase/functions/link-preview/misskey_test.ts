@@ -1,7 +1,7 @@
 import { loadMisskey } from "./load.ts";
 Deno.test('forwards the boolean reply filter for a complete author feed', async () => {
  const original=globalThis.fetch;
- globalThis.fetch=async(_input,init)=>{const body=JSON.parse(String(init?.body));if(body.withReplies!==true||body.limit!==100)throw new Error('Reply filter lost');return Response.json([]);};
+ globalThis.fetch=async(_input,init)=>{if(new Headers(init?.headers).get('user-agent')!=='LimeNote/1.0')throw new Error('API client identification missing');const body=JSON.parse(String(init?.body));if(body.withReplies!==true||body.limit!==100)throw new Error('Reply filter lost');return Response.json([]);};
  try {
   await loadMisskey('users/notes',{userId:'creator',limit:100,withReplies:true});
   let rejected=false;try{await loadMisskey('users/notes',{userId:'creator',withReplies:'true'});}catch{rejected=true;}

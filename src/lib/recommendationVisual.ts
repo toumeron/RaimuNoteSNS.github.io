@@ -1,4 +1,4 @@
-import prototypes from './recommendationVisualPrototypes.json';
+import prototypes from './recommendationVisualClassifierData.json';
 import type {PostWithAuthor} from '@/types';
 import {isTopicId,type TopicId} from './topics';
 import {privateMediaReference} from './privateMediaFetch';

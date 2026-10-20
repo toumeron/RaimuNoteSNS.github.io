@@ -5,7 +5,7 @@ import { Header } from "@/components/layout/Header";
 import { useAuth } from "@/hooks/useAuth";
 import { CallSessionProvider } from "@/components/chat/CallSessionProvider";
 
-import { PageCompanion } from "@/components/ai/PageCompanion";
+import { PageCompanion } from "@/components/ai/PageCompanionGate";
 import { Skeleton, Popover, PopoverContent, PopoverTrigger } from "@/components/ui/button";
 import { PrivateAccountBadge, Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { isIpad, cn } from "@/lib/utils";

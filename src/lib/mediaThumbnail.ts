@@ -146,9 +146,9 @@ function videoSelections(initial:MediaViewerSelection,pages:readonly {posts:Post
  const seen=new Set<string>();
  return [initial,...pages.flatMap(page=>page.posts.filter(post=>post.video||post.externalVideo).map(post=>({post,postId:post.id,url:`video:${post.id}`,video:{postId:post.id,video:post.video??post.externalVideo!,...(post.externalVideo?{externalVideo:post.externalVideo}:{})}})))].filter(item=>{const key=item.video?.postId??item.url;if(seen.has(key))return false;seen.add(key);return true;});
 }
-/** Either vertical swipe advances; horizontal drags and short taps do not. */
-function videoSwipeDirection(dx:number,dy:number):1|0 {
- return Math.abs(dy)>=64&&Math.abs(dy)>Math.abs(dx)*1.35?1:0;
+/** Upward swipes advance; downward swipes return to the previous watched video. */
+function videoSwipeDirection(dx:number,dy:number):-1|0|1 {
+ return Math.abs(dy)>=64&&Math.abs(dy)>Math.abs(dx)*1.35?(dy<0?1:-1):0;
 }
 /** Late twitter results can enter the unvisited tail without moving watched slides. */
 function mergeVideoQueue(previous:MediaViewerSelection[],current:MediaViewerSelection,incoming:MediaViewerSelection[],watchedCount=0):MediaViewerSelection[]{
@@ -274,11 +274,16 @@ async function writeImage(url:string,blob:Blob){
  const bytes=await blob.arrayBuffer(),db=await imageDb();
  try{await new Promise<void>((resolve,reject)=>{
   const tx=db.transaction('images','readwrite'),store=tx.objectStore('images');
-  const request=store.getAll();
+  // A getAll() clones every cached image (up to 40 MB) on every write.
+  // Retain only metadata while walking one record at a time instead.
+  const records:Array<{url:string;savedAt:number;size:number}>=[];
+  const request=store.openCursor();
   request.onsuccess=()=>{
-   const records=(request.result as SavedImage[]).filter(record=>record.url!==url).sort((a,b)=>a.savedAt-b.savedAt);
-   let totalBytes=records.reduce((sum,record)=>sum+record.bytes.byteLength,bytes.byteLength);
-   while(records.length>=200||totalBytes>40*1024*1024){const oldest=records.shift();if(!oldest)break;totalBytes-=oldest.bytes.byteLength;store.delete(oldest.url);}
+   const cursor=request.result;
+   if(cursor){const record=cursor.value as SavedImage;if(record.url!==url)records.push({url:record.url,savedAt:record.savedAt,size:record.bytes.byteLength});cursor.continue();return;}
+   records.sort((a,b)=>a.savedAt-b.savedAt);
+   let totalBytes=records.reduce((sum,record)=>sum+record.size,bytes.byteLength);
+   while(records.length>=200||totalBytes>40*1024*1024){const oldest=records.shift();if(!oldest)break;totalBytes-=oldest.size;store.delete(oldest.url);}
    store.put({url,bytes,type:blob.type,savedAt:Date.now()});
   };
   tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);

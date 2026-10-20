@@ -406,7 +406,8 @@ export default function Feed() {
   // トレンド専用に取得した人気投稿だけを表示する。
   const allPosts = useMemo(() => {
     if (activeTab === 'trending') return trendingPosts.filter(isTimelinePost);
-    if (isRankedTab||selectedList) return fetchedPosts;
+    if (isRankedTab) return fetchedPosts;
+    if (selectedList) return mergePostsByCreatedAt(fetchedPosts);
     return mergePostsByCreatedAt(limePosts).filter(isTimelinePost).filter(post=>activeTab!=='all'||isLimeNoteTimelinePost(post));
   }, [activeTab, limePosts, trendingPosts, fetchedPosts,topicPreferences]);
   const firstAnimatedPostIds=useRef<Set<string>|null>(null);

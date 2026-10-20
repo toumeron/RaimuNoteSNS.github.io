@@ -102,12 +102,12 @@ export async function loadTimelinePage(previous: TimelineCursor, sources: Timeli
  const lime=copy(previous.lime);
  const bluesky=Object.fromEntries(Object.entries(previous.bluesky).map(([handle,state])=>[handle,copy(state)]));
  const states=[lime,...Object.values(bluesky)],posts:PostWithAuthor[]=[],seen=new Set<string>();
- const reads=new Map<SourceCursor,number>();
+ const reads=new Map<SourceCursor,number>(),failures=new Map<SourceCursor,unknown>();
  while(posts.length<TIMELINE_PAGE_SIZE){
   const missing=states.filter(state=>!state.done&&!state.posts.length);
   const jobs:Array<{state:SourceCursor;job:SourceRead}>=[];
   for(const state of missing){
-   if((reads.get(state)??0)>=2||Date.now()-started>=1000&&!pendingReads.has(state))continue;
+   if(failures.has(state)||(reads.get(state)??0)>=2||Date.now()-started>=1000&&!pendingReads.has(state))continue;
    const existing=pendingReads.get(state);
    const job=sourceRead(state,()=>{
     if(state===lime)return sources.lime(lime.page,SOURCE_PAGE_SIZE,lime.before).then(rows=>{
@@ -130,14 +130,14 @@ export async function loadTimelinePage(previous: TimelineCursor, sources: Timeli
    finally{clearTimeout(timer);}
    for(const {state,job} of jobs)if(job.settled){
     pendingReads.delete(state);
-    if(job.error)throw job.error;
+    if(job.error){failures.set(state,job.error);continue;}
     Object.assign(state,{...job.result,posts:[...(job.result?.posts??[])]});
    }
   }
   const available=states.filter(state=>state.posts.length);
   if(!available.length){
    if(jobs.some(({job})=>!job.settled)||missing.some(state=>(reads.get(state)??0)>=2)||Date.now()-started>=1000)break;
-   if(states.some(state=>!state.done))continue;
+   if(states.some(state=>!state.done&&!failures.has(state)))continue;
    break;
   }
   // Fast sources retain chronological merging. After the display budget,
@@ -147,6 +147,7 @@ export async function loadTimelinePage(previous: TimelineCursor, sources: Timeli
   if(seen.has(post.id)||!isTimelinePost(post))continue;
   seen.add(post.id);posts.push(post);
  }
+ if(!posts.length&&failures.size&&!states.some(state=>pendingReads.has(state)||state.posts.length))throw failures.values().next().value;
  const hasMore=states.some(state=>!state.done||state.posts.length);
  return {posts,next:hasMore?{lime,bluesky}:undefined};
 }

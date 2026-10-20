@@ -167,16 +167,19 @@ export async function getFeed(page: number = 0, limit: number = 10, before?: Fee
 }
 
 /** Only fetch video posts; raw-row cursors also advance across visibility filtering. */
-export async function getVideoFeed(before?:FeedCursor,signal?:AbortSignal):Promise<{posts:PostWithAuthor[];nextCursor:FeedCursor|null}> {
+export async function getVideoFeed(before?:FeedCursor,signal?:AbortSignal,scope?:{authorIds:string[];limit?:number}):Promise<{posts:PostWithAuthor[];nextCursor:FeedCursor|null}> {
  const userId=await getCurrentUserId();
+ if(scope&&!scope.authorIds.length)return {posts:[],nextCursor:null};
+ const limit=scope?.limit??8;
  let query=supabase.from('posts').select(POST_SELECT_QUERY).not('video','is',null)
-  .order('created_at',{ascending:false}).order('id',{ascending:false}).limit(8);
+  .order('created_at',{ascending:false}).order('id',{ascending:false}).limit(limit);
+ if(scope)query=query.in('user_id',scope.authorIds);
  if(before)query=query.or(`created_at.lt.${before.createdAt},and(created_at.eq.${before.createdAt},id.lt.${before.id})`);
  const {data,error}=await readWithSignal(query,signal);if(error)throw error;
  const raw=data??[],rows=await filterVisibleRows(raw,userId,signal);
  const {likedIds,repostedIds}=await getViewerReactions(userId,rows,signal);
  const last=raw[raw.length-1];
- return {posts:rows.map(row=>rowToPost(row,likedIds,repostedIds)),nextCursor:raw.length===8?{createdAt:last.created_at,id:last.id}:null};
+ return {posts:rows.map(row=>rowToPost(row,likedIds,repostedIds)),nextCursor:raw.length===limit?{createdAt:last.created_at,id:last.id}:null};
 }
 
 /**
@@ -651,6 +654,13 @@ export async function setPostMapLocation(postId: string, location: MapLocation |
   if (location && !validMapLocation(location)) throw new Error('場所が無効です');
   const {error} = await supabase.rpc('set_post_map_location', {post_id:postId, latitude:location?.latitude ?? null, longitude:location?.longitude ?? null});
   if (error) throw error;
+}
+
+/** Count only quotes visible under the caller's existing post permissions. */
+export async function getPostQuoteCount(postId:string,signal?:AbortSignal):Promise<number>{
+ const {count,error}=await supabase.from('posts').select('id',{count:'exact',head:true}).eq('parent_id',postId).eq('is_quote',true).abortSignal(signal??new AbortController().signal);
+ if(error)throw error;
+ return count??0;
 }
 
 export async function getPostQuotes(postId:string,replyId:string|null=null,sort:'top'|'latest'='top',page=0):Promise<PostWithAuthor[]> {

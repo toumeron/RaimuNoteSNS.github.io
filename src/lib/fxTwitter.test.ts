@@ -6,6 +6,7 @@ import { splitMentionText, mentionProfileHandle, externalRead, externalFetch } f
 import { searchMisskeyPostPage, configuredMisskeyHandles, mapMisskeyNote, type MisskeyNote, searchMisskey } from "@/lib/misskey";
 import { normalizeTimelineBlueskyPost } from "@/lib/timelinePaging";
 import { ACTIVE_ACCOUNT_KEY } from "@/lib/savedAccounts";
+vi.mock('./savedAccountSearch',()=>({searchSavedAccounts:vi.fn(async()=>[])}));
 
 describe("fxTwitter", () => {
 describe("fxTwitter", () => {
@@ -17,6 +18,15 @@ it('normalizes X URLs and rejects lookalike hosts and invalid IDs',()=>{
 it('preserves text, media and quotes without treating X verification as Lime official status',()=>{
  const mapped=mapXPost({...post(),quote:{...post('20'),media:{photos:[{url:'https://pbs.twimg.com/art.jpg',altText:'絵',width:600,height:900}]}}})!;
  expect(mapped.source).toBe('x');expect(mapped.author.username).toBe('X@twitter.com');expect(mapped.author.isOfficial).toBe(false);expect(mapped.externalVideo).toMatchObject({format:'mp4',duration:16,width:1920});expect(mapped.parentPost?.imageUrls).toEqual(['https://pbs.twimg.com/art.jpg']);expect(mapped.parentPost?.imageDimensions).toEqual([{width:600,height:900}]);expect('video' in mapped).toBe(false);
+});
+it('prefers compatible Twitter MP4 variants and retains an HLS fallback',()=>{
+ const source=post();
+ const mapped=mapXPost({...source,media:{videos:[{...source.media.videos[0],formats:[
+  {url:'https://video.twimg.com/unsupported.mp4',container:'mp4',codec:'hevc'},
+  {url:'https://video.twimg.com/compatible.mp4',container:'mp4',codec:'h264'},
+  {url:'https://video.twimg.com/stream.m3u8',container:'m3u8'},
+ ]}]}})!;
+ expect(mapped.externalVideo).toMatchObject({playlist:'https://video.twimg.com/compatible.mp4',format:'mp4',fallback:{playlist:'https://video.twimg.com/stream.m3u8',format:'hls'}});
 });
 it('does not expose protected posts or unsafe media',()=>{expect(mapXPost({...post(),author:{...post().author,protected:true}})).toBeNull();expect(mapXPost({...post(),media:{videos:[{url:'javascript:alert(1)'}]}})?.externalVideo).toBeUndefined();});
 it('keeps X pagination and uses only the selected provider',async()=>{
@@ -258,6 +268,16 @@ it('excluding Bluesky does not remove Misskey suggestions',async()=>{
   const fetcher=vi.fn(async(url:string)=>new Response(JSON.stringify(url.endsWith('users/show') ? misskeyUser:[misskeyUser])));vi.stubGlobal('fetch',fetcher);
   expect((await searchExternalUsers('cat',{includeBluesky:false}))[0].username).toBe('cat@misskey.io');
   expect(fetcher.mock.calls.every(([url])=>!String(url).includes("bsky.app"))).toBe(true);
+});
+it('finds an inactive Misskey account by display name using verified cross-provider search matches',async()=>{
+ vi.stubGlobal('fetch',vi.fn(async(url:string,init:RequestInit={})=>{
+  if(url.includes('api.fxtwitter.com'))return Response.json({code:200,users:[{id:'name-hint',screen_name:'Nakkar7',name:'かなめなか'},{id:'wrong-hint',screen_name:'other_artist',name:'かなめなか'}]});
+  if(url.endsWith('/users/search'))return Response.json([]);
+  if(url.endsWith('/users/show')){const body=JSON.parse(String(init.body));return Response.json({id:body.username,username:body.username,name:body.username==='Nakkar7'?'かなめなか':'別の人'});}
+  return Response.json({actors:[]});
+ }));
+ const result=await searchExternalUsers('かなめなか',{source:'misskey',limit:25});
+ expect(result.map(user=>user.username)).toEqual(['Nakkar7@misskey.io']);
 });
 it('federated mention links remain intact and short Misskey mentions stay on their server',()=>{
   expect(splitMentionText('hello @cat@misskey.io and @cat.bsky.social.')).toEqual(['hello ','@cat@misskey.io',' and ','@cat.bsky.social','.']);

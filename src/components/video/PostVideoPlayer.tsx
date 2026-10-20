@@ -7,21 +7,22 @@ import { Loader2, Play, Pause, Volume2, VolumeOff, Settings, PictureInPicture2, 
 import { resolvePostVideo, resolvePostVideoPoster } from "@/lib/mediaThumbnail";
 
 import { createPortal } from "react-dom";
+import {pwaHlsBuffers} from '@/lib/pwaPerformance';
 
 // hlsPlayback
 /** Attach an HLS stream only when playback is requested; abort releases buffers and requests. */
-async function attachHls(media: HTMLVideoElement, url: string, signal: AbortSignal, onError: (message: string) => void) {
+async function attachHls(media: HTMLVideoElement, url: string, signal: AbortSignal, onError: (message: string) => void, forceEngine=false) {
  const check = () => { if (signal.aborted) throw new DOMException('Aborted', 'AbortError'); };
  check();
  // Safari's native pipeline avoids an extra JS decoder/buffer and supports OS playback controls.
- if(media.canPlayType('application/vnd.apple.mpegurl')){media.src=url;return;}
+ if(!forceEngine&&media.canPlayType('application/vnd.apple.mpegurl')){media.src=url;return;}
  const {default: Hls, FetchLoader} = await import('hls.js');
  check();
  if (!Hls.isSupported()) {
-  if (media.canPlayType('application/vnd.apple.mpegurl')) { media.src = url; return; }
+  if (!forceEngine&&media.canPlayType('application/vnd.apple.mpegurl')) { media.src = url; return; }
   throw new Error('このブラウザーでは動画を再生できません');
  }
- const hls = new Hls({maxBufferLength: 20, maxMaxBufferLength: 30, loader: FetchLoader, fetchSetup: (context, init) => new Request(context.url, {...init, referrerPolicy:'no-referrer'})});
+ const hls = new Hls({maxBufferLength: 20, maxMaxBufferLength: 30,...pwaHlsBuffers(), loader: FetchLoader, fetchSetup: (context, init) => new Request(context.url, {...init, referrerPolicy:'no-referrer'})});
  const destroy = () => hls.destroy();
  signal.addEventListener('abort', destroy, {once:true});
  await new Promise<void>((resolve,reject) => {
@@ -200,7 +201,7 @@ function PostVideoThumbnail({postId,duration,thumbnail,external}:{postId:string;
 // VideoLightboxPlayer
 const VideoLightboxPlayerClock=(value:number)=>`${Math.floor(Math.max(0,value)/60)}:${Math.floor(Math.max(0,value)%60).toString().padStart(2,'0')}`;
 
-/** The active slide owns its source, request, and playback; adjacent videos never download. */
+/** Keep the active video and one paused next video ready; each owns and releases its source. */
 function VideoLightboxPlayer({selection,host,muted,onMutedChange,rate,onRateChange,onSource,suspended=false,zoom=1,pan={x:0,y:0},onTap}:{
  suspended?:boolean;selection:NonNullable<MediaViewerSelection['video']>;host:HTMLElement|null;zoom?:number;pan?:{x:number;y:number};onTap?:(toggle:()=>void)=>void;
  muted:boolean;onMutedChange:(muted:boolean)=>void;rate:number;onRateChange:(rate:number)=>void;onSource:(url:string)=>void;
@@ -210,29 +211,52 @@ function VideoLightboxPlayer({selection,host,muted,onMutedChange,rate,onRateChan
  const [loading,setLoading]=useState(true),[error,setError]=useState(''),[attempt,setAttempt]=useState(0),[playing,setPlaying]=useState(false),[time,setTime]=useState(0),[duration,setDuration]=useState(selection.video.duration);
  useEffect(()=>{const element=media.current;if(element)return bindBackgroundPlayback(element);},[selection.postId,selection.previewUrl,selection.externalVideo?.playlist]);
  const [soundBlocked,setSoundBlocked]=useState(false);
+ const [fallbackSource,setFallbackSource]=useState<string|null>(null),[engineSource,setEngineSource]=useState<string|null>(null);
+ const external=selection.externalVideo;
+ const usingFallback=!!external&&fallbackSource===external.playlist;
+ const playbackSource=usingFallback?external.fallback:external;
+ const forceEngine=!!playbackSource&&engineSource===playbackSource.playlist;
+ const playbackFailed=(cause?:unknown)=>{
+  if((cause as Error|undefined)?.name==='AbortError')return;
+  if(external?.fallback&&!usingFallback){setFallbackSource(external.playlist);return;}
+  if(playbackSource&&playbackSource.format!=='mp4'&&!/\.mp4(?:[?#]|$)/i.test(playbackSource.playlist)&&!forceEngine&&media.current?.canPlayType('application/vnd.apple.mpegurl')){setEngineSource(playbackSource.playlist);return;}
+  setError('動画を読み込めませんでした。別の動画へスワイプするか、再試行してください');
+ };
+ const sourceReady=useRef(false),resolvedPlaybackSource=useRef(''),sourceAbort=useRef<AbortController|null>(null);
+ const playbackFailedRef=useRef(playbackFailed);playbackFailedRef.current=playbackFailed;
  const actualMuted=muted||soundBlocked;
+ const startPlayback=async(element:HTMLVideoElement)=>{
+  const signal=sourceAbort.current?.signal;
+  try{await element.play();}
+  catch(error){
+   if(signal?.aborted||settings.current.suspended||media.current!==element)return;
+   if((error as Error).name!=='NotAllowedError'||element.muted)throw error;
+   element.muted=true;setSoundBlocked(true);await element.play();
+  }
+ };
  useEffect(()=>{
   const element=media.current;if(!element)return;
-  const abort=new AbortController();let local:string|undefined;
+  const abort=new AbortController();sourceAbort.current=abort;let local:string|undefined;
+  sourceReady.current=false;
   setLoading(true);setError('');setTime(0);setPlaying(false);setSoundBlocked(false);
   void(async()=>{
    try{
-    const result=selection.externalVideo?{url:selection.externalVideo.playlist,local:false}:selection.previewUrl?{url:selection.previewUrl,local:false}:await resolvePostVideo(selection.postId!,abort.signal);
+    const result=playbackSource?{url:playbackSource.playlist,local:false}:selection.previewUrl?{url:selection.previewUrl,local:false}:await resolvePostVideo(selection.postId!,abort.signal);
     if(abort.signal.aborted){if(result.local)URL.revokeObjectURL(result.url);return;}
     if(result.local)local=result.url;
-    if(selection.externalVideo?.format==='mp4'){element.src=result.url;}else if(selection.externalVideo)await attachHls(element,result.url,abort.signal,setError);else element.src=result.url;
-    if(abort.signal.aborted)return;settings.current.onSource(local??result.url);element.muted=settings.current.muted;element.playbackRate=settings.current.rate;
-    try{if(!settings.current.suspended)await element.play();}catch(e){if((e as Error).name!=='NotAllowedError'||element.muted)throw e;element.muted=true;setSoundBlocked(true);await element.play();}
+    if(playbackSource?.format==='mp4'||/\.mp4(?:[?#]|$)/i.test(result.url)){element.src=result.url;}else if(playbackSource)await attachHls(element,result.url,abort.signal,()=>{if(!abort.signal.aborted)playbackFailedRef.current();},forceEngine);else element.src=result.url;
+    if(abort.signal.aborted)return;sourceReady.current=true;resolvedPlaybackSource.current=local??result.url;if(!settings.current.suspended)settings.current.onSource(resolvedPlaybackSource.current);element.muted=settings.current.muted;element.playbackRate=settings.current.rate;
+    if(!settings.current.suspended)await startPlayback(element);
     if(abort.signal.aborted||settings.current.suspended)element.pause();
-   }catch(e){if(!abort.signal.aborted)setError((e as Error).message||'動画を再生できませんでした');}
+   }catch(e){if(!abort.signal.aborted)playbackFailedRef.current(e);}
    finally{if(!abort.signal.aborted)setLoading(false);}
   })();
   return()=>{abort.abort();element.pause();element.removeAttribute('src');element.load();if(local)URL.revokeObjectURL(local);};
- },[selection.postId,selection.previewUrl,selection.externalVideo?.playlist,attempt]);
+ },[selection.postId,selection.previewUrl,selection.externalVideo?.playlist,usingFallback,forceEngine,attempt]);
  useEffect(()=>{setSoundBlocked(false);if(media.current)media.current.muted=muted;},[muted]);
  useEffect(()=>{if(media.current)media.current.playbackRate=rate;},[rate]);
- useEffect(()=>{const element=media.current;if(!element)return;if(suspended)element.pause();else if(!loading&&!error)void element.play().catch(()=>{});},[suspended]);
- const toggle=()=>{const element=media.current;if(!element||loading)return;if(element.paused)void element.play().catch(()=>setError('再生できませんでした'));else element.pause();};
+ useEffect(()=>{const element=media.current;if(!element)return;if(suspended)element.pause();else if(sourceReady.current&&!loading&&!error){settings.current.onSource(resolvedPlaybackSource.current);if(element.paused){const signal=sourceAbort.current?.signal;void startPlayback(element).catch(error=>{if(!signal?.aborted)playbackFailedRef.current(error);});}}},[suspended,loading,error]);
+ const toggle=()=>{const element=media.current;if(!element||loading||suspended)return;if(element.paused)void element.play().catch(e=>{if((e as Error).name!=='AbortError'&&media.current===element)setError('再生できませんでした');});else element.pause();};
  const transport=<div className="lime-video-transport">
   <input aria-label="動画の再生位置" type="range" min="0" max={duration} step="0.1" value={Math.min(time,duration)} onChange={e=>{const next=Number(e.target.value);if(media.current)media.current.currentTime=next;setTime(next);}} style={{'--progress':`${duration?time/duration*100:0}%`} as React.CSSProperties}/>
   <div className="lime-video-transport-row">
@@ -244,10 +268,10 @@ function VideoLightboxPlayer({selection,host,muted,onMutedChange,rate,onRateChan
   </div>
  </div>;
  return <>
-  <video ref={media} poster={selection.externalVideo?.thumbnail} playsInline loop muted={actualMuted} preload="metadata" style={{transform:`translate(${pan.x}px, ${pan.y}px) scale(${zoom})`}} onClick={()=>onTap?onTap(toggle):toggle()} onPlay={()=>setPlaying(true)} onPause={()=>setPlaying(false)} onTimeUpdate={event=>{if(!document.hidden){const time=event.currentTarget.currentTime;setTime(previous=>Math.abs(previous-time)>=.25?time:previous);}}} onLoadedMetadata={event=>{if(Number.isFinite(event.currentTarget.duration))setDuration(event.currentTarget.duration);}} onError={()=>{if(media.current?.getAttribute('src'))setError('動画を読み込めませんでした');}}/>
+  <video ref={media} poster={selection.externalVideo?.thumbnail} playsInline loop muted={actualMuted} preload="auto" style={{transform:`translate(${pan.x}px, ${pan.y}px) scale(${zoom})`}} onClick={()=>onTap?onTap(toggle):toggle()} onPlay={()=>{setPlaying(true);setError('');}} onPause={()=>setPlaying(false)} onTimeUpdate={event=>{if(!document.hidden){const time=event.currentTarget.currentTime;setTime(previous=>Math.abs(previous-time)>=.25?time:previous);}}} onLoadedMetadata={event=>{if(Number.isFinite(event.currentTarget.duration))setDuration(event.currentTarget.duration);}} onError={()=>{if(media.current?.getAttribute('src'))playbackFailed();}}/>
   {loading&&<span className="lime-video-loading" role="status" aria-label="動画を読み込み中"><Loader2 className="animate-spin"/></span>}
   {!playing&&!loading&&!error&&<button className="lime-video-overlay-play" aria-label="動画を再生" onClick={toggle}><Play fill="currentColor"/></button>}
-  {error&&<div className="lime-video-error" role="alert">{error}<button onClick={()=>setAttempt(value=>value+1)}>再試行</button></div>}
+  {error&&<div className="lime-video-error" role="alert">{error}<button onClick={()=>{setFallbackSource(null);setEngineSource(null);setAttempt(value=>value+1);}}>再試行</button></div>}
   {host&&createPortal(transport,host)}
  </>;
 }

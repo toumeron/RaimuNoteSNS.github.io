@@ -15,7 +15,10 @@ export default defineConfig(({ mode }) => {
   define:{'import.meta.env.VITE_RECOMMENDATION_CATALOG_URL':JSON.stringify(env.VITE_RECOMMENDATION_CATALOG_URL||(existsSync('public/recommendations/catalog.json')?'/RaimuNoteSNS.github.io/recommendations/catalog.json':''))},
   // GitHub Pages用のベースパス設定
   base: "/RaimuNoteSNS.github.io/",
-  build: { target: ["es2020", "safari16"] },
+  build: { target: ["es2020", "safari16"],rollupOptions:{output:{manualChunks(id){
+    // Hashed framework code stays reusable across PWA application updates.
+    if(/\/node_modules\/(react\/|react-dom\/|scheduler\/|react-router(?:-dom)?\/|@tanstack\/(?:react-query|query-core)\/)/.test(id))return 'framework';
+  }}} },
   worker: { format: 'es' },
   optimizeDeps: { include: ['@huggingface/transformers'] },
   server: {

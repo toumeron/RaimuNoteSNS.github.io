@@ -91,9 +91,10 @@ describe('paired chronological timeline pagination', () => {
     const sources = sourcesFor([post('lime', 2)], { author: [post('blue', 1)] });
     const real = sources.lime;
     sources.lime = vi.fn(async () => { throw new Error('offline'); });
-    await expect(loadTimelinePage(cursor, sources)).rejects.toThrow('offline');
-    expect(cursor).toEqual(saved);
-    sources.lime = real; expect((await loadTimelinePage(cursor, sources)).posts).toHaveLength(2);
+    const first=await loadTimelinePage(cursor,sources);
+    expect(first.posts.map(post=>post.id)).toEqual(['blue']);
+    expect(first.next?.lime).toEqual(saved.lime);expect(cursor).toEqual(saved);
+    sources.lime=real;expect((await loadTimelinePage(first.next!,sources)).posts.map(post=>post.id)).toEqual(['lime']);
   });
   it('continues Lime normally when no Bluesky accounts are configured', async () => {
     const lime = Array.from({ length: 47 }, (_, i) => post(`lime-${i}`, 100 - i));
@@ -237,4 +238,18 @@ it('does not mistake an empty or failed trend scan for absence of trend posts',(
   expect(showTimelineEmpty(loading,fetching,error,0,'trending')).toBe(false);
  }
  expect(showTimelineEmpty(false,false,false,0,'all')).toBe(true);
+});
+
+it('keeps a failed external account resumable without hiding ready accounts',async()=>{
+ const sources:TimelineSources={lime:async()=>[],bluesky:vi.fn(async handle=>{if(handle==='failed')throw new Error('429');return {posts:[{id:'ready',createdAt:'2026-10-20',author:{id:'ready',username:'ready'}} as any],cursor:null};})};
+ const first=await loadTimelinePage(createTimelineCursor(['failed','ready']),sources);
+ expect(first.posts.map(p=>p.id)).toEqual(['ready']);expect(first.next?.bluesky.failed).toMatchObject({cursor:null,done:false});
+ expect(sources.bluesky).toHaveBeenCalledTimes(2);
+ sources.bluesky=async()=>({posts:[{id:'recovered',createdAt:'2026-10-21',author:{id:'recovered',username:'recovered'}} as any],cursor:null});
+ expect((await loadTimelinePage(first.next!,sources)).posts.map(p=>p.id)).toEqual(['recovered']);
+});
+it('surfaces a complete outage without marking every source as exhausted',async()=>{
+ const sources:TimelineSources={lime:async()=>{throw new Error('offline');},bluesky:async()=>{throw new Error('offline');}};
+ const cursor=createTimelineCursor(['account']);await expect(loadTimelinePage(cursor,sources)).rejects.toThrow('offline');
+ expect(cursor.lime.done).toBe(false);expect(cursor.bluesky.account.done).toBe(false);
 });

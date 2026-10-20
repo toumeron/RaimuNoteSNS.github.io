@@ -21,7 +21,7 @@ export type User = {
   bot_prompt?: string;   // AIへの指示内容
 };
 
-export type ExternalVideo = { playlist: string; format?: 'hls' | 'mp4'; thumbnail?: string; width: number; height: number; duration: number; alt?: string };
+export type ExternalVideo = { fallback?: {playlist: string; format: 'hls' | 'mp4'}; playlist: string; format?: 'hls' | 'mp4'; thumbnail?: string; width: number; height: number; duration: number; alt?: string };
 
 export type ExternalPostDetails = { views?:number; bookmarks?:number; reposts?:number; quotes?:number; poll?:import("@/lib/utils").Poll; communityNote?:string };
 

@@ -261,10 +261,18 @@ function searchProviderBatch(candidates:PostWithAuthor[],limit:number,mixed:bool
 }
 
 // twitterSearchRelay
+const twitterSearchCooldowns=new Map<string,number>();
+const twitterSearchRateLimitError=()=>Object.assign(new Error('検索の取得先が一時的にアクセス制限中です。時間をおいて再試行してください。'),{name:'VideoSourceRateLimitError'});
 async function relayTwitterSearch(query:string,feed:string,offset:number,signal?:AbortSignal,limit=6):Promise<{ids:string[];cursor:number|null}>{
  limit=Math.max(1,Math.min(20,Math.floor(limit)||6));
  const {data:{session}}=await supabase.auth.getSession();if(!session)throw new Error('twitterの代替検索にはLimeNoteへのログインが必要です');
+ if((twitterSearchCooldowns.get(session.user.id)??0)>Date.now())throw twitterSearchRateLimitError();
  const result=await externalRead(()=>supabase.functions.invoke('link-preview',{body:{mode:'twitter-search',query,feed,offset,...(limit!==6?{limit}:{})},signal}),signal,'interactive');
+ const response=result.error?.context;
+ if(response instanceof Response&&response.status===429){
+  const seconds=Math.max(1,Number(response.headers.get('retry-after'))||300);
+  twitterSearchCooldowns.set(session.user.id,Date.now()+seconds*1000);throw twitterSearchRateLimitError();
+ }
  if(result.error||!Array.isArray(result.data?.ids))throw new Error('twitterの検索結果を取得できませんでした');
  return {ids:result.data.ids.filter((id:unknown):id is string=>typeof id==='string'&&/^\d{2,20}$/.test(id)).slice(0,limit),cursor:Number.isInteger(result.data.cursor)&&result.data.cursor>offset?result.data.cursor:null};
 }

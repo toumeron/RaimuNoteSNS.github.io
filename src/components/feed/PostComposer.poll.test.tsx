@@ -26,7 +26,7 @@ const mocks=vi.hoisted(()=>({submit:vi.fn(),prepare:vi.fn()}));
 vi.mock('@/pages/Feed',()=>({default:()=>null}));
 
 import {PostComposer} from './PostComposer';
-import {PostComposer as OverlayComposer} from '@/App';
+import {PostComposer as OverlayComposer} from './OverlayPostComposer';
 beforeEach(()=>{vi.clearAllMocks();mocks.submit.mockResolvedValue({});});afterEach(cleanup);
 it('submits a text-only poll through the normal composer and resets it after success',async()=>{
  render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><MemoryRouter><PostComposer/></MemoryRouter></QueryClientProvider>);fireEvent.click(screen.getByRole('button',{name:'投票を追加'}));

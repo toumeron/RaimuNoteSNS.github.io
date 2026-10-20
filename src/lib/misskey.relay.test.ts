@@ -2,18 +2,18 @@ import {beforeEach,expect,it,vi} from 'vitest';
 const fixture=vi.hoisted(()=>({session:{} as object|null,invoke:vi.fn()}));
 vi.mock('./supabase',()=>({supabase:{auth:{getSession:async()=>({data:{session:fixture.session}})},functions:{invoke:fixture.invoke}}}));
 import {misskeyRequest,misskeyProfile,fetchMisskeyTopicPosts} from './misskey';
-beforeEach(()=>{fixture.session={};fixture.invoke.mockReset();vi.unstubAllGlobals();});
+beforeEach(()=>{fixture.session={};fixture.invoke.mockReset();vi.unstubAllGlobals();vi.stubGlobal('fetch',vi.fn().mockRejectedValue(new TypeError('CORS unavailable')));});
 it('includes replies in an author profile scan',async()=>{
  const {misskeyFeed}=await import('./misskey');
  fixture.invoke.mockImplementation(async(_name:string,{body}:any)=>({data:{data:body.endpoint==='users/show'?{id:'creator',username:'creator'}:[]},error:null}));
  await misskeyFeed({actor:'misskey-user:creator',filter:'posts_with_replies',includeReposts:true,limit:100});
  expect(fixture.invoke).toHaveBeenCalledWith('link-preview',expect.objectContaining({body:{mode:'misskey',endpoint:'users/notes',params:{limit:100,userId:'creator',withReplies:true}}}));
 });
-it('uses the existing authenticated relay without a cross-origin browser request',async()=>{
- const fetcher=vi.fn();vi.stubGlobal('fetch',fetcher);
+it('falls back to the authenticated relay when the public browser read fails',async()=>{
+ const fetcher=vi.fn().mockRejectedValue(new TypeError('CORS'));vi.stubGlobal('fetch',fetcher);
  fixture.invoke.mockResolvedValue({data:{data:[{id:'local',username:'cat'}]},error:null});
  expect(await misskeyRequest('users/search',{query:'cat',i:'do-not-forward'})).toEqual([{id:'local',username:'cat'}]);
- expect(fetcher).not.toHaveBeenCalled();
+ expect(fetcher).toHaveBeenCalledTimes(1);
  expect(fixture.invoke).toHaveBeenCalledWith('link-preview',expect.objectContaining({body:{mode:'misskey',endpoint:'users/search',params:{query:'cat'}}}));
 });
 it('treats an absent exact user as a search miss rather than invalid profile data',async()=>{
@@ -61,4 +61,45 @@ it('keeps Misskey renote totals in posts and quotes',async()=>{
  const quoted={id:'quoted-count',createdAt:'2026-10-17T00:00:00Z',text:'元の投稿',visibility:'public',user:{id:'artist',username:'artist'},renoteCount:24};
  const post=mapMisskeyNote({...quoted,id:'quote-count',text:'引用',renoteCount:12,renote:quoted})!;
  expect(post.repostsCount).toBe(12);expect(post.externalDetails?.reposts).toBe(12);expect(post.parentPost?.repostsCount).toBe(24);
+});
+
+it('uses the public read API even when the shared relay would be rate limited',async()=>{
+ fixture.session={user:{id:'limited-misskey'}};
+ fixture.invoke.mockResolvedValue({data:null,error:{context:new Response(null,{status:429,headers:{'retry-after':'300'}})}});
+ const fetcher=vi.fn().mockImplementation(async()=>new Response(JSON.stringify([{id:'available',username:'cat'}])));vi.stubGlobal('fetch',fetcher);
+ expect(await misskeyRequest('users/search',{query:'cat'})).toEqual([{id:'available',username:'cat'}]);
+ expect(await misskeyRequest('users/search',{query:'dog'})).toEqual([{id:'available',username:'cat'}]);
+ expect(fixture.invoke).not.toHaveBeenCalled();expect(fetcher).toHaveBeenCalledTimes(2);
+ expect(fetcher.mock.calls[0][0]).toBe('https://misskey.io/api/users/search');
+});
+
+it('publishes an exact Misskey profile before the broad account search finishes',async()=>{
+ const {searchMisskey}=await import('./misskey');
+ let finishSearch!:(value:Response)=>void;
+ const pending=new Promise<Response>(resolve=>{finishSearch=resolve;});
+ vi.stubGlobal('fetch',vi.fn().mockImplementation(async(url:string)=>url.endsWith('/users/search')?pending:new Response(JSON.stringify({id:'live-km170',username:'km170',name:'たんたんめん',avatarUrl:'https://example.com/avatar.png'}))));
+ const publish=vi.fn(),search=searchMisskey('km170',false,undefined,publish);
+ await vi.waitFor(()=>expect(publish).toHaveBeenCalledWith([expect.objectContaining({id:'misskey-user:live-km170',displayName:'たんたんめん',avatarUrl:'https://example.com/avatar.png'})]));
+ finishSearch(new Response('[]'));
+ expect((await search).users).toHaveLength(1);
+});
+
+it('finds kana variants of display names and retains federated accounts without follower thresholds',async()=>{
+ const {searchMisskey}=await import('./misskey');
+ const fetcher=vi.fn().mockImplementation(async(_url:string,init:RequestInit)=>{
+  const body=JSON.parse(String(init.body));
+  return Response.json(body.query==='あおぞらの絵描き'?[{id:'small-artist',username:'unrelated_handle',host:'art.example',name:'あおぞらの絵描き',followersCount:0}]:[]);
+ });vi.stubGlobal('fetch',fetcher);
+ const result=await searchMisskey('アオゾラノ絵描キ',false);
+ expect(result.users).toEqual([expect.objectContaining({username:'unrelated_handle@art.example',displayName:'あおぞらの絵描き'})]);
+ expect(fetcher.mock.calls.some(([,init])=>JSON.parse(String(init.body)).query==='あおぞらの絵描き')).toBe(true);
+ expect(fetcher.mock.calls.every(([,init])=>JSON.parse(String(init.body)).origin==='combined')).toBe(true);
+});
+
+it('keeps a resolved inactive account searchable by its display name when the server omits it',async()=>{
+ const {searchMisskey}=await import('./misskey');
+ vi.stubGlobal('fetch',vi.fn().mockImplementation(async(url:string)=>Response.json(url.endsWith('/users/show')?{id:'inactive-name-test',username:'inactive_artist',name:'久遠の絵描き',avatarUrl:'https://example.com/artist.png'}:[])));
+ await misskeyProfile('inactive_artist@misskey.io');
+ const result=await searchMisskey('久遠の絵描き',false);
+ expect(result.users).toEqual([expect.objectContaining({id:'misskey-user:inactive-name-test',displayName:'久遠の絵描き'})]);
 });

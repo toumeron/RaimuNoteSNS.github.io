@@ -1,3 +1,4 @@
+import {useTimelineSourceUpdates} from './useTimelineSourceUpdates';
 import { useMutation, useQuery, useQueryClient, useInfiniteQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { getTopicPreferences, topicsKey, updateTopicPreferences, createTopicCursor, getTopicPage, getTrendRanking } from "@/api/topics";
@@ -55,8 +56,10 @@ function useListFeed(id?:string){
  const {user}=useAuth();const list=useList(id);const members=list.data?.members??[];
  const native=members.filter(member=>uuid.test(member.id)).map(member=>member.id);
  const external=members.filter(member=>!uuid.test(member.id)).map(member=>member.id.startsWith('misskey-user:')?member.username:member.id);
- const query=useInfiniteQuery({queryKey:['feed','list',user?.id??null,id,list.data?.updated_at],enabled:!!id&&!!list.data,
+ const queryKey=['feed','list',user?.id??null,id,list.data?.updated_at,'timeline-v2'];
+ const query=useInfiniteQuery({queryKey,enabled:!!id&&!!list.data,
  initialPageParam:createTimelineCursor(external),queryFn:({pageParam,signal})=>loadTimelinePage(pageParam,{lime:(page,limit,before)=>getListNativePosts(native,page,limit,before,signal),bluesky:(actor,cursor,limit)=>fetchBlueskyAuthorFeed({actor,cursor,limit,signal})}),getNextPageParam:page=>page.next,staleTime:60000,refetchOnWindowFocus:false,retry:false});
+ useTimelineSourceUpdates(queryKey,query.data,query.isFetching,!!id);
  return {...query,isLoading:list.isLoading||query.isLoading,isError:list.isError||query.isError,error:list.error??query.error,refetch:async()=>{await list.refetch();return query.refetch();}};
 }
 function useInvalidateLists(){const client=useQueryClient();return async()=>{await Promise.all([client.invalidateQueries({queryKey:['list-catalog']}),client.invalidateQueries({queryKey:['user-lists']}),client.invalidateQueries({queryKey:['user-list']}),client.invalidateQueries({queryKey:['feed','list']})]);};}

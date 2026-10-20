@@ -1,3 +1,4 @@
+import {useTimelineSourceUpdates} from './useTimelineSourceUpdates';
 import { completeSavedPosts } from "@/api/external-posts";
 import { useMutation, useQuery, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { createPost, getFeed, getFollowingFeed, getPostById, getPostsByUser, toggleLike, toggleRepost, getProfilePosts } from "@/api/posts";
@@ -9,7 +10,7 @@ import { useEffect, useState } from "react";
 import { initialiseExternalAccounts, setExternalAccountOwner, completeExternalPostAuthors } from "@/lib/externalAccounts";
 import { useAuth } from "@/hooks/useAuth";
 import { fetchBlueskyAuthorFeed, getConfiguredExternalHandles } from "@/lib/bluesky";
-import { createTimelineCursor, loadTimelinePage, watchTimelineSources, collectReadyTimelineSources } from "@/lib/timelinePaging";
+import { createTimelineCursor, loadTimelinePage } from "@/lib/timelinePaging";
 import { createComment, getCommentsByPost, type CommentInput } from "@/api/comments";
 import { getUserByUsername, updateProfile, getFollowStats, toggleFollow } from "@/api/users";
 
@@ -322,41 +323,20 @@ function useTimelineFeed(tab: 'all' | 'following', enabled = true) {
   }, [user?.id,tab]);
 
   const sourceHandles=tab==='following'?handles:[];
-  const queryKey=['feed',tab,tab==='all'?'timeline-native-v2':'timeline',user?.id,sourceHandles];
+  const queryKey=['feed',tab,tab==='all'?'timeline-native-v3':'timeline-v2',user?.id,sourceHandles];
   const query=useInfiniteQuery({
     enabled:enabled&&!loading&&!!user,
     queryKey,
     initialPageParam: createTimelineCursor(sourceHandles),
     queryFn: ({ pageParam, signal }) => loadTimelinePage(pageParam, {
       lime: (page,limit,before)=>(tab === 'all' ? getFeed : getFollowingFeed)(page,limit,before,signal),
-      bluesky: async (actor, cursor, limit) => {
-        try { return await fetchBlueskyAuthorFeed({ actor, cursor, limit, signal }); }
-        catch(error) {
-          if (signal.aborted || (!actor.includes('@') && actor!=='misskey.io' && !actor.startsWith('x-user:'))) throw error;
-          console.warn('Misskey feed unavailable; retaining LimeNote timeline',error);
-          return {posts:[],cursor:null};
-        }
-      },
+      bluesky: (actor,cursor,limit)=>fetchBlueskyAuthorFeed({actor,cursor,limit,signal}),
     }),
     getNextPageParam: lastPage => lastPage.next,
     staleTime: 1000 * 60,
     retry:false,
   });
-  useEffect(()=>{
-    const cursor=query.data?.pages.at(-1)?.next;
-    if(!enabled||query.isFetching||!cursor)return;
-    return watchTimelineSources(cursor,()=>{
-      if(client.getQueryState(queryKey)?.fetchStatus==='fetching')return;
-      client.setQueryData<NonNullable<typeof query.data>>(queryKey,data=>{
-        const last=data?.pages.at(-1);
-        if(!data||!last?.next||last.next!==cursor)return data;
-        const ready=collectReadyTimelineSources(cursor);if(!ready)return data;
-        const shown=new Set(data.pages.flatMap(page=>page.posts.map(post=>post.id)));
-        const posts=ready.posts.filter(post=>{if(shown.has(post.id))return false;shown.add(post.id);return true;});
-        return {...data,pages:[...data.pages.slice(0,-1),{posts:[...last.posts,...posts],next:ready.next}]};
-      });
-    });
-  },[enabled,query.isFetching,query.data,client]);
+  useTimelineSourceUpdates(queryKey,query.data,query.isFetching,enabled);
   return query;
 }
 

@@ -4,6 +4,7 @@ import { cloudExternalHandles, saveExternalProviderHandles } from './externalAcc
 import type { BlueskyMappedPost, BlueskyProfile } from './bluesky';
 import {supabase} from './supabase';
 import {externalRead, accountSearchScore} from './utils';
+import {normalizeAccountText} from './accountSearchRanking';
 
 // All requests, credentials and IDs are scoped to the selected server.
 export const MISSKEY_ORIGIN = 'https://misskey.io';
@@ -29,7 +30,7 @@ export async function changeMisskeySetting(key:string, value:unknown) {
 // Misskey is an account reader, not an additional login provider.
 type MisskeyUser = {id:string;username:string;host?:string|null;name?:string|null;avatarUrl?:string;bannerUrl?:string;description?:string;createdAt?:string;followersCount?:number;followingCount?:number;notesCount?:number;isBot?:boolean;isFollowing?:boolean};
 export type MisskeyNote = {id:string;createdAt:string;text?:string|null;cw?:string|null;visibility:string;user:MisskeyUser;files?:{type:string;url:string;thumbnailUrl?:string;properties?:{width?:number;height?:number};isSensitive?:boolean;comment?:string|null}[];reactions?:Record<string,number>;myReaction?:string|null;repliesCount?:number;renoteCount?:number;renote?:MisskeyNote;replyId?:string|null;reply?:MisskeyNote};
-let relayRequired=false;
+const relayCooldowns=new Map<string,number>();
 export async function misskeyRequest<T>(endpoint:string, body:Record<string,unknown>={}, signal?:AbortSignal, required=false):Promise<T> {
   if (required) throw new Error('Misskeyの操作は元のサイトで行ってください');
   const {i: _unusedCredential, ...params}=body;
@@ -41,18 +42,19 @@ export async function misskeyRequest<T>(endpoint:string, body:Record<string,unkn
   const {data:{session}}=await supabase.auth.getSession();
   const readRelay=async()=>{
     const result=await externalRead(()=>supabase.functions.invoke('link-preview',{body:{mode:'misskey',endpoint,params},signal:controller.signal}),controller.signal);
+    const response=result.error?.context;
+    if(response instanceof Response&&response.status===429)throw Object.assign(new Error('Misskeyの中継取得が一時的に制限されています'),{status:429,retryAfter:Math.max(1,Number(response.headers.get('retry-after'))||300)});
     if(result.error||!result.data||!('data' in result.data))throw new Error('Misskeyの取得に失敗しました');
     return result.data.data as T;
   };
-  // Signed-in readers use the existing authenticated relay before attempting
-  // browser requests that can fail CORS. Public, signed-out reads remain direct.
-  if(session)return await readRelay();
+  // The public API permits browser CORS reads; avoid the shared relay quota.
+  const owner=session?.user?.id??'public';
   let response:Response;
-  try {if(relayRequired)throw new TypeError('Direct reader unavailable');response=await externalRead(()=>fetch(`${MISSKEY_ORIGIN}/api/${endpoint}`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(params),signal:controller.signal}),controller.signal);}
+  try {response=await externalRead(()=>fetch(`${MISSKEY_ORIGIN}/api/${endpoint}`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(params),signal:controller.signal}),controller.signal);}
   catch(error){
     if(!(error instanceof TypeError)||signal?.aborted||controller.signal.aborted)throw error;
-    relayRequired=true;
-    return await readRelay();
+    if((relayCooldowns.get(owner)??0)>Date.now())throw Object.assign(new Error('Misskeyの取得先が一時的に制限されています。時間をおいて再試行してください'),{status:429});
+    try{return await readRelay();}catch(relayError){if((relayError as {status?:number}).status===429)relayCooldowns.set(owner,Date.now()+(relayError as {retryAfter:number}).retryAfter*1000);throw relayError;}
   }
   if (!response.ok) {
     const result=await response.json().catch(()=>null);
@@ -129,9 +131,9 @@ export async function searchMisskeyPostPage(query:string,cursor:string|null=null
  return {posts:rows.map(note=>mapMisskeyNote(note)).filter((post):post is BlueskyMappedPost=>!!post),cursor:next!==cursor?next:null};
 }
 
-export async function searchMisskey(query:string,includePosts=true,signal?:AbortSignal) {
+export async function searchMisskey(query:string,includePosts=true,signal?:AbortSignal,onUsers?:(users:BlueskyProfile[])=>void) {
   if (isAccountReadOnly()) return {posts:[],users:[]};
-  const normalized=query.trim().replace(`${MISSKEY_ORIGIN}/@`,'').replace(/^@+/, '');
+  const normalized=query.normalize('NFKC').trim().replace(`${MISSKEY_ORIGIN}/@`,'').replace(/^@+/, '');
   if(!normalized)return {posts:[],users:[]};
   const key=`${includePosts}:${normalized.toLocaleLowerCase()}`;
   const cached=searchCache.get(key) || (!includePosts ? searchCache.get(`true:${normalized.toLocaleLowerCase()}`):undefined);
@@ -140,16 +142,27 @@ export async function searchMisskey(query:string,includePosts=true,signal?:Abort
   // Display-name search is ordered by activity at the server. Rank the broader
   // candidate list locally so an exact name is not lost behind active accounts.
   const cachedUsers=searchCache.get(`false:${normalized.toLocaleLowerCase()}`);
-  const accountJobs:Promise<BlueskyProfile[]>[]=[cachedUsers && cachedUsers.expires>Date.now() ? Promise.resolve(cachedUsers.result.users):misskeyRequest<MisskeyUser[]>('users/search',{query:nameQuery,limit:100,origin:'local'},signal).then(rows=>rows.filter(user=>!user.host || user.host==='misskey.io').map(mapMisskeyUser))];
+  const variants=[...new Set([nameQuery,nameQuery.replace(/[ァ-ヶ]/g,c=>String.fromCharCode(c.charCodeAt(0)-0x60)),nameQuery.replace(/[ぁ-ゖ]/g,c=>String.fromCharCode(c.charCodeAt(0)+0x60))])];
+  // users/search excludes inactive accounts. Retain profiles already resolved by
+  // handle so switching to their display name does not lose those accounts.
+  const known=[...new Map([...profileCache.values()].map(entry=>[entry.profile.id,entry.profile])).values()].filter(user=>normalizeAccountText(`${user.displayName} ${user.username}`).includes(normalizeAccountText(nameQuery)));
+  if(known.length&&!signal?.aborted)onUsers?.(known);
+  const accountJobs:Promise<BlueskyProfile[]>[]=[Promise.resolve(known),...(cachedUsers && cachedUsers.expires>Date.now() ? [Promise.resolve(cachedUsers.result.users)]:variants.map(term=>misskeyRequest<MisskeyUser[]>('users/search',{query:term,limit:100,origin:'combined'},signal).then(rows=>rows.map(mapMisskeyUser))))];
   if((!cachedUsers || cachedUsers.expires<=Date.now()) && /^[a-zA-Z0-9_.-]+(?:@[^@\s]+)?$/.test(normalized)) {
     accountJobs.push(misskeyProfile(normalized.includes('@') ? normalized : `${normalized}@misskey.io`,signal).then(user=>[user]));
   }
-  const accounts=Promise.allSettled(accountJobs).then(results=>{
-    if(results.every(result=>result.status==='rejected'))throw (results[0] as PromiseRejectedResult).reason;
+  const readyUsers=new Map<string,BlueskyProfile>();
+  const accounts=Promise.allSettled(accountJobs.map(job=>job.then(users=>{
+    users.forEach(user=>readyUsers.set(user.id,user));
+    if(!signal?.aborted&&users.length)onUsers?.([...readyUsers.values()].sort((a,b)=>accountSearchScore(b,normalized)-accountSearchScore(a,normalized)).slice(0,25));
+    return users;
+  }))).then(results=>{
+    if(results.slice(1).length&&results.slice(1).every(result=>result.status==='rejected')&&!known.length)throw (results[1] as PromiseRejectedResult).reason;
     return results.flatMap(result=>result.status==='fulfilled' ? result.value:[]);
   });
   const [notes,users]=await Promise.allSettled([includePosts ? misskeyRequest<MisskeyNote[]>('notes/search',{query:query.trim().replace(/^#/, ''),limit:30},signal) : Promise.resolve([] as MisskeyNote[]),accounts]);
   if(signal?.aborted)throw signal.reason;
+  if(users.status==='rejected'&&!includePosts)throw users.reason;
   if(notes.status==='rejected' && users.status==='rejected')throw notes.reason;
   const ranked=users.status==='fulfilled' ? [...new Map(users.value.map(user=>[user.id,user])).values()].sort((a,b)=>accountSearchScore(b,normalized)-accountSearchScore(a,normalized)):[];
   const result={posts:(notes.status==='fulfilled' ? notes.value:[]).map(note=>mapMisskeyNote(note)).filter((post):post is BlueskyMappedPost=>Boolean(post)),users:ranked.slice(0,25)};

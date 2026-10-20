@@ -1,3 +1,8 @@
+import {xProfile as resolveAliasXProfile} from './fxTwitter';
+import {searchAccountAliasHandles} from './accountAliases';
+import {searchSavedAccounts} from './savedAccountSearch';
+import {normalizeAccountText} from './accountSearchRanking';
+import {TransientCache} from './transientCache';
 import { relayBlueskySearch } from "@/api/search-news";
 import { isAccountReadOnly } from '@/lib/accountSuspension';
 import { extractPostMapLocation } from "@/lib/mapLocation";
@@ -613,7 +618,7 @@ export type BlueskyFollowListPage = {
 };
 
 const BLUESKY_SEARCH_CACHE_TTL_MS = 60_000;
-const blueskySearchCache = new Map<string, { expiresAt: number; result: BlueskySearchResults }>();
+const blueskySearchCache = new TransientCache<string, { expiresAt: number; result: BlueskySearchResults }>(60_000);
 const blueskySearchRequests = new Map<string, Promise<BlueskySearchResults>>();
 
 type BlueskyEmbed = {
@@ -984,7 +989,7 @@ export const getBlueskyUriFromPostId = (postId: string) => {
 
 // Read only the authenticated account's likes, on a requested recommendation
 // page. The API disallows another account's private likes.
-const recommendationLikesCache=new Map<string,{at:number;posts:BlueskyMappedPost[]}>();
+const recommendationLikesCache=new TransientCache<string,{at:number;posts:BlueskyMappedPost[]}>(600_000,12,6);
 export async function fetchBlueskyLikedPosts(signal?:AbortSignal):Promise<BlueskyMappedPost[]> {
  const session=getStoredBlueskySession();if(!session)return [];
  const owner=window.localStorage.getItem(ACTIVE_ACCOUNT_KEY),key=`${owner}:${session.did}`;
@@ -1588,22 +1593,63 @@ export async function fetchTrendingJapaneseBlueskyPosts(options?:{cursor?:string
   return {posts,cursor:bluesky.cursor};
 }
 
-// Both search surfaces publish one ranked list after the readers settle.
-export async function searchExternalUsers(query:string,options:{includeBluesky?:boolean;signal?:AbortSignal;limit?:number}={}):Promise<BlueskyProfile[]> {
+async function searchAliasUsers(query:string,signal?:AbortSignal):Promise<BlueskyProfile[]>{
+ const controller=new AbortController(),abort=()=>controller.abort(signal?.reason);
+ if(signal?.aborted)throw signal.reason;
+ signal?.addEventListener('abort',abort,{once:true});
+ const timer=setTimeout(()=>controller.abort(),3500);
+ try{
+  const handles=await searchAccountAliasHandles(query,controller.signal);
+  const results=await Promise.allSettled(handles.map(handle=>resolveAliasXProfile(`${handle}@twitter.com`,controller.signal)));
+  return results.flatMap(result=>result.status==='fulfilled'&&result.value?[result.value]:[]);
+ }catch(error){if(signal?.aborted)throw error;return [];}
+ finally{clearTimeout(timer);signal?.removeEventListener('abort',abort);}
+}
+
+// Publish completed providers immediately, so a slow provider cannot hide Misskey.
+export async function searchExternalUsers(query:string,options:{includeBluesky?:boolean;signal?:AbortSignal;limit?:number;source?:'all'|'lime'|'bluesky'|'misskey'|'x';onUsers?:(users:BlueskyProfile[])=>void}={}):Promise<BlueskyProfile[]> {
   if (isAccountReadOnly()) return [];
   const normalized=query.trim().replace(/^@+/, '');
   if(!normalized)return [];
+  const completed=new Map<number,BlueskyProfile[]>();
+  const matchedMisskey=new Map<string,BlueskyProfile>(),checkedHandles=new Set<string>(),profileReads:Promise<void>[]=[];
+  const ranked=()=>{
+    const aliasIds=new Set((completed.get(3)??[]).map(user=>user.id));
+    const score=(user:BlueskyProfile)=>Math.max(accountSearchScore(user,normalized),aliasIds.has(user.id)?75:0);
+    return [...new Map([...([4,0,1,2,3].flatMap(index=>completed.get(index)??[])),...matchedMisskey.values()].map(user=>[user.id,user])).values()]
+      .filter(user=>!options.source||options.source==='all'||options.source==='misskey'&&user.id.startsWith('misskey-user:')||options.source==='x'&&user.id.startsWith('x-user:')||options.source==='bluesky'&&user.id.startsWith('did:'))
+      .sort((a,b)=>score(b)-score(a)).slice(0,options.limit??3);
+  };
+  const findMisskeyNames=(users:BlueskyProfile[],source:number)=>{
+    if(options.source&&options.source!=='all'&&options.source!=='misskey')return;
+    const name=normalizeAccountText(normalized);
+    if(name.length<2||source!==0&&source!==2)return;
+    let added=0;
+    for(const user of users){
+      if(user.id.startsWith('misskey-user:')||!normalizeAccountText(user.displayName).includes(name))continue;
+      const handle=user.username.replace(/@(?:twitter|x)\.com$/i,'').split('.')[0];
+      if(!/^[a-zA-Z0-9_-]{1,50}$/.test(handle)||checkedHandles.has(handle.toLowerCase())||checkedHandles.size>=4||added>=2)continue;
+      checkedHandles.add(handle.toLowerCase());
+      added++;
+      const readSignal=options.signal?AbortSignal.any([options.signal,AbortSignal.timeout(3000)]):AbortSignal.timeout(3000);
+      profileReads.push(misskeyProfile(`${handle}@misskey.io`,readSignal).then(profile=>{
+        // Matching handles alone are insufficient: verify the returned display name.
+        if(!normalizeAccountText(profile.displayName).includes(name)||options.signal?.aborted)return;
+        matchedMisskey.set(profile.id,profile);options.onUsers?.(ranked());
+      }).catch(()=>{}));
+    }
+  };
   const results=await Promise.allSettled([
-    options.includeBluesky===false ? Promise.resolve({users:[]}):searchBluesky(normalized,{includePosts:false,signal:options.signal}),
-    searchMisskey(normalized,false,options.signal),
-    searchX(normalized,false,options.signal),
-  ]);
+    options.includeBluesky===false||options.source&&options.source!=='all'&&options.source!=='bluesky'&&options.source!=='misskey' ? Promise.resolve({users:[]}):searchBluesky(normalized,{includePosts:false,signal:options.signal}),
+    !options.source||options.source==='all'||options.source==='misskey'?searchMisskey(normalized,false,options.signal,users=>{completed.set(1,users);if(!options.signal?.aborted)options.onUsers?.(ranked());}):Promise.resolve({users:[]}),
+    !options.source||options.source==='all'||options.source==='x'||options.source==='misskey'?searchX(normalized,false,options.signal):Promise.resolve({users:[]}),
+    !options.source||options.source==='all'||options.source==='x'?searchAliasUsers(query,options.signal).then(users=>({users})):Promise.resolve({users:[]}),
+    searchSavedAccounts(normalized,options.signal).then(users=>({users:users.filter(user=>!options.source||options.source==='all'||options.source==='misskey'&&user.id.startsWith('misskey-user:')||options.source==='x'&&user.id.startsWith('x-user:')||options.source==='bluesky'&&user.id.startsWith('did:'))})),
+  ].map((job,index)=>job.then(result=>{completed.set(index,result.users);if(!options.signal?.aborted&&result.users.length){options.onUsers?.(ranked());findMisskeyNames(result.users,index);}return result;})));
+  await Promise.all(profileReads);
   if(options.signal?.aborted)throw options.signal.reason;
   if(results.every(result=>result.status==='rejected'))throw (results[0] as PromiseRejectedResult).reason;
-  const users=results.flatMap(result=>result.status==='fulfilled' ? result.value.users:[]);
-  return [...new Map(users.map(user=>[user.id,user])).values()]
-    .sort((a,b)=>accountSearchScore(b,normalized)-accountSearchScore(a,normalized))
-    .slice(0,options.limit ?? 3);
+  return ranked();
 }
 
 /** Read activity on demand, using the same public AppView fallback as other reads. */

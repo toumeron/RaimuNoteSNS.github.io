@@ -112,7 +112,7 @@ async function externalRead<T>(read:()=>Promise<T>,signal?:AbortSignal,priority:
 }
 
 function accountSearchScore(user: {username:string;displayName:string}, query:string): number {
-  const normalize = (text:string) => text.normalize('NFKC').toLocaleLowerCase().replace(/^@+/, '').trim();
+  const normalize = (text:string) => text.normalize('NFKC').toLocaleLowerCase().replace(/^@+/, '').replace(/:[a-z0-9_]+:/gi,' ').replace(/[ァ-ヶ]/g,c=>String.fromCharCode(c.charCodeAt(0)-0x60)).trim();
   const q = normalize(query), name = normalize(user.displayName), handle = normalize(user.username);
   if (!q) return 0;
   if (name === q || handle === q || handle.split('@')[0] === q) return 100;

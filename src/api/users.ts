@@ -1,3 +1,4 @@
+import {rankAccountSearch} from '@/lib/accountSearchRanking';
 import { getPrivateBotPrompt, isAccountReadOnly } from "@/lib/accountSuspension";
 import { randomUUID, getClientName } from "@/lib/utils";
 import { type User, type PostWithAuthor } from "@/types/index";
@@ -369,15 +370,34 @@ async function fetchFollowListPage(target:User,tab:FollowListTab,viewerId:string
 function searchProfileUser(row:Record<string,any>):User {
  return {id:row.id,username:row.username,displayName:row.display_name||row.displayName||'User',avatarUrl:row.avatar_url||row.avatarUrl||'',coverUrl:row.cover_url||'',createdAt:row.created_at||'',bio:row.bio||'',isOfficial:!!(row.is_official||row.isOfficial),isPrivate:!!(row.is_private||row.isPrivate),providerVerification:row.providerVerification};
 }
+export async function getSearchFollowingUsers(viewerId:string,signal?:AbortSignal):Promise<User[]>{
+ const users:User[]=[];
+ for(let offset=0;;offset+=1000){
+  const {data,error}=await supabase.from('follows').select('followee_id,external_provider,external_handle,external_profile,profile:profiles!follows_followee_id_fkey(id,username,display_name,avatar_url,bio,is_official,is_private)').eq('follower_id',viewerId).eq('approved',true).order('created_at',{ascending:false}).range(offset,offset+999).abortSignal(signal!);
+  if(error)throw error;
+  for(const row of data??[]){
+   const profile=Array.isArray(row.profile)?row.profile[0]:row.profile;
+   if(profile){users.push(searchProfileUser(profile));continue;}
+   if(!row.external_provider)continue;
+   const saved=row.external_profile??{},twitter=['x','twitter'].includes(row.external_provider);
+   const handle=saved.username||row.external_handle;if(!handle)continue;
+   const username=twitter?`${handle.replace(/^@/,'').replace(/@(?:x|twitter)\.com$/i,'')}@twitter.com`:handle;
+   users.push(searchProfileUser({...saved,id:saved.id??(twitter?'x-user:':row.external_provider==='misskey'?'misskey-user:':'did:handle:')+handle,username}));
+  }
+  if(!data||data.length<1000)break;
+ }
+ return users;
+}
 async function searchAccounts(query:string,signal?:AbortSignal):Promise<User[]> {
  if (isAccountReadOnly()) return [];
  const q=query.trim().replace(/^@+/, '');if(!q)return [];
  const safe=q.replace(/[%_,().\\]/g,'').slice(0,100);
  const native=supabase.from('profiles').select('id,username,display_name,avatar_url,bio,is_official,is_private').or(`username.ilike.%${safe}%,display_name.ilike.%${safe}%,bio.ilike.%${safe}%`).limit(15).abortSignal(signal??new AbortController().signal);
- const results=await Promise.allSettled([native,searchExternalUsers(q,{signal,limit:15})]);if(signal?.aborted)throw signal.reason;
+ const viewerId=await getCurrentUserId().catch(()=>null);
+ const results=await Promise.allSettled([native,searchExternalUsers(q,{signal,limit:15}),viewerId?getSearchFollowingUsers(viewerId,signal):Promise.resolve([] as User[])]);if(signal?.aborted)throw signal.reason;
  const local=results[0].status==='fulfilled'?results[0].value:null;if(local?.error)throw local.error;
  if(results.every(item=>item.status==='rejected'))throw new Error('ユーザーを検索できませんでした');
- return [...new Map([...(local?.data??[]).map(searchProfileUser),...(results[1].status==='fulfilled'?results[1].value:[])].map(user=>[user.id,user])).values()];
+ return rankAccountSearch((local?.data??[]).map(searchProfileUser),results[1].status==='fulfilled'?results[1].value:[],results[2].status==='fulfilled'?results[2].value:[],q);
 }
 
 // directMessages

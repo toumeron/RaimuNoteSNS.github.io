@@ -18,7 +18,7 @@ export async function loadMisskey(endpoint:unknown, params:unknown):Promise<unkn
  if(input.withReplies!==undefined){if(typeof input.withReplies!=='boolean')throw new Error('Invalid Misskey reply filter');body.withReplies=input.withReplies;}
  if(input.limit!==undefined)body.limit=Math.min(100,Math.max(1,Number(input.limit)||30));
  if(input.i!==undefined)throw new Error('Misskey credentials are not supported');
- const response=await fetch(`https://misskey.io/api/${endpoint}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(15000)});
+ const response=await fetch(`https://misskey.io/api/${endpoint}`,{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json','User-Agent':'LimeNote/1.0'},body:JSON.stringify(body),signal:AbortSignal.timeout(15000)});
  // A missing exact-handle candidate is an ordinary empty search result.
  if(endpoint==='users/show'&&response.status===404)return null;
  if(!response.ok)throw new Error(`Misskey API ${response.status}`);

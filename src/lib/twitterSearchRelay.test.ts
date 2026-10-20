@@ -13,3 +13,11 @@ it('requests and retains up to twenty IDs for the visible search page',async()=>
  expect(page.ids).toEqual(ids);expect(page.cursor).toBe(20);
  expect(mocks.invoke).toHaveBeenCalledWith('link-preview',{body:{mode:'twitter-search',query:'キオクシア',feed:'top',offset:0,limit:20},signal:undefined});
 });
+
+it('honors a rate-limited search response instead of repeatedly consuming the same quota',async()=>{
+ mocks.session.mockResolvedValue({data:{session:{user:{id:'limited-viewer'}}}});
+ mocks.invoke.mockResolvedValue({data:null,error:{context:new Response(null,{status:429,headers:{'retry-after':'300'}})}});
+ await expect(relayTwitterSearch('動画','top',0)).rejects.toMatchObject({name:'VideoSourceRateLimitError'});
+ await expect(relayTwitterSearch('別の動画','top',0)).rejects.toMatchObject({name:'VideoSourceRateLimitError'});
+ expect(mocks.invoke).toHaveBeenCalledTimes(1);
+});

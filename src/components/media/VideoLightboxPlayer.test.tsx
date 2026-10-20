@@ -4,9 +4,22 @@ vi.mock("@/lib/mediaThumbnail", async importOriginal => {
 });
 
 
-import {cleanup,render,screen,waitFor,fireEvent} from '@testing-library/react';
+import {act,cleanup,render,screen,waitFor,fireEvent} from '@testing-library/react';
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
-const mocks=vi.hoisted(()=>({resolve:vi.fn()}));
+const mocks=vi.hoisted(()=>({resolve:vi.fn(),hls:vi.fn()}));
+vi.mock('hls.js',()=>({
+ FetchLoader:class{},
+ default:class {
+  static Events={MANIFEST_PARSED:'manifest',ERROR:'error'};
+  static isSupported=()=>true;
+  handlers=new Map<string,()=>void>();
+  constructor(){mocks.hls();}
+  on(event:string,callback:()=>void){this.handlers.set(event,callback);}
+  attachMedia(media:HTMLVideoElement){media.src='blob:hls-engine';}
+  loadSource(){this.handlers.get('manifest')?.();}
+  destroy(){}
+ }
+}));
 
 import { VideoLightboxPlayer } from "@/components/video/PostVideoPlayer";
 let running=false;
@@ -59,4 +72,99 @@ it('does not start late playback while the outgoing slide is suspended',async()=
  const view=render(<VideoLightboxPlayer {...props}/>);view.rerender(<VideoLightboxPlayer {...props} suspended/>);
  finish({url:'https://video.example/late.mp4',local:false});await waitFor(()=>expect(screen.queryByLabelText('動画を読み込み中')).not.toBeInTheDocument());
  expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+});
+
+it('does not show an error when a swipe interrupts pending autoplay and resumes after cancellation',async()=>{
+ mocks.resolve.mockResolvedValue({url:'https://video.example/current.mp4',local:false});
+ let rejectPlay!:(reason:unknown)=>void;
+ vi.mocked(HTMLMediaElement.prototype.play).mockImplementationOnce(()=>new Promise((_,reject)=>{rejectPlay=reject;}));
+ const props={...prefs,selection:{postId:'interrupted',video},host:null};
+ const view=render(<VideoLightboxPlayer {...props}/>);
+ await waitFor(()=>expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1));
+ view.rerender(<VideoLightboxPlayer {...props} suspended/>);
+ await act(async()=>{rejectPlay(new DOMException('The play() request was interrupted by a call to pause().','AbortError'));});
+ expect(screen.queryByRole('alert')).not.toBeInTheDocument();expect(running).toBe(false);
+ view.rerender(<VideoLightboxPlayer {...props}/>);
+ await waitFor(()=>expect(running).toBe(true));expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+});
+
+it('resumes if suspension is cancelled before an interrupted play promise settles',async()=>{
+ mocks.resolve.mockResolvedValue({url:'https://video.example/current.mp4',local:false});
+ let rejectPlay!:(reason:unknown)=>void;
+ vi.mocked(HTMLMediaElement.prototype.play).mockImplementationOnce(()=>new Promise((_,reject)=>{rejectPlay=reject;}));
+ const props={...prefs,selection:{postId:'quick-swipe',video},host:null};
+ const view=render(<VideoLightboxPlayer {...props}/>);
+ await waitFor(()=>expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1));
+ view.rerender(<VideoLightboxPlayer {...props} suspended/>);view.rerender(<VideoLightboxPlayer {...props}/>);
+ await act(async()=>{rejectPlay(new DOMException('The play() request was interrupted by a call to pause().','AbortError'));});
+ await waitFor(()=>expect(running).toBe(true));expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+});
+
+it('keeps real playback errors visible and allows retry',async()=>{
+ mocks.resolve.mockResolvedValue({url:'https://video.example/current.mp4',local:false});
+ vi.mocked(HTMLMediaElement.prototype.play).mockRejectedValueOnce(new DOMException('Unsupported video','NotSupportedError'));
+ render(<VideoLightboxPlayer {...prefs} selection={{postId:'broken',video}} host={null}/>);
+ expect(await screen.findByRole('alert')).toHaveTextContent('動画を読み込めませんでした');
+ fireEvent.click(screen.getByRole('button',{name:'再試行'}));
+ await waitFor(()=>expect(running).toBe(true));expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+});
+
+it('falls back to an alternative stream when the primary video format cannot be played',async()=>{
+ vi.spyOn(HTMLMediaElement.prototype,'canPlayType').mockReturnValue('probably');
+ vi.mocked(HTMLMediaElement.prototype.play).mockRejectedValueOnce(new DOMException('Failed to load because no supported source was found.','NotSupportedError'));
+ const externalVideo={playlist:'https://video.example/main.mp4',format:'mp4' as const,fallback:{playlist:'https://video.example/alternative.m3u8',format:'hls' as const},...video};
+ const view=render(<VideoLightboxPlayer {...prefs} selection={{postId:'alternate',video,externalVideo}} host={null}/>);
+ await waitFor(()=>expect(running).toBe(true));
+ expect(view.container.querySelector('video')).toHaveAttribute('src',externalVideo.fallback.playlist);
+ expect(screen.queryByRole('alert')).not.toBeInTheDocument();expect(mocks.resolve).not.toHaveBeenCalled();
+});
+it('uses the alternative source on a media error event instead of leaving an error overlay',async()=>{
+ vi.spyOn(HTMLMediaElement.prototype,'canPlayType').mockReturnValue('probably');
+ const externalVideo={playlist:'https://video.example/main.mp4',format:'mp4' as const,fallback:{playlist:'https://video.example/alternative.m3u8',format:'hls' as const},...video};
+ const view=render(<VideoLightboxPlayer {...prefs} selection={{postId:'alternate-event',video,externalVideo}} host={null}/>);
+ await waitFor(()=>expect(running).toBe(true));fireEvent.error(view.container.querySelector('video')!);
+ await waitFor(()=>expect(view.container.querySelector('video')).toHaveAttribute('src',externalVideo.fallback.playlist));
+ expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+});
+it('recognizes an MP4 URL even if the external provider omitted its format',async()=>{
+ const externalVideo={playlist:'https://video.example/without-format.mp4?tag=1',...video};
+ const view=render(<VideoLightboxPlayer {...prefs} selection={{postId:'mp4-inferred',video,externalVideo}} host={null}/>);
+ await waitFor(()=>expect(running).toBe(true));expect(view.container.querySelector('video')).toHaveAttribute('src',externalVideo.playlist);
+ expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+ expect(mocks.hls).not.toHaveBeenCalled();
+});
+
+it('switches from failing native HLS playback to the JavaScript HLS engine',async()=>{
+ vi.spyOn(HTMLMediaElement.prototype,'canPlayType').mockReturnValue('probably');
+ vi.mocked(HTMLMediaElement.prototype.play).mockRejectedValueOnce(new DOMException('Failed to load because no supported source was found.','NotSupportedError'));
+ const externalVideo={playlist:'https://video.example/native-failed.m3u8',format:'hls' as const,...video};
+ const view=render(<VideoLightboxPlayer {...prefs} selection={{postId:'native-failed',video,externalVideo}} host={null}/>);
+ await waitFor(()=>expect(mocks.hls).toHaveBeenCalledTimes(1));
+ await waitFor(()=>expect(running).toBe(true));
+ expect(view.container.querySelector('video')).toHaveAttribute('src','blob:hls-engine');expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+});
+
+it('prepares the next source silently and reuses it immediately when it becomes active',async()=>{
+ mocks.resolve.mockResolvedValue({url:'blob:next-ready',local:true});
+ const props={...prefs,selection:{postId:'next-ready',video},host:null};
+ const view=render(<VideoLightboxPlayer {...props} suspended/>);
+ await waitFor(()=>expect(view.container.querySelector('video')).toHaveAttribute('src','blob:next-ready'));
+ await waitFor(()=>expect(screen.queryByLabelText('動画を読み込み中')).not.toBeInTheDocument());
+ expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();expect(prefs.onSource).not.toHaveBeenCalled();
+ const prepared=view.container.querySelector('video');view.rerender(<VideoLightboxPlayer {...props}/>);
+ await waitFor(()=>expect(running).toBe(true));expect(view.container.querySelector('video')).toBe(prepared);
+ expect(mocks.resolve).toHaveBeenCalledTimes(1);expect(prefs.onSource).toHaveBeenCalledWith('blob:next-ready');
+ view.unmount();expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:next-ready');
+});
+
+it('handles unsupported playback discovered only when a preloaded video becomes active',async()=>{
+ vi.spyOn(HTMLMediaElement.prototype,'canPlayType').mockReturnValue('probably');
+ vi.mocked(HTMLMediaElement.prototype.play).mockRejectedValueOnce(new DOMException('Unsupported source','NotSupportedError'));
+ const externalVideo={playlist:'https://video.example/preloaded.mp4',format:'mp4' as const,fallback:{playlist:'https://video.example/preloaded.m3u8',format:'hls' as const},...video};
+ const props={...prefs,selection:{postId:'preloaded-fallback',video,externalVideo},host:null};
+ const view=render(<VideoLightboxPlayer {...props} suspended/>);
+ await waitFor(()=>expect(screen.queryByLabelText('動画を読み込み中')).not.toBeInTheDocument());
+ view.rerender(<VideoLightboxPlayer {...props}/>);
+ await waitFor(()=>expect(view.container.querySelector('video')).toHaveAttribute('src',externalVideo.fallback.playlist));
+ await waitFor(()=>expect(running).toBe(true));expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 });

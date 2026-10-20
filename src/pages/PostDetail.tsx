@@ -19,6 +19,7 @@ import { createPortal } from "react-dom";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, MessageCircle, X, Plus, Link as LinkIcon, Upload, Send, Globe, MoreHorizontal, Trash2, ChartBarBig, Lock, Users, Loader2, Share2 } from "lucide-react";
 import { LikeButton } from "@/components/post/LikeButton";
+import {PostActivitySummary} from '@/components/post/PostActivitySummary';
 import { CommentList, CommentCard } from "@/components/post/CommentList";
 import { CommentForm } from "@/components/post/CommentForm";
 import { usePost } from "@/hooks/useFeed";
@@ -1773,6 +1774,8 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
               </>
             )}
           </p>
+
+          <PostActivitySummary post={data as PostWithAuthor} mobile={isMobile}/>
 
           {/* --- リアクションバッジエリア（本文・画像と日時表示の間に挿入） --- */}
           {reactions.length > 0 && (

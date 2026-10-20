@@ -1,3 +1,7 @@
+import {useSearchFollowing} from '@/hooks/useSearchFollowing';
+import {useSearchTermSuggestions} from '@/hooks/useSearchTermSuggestions';
+import {rememberSearchAccount} from '@/lib/recentSearchAccounts';
+import {rankAccountSearch,followedAccountMatcher} from '@/lib/accountSearchRanking';
 import { completeSavedPosts } from "@/api/external-posts";
 import { SearchPostRow } from "@/components/search/SearchExploreContent";
 import { searchTwitterResults } from "@/api/search-news";
@@ -795,6 +799,7 @@ interface FeedState {
   twitterCursor?:string|null;
   twitterDone?:boolean;
   twitterError?:string;
+  externalError?:string;
   page: number;
   hasMore: boolean;
   loading: boolean;
@@ -894,6 +899,8 @@ export function SearchResults({
   refreshKey,
   onChangeQuery,
 }: SearchResultsProps) {
+  const {data:searchFollowing=[]}=useSearchFollowing();
+  const isSearchFollowed=useMemo(()=>followedAccountMatcher(searchFollowing),[searchFollowing]);
   const parsed = useMemo(() => parseSearchQuery(searchQuery), [searchQuery]);
   const keyBase = `${searchQuery}\u0000${excludeBlueskyPosts}\u0000${refreshKey}`;
 
@@ -930,6 +937,11 @@ export function SearchResults({
     if (cached) return cached;
 
     const query=text.trim().replace(/^@+/, '');
+    if(!includePosts){
+      const signal=searchControllerRef.current.signal;
+      const promise=searchExternalUsers(query,{includeBluesky:!excludeBlueskyPosts,source:parsed.source,limit:50,signal,onUsers:users=>{if(!signal.aborted)setBlueskyUsers(users.map(toUser));}}).then(users=>({posts:[],users} as BlueskyResult));
+      blueskyCacheRef.current.set(key,promise);return promise;
+    }
     const jobs:Promise<BlueskyResult>[]=[];
     if (parsed.source!=='x' && parsed.source!=='misskey' && !(includePosts && excludeBlueskyPosts)) jobs.push(searchBluesky(query,{includePosts,signal:searchControllerRef.current.signal}) as unknown as Promise<BlueskyResult>);
     if (parsed.source!=='x' && parsed.source!=='bluesky' && misskeyEnabled()) jobs.push(searchMisskey(query,includePosts,searchControllerRef.current.signal) as unknown as Promise<BlueskyResult>);
@@ -1121,7 +1133,7 @@ export function SearchResults({
   const fetchExternalPage=useCallback(async(p:ParsedSearch,previous:FeedState)=>{
     const text=getPostSearchText(p);
     const cursors={...previous.externalCursors},done={...previous.externalDone};
-    const posts:PostWithAuthor[]=[];
+    const posts:PostWithAuthor[]=[],errors:string[]=[];
     const results=await Promise.allSettled((['bluesky','misskey'] as const).map(async provider=>{
       if(!text||p.source==='lime'||p.source==='x'||p.source!=='all'&&p.source!==provider||provider==='bluesky'&&excludeBlueskyPosts||provider==='misskey'&&!misskeyEnabled()){done[provider]=true;return;}
       if(done[provider]||previous.remaining.filter(post=>post.source===provider).length>=PAGE_SIZE)return;
@@ -1134,8 +1146,8 @@ export function SearchResults({
         if(postMatchesSearch(post,p,{trustServerTerms:provider!=='misskey'}))posts.push(post);
       }
     }));
-    results.forEach((result,index)=>{if(result.status==='rejected'){const provider=(['bluesky','misskey'] as const)[index];if(searchControllerRef.current.signal.aborted||p.source===provider)throw result.reason;done[provider]=true;console.warn('External search failed',result.reason);}});
-    return {posts,cursors,done,hasMore:Object.values(done).some(value=>!value)};
+    results.forEach((result,index)=>{if(result.status==='rejected'){const provider=(['bluesky','misskey'] as const)[index];if(searchControllerRef.current.signal.aborted)throw result.reason;done[provider]=false;errors.push(`${provider==='misskey'?'Misskey':'Bluesky'}の検索を取得できませんでした`);console.warn('External search failed',result.reason);}});
+    return {posts,cursors,done,hasMore:Object.values(done).some(value=>!value),error:errors.join('。')||undefined};
   },[excludeBlueskyPosts]);
 
   const loadFeed = useCallback(
@@ -1180,10 +1192,14 @@ export function SearchResults({
           const previous=prev[mode];
           const shown=new Set(page===0 ? []:previous.items.map(post=>post.id));
           const candidates=sortPosts([...(page===0 ? []:previous.remaining),...local.items,...extra.posts,...twitterPosts],mode).filter(post=>!shown.has(post.id));
-          const {posts:batch,remaining}=searchProviderBatch(candidates,PAGE_SIZE,effective.source==='all');
+          const followed=candidates.filter(post=>mode==='top'&&isSearchFollowed({id:post.userId,username:post.author.username}));
+          const preferred=followed.slice(0,PAGE_SIZE);
+          const other=candidates.filter(post=>mode!=='top'||!isSearchFollowed({id:post.userId,username:post.author.username}));
+          const rest=mode==='top'?searchProviderBatch(other,PAGE_SIZE-preferred.length,effective.source==='all'):{posts:other.slice(0,PAGE_SIZE),remaining:other.slice(PAGE_SIZE)};
+          const batch=[...preferred,...rest.posts],remaining=[...followed.slice(PAGE_SIZE),...rest.remaining];
           return {...prev,[mode]:{
             items:page===0 ? batch:[...previous.items,...batch],
-            remaining,localHasMore:local.hasMore,externalCursors:extra.cursors,externalDone:extra.done,twitterCursor:twitter.cursor??(twitter.error?previous.twitterCursor:null),twitterDone:twitter.error?false:!twitter.cursor,twitterError:twitter.error?(twitter.error instanceof Error?twitter.error.message:'twitterの検索結果を取得できませんでした'):undefined,
+            remaining,localHasMore:local.hasMore,externalCursors:extra.cursors,externalDone:extra.done,externalError:extra.error,twitterCursor:twitter.cursor??(twitter.error?previous.twitterCursor:null),twitterDone:twitter.error?false:!twitter.cursor,twitterError:twitter.error?(twitter.error instanceof Error?twitter.error.message:'twitterの検索結果を取得できませんでした'):undefined,
             page:currentPage,hasMore:local.hasMore || remaining.length>0 || extra.hasMore || !!twitter.cursor || !!twitter.error,
             loading:false,loaded:true,error:null,
           }};
@@ -1197,7 +1213,7 @@ export function SearchResults({
         }));
       }
     },
-    [parsed, mediaKind, fetchLocalPosts, fetchExternalPage],
+    [parsed, mediaKind, fetchLocalPosts, fetchExternalPage,isSearchFollowed],
   );
 
   // 検索語・Bluesky設定・再検索で全タブの結果をリセットする
@@ -1226,7 +1242,7 @@ export function SearchResults({
     if (!mode || feedsKey !== keyBase) return;
     const f = feeds[mode];
     const el = sentinelRef.current;
-    if (!el || !f.loaded || !f.hasMore || f.loading || f.error) return;
+    if (!el || !f.loaded || !f.hasMore || f.loading || f.error || f.externalError) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -1267,54 +1283,10 @@ export function SearchResults({
     };
   }, [activeTab,userText, parsed.source, refreshKey, getBluesky]);
 
-  const searchableUsers = useMemo(() => {
-    const byId = new Map<string, User>();
-    const list = (parsed.source === 'bluesky' || parsed.source === 'misskey' || parsed.source === 'x') ? blueskyUsers : [...allUsers, ...blueskyUsers];
-    list.forEach((u) => byId.set(u.id, u));
-    return Array.from(byId.values());
-  }, [allUsers, blueskyUsers, parsed.source]);
-
-  const searchableUsersIndex = useMemo(() => {
-    const index = new Map<string, { dn: string; un: string; handle: string; hay: string }>();
-    searchableUsers.forEach((u) => {
-      const dn = normalizeText(u.displayName);
-      const un = normalizeText(u.username);
-      const handle = normalizeText(`@${u.username}`);
-      index.set(u.id, { dn, un, handle, hay: normalizeText(`${u.displayName} ${u.username} @${u.username} ${u.bio || ''}`) });
-    });
-    return index;
-  }, [searchableUsers]);
-
   const filteredUsers = useMemo(() => {
-    const tokens = normalizeText(userText).split(/[\s\u3000]+/).filter(Boolean);
-    if (tokens.length === 0) return [];
-
-    const blueskyIds = new Set(blueskyUsers.map((u) => u.id));
-    const matching = searchableUsers
-      .map((u) => {
-        const idx = searchableUsersIndex.get(u.id);
-        const hay = idx?.hay ?? '';
-        const dn = idx?.dn ?? '';
-        const un = idx?.un ?? '';
-        const handle = idx?.handle ?? '';
-        let score = 0;
-        for (const t of tokens) {
-          const candidates = Array.from(new Set([t, t.replace(/^@+/, '')].filter(Boolean)));
-          if (!candidates.some((c) => hay.includes(c))) return null;
-          if (candidates.some((c) => dn === c || un === c || handle === c)) score += 5;
-          else if (candidates.some((c) => dn.startsWith(c) || un.startsWith(c) || handle.startsWith(c))) score += 3;
-          else score += 1;
-        }
-        return { u, score };
-      })
-      .filter((x): x is { u: User; score: number } => x !== null)
-      .sort((a, b) => b.score - a.score)
-      .map((x) => x.u);
-
-    return [...matching, ...blueskyUsers.filter(u=>!matching.some(match=>match.id===u.id))].filter(
-      (u, i, arr) => arr.findIndex((c) => c.id === u.id) === i,
-    );
-  }, [userText, searchableUsers, searchableUsersIndex, blueskyUsers]);
+    const matchesSource=(account:User)=>parsed.source==='all'||parsed.source==='lime'&&!/^(did:|x-user:|misskey-user:)/.test(account.id)||parsed.source==='x'&&account.id.startsWith('x-user:')||parsed.source==='misskey'&&account.id.startsWith('misskey-user:')||parsed.source==='bluesky'&&account.id.startsWith('did:');
+    return rankAccountSearch(allUsers.filter(matchesSource),blueskyUsers.filter(matchesSource),searchFollowing.filter(matchesSource),userText);
+  }, [allUsers,blueskyUsers,searchFollowing,userText,parsed.source]);
 
   // ---- 表示 ----------------------------------------------------------------
   const chipBar =
@@ -1350,11 +1322,13 @@ export function SearchResults({
     ) : null;
 
   const currentFeed: FeedState | null = mode && feedsKey === keyBase ? feeds[mode] : null;
+  const visibleSearchPosts=currentFeed?[...currentFeed.items].sort(mode==='top'?(a,b)=>Number(isSearchFollowed({id:b.userId,username:b.author.username}))-Number(isSearchFollowed({id:a.userId,username:a.author.username})):(a,b)=>timeOf(b)-timeOf(a)||b.id.localeCompare(a.id)):[];
   const isFirstLoading = !currentFeed || (!currentFeed.loaded && !currentFeed.error);
 
   const sentinel = (
     <div ref={sentinelRef} data-lime-search-next-page className="flex h-20 items-center justify-center">
-      {currentFeed?.hasMore && currentFeed.loaded && <Loader2 className="h-6 w-6 animate-spin text-primary" />}
+      {currentFeed?.externalError&&<p role="status" className="px-4 py-2 text-sm text-muted-foreground">{currentFeed.externalError}。<button className="ml-2 underline" onClick={()=>{if(mode)void loadFeed(mode,currentFeed.page+1);}}>再試行</button></p>}
+      {!currentFeed?.externalError&&currentFeed?.hasMore && currentFeed.loaded && <Loader2 className="h-6 w-6 animate-spin text-primary" />}
     </div>
   );
 
@@ -1397,7 +1371,7 @@ export function SearchResults({
           <div className="px-4 pb-1 text-[12px] text-[rgb(83,100,113)] dark:text-gray-400"></div>
         )}
         {currentFeed?.twitterError&&<p role="status" className="px-4 py-2 text-sm text-muted-foreground">{currentFeed.twitterError}</p>}
-        {currentFeed!.items.map((post) => (
+        {visibleSearchPosts.map((post) => (
           <SearchPostRow key={post.id}>
             <PostCard post={post} />
           </SearchPostRow>
@@ -1439,7 +1413,7 @@ export function SearchResults({
         </div>
         {status ?? (
           <>
-            <SearchMediaGrid posts={currentFeed!.items} blueskyIds={blueskyIdsRef.current} />
+            <SearchMediaGrid posts={visibleSearchPosts} blueskyIds={blueskyIdsRef.current} />
             {sentinel}
           </>
         )}
@@ -1607,6 +1581,7 @@ function SearchPageContent() {
   const appliedSearchHomeTokenRef = useRef<number | null>(null);
 
   const { user } = useAuth();
+  const {data:searchFollowing=[]}=useSearchFollowing();
   const {data:newsData,isPending:isNewsLoading}=useSearchNews(user?.id??null);
   const newsItems=newsData?.items??[];
   const newsSources=newsData?.sources??{};
@@ -1622,7 +1597,7 @@ function SearchPageContent() {
       if(!controller.signal.aborted)setBlueskySuggestionUsers(users.map(user=>({...user,isOfficial:false})));
     };
     const timer=window.setTimeout(()=>{
-      void searchExternalUsers(normalizeBlueskyQuery(query),{includeBluesky:!excludeBlueskyPosts,signal:controller.signal})
+      void searchExternalUsers(normalizeBlueskyQuery(query),{includeBluesky:!excludeBlueskyPosts,signal:controller.signal,limit:25,onUsers:publish})
         .then(publish).catch(error=>{if(!controller.signal.aborted)console.warn('External suggestions unavailable',error);});
     },250);
     return()=>{controller.abort();window.clearTimeout(timer);};
@@ -1754,68 +1729,25 @@ function SearchPageContent() {
     }
   }, [commitSearch,navigate]);
 
-  // サジェスト候補の計算はキー入力のたびに実行されるため、
-  // 正規化済みの値はユーザー一覧が変わったときだけ作り直す。
-  const allUsersSearchIndex = useMemo(() => {
-    const index = new Map<string, { dn: string; un: string; handle: string }>();
-    allUsers.forEach((u) => {
-      index.set(u.id, {
-        dn: normalizeText(u.displayName),
-        un: normalizeText(u.username),
-        handle: normalizeText(`@${u.username}`),
-      });
-    });
-    return index;
-  }, [allUsers]);
-
-  const liveSuggestions = useMemo(() => {
-    // "from:xxx" などの演算子は除き、検索語だけでユーザー候補を出す
-    const raw = getSearchFreeText(inputValue).trim();
-    const normalizedRaw = normalizeText(raw);
-    const queryCandidates = Array.from(
-      new Set([normalizedRaw, normalizedRaw.replace(/^@+/, '')].filter(Boolean))
-    );
-
-    if (queryCandidates.length === 0) return [];
-
-    const localSuggestions = allUsers
-      .map((u) => {
-        const idx = allUsersSearchIndex.get(u.id);
-        const dn = idx?.dn ?? '';
-        const un = idx?.un ?? '';
-        const handle = idx?.handle ?? '';
-        const fields = [dn, un, handle];
-        let score = 0;
-
-        if (queryCandidates.some((q) => fields.includes(q))) score = 100;
-        else if (queryCandidates.some((q) => fields.some((field) => field.startsWith(q)))) score = 50;
-        else if (queryCandidates.some((q) => fields.some((field) => field.includes(q)))) score = 20;
-
-        return { user: u, score };
-      })
-      .filter((x) => x.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 5)
-      .map((x) => x.user);
-    const seen = new Set(localSuggestions.map((user) => user.id));
-    const blueskySuggestions = blueskySuggestionUsers.filter((user) => !seen.has(user.id)).slice(0, 3);
-    return [...localSuggestions.slice(0, 5 - blueskySuggestions.length), ...blueskySuggestions];
-  }, [inputValue, allUsers, allUsersSearchIndex, blueskySuggestionUsers]);
+  const liveSuggestions = useMemo(() => rankAccountSearch(allUsers,blueskySuggestionUsers,searchFollowing,getSearchFreeText(inputValue).trim(),5),[inputValue,allUsers,blueskySuggestionUsers,searchFollowing]);
+  const searchTerms=useSearchTermSuggestions(inputValue,desktopLayout);
 
   const suggestionRows = useMemo<SuggestionRow[]>(() => {
     const rows: SuggestionRow[] = [];
     if (inputValue.trim()) {
       for(const asset of suggestMarketAssets(inputValue))rows.push({type:'stock',value:`$${asset.symbol}`,asset});
       rows.push({ type: 'search', value: inputValue.trim() });
+      for(const term of searchTerms)rows.push({type:'search',value:term});
       for (const u of liveSuggestions) rows.push({ type: 'user', value: u.username, user: u });
     } else {
       for (const h of history) rows.push({ type: 'search', value: h });
     }
     return rows;
-  }, [inputValue, liveSuggestions, history]);
+  }, [inputValue, liveSuggestions, history,searchTerms]);
 
   const handleSuggestionSelect = useCallback((row: SuggestionRow) => {
     if (row.type === 'user') {
+      rememberSearchAccount(user?.id,row.user);
       setIsInputFocused(false);
       setActiveSuggestIdx(-1);
       inputRef.current?.blur();
@@ -1824,7 +1756,7 @@ function SearchPageContent() {
     }
 
     commitSearch(row.value);
-  }, [commitSearch, navigate]);
+  }, [commitSearch, navigate,user?.id]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (!isInputFocused) return;

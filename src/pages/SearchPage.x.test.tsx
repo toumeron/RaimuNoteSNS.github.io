@@ -20,9 +20,12 @@ import SearchPage, { SearchResults } from './SearchPage';
 vi.mock('@/hooks/useAuth',async original=>({...await original<typeof import('@/hooks/useAuth')>(),useAuth:()=>({user:null,accounts:[]})}));
 vi.mock('@/hooks/useTopics',async original=>({...await original<typeof import('@/hooks/useTopics')>(),useTrends:()=>({data:[],isPending:false}),useSearchNews:()=>({data:{items:[],sources:{}},isPending:false}),useSearchExploreTab:()=>['recommended']}));
 vi.mock('@/api/recommendations',async original=>({...await original<typeof import('@/api/recommendations')>(),getRecommendationPreferences:async()=>({authors:{},terms:{}})}));
-vi.mock('@/api/search-news',async original=>({...await original<typeof import('@/api/search-news')>(),searchTwitterResults:async()=>({posts:[],cursor:null,error:null})}));
+const searchFixtures=vi.hoisted(()=>({twitter:vi.fn(),following:[] as any[]}));
+vi.mock('@/api/search-news',async original=>({...await original<typeof import('@/api/search-news')>(),searchTwitterResults:(...args:any[])=>searchFixtures.twitter(...args)}));
+vi.mock('@/hooks/useSearchFollowing',()=>({useSearchFollowing:()=>({data:searchFixtures.following})}));
+vi.mock('@/components/feed/PostCard',async original=>({...await original<typeof import('@/components/feed/PostCard')>(),PostCard:({post}:{post:PostWithAuthor})=><article data-testid="ordered-search-post" data-post-id={post.id}>{post.content}</article>}));
 const externalPages=vi.hoisted(()=>vi.fn());
-beforeEach(()=>externalPages.mockReset().mockResolvedValue({posts:[],cursor:null}));
+beforeEach(()=>{externalPages.mockReset().mockResolvedValue({posts:[],cursor:null});searchFixtures.following=[];searchFixtures.twitter.mockReset().mockResolvedValue({posts:[],cursor:null,error:null});});
 vi.mock('@/lib/bluesky',async original=>({...await original<typeof import('@/lib/bluesky')>(),fetchBlueskyTopicPosts:(...args:any[])=>externalPages(...args),searchBluesky:async()=>({posts:[],users:[]}),searchExternalUsers:async()=>[]}));
 vi.mock('@/lib/misskey',async original=>({...await original<typeof import('@/lib/misskey')>(),misskeyEnabled:()=>false}));
 vi.mock('@/lib/supabase',()=>({supabase:{auth:{getUser:async()=>({data:{user:null}}),getSession:async()=>({data:{session:null}})},from:()=>{const q=new Proxy({},{get:(_,name)=>name==='then'?(done:Function)=>Promise.resolve({data:[],error:null}).then(done as never):()=>q});return q;}}}));
@@ -78,4 +81,14 @@ it('drains buffered media before fetching another provider page',async()=>{
  await waitFor(()=>expect(screen.getAllByRole('button',{name:'画像を開く'})).toHaveLength(40));expect(externalPages).toHaveBeenCalledTimes(1);
  await act(async()=>intersect());
  await waitFor(()=>expect(screen.getAllByRole('button',{name:'画像を開く'})).toHaveLength(60));expect(externalPages).toHaveBeenCalledTimes(2);
+});
+
+it('keeps latest results chronological across providers even when an older author is followed',async()=>{
+ const old={...post,id:'x:older',userId:'x-user:followed',createdAt:'2026-10-10T00:00:00Z',author:{...post.author,id:'x-user:followed',username:'followed@twitter.com'}};
+ const recent={...post,id:'bsky:recent',source:'bluesky',userId:'did:plc:recent',createdAt:'2026-10-20T00:00:00Z',author:{...post.author,id:'did:plc:recent',username:'recent.bsky.social'}};
+ searchFixtures.following=[old.author];searchFixtures.twitter.mockResolvedValue({posts:[old],cursor:null,error:null});externalPages.mockResolvedValue({posts:[recent],cursor:null});
+ vi.stubGlobal('IntersectionObserver',class{observe(){}disconnect(){}unobserve(){}});vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}});
+ queryClient=new QueryClient({defaultOptions:{queries:{retry:false}}});
+ render(<QueryClientProvider client={queryClient}><MemoryRouter><SearchResults searchQuery="アニメ" activeTab="latest" excludeBlueskyPosts={false} allUsers={[]} isUsersLoading={false} refreshKey={0} onChangeQuery={()=>{}}/></MemoryRouter></QueryClientProvider>);
+ await waitFor(()=>expect(screen.getAllByTestId('ordered-search-post').map(row=>row.getAttribute('data-post-id'))).toEqual([recent.id,old.id]));
 });

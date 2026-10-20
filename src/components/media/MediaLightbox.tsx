@@ -3,7 +3,7 @@ import { displayUsername } from "@/lib/utils";
 import { usePrivateMediaUrl } from "@/components/ui/avatar";
 import { useVideoMutedPreference } from "@/components/video/PostVideoPlayer";
 import {resolvePrivateMediaUrl} from '@/lib/privateMediaFetch';
-import { getTwitterVideoPage, type TwitterVideoCursor } from "@/api/search-news";
+import { getVideoRecommendationPage, type VideoRecommendationCursor } from "@/api/video-recommendations";
 import {twitterReplyUrl} from '@/lib/fxTwitter';
 import { ProviderVerificationBadge } from "@/components/ui/avatar";
 import { VideoLightboxPlayer } from "@/components/video/PostVideoPlayer";
@@ -16,11 +16,11 @@ import {getBlueskyPostUrl} from '@/lib/bluesky';
 import { OfflineBookmarkContext } from "@/components/stickers/Stickers";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal, flushSync } from 'react-dom';
-import { Link, useLocation } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { ArrowLeft, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Loader2, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { getPostById, getVideoFeed, type FeedCursor } from '@/api/posts';
+import { getPostById } from '@/api/posts';
 import { getExternalPost, isExternalPostId } from '@/api/external-posts';
 import { getReplyPost } from "@/api/external-posts";
 import { useAuth } from '@/hooks/useAuth';
@@ -33,24 +33,13 @@ import { renderStickerText } from "@/components/stickers/Stickers";
 import { PostOverlayContext, usePostOverlay } from "@/components/layout/DesktopLayoutContext";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import type { PostWithAuthor } from '@/types';
-import { MEDIA_VIEWER_EVENT, type MediaViewerSelection } from './openMediaViewer';
+import { type MediaViewerSelection } from './openMediaViewer';
 
 import { containSize, clampPan, focalPan, pinchZoom } from "@/lib/mediaThumbnail";
 
 const CachedLightboxImage=forwardRef<HTMLImageElement,ImgHTMLAttributes<HTMLImageElement>&{account?:string}>(({src,account,...props},ref)=>{const resolved=usePrivateMediaUrl(src);const cached=useCachedChatImage(resolved??'',account);return <img {...props} ref={ref} src={cached||undefined}/>});
 
-export function MediaLightboxRoot() {
-  const [selection, setSelection] = useState<MediaViewerSelection | null>(null);
-  const location = useLocation();
-  const { user } = useAuth();
-  useEffect(() => {
-    const open = (event: Event) => setSelection((event as CustomEvent<MediaViewerSelection>).detail);
-    window.addEventListener(MEDIA_VIEWER_EVENT, open);
-    return () => window.removeEventListener(MEDIA_VIEWER_EVENT, open);
-  }, []);
-  useEffect(() => setSelection(null), [location.key, user?.id]);
-  return selection ? <OfflineBookmarkContext.Provider value={selection.offline ?? null}><MediaLightbox key={`${selection.post?.id ?? selection.postId}:${selection.url}`} selection={selection} onClose={() => setSelection(null)} /></OfflineBookmarkContext.Provider> : null;
-}
+export {MediaLightboxRoot} from './MediaLightboxRoot';
 
 export function MediaLightbox({ selection: initialSelection, onClose }: { selection: MediaViewerSelection; onClose: () => void }) {
   const [selection,setSelection]=useState(initialSelection);
@@ -58,25 +47,17 @@ export function MediaLightbox({ selection: initialSelection, onClose }: { select
   const [videoHost,setVideoHost]=useState<HTMLDivElement|null>(null);
   const [videoMuted,setVideoMuted]=useVideoMutedPreference();
   const [videoRate,setVideoRate]=useState(1),[videoDirection,setVideoDirection]=useState(0),[videoNotice,setVideoNotice]=useState(''),[videoAdvancing,setVideoAdvancing]=useState(false);
-  const [videoTransition,setVideoTransition]=useState(0);
-  const videoSource=useRef(''),videoBusy=useRef(false),videoPointers=useRef(new Map<number,{x:number;y:number}>()),videoGesture=useRef<{x:number;y:number;panX:number;panY:number;scale:number;distance:number;focal:{x:number;y:number};moved:boolean;pinched:boolean}|null>(null),suppressVideoClick=useRef(0);
+  const videoRequest=useRef(0),videoTarget=useRef<number|null>(null);
+  const videoPageRequest=useRef<ReturnType<typeof videoFeed.refetch>|null>(null);
+  const videoSource=useRef(''),videoPointers=useRef(new Map<number,{x:number;y:number}>()),videoGesture=useRef<{x:number;y:number;panX:number;panY:number;scale:number;distance:number;focal:{x:number;y:number};moved:boolean;pinched:boolean}|null>(null),suppressVideoClick=useRef(0);
   const advanceVideoRef=useRef<(delta:number,motion?:number)=>Promise<void>>(async()=>{});
   const { user } = useAuth();
   const videoFeed=useInfiniteQuery({
-    queryKey:['media-video-feed',user?.id],initialPageParam:undefined as FeedCursor|undefined,
-    queryFn:({pageParam,signal})=>getVideoFeed(pageParam,signal),getNextPageParam:page=>page.nextCursor??undefined,
-    enabled:!!initialSelection.video?.postId,staleTime:60_000,retry:1,refetchOnWindowFocus:false,
+    queryKey:['media-video-recommendations-v2',user?.id,initialSelection.video?.postId],initialPageParam:undefined as VideoRecommendationCursor|undefined,
+    queryFn:({pageParam,signal})=>getVideoRecommendationPage(initialSelection,user?.id,pageParam,signal),getNextPageParam:page=>page.nextCursor??undefined,
+    enabled:!!initialSelection.video?.postId&&!initialSelection.offline,staleTime:60_000,retry:false,refetchOnWindowFocus:false,
   });
-  const twitterVideos=useInfiniteQuery({
-    queryKey:['media-twitter-videos-v4',user?.id],initialPageParam:undefined as TwitterVideoCursor|undefined,
-    queryFn:({pageParam,signal})=>getTwitterVideoPage(user!.id,pageParam,signal),getNextPageParam:page=>page.nextCursor??undefined,
-    enabled:videoMode&&!!user?.id&&!initialSelection.offline,staleTime:60_000,retry:false,refetchOnWindowFocus:false,
-  });
-  const queuedVideos=(native:typeof videoFeed.data=videoFeed.data,twitter:typeof twitterVideos.data=twitterVideos.data)=>{
-    const a=videoSelections(initialSelection,native?.pages).slice(1),b=videoSelections(initialSelection,twitter?.pages).slice(1);
-    // Append new candidates; fetching another page must never reorder visited slides.
-    return videoSelections(initialSelection,[{posts:Array.from({length:Math.max(a.length,b.length)},(_,i)=>[b[i]?.post,a[i]?.post]).flat().filter((post):post is PostWithAuthor=>!!post)}]);
-  };
+  const queuedVideos=(data:typeof videoFeed.data=videoFeed.data)=>videoSelections(initialSelection,data?.pages);
   const videoQueueRef=useRef<MediaViewerSelection[]>([initialSelection]);
   const watchedVideoCount=useRef(1);
   watchedVideoCount.current=Math.max(watchedVideoCount.current,videoQueueRef.current.findIndex(item=>(item.video?.postId??item.url)===(selection.video?.postId??selection.url))+1);
@@ -84,16 +65,15 @@ export function MediaLightbox({ selection: initialSelection, onClose }: { select
   videoQueueRef.current.splice(0,videoQueueRef.current.length,...incoming);
   const videoQueue=videoQueueRef.current;
   const videoIndex=videoQueue.findIndex(item=>(item.video?.postId??item.url)===(selection.video?.postId??selection.url));
-  const pendingTwitter=videoQueue.slice(videoIndex+1).filter(item=>item.post?.source==='x'||item.video?.postId?.startsWith('x:')).length;
-  const twitterRetryIndex=useRef(-1);
+  const prefetchedVideoIndexes=useRef(new Set<number>());
   useEffect(()=>{
-    if(!videoMode||!user||initialSelection.offline||twitterVideos.isFetching||!twitterVideos.hasNextPage||pendingTwitter>=2)return;
-    // Photo-only pages do not fill the video reserve. Bound work per gesture,
-    // then replenish again as viewing advances; there is no session page cap.
-    if((twitterVideos.data?.pages.length??0)>=6+watchedVideoCount.current)return;
-    if(twitterVideos.isError){if(twitterRetryIndex.current===videoIndex)return;twitterRetryIndex.current=videoIndex;}
-    void twitterVideos.fetchNextPage({cancelRefetch:false});
-  },[videoMode,user?.id,initialSelection.offline,twitterVideos.isFetching,twitterVideos.hasNextPage,twitterVideos.isError,twitterVideos.data?.pages.length,pendingTwitter,videoIndex]);
+    if(!videoMode||initialSelection.offline||videoAdvancing||videoFeed.isFetching||videoFeed.isError||!videoFeed.hasNextPage||videoQueue.length-videoIndex>5||prefetchedVideoIndexes.current.has(videoIndex))return;
+    prefetchedVideoIndexes.current.add(videoIndex);
+    const read=videoFeed.fetchNextPage({cancelRefetch:false});
+    videoPageRequest.current=read;
+    const clear=()=>{if(videoPageRequest.current===read)videoPageRequest.current=null;};
+    void read.then(clear,clear);
+  },[videoMode,initialSelection.offline,videoAdvancing,videoFeed.isFetching,videoFeed.isError,videoFeed.hasNextPage,videoIndex,videoQueue.length]);
   const openPostOverlay = usePostOverlay();
   const offline = useContext(OfflineBookmarkContext);
   const id = selection.post?.id ?? selection.postId ?? '';
@@ -107,41 +87,37 @@ export function MediaLightbox({ selection: initialSelection, onClose }: { select
   const [likeState, setLikeState] = useState<{ liked: boolean; count: number;postId:string } | null>(null);
   const post = useMemo(() => sourcePost && likeState?.postId===id ? { ...sourcePost, likedByMe: likeState.liked, likesCount: likeState.count } : sourcePost, [sourcePost, likeState,id]);
   advanceVideoRef.current=async(delta:number,motion=delta)=>{
-    if(videoBusy.current)return;
-    videoBusy.current=true;setVideoAdvancing(true);setVideoNotice('');
+    const request=++videoRequest.current;
+    const next=Math.max(0,(videoTarget.current??videoIndex)+delta);
+    videoTarget.current=next;
+    setVideoNotice('');
     try{
-      let queue=videoQueue,next=videoIndex+delta;
-      if(next>=queue.length&&delta>0&&initialSelection.video?.postId&&(videoFeed.isPending||videoFeed.isError&&!videoFeed.data||videoFeed.hasNextPage||!!user&&(twitterVideos.isPending||twitterVideos.isError&&!twitterVideos.data||twitterVideos.hasNextPage))){
-        setVideoTransition(motion);setSwipeOffset(0);
-        // Skip a bounded number of image-only/filtered pages, retaining cursors for the next swipe.
-        for(let scan=0;scan<3&&next>=queue.length;scan++){
-          const reads=[
-            videoFeed.isPending||videoFeed.isError&&!videoFeed.data?videoFeed.refetch({cancelRefetch:false}):videoFeed.hasNextPage?videoFeed.fetchNextPage({cancelRefetch:false}):Promise.resolve(null),
-            !user||initialSelection.offline?Promise.resolve(null):twitterVideos.isPending||twitterVideos.isError&&!twitterVideos.data?twitterVideos.refetch({cancelRefetch:false}):twitterVideos.hasNextPage?twitterVideos.fetchNextPage({cancelRefetch:false}):Promise.resolve(null),
-          ];
-          // A ready twitter slide must not wait for a stalled native request.
-          const results=await new Promise<PromiseSettledResult<Awaited<typeof reads[number]>>[]>(resolve=>{
-            const settled:PromiseSettledResult<Awaited<typeof reads[number]>>[]=[];let finished=0;
-            const check=()=>{
-              const native=settled[0]?.status==='fulfilled'?settled[0].value:null,external=settled[1]?.status==='fulfilled'?settled[1].value:null;
-              const known=new Set(queue.map(item=>item.video?.postId??item.url));
-              const available=queuedVideos(native?.data??videoFeed.data,external?.data??twitterVideos.data).some(item=>!known.has(item.video?.postId??item.url));
-              if(next<queue.length||available||finished===reads.length)resolve([...settled]);
-            };
-            reads.forEach((read,index)=>void read.then(value=>{settled[index]={status:'fulfilled',value};finished++;check();},reason=>{settled[index]={status:'rejected',reason};finished++;check();}));
-          });
-          const native=results[0]?.status==='fulfilled'?results[0].value:null,external=results[1]?.status==='fulfilled'?results[1].value:null;
-          const candidates=mergeVideoQueue(queue,selection,queuedVideos(native?.data??videoFeed.data,external?.data??twitterVideos.data),watchedVideoCount.current);
+      const queue=videoQueue;
+      if(next>=queue.length&&!initialSelection.offline&&(videoFeed.isPending||videoFeed.isError||videoFeed.hasNextPage)){
+        setVideoAdvancing(true);setSwipeOffset(0);
+        let data=videoFeed.data;
+        // Share each page request while every gesture updates the requested destination.
+        while(next>=queue.length){
+          if(!videoPageRequest.current){
+            const read=!data?.pages.length?videoFeed.refetch({cancelRefetch:false}):videoFeed.fetchNextPage({cancelRefetch:false});
+            videoPageRequest.current=read;
+            const clear=()=>{if(videoPageRequest.current===read)videoPageRequest.current=null;};
+            void read.then(clear,clear);
+          }
+          const result=await videoPageRequest.current;
+          if(request!==videoRequest.current)return;
+          if(result.isError)throw result.error;
+          data=result.data;
+          const candidates=mergeVideoQueue(queue,selection,queuedVideos(result.data),watchedVideoCount.current);
           queue.splice(0,queue.length,...candidates);
-          if(!native&&!external)break;
-          if(next>=queue.length&&(native?.isError||external?.isError))throw native?.error??external?.error;
-          if(!native?.hasNextPage&&!external?.hasNextPage)break;
+          if(!result.data?.pages.at(-1)?.nextCursor)break;
         }
       }
-      if(next<0||!queue[next]){setVideoNotice(delta>0?(videoFeed.hasNextPage?'':''):'');return;}
+      if(request!==videoRequest.current)return;
+      if(!queue[next]){videoTarget.current=null;return;}
       videoSource.current='';setLikeState(null);setVideoDirection(motion);setSelection(queue[next]);setZoom(1);setPan({x:0,y:0});setSwipeOffset(0);setControls(true);setDetails(true);
-    }catch{setVideoNotice('動画を読み込めませんでした。もう一度お試しください');}
-    finally{videoBusy.current=false;setVideoAdvancing(false);setVideoTransition(0);}
+    }catch(error){if(request===videoRequest.current)setVideoNotice((error as Error).name==='VideoSourceRateLimitError'?(error as Error).message:'動画を読み込めませんでした。もう一度お試しください');}
+    finally{if(request===videoRequest.current){videoTarget.current=null;setVideoAdvancing(false);}}
   };
   const media = selection.media?.length ? selection.media : [...new Set([...(post?.imageUrls ?? []), selection.url])].map(src => ({ src, type: 'image' as const }));
   const [index, setIndex] = useState(0);
@@ -172,10 +148,11 @@ export function MediaLightbox({ selection: initialSelection, onClose }: { select
   const tapTimer = useRef<ReturnType<typeof setTimeout>>();
   const close = useCallback(() => {
     if (closeTimer.current) return;
+    ++videoRequest.current;videoTarget.current=null;setVideoAdvancing(false);
     setClosing(true);
     closeTimer.current = setTimeout(onClose, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 160);
   }, [onClose]);
-  useEffect(() => () => { clearTimeout(closeTimer.current); clearTimeout(tapTimer.current); }, []);
+  useEffect(() => () => { ++videoRequest.current;clearTimeout(closeTimer.current); clearTimeout(tapTimer.current); }, []);
   const closeButton = useRef<HTMLButtonElement>(null);
   const replyRef = useRef<HTMLDivElement>(null);
   const dock = useRef<HTMLElement>(null);
@@ -300,9 +277,9 @@ export function MediaLightbox({ selection: initialSelection, onClose }: { select
     {user && user.id !== post.userId && <div className="lime-media-follow"><FollowButton userId={post.author.id} /></div>}
   </div> : null;
   const replies = post && !external && !offline && replyPostId ? <><div ref={replyRef}><CommentForm postId={replyPostId} parentCommentId={post.replyId ?? null} variant="mediaViewer" replyTo={post} /></div><CommentList postId={replyPostId} parentCommentId={post.replyId ?? null} mobileFlat /></> : null;
-  return createPortal(<PostOverlayContext.Provider value={quotedPost => { onClose(); openPostOverlay(quotedPost); }}><div ref={root} className={`lime-media-lightbox ${videoMode?'lime-video-mode':''} ${videoTransition?'lime-video-transitioning':''} ${closing ? 'lime-media-closing' : ''} ${zoom > 1 ? 'lime-media-zoomed' : ''} ${controls ? '' : 'lime-media-controls-hidden'} ${details ? '' : 'lime-media-details-hidden'}`} role="dialog" aria-modal="true" aria-busy={videoMode?videoAdvancing:undefined} aria-label={videoMode?'動画を拡大表示':'メディアを拡大表示'}
+  return createPortal(<PostOverlayContext.Provider value={quotedPost => { onClose(); openPostOverlay(quotedPost); }}><div ref={root} className={`lime-media-lightbox ${videoMode?'lime-video-mode':''} ${closing ? 'lime-media-closing' : ''} ${zoom > 1 ? 'lime-media-zoomed' : ''} ${controls ? '' : 'lime-media-controls-hidden'} ${details ? '' : 'lime-media-details-hidden'}`} role="dialog" aria-modal="true" aria-busy={videoMode?videoAdvancing:undefined} aria-label={videoMode?'動画を拡大表示':'メディアを拡大表示'}
     onPointerDownCapture={event=>{
-      if(!videoMode||videoBusy.current||event.button!==0)return;
+      if(!videoMode||event.button!==0)return;
       const control=(event.target as Element).closest('button,input,select,a,textarea');
       if(control&&!control.matches('.lime-video-overlay-play'))return;
       videoPointers.current.set(event.pointerId,{x:event.clientX,y:event.clientY});
@@ -406,14 +383,14 @@ export function MediaLightbox({ selection: initialSelection, onClose }: { select
           }
           else setSwipeOffset(0);
         }} onPointerCancel={() => { pointers.current.clear(); setSwipeOffset(0); }}>
-        {videoMode&&selection.video?<div key={id||selection.url} aria-hidden={!!videoTransition||undefined} className={`lime-video-frame ${videoTransition>0?'lime-video-leaving-down':videoTransition<0?'lime-video-leaving-up':''} ${videoDirection>0?'lime-video-forward':videoDirection<0?'lime-video-backward':''}`} style={{transform:`translateY(${swipeOffset}px)`}}>
-          <VideoLightboxPlayer suspended={!!videoTransition} selection={selection.video} host={videoHost} muted={videoMuted} onMutedChange={setVideoMuted} rate={videoRate} onRateChange={setVideoRate} onSource={url=>{videoSource.current=url;}} zoom={zoom} pan={pan} onTap={toggle=>{clearTimeout(tapTimer.current);tapTimer.current=setTimeout(()=>{if(window.matchMedia('(max-width: 767px)').matches)setControls(value=>!value);else toggle();},220);}}/>
-        </div>:imageFailed ? <p>画像を読み込めませんでした。<button onClick={() => setImageFailed(false)}>再試行</button></p> : current?.type === 'youtube' ?
+        {videoMode&&selection.video?<>{videoQueue.slice(videoIndex,videoIndex+2).map((item,offset)=>item.video&&<div key={item.video.postId||item.url} aria-hidden={offset>0||undefined} className={`lime-video-frame ${offset?'lime-video-preload':videoDirection>0?'lime-video-forward':videoDirection<0?'lime-video-backward':''}`} style={{transform:`translateY(${offset?0:swipeOffset}px)`}}>
+          <VideoLightboxPlayer suspended={offset>0} selection={item.video} host={offset?null:videoHost} muted={videoMuted} onMutedChange={setVideoMuted} rate={videoRate} onRateChange={setVideoRate} onSource={url=>{if(!offset)videoSource.current=url;}} zoom={offset?1:zoom} pan={offset?{x:0,y:0}:pan} onTap={toggle=>{clearTimeout(tapTimer.current);tapTimer.current=setTimeout(()=>{if(window.matchMedia('(max-width: 767px)').matches)setControls(value=>!value);else toggle();},220);}}/>
+        </div>)}</>:imageFailed ? <p>画像を読み込めませんでした。<button onClick={() => setImageFailed(false)}>再試行</button></p> : current?.type === 'youtube' ?
           <iframe src={`https://www.youtube-nocookie.com/embed/${current.youtubeId}?autoplay=1&rel=0&playsinline=1`} title="YouTube" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen /> : current?.type === 'video' ?
           <video src={current.src} controls playsInline /> : <div ref={track} className="lime-media-image-track" style={{ transform: `translateX(${swipeOffset}px)` }}>
             {media.map((item, itemIndex) => (!item.type || item.type === 'image') && <CachedLightboxImage referrerPolicy={post?.source==='x'?'no-referrer':undefined} account={user?.id} key={item.src} ref={itemIndex === index ? image : undefined} className={itemIndex === index ? undefined : 'lime-media-adjacent'} src={item.src} alt={itemIndex === index ? `拡大画像 ${index + 1}` : ''} aria-hidden={itemIndex !== index || undefined} draggable={false} onError={() => { if (itemIndex === index) setImageFailed(true); }} style={{ transform: itemIndex === index ? `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` : `translateX(${(itemIndex - index) * 100}%)` }} />)}
           </div>}
-        {!!videoTransition&&<div className={`lime-video-pending ${videoTransition>0?'lime-video-pending-down':'lime-video-pending-up'}`} role="status" aria-label="次の動画を読み込み中"><Loader2 className="animate-spin"/></div>}
+        {videoAdvancing&&<div className="lime-video-next-loading" role="status" aria-label="次の動画を読み込み中"><Loader2 className="animate-spin"/></div>}
       </div>
       {!videoMode&&index > 0 && <button className="lime-media-prev" aria-label="前の画像" onClick={() => move(-1)}><ChevronLeft /></button>}
       {!videoMode&&index < media.length - 1 && <button className="lime-media-next" aria-label="次の画像" onClick={() => move(1)}><ChevronRight /></button>}

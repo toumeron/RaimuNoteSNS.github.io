@@ -1,3 +1,8 @@
+import {useSearchFollowing} from '@/hooks/useSearchFollowing';
+import {useSearchTermSuggestions} from '@/hooks/useSearchTermSuggestions';
+import {MobileSearchRecents} from '@/components/search/MobileSearchRecents';
+import {recentSearchAccounts,rememberSearchAccount,clearRecentSearchAccounts,RECENT_SEARCH_ACCOUNTS_EVENT} from '@/lib/recentSearchAccounts';
+import {rankAccountSearch} from '@/lib/accountSearchRanking';
 import { observeDocumentHeight } from "@/hooks/useViewportWidth";
 import { StockSuggestion } from "@/components/search/SearchExploreContent";
 import { suggestMarketAssets, type MarketAsset } from "@/api/search-news";
@@ -1936,6 +1941,23 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   const [headerActiveSuggestIdx, setHeaderActiveSuggestIdx] = useState(-1);
   const headerSearchInputRef = useRef<HTMLInputElement>(null);
   const headerSuggestBoxRef = useRef<HTMLDivElement>(null);
+  const headerSearchInitialValueRef=useRef('');
+  const [recentHeaderAccounts,setRecentHeaderAccounts]=useState<User[]>([]);
+  const [searchViewport,setSearchViewport]=useState({top:0,height:'100dvh'});
+  const mobileSearchEditing=isSearchRoute&&!desktopLayout&&isHeaderSearchFocused;
+  useEffect(()=>{
+    const update=()=>setRecentHeaderAccounts(recentSearchAccounts(user?.id));update();
+    window.addEventListener(RECENT_SEARCH_ACCOUNTS_EVENT,update);
+    return()=>window.removeEventListener(RECENT_SEARCH_ACCOUNTS_EVENT,update);
+  },[user?.id]);
+  useEffect(()=>{
+    if(!mobileSearchEditing)return;
+    const viewport=window.visualViewport,overflow=document.body.style.overflow;
+    document.body.style.overflow='hidden';
+    const update=()=>setSearchViewport({top:viewport?.offsetTop??0,height:viewport?`${viewport.height}px`:'100dvh'});
+    update();viewport?.addEventListener('resize',update);viewport?.addEventListener('scroll',update);
+    return()=>{document.body.style.overflow=overflow;viewport?.removeEventListener('resize',update);viewport?.removeEventListener('scroll',update);};
+  },[mobileSearchEditing]);
 
   // SearchPage.tsx のPC版検索バーやトレンドから検索したときも、
   // モバイルヘッダーの検索欄へ同じ文字列を反映する。URLの ?q= には依存しない。
@@ -1981,6 +2003,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
     const handleViewportChange = () => {
       if (window.innerWidth >= 640) {
         setIsMobileSidebarOpen(false);
+        setIsHeaderSearchFocused(false);
       }
     };
 
@@ -2022,6 +2045,8 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
     };
   }, [isSearchRoute]);
 
+  const {data:searchFollowing=[]}=useSearchFollowing(isSearchRoute);
+
   // Both external providers share the same suggestion slots and cancellation.
   useEffect(() => {
     const query=getSuggestFreeText(headerSearchValue).trim();
@@ -2032,7 +2057,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
       if(!controller.signal.aborted)setHeaderBlueskySuggestionUsers(users.map(user=>({...user,isOfficial:false})));
     };
     const timer=window.setTimeout(()=>{
-      void searchExternalUsers(normalizeBlueskySuggestQuery(query),{includeBluesky:!excludeBlueskyPosts,signal:controller.signal})
+      void searchExternalUsers(normalizeBlueskySuggestQuery(query),{includeBluesky:!excludeBlueskyPosts,signal:controller.signal,limit:25,onUsers:publish})
         .then(publish).catch(error=>{if(!controller.signal.aborted)console.warn('External suggestions unavailable',error);});
     },250);
     return()=>{controller.abort();window.clearTimeout(timer);};
@@ -2041,6 +2066,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   // サジェストの外側をクリックしたら閉じる。
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
+      if(e.target instanceof Element&&e.target.closest('[data-lime-mobile-search-editor]'))return;
       if (
         headerSuggestBoxRef.current && !headerSuggestBoxRef.current.contains(e.target as Node) &&
         headerSearchInputRef.current && !headerSearchInputRef.current.contains(e.target as Node)
@@ -2052,40 +2078,8 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
     return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
 
-  // ローカルユーザー候補 + Blueskyユーザー候補をマージ(SearchPage.tsxのliveSuggestionsと同じロジック)。
-  // "from:xxx" などの検索コマンドは除き、検索語だけでユーザー候補を出す。
-  const headerLiveUserSuggestions = useMemo(() => {
-    const raw = getSuggestFreeText(headerSearchValue).trim();
-    const normalizedRaw = normalizeForSearch(raw);
-    const queryCandidates = Array.from(
-      new Set([normalizedRaw, normalizedRaw.replace(/^@+/, '')].filter(Boolean))
-    );
-
-    if (queryCandidates.length === 0) return [];
-
-    const localSuggestions = headerAllUsers
-      .map((u) => {
-        const dn = normalizeForSearch(u.displayName);
-        const un = normalizeForSearch(u.username);
-        const handle = normalizeForSearch(`@${u.username}`);
-        const fields = [dn, un, handle];
-        let score = 0;
-
-        if (queryCandidates.some((q) => fields.includes(q))) score = 100;
-        else if (queryCandidates.some((q) => fields.some((field) => field.startsWith(q)))) score = 50;
-        else if (queryCandidates.some((q) => fields.some((field) => field.includes(q)))) score = 20;
-
-        return { user: u, score };
-      })
-      .filter((x) => x.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 5)
-      .map((x) => x.user);
-
-    const seen = new Set(localSuggestions.map((user) => user.id));
-    const blueskySuggestions = headerBlueskySuggestionUsers.filter((user) => !seen.has(user.id)).slice(0, 3);
-    return [...localSuggestions.slice(0, 5 - blueskySuggestions.length), ...blueskySuggestions];
-  }, [headerSearchValue, headerAllUsers, headerBlueskySuggestionUsers]);
+  const headerLiveUserSuggestions = useMemo(() => rankAccountSearch(headerAllUsers,headerBlueskySuggestionUsers,searchFollowing,getSuggestFreeText(headerSearchValue).trim(),5),[headerSearchValue,headerAllUsers,headerBlueskySuggestionUsers,searchFollowing]);
+  const headerSearchTerms=useSearchTermSuggestions(headerSearchValue,isSearchRoute&&!desktopLayout);
 
   // 表示するサジェスト行:入力があれば「検索する」+ユーザー候補、無ければ履歴。
   const headerSuggestionRows = useMemo<HeaderSuggestionRow[]>(() => {
@@ -2093,12 +2087,13 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
     if (headerSearchValue.trim()) {
       for(const asset of suggestMarketAssets(headerSearchValue))rows.push({type:'stock',value:`$${asset.symbol}`,asset});
       rows.push({ type: 'search', value: headerSearchValue.trim() });
+      for(const term of headerSearchTerms)rows.push({type:'search',value:term});
       for (const u of headerLiveUserSuggestions) rows.push({ type: 'user', value: u.username, user: u });
     } else {
       for (const h of headerSearchHistory) rows.push({ type: 'search', value: h });
     }
     return rows;
-  }, [headerSearchValue, headerLiveUserSuggestions, headerSearchHistory]);
+  }, [headerSearchValue, headerLiveUserSuggestions, headerSearchHistory,headerSearchTerms]);
 
   const isSearchPage = normalizeAppPath(location.pathname) === '/u/LimeBiz';
   const isChatPage = normalizeAppPath(location.pathname) === '/chat' || /^\/messages(?:\/|$)/.test(normalizeAppPath(location.pathname));
@@ -2220,10 +2215,10 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   // 検索結果表示中はヘッダーを閉じないので、サジェストもこの処理では閉じない。
   // PC版や検索ページ以外のヘッダーには影響させない。
   useEffect(() => {
-    if (!isHiddenOnMobile || !isSearchRoute || isSearchResultsVisible || window.innerWidth >= 640) return;
+    if (mobileSearchEditing || !isHiddenOnMobile || !isSearchRoute || isSearchResultsVisible || window.innerWidth >= 640) return;
     setIsHeaderSearchFocused(false);
     setHeaderActiveSuggestIdx(-1);
-  }, [isHiddenOnMobile, isSearchRoute, isSearchResultsVisible]);
+  }, [isHiddenOnMobile, isSearchRoute, isSearchResultsVisible,mobileSearchEditing]);
 
   // 通常クリックではスクロール位置を変更しない。
   // ダブルクリック判定用に「1回目のクリックでタブが切り替わったか」だけを記録する。
@@ -2306,6 +2301,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   // 検索行(履歴 or 入力中のキーワード)なら検索を確定する。
   const handleHeaderSuggestionSelect = (row: HeaderSuggestionRow) => {
     if (row.type === 'user') {
+      rememberSearchAccount(user?.id,row.user);
       setIsHeaderSearchFocused(false);
       setHeaderActiveSuggestIdx(-1);
       headerSearchInputRef.current?.blur();
@@ -2318,6 +2314,9 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
 
   const handleHeaderSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (!isHeaderSearchFocused) return;
+    if(event.key==='Escape'){
+      event.preventDefault();setHeaderSearchValue(headerSearchInitialValueRef.current);setIsHeaderSearchFocused(false);headerSearchInputRef.current?.blur();return;
+    }
     if (event.key === 'ArrowDown') {
       event.preventDefault();
       setHeaderActiveSuggestIdx((i) => Math.min(headerSuggestionRows.length - 1, i + 1));
@@ -2344,6 +2343,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   const clearHeaderHistory = () => {
     setHeaderSearchHistory([]);
     saveSearchHistory([]);
+    clearRecentSearchAccounts(user?.id);
   };
 
   // 検索ページ(モバイル)の話題/最新/ユーザー/メディアタブ切り替え。SearchPage.tsx側は
@@ -2549,34 +2549,38 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
     // 検索バーは検索ページ('/search')のモバイル表示でのみ表示する。
     if (!isSearchRoute) return null;
 
-    return (
-      <div className="relative min-w-0 flex-1 sm:hidden">
-        <form onSubmit={handleHeaderSearchSubmit} className="flex min-w-0 flex-1 items-center gap-2">
+    const content=(
+      <div className={mobileSearchEditing?'flex h-full min-h-0 w-full flex-col bg-background text-foreground sm:hidden':'relative min-w-0 flex-1 sm:hidden'}>
+        <form onSubmit={handleHeaderSearchSubmit} className={cn('flex min-w-0 items-center gap-2',mobileSearchEditing?'shrink-0 border-b border-border px-3 pb-3 pt-[max(12px,env(safe-area-inset-top))]':'flex-1')}>
+          {mobileSearchEditing&&<button type="button" aria-label="検索入力を閉じる" onClick={()=>{setHeaderSearchValue(headerSearchInitialValueRef.current);setIsHeaderSearchFocused(false);setHeaderActiveSuggestIdx(-1);headerSearchInputRef.current?.blur();}} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full hover:bg-muted"><ArrowLeft className="h-6 w-6"/></button>}
           <div
             className={cn(
               "flex h-10 min-w-0 flex-1 items-center rounded-full border border-border px-4 transition-colors",
-              isHeaderSearchFocused
-                ? "bg-white ring-2 ring-primary dark:bg-black"
+              mobileSearchEditing
+                ? "border-transparent bg-transparent px-1"
                 : "bg-transparent"
             )}
           >
-            <Search className={cn("h-[18px] w-[18px] shrink-0", isHeaderSearchFocused ? "text-primary" : "text-zinc-500 dark:text-zinc-400")} />
+            <Search className="h-[18px] w-[18px] shrink-0 text-muted-foreground" />
             <input
               ref={headerSearchInputRef}
+              autoFocus={mobileSearchEditing}
+              enterKeyHint="search"
               value={headerSearchValue}
               onChange={(event) => {
                 setHeaderSearchValue(event.target.value);
                 setHeaderActiveSuggestIdx(-1);
               }}
-              onFocus={() => setIsHeaderSearchFocused(true)}
+              onFocus={() => {if(!isHeaderSearchFocused)headerSearchInitialValueRef.current=headerSearchValue;setIsHeaderSearchSettingsOpen(false);setIsHeaderSearchFocused(true);}}
               onKeyDown={handleHeaderSearchKeyDown}
               placeholder="検索"
               aria-label="検索"
-              className="h-full w-full min-w-0 bg-transparent px-3 text-[15px] text-zinc-900 outline-none placeholder:text-zinc-500 dark:text-white dark:placeholder:text-zinc-400"
+              className="h-full w-full min-w-0 bg-transparent px-3 text-base text-foreground outline-none placeholder:text-muted-foreground"
             />
             {headerSearchValue && (
               <button
                 type="button"
+                aria-label="検索欄をクリア"
                 onClick={() => {
                   setHeaderSearchValue('');
                   headerSearchInputRef.current?.focus();
@@ -2588,7 +2592,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
             )}
           </div>
 
-          <div className="relative shrink-0">
+          <div className={cn('relative shrink-0',mobileSearchEditing&&'hidden')}>
             <button
               type="button"
               aria-label="検索設定"
@@ -2624,24 +2628,14 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
           </div>
         </form>
 
-        {isHeaderSearchFocused && headerSuggestionRows.length > 0 && (
+        {mobileSearchEditing && (
           <div
             ref={headerSuggestBoxRef}
-            className="absolute left-0 right-12 top-12 z-[600] max-h-[60vh] overflow-y-auto rounded-2xl border border-black/5 bg-white/95 shadow-[0_8px_30px_rgba(0,0,0,0.1)] backdrop-blur-xl dark:border-white/10 dark:bg-[#15202b]/95 dark:shadow-[0_8px_30px_rgba(0,0,0,0.3)]"
+            onMouseDown={event=>event.preventDefault()}
+            className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom)]"
           >
-            {!headerSearchValue.trim() && headerSearchHistory.length > 0 && (
-              <div className="flex items-center justify-between px-4 py-2.5">
-                <span className="text-[15px] font-bold">最近の検索</span>
-                <button
-                  type="button"
-                  onClick={clearHeaderHistory}
-                  className="text-[13px] text-primary hover:underline"
-                >
-                  すべて消去
-                </button>
-              </div>
-            )}
-            {headerSuggestionRows.map((row, idx) => (
+            {!headerSearchValue.trim()&&<MobileSearchRecents accounts={recentHeaderAccounts} history={headerSearchHistory} onClear={clearHeaderHistory} onAccount={account=>handleHeaderSuggestionSelect({type:'user',value:account.username,user:account})} onSearch={commitHeaderSearch} onFill={value=>{setHeaderSearchValue(value);setHeaderActiveSuggestIdx(-1);headerSearchInputRef.current?.focus();}}/>}
+            {headerSearchValue.trim()&&headerSuggestionRows.map((row, idx) => (
               <button
                 key={idx}
                 type="button"
@@ -2714,6 +2708,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
         )}
       </div>
     );
+    return mobileSearchEditing?createPortal(<div data-lime-mobile-search-editor className="fixed left-0 right-0 z-[5000] sm:hidden" style={{top:searchViewport.top,height:searchViewport.height}}>{content}</div>,document.body):content;
   };
 
   // 検索ページ(モバイル)専用の「話題/最新/ユーザー/メディア」タブ。旧SearchPage.tsxにあった

@@ -17,6 +17,8 @@ vi.mock('@/lib/supabase', () => ({
         or: (value: string) => { call.filters.or = value; return builder; },
         abortSignal: (signal:AbortSignal) => {call.signal=signal;return builder;},
         ilike: () => builder,
+        not: (column: string) => { call.filters.notNull = column; return builder; },
+        limit: (count: number) => { call.filters.range = [0, count - 1]; return builder; },
         order: () => builder,
         range: (from: number, to: number) => { call.filters.range = [from, to]; return builder; },
         maybeSingle: () => { call.filters.single = true; return builder; },
@@ -24,6 +26,7 @@ vi.mock('@/lib/supabase', () => ({
         then: (resolve: (value: unknown) => void) => {
           db.calls.push(call);
           let rows = (db.rows[table] ?? []).filter(row => Object.entries(call.filters).every(([key, value]) => {
+            if (key === 'notNull') return row[String(value)] != null;
             if (['or', 'range', 'single'].includes(key)) return true;
             return Array.isArray(value) ? value.includes(row[key]) : row[key] === value;
           }));
@@ -37,7 +40,7 @@ vi.mock('@/lib/supabase', () => ({
 }));
 
 import { getUserByUsername } from './users';
-import { getFeed, getFollowingFeed, getPostsByUser, getLikedPostsByUser, searchPosts, getProfilePosts, getProfilePopularityPosts, getPostById, getHighlightedPosts } from './posts';
+import { getFeed, getVideoFeed, getFollowingFeed, getPostsByUser, getLikedPostsByUser, searchPosts, getProfilePosts, getProfilePopularityPosts, getPostById, getHighlightedPosts } from './posts';
 
 const post = (id: string, parent?: string) => ({
   id, user_id: 'author', content: 'post', image_urls: ['https://example.com/image.png'],
@@ -316,4 +319,21 @@ it('preserves poll definitions and counts in post detail and its quoted parent',
  db.rows.posts=[{...post('original'),poll},{...post('quote','original'),parent_post:{...post('original'),poll}}];
  expect((await getPostById('original'))?.poll).toEqual(poll);
  expect((await getPostById('quote'))?.parentPost?.poll).toEqual(poll);
+});
+
+it('scopes video candidates to requested authors and excludes inaccessible videos', async () => {
+ db.rows.posts = [
+  {...post('friend-video'), user_id:'friend', video:{key:'friend-video'}},
+  {...post('other-video'), user_id:'other', video:{key:'other-video'}},
+  {...post('friend-photo'), user_id:'friend'},
+  {...post('private-video'), user_id:'friend', visibility:'members', video:{key:'private-video'}},
+ ];
+ const result=await getVideoFeed(undefined,undefined,{authorIds:['friend'],limit:20});
+ expect(result.posts.map(post=>post.id)).toEqual(['friend-video']);
+ expect(db.calls.find(call=>call.table==='posts')?.filters.user_id).toEqual(['friend']);
+ expect(result.nextCursor).toBeNull();
+});
+it('does not query global videos when the scoped author list is empty', async () => {
+ expect(await getVideoFeed(undefined,undefined,{authorIds:[]})).toEqual({posts:[],nextCursor:null});
+ expect(db.calls).toHaveLength(0);
 });
