@@ -1,9 +1,10 @@
+// sandboxExecution
 /** Arbitrary model-generated code must never run in the app's origin. */
-export function sandboxDocument(html: string): string {
+function sandboxDocument(html: string): string {
   const escape = (value: string) => value.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Preview</title></head><body style="margin:0"><iframe sandbox="allow-scripts allow-modals allow-forms allow-popups allow-pointer-lock" referrerpolicy="no-referrer" style="position:fixed;inset:0;width:100%;height:100%;border:0" srcdoc="${escape(html)}"></iframe></body></html>`;
 }
-export type SandboxWorker = {
+type SandboxWorker = {
   onmessage: ((event: MessageEvent) => void) | null;
   onerror: ((event: {message: string}) => void) | null;
   postMessage: (data: unknown) => void;
@@ -14,7 +15,7 @@ export type SandboxWorker = {
  * inherits the app origin and could read IndexedDB exports/private bookmarks.
  * The parent only relays code and bounded console output, never credentials.
  */
-export function createSandboxWorker(source: string): SandboxWorker {
+function createSandboxWorker(source: string): SandboxWorker {
   const frame = document.createElement('iframe');
   frame.hidden = true;
   frame.setAttribute('sandbox','allow-scripts');
@@ -54,3 +55,31 @@ export function createSandboxWorker(source: string): SandboxWorker {
   document.body.append(frame);
   return worker;
 }
+
+// documentText
+/** Keep untrusted document parsers off the UI thread and kill stalled jobs. */
+async function extractDocumentText(file:File,kind:'pdf'|'docx'):Promise<string>{
+  if(file.size>25*1024*1024)throw Error('文書は25MB以内にしてください');
+  const bytes=await file.arrayBuffer();
+  const worker=new Worker(new URL('./documentText.worker.ts',import.meta.url),{type:'module'});
+  try {
+    return await new Promise<string>((resolve,reject)=>{
+      const timer=setTimeout(()=>{worker.terminate();reject(Error('文書の解析が時間制限を超えました'));},30000);
+      const fail=(message:string)=>{clearTimeout(timer);reject(Error(message));};
+      worker.onerror=()=>fail('文書を解析できませんでした');
+      worker.onmessage=event=>{
+        // PDF.js can emit its own worker protocol messages while importing.
+        if(event.data?.documentResult!==true)return;
+        clearTimeout(timer);
+        if(typeof event.data?.text==='string')resolve(event.data.text.slice(0,80000));
+        else fail(typeof event.data?.error==='string'?event.data.error:'文書を解析できませんでした');
+      };
+      worker.postMessage({bytes,kind,maxChars:80000},[bytes]);
+    });
+  }finally{worker.terminate();}
+}
+
+export { sandboxDocument };
+export { createSandboxWorker };
+export type { SandboxWorker };
+export { extractDocumentText };

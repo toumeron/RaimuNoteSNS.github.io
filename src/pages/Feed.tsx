@@ -1,24 +1,27 @@
-import {useTrendViews} from '@/hooks/useTrendViews';
-import { readTrendViews, recordTrendDeliveries } from "@/hooks/useTrendViews";
-import {createTwitterTrendCursor,getTwitterTrendPage,type TwitterTrendCursor} from '@/api/twitter-trends';
-import { SuspensionNotice } from '@/components/account/AccountSuspension';
+import { isIosPwa } from "@/lib/utils";
+import { useTrendViews } from "@/hooks/useTopics";
+import { readTrendViews, recordTrendDeliveries } from "@/hooks/useTopics";
+import { createTwitterTrendCursor, getTwitterTrendPage, type TwitterTrendCursor } from "@/api/search-news";
+import { SuspensionNotice } from "@/components/layout/AppLayout";
 import {isTimelinePost,isLimeNoteTimelinePost,showTimelineEmpty} from "@/lib/timelinePaging";
-import {useListFeed} from '@/hooks/useLists';
+import { useListFeed } from "@/hooks/useTopics";
 import { useTopicFeed } from "@/hooks/useTopics";
 import { isFeedTabValue, feedTabTopic, useTimelineTabs, type FeedTabValue } from "@/components/feed/TimelineTabBar";
-import { RefreshCw, Sparkles, Loader2 } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { RefreshCw, Sparkles, Loader2, ArrowUp } from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
+import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { useInView } from 'react-intersection-observer';
 import { useQuery,useQueryClient } from '@tanstack/react-query';
 import {getTopicPreferences,topicsKey} from '@/api/topics';
-import {recommendationIdentity,recommendationFingerprint} from "@/lib/recommendationSignals";
+import { recommendationIdentity, recommendationFingerprint } from "@/lib/recommendations";
 import {useAuth} from '@/hooks/useAuth';
 import { PostComposer } from '@/components/feed/PostComposer';
 import { PostCard } from '@/components/feed/PostCard';
-import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
-import { useTimelineContinuation } from "@/hooks/useRecommendationImages";
-import { useTimelineFeed } from '@/hooks/useTimelineFeed';
-import { useIsPWA, TIMELINE_PAGINATION_MARGIN } from "@/hooks/use-mobile";
+import { PostCardSkeleton } from "@/components/feed/PostPoll";
+import { useTimelineContinuation } from "@/hooks/useRecommendedFeed";
+import { useTimelineFeed } from "@/hooks/useFeed";
+import { useIsPWA, TIMELINE_PAGINATION_MARGIN } from "@/hooks/useViewportWidth";
 import { supabase } from '@/lib/supabase';
 import { getPostById } from '@/api/posts';
 import type { PostWithAuthor } from '@/types';
@@ -90,6 +93,7 @@ type FeedPostInsertPayload = {
 const ESTIMATED_POST_HEIGHT = 360;
 const VIRTUAL_OVERSCAN = 4;
 const MIN_VIRTUALIZED_POSTS = 12;
+const NEW_POSTS_SCROLL_THRESHOLD = 80;
 // トレンドタブで1回に取得する件数の目安。
 
 // 最新/フォロー中/トレンドの選択状態はヘッダー側に移設したため、Feed側はこのキーと
@@ -107,6 +111,68 @@ const insertPostAtLocalFeedHead = (current: PostWithAuthor[], post: PostWithAuth
   if (current.some((item) => item.id === post.id)) return current;
   return [post, ...current].slice(0, 12);
 };
+
+export function collectTimelineNoticePosts(current: PostWithAuthor[], post: PostWithAuthor, viewerId: string | null) {
+  if (post.userId === viewerId || post.author.id === viewerId || current.some(item => item.id === post.id)) return current;
+  return [post, ...current].slice(0, 12);
+}
+
+export function TimelineNewPostsNotice({posts, anchor, onShow}: {posts: PostWithAuthor[]; anchor: RefObject<HTMLDivElement>; onShow: () => void}) {
+  const [position, setPosition] = useState<{left: number; top: number; width: number} | null>(null);
+  const authors = posts.map(post => post.author).filter((author, index, all) => all.findIndex(item => item.id === author.id) === index).slice(0, 3);
+  useLayoutEffect(() => {
+    const root = anchor.current;
+    if (!root) return;
+    const header = document.querySelector<HTMLElement>('[data-lime-app-header]');
+    let frame: number | undefined;
+    let headerMoving = false;
+    const measure = () => {
+      frame = undefined;
+      const bounds = root.getBoundingClientRect();
+      const next = {left: Math.max(0, bounds.left) + Math.min(bounds.width, innerWidth) / 2, top: Math.max(12, (header?.getBoundingClientRect().bottom ?? 0) + 12), width: Math.max(0, Math.min(bounds.width, innerWidth) - 24)};
+      setPosition(current => current && current.left === next.left && current.top === next.top && current.width === next.width ? current : next);
+      // The notice may mount after Header's transitionrun has already fired.
+      if (headerMoving || header?.getAnimations?.().some(animation => animation.playState === 'running')) {
+        frame = requestAnimationFrame(measure);
+      }
+    };
+    const schedule = () => { if (frame === undefined) frame = requestAnimationFrame(measure); };
+    const followHeader = (event: TransitionEvent) => {
+      if (event.target !== header || event.propertyName !== 'transform') return;
+      headerMoving = event.type === 'transitionrun';
+      schedule();
+    };
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(schedule);
+    observer?.observe(root);
+    if (header) observer?.observe(header);
+    header?.addEventListener('transitionrun', followHeader);
+    header?.addEventListener('transitionend', followHeader);
+    header?.addEventListener('transitioncancel', followHeader);
+    measure();
+    window.addEventListener('resize', schedule);
+    window.addEventListener('scroll', schedule, {passive: true});
+    return () => {
+      observer?.disconnect();
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      header?.removeEventListener('transitionrun', followHeader);
+      header?.removeEventListener('transitionend', followHeader);
+      header?.removeEventListener('transitioncancel', followHeader);
+      window.removeEventListener('resize', schedule);
+      window.removeEventListener('scroll', schedule);
+    };
+  }, [anchor]);
+  if (!posts.length || !position) return null;
+  return createPortal(<div className="lime-new-posts-notice" style={{left: position.left, top: position.top, maxWidth: position.width}} role="status" aria-live="polite">
+    <button type="button" onClick={onShow} aria-label={`${authors.map(author => author.displayName || author.username).join('、')}さんの新しいポストを表示`}>
+      <ArrowUp aria-hidden="true" />
+      <span className="lime-new-posts-avatars" aria-hidden="true">{authors.map(author => <Avatar key={author.id}>
+        <AvatarImage src={author.avatarUrl || undefined} alt="" referrerPolicy="no-referrer" />
+        <AvatarFallback>{(author.displayName || author.username || '?').slice(0, 1)}</AvatarFallback>
+      </Avatar>)}</span>
+      <span>さんがポストしました</span>
+    </button>
+  </div>, document.body);
+}
 
 const isTimelineRootPost = (post: FeedPostInsertPayload | null | undefined) => (
   Boolean(post?.id) && !(Boolean(post?.parent_id) && post?.is_quote !== true)
@@ -231,6 +297,10 @@ export default function Feed() {
   const pullDistanceRef = useRef(0);
   const realtimeHandledPostIdsRef = useRef<Set<string>>(new Set());
   const currentUserIdRef = useRef<string | null>(null);
+  const noticeViewerRef = useRef(user?.id ?? null);
+  noticeViewerRef.current = user?.id ?? null;
+  const [newPostsByTab, setNewPostsByTab] = useState<Partial<Record<FeedTab, PostWithAuthor[]>>>({});
+  useEffect(() => { setNewPostsByTab({}); realtimeHandledPostIdsRef.current.clear(); }, [user?.id]);
   const followedUserIdsRef = useRef<Set<string>>(new Set());
   const [pullDistance, setPullDistance] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -240,11 +310,27 @@ export default function Feed() {
     height: typeof window === 'undefined' ? 800 : window.innerHeight,
     listTop: 0,
   }));
+  const isFeedScrolled = virtualViewport.scrollY > NEW_POSTS_SCROLL_THRESHOLD;
   const [realtimePostsByTab, setRealtimePostsByTab] = useState<Partial<Record<FeedTab, PostWithAuthor[]>>>({
     all: [],
     following: [],
     trending: [],
   });
+  const revealNewPosts = useCallback((tab: FeedTab, posts: PostWithAuthor[]) => {
+    if (!posts.length) return;
+    setRealtimePostsByTab(current => ({...current, [tab]: posts.reduceRight((rows, post) => insertPostAtLocalFeedHead(rows, post), current[tab] ?? [])}));
+    const shown = new Set(posts.map(post => post.id));
+    setNewPostsByTab(current => ({...current, [tab]: (current[tab] ?? []).filter(post => !shown.has(post.id))}));
+  }, []);
+  const newPostsByTabRef = useRef(newPostsByTab);
+  newPostsByTabRef.current = newPostsByTab;
+  const activeNewPosts = newPostsByTab[activeTab];
+  useEffect(() => {
+    if (isFeedScrolled || !activeNewPosts?.length) return;
+    const target = pendingFeedTabScrollRestoreRef.current ?? window.scrollY;
+    if (target > NEW_POSTS_SCROLL_THRESHOLD) return;
+    revealNewPosts(activeTab, activeNewPosts);
+  }, [activeTab, activeNewPosts, isFeedScrolled, revealNewPosts]);
   // --- トレンドタブ(Twitter・トピック別の人気投稿)用の状態 ---
   const [trendingPosts, setTrendingPosts] = useState<PostWithAuthor[]>([]);
   const [trendingLoading, setTrendingLoading] = useState(false);
@@ -424,13 +510,7 @@ export default function Feed() {
     let cancelled = false;
 
     const loadFollowingState = async () => {
-      const { data: authData, error: authError } = await supabase.auth.getUser();
-      if (authError) {
-        console.error('Fetch current user for realtime feed failed:', authError);
-        return;
-      }
-
-      const currentUserId = authData.user?.id ?? null;
+      const currentUserId = user?.id ?? null;
       currentUserIdRef.current = currentUserId;
       followedUserIdsRef.current = new Set();
 
@@ -461,9 +541,15 @@ export default function Feed() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [user?.id]);
 
   const addPostToTab = useCallback((targetTab: 'all' | 'following', post: PostWithAuthor) => {
+    const scrollPosition = targetTab === activeFeedTabForScrollRef.current ? window.scrollY : feedTabScrollPositionsRef.current[targetTab] ?? 0;
+    if (scrollPosition > NEW_POSTS_SCROLL_THRESHOLD && post.userId !== noticeViewerRef.current && post.author.id !== noticeViewerRef.current) {
+      // Keep the list and its measured heights untouched while it is being read.
+      setNewPostsByTab(current => ({...current, [targetTab]: collectTimelineNoticePosts(current[targetTab] ?? [], post, noticeViewerRef.current)}));
+      return;
+    }
     setRealtimePostsByTab((current) => ({
       ...current,
       [targetTab]: insertPostAtLocalFeedHead(current[targetTab]??[], post),
@@ -471,6 +557,7 @@ export default function Feed() {
   }, []);
 
   const showIncomingPostInAllVisibleFeeds = useCallback(async (postId: string) => {
+    const viewerId = noticeViewerRef.current;
     const handledPostKey = `incoming:${postId}`;
     if (realtimeHandledPostIdsRef.current.has(handledPostKey)) return;
     realtimeHandledPostIdsRef.current.add(handledPostKey);
@@ -481,6 +568,7 @@ export default function Feed() {
     }
 
     const post = await fetchRealtimePostById(postId);
+    if (noticeViewerRef.current !== viewerId) return;
 
     if (!post) {
       realtimeHandledPostIdsRef.current.delete(handledPostKey);
@@ -1178,12 +1266,15 @@ export default function Feed() {
 
   useEffect(() => {
     let frame: number | null = null;
+    let listTop=0, measureLayout=true;
+    const scrollStep=isIosPwa()?120:24;
 
     const updateVirtualViewport = () => {
       frame = null;
-      const listTop = postListRef.current
-        ? postListRef.current.getBoundingClientRect().top + window.scrollY
-        : 0;
+      if(measureLayout){
+        listTop=postListRef.current?postListRef.current.getBoundingClientRect().top+window.scrollY:0;
+        measureLayout=false;
+      }
 
       setVirtualViewport((current) => {
         const next = {
@@ -1193,7 +1284,8 @@ export default function Feed() {
         };
 
         if (
-          Math.abs(current.scrollY - next.scrollY) < 24 &&
+          (current.scrollY > NEW_POSTS_SCROLL_THRESHOLD) === (next.scrollY > NEW_POSTS_SCROLL_THRESHOLD) &&
+          Math.abs(current.scrollY - next.scrollY) < scrollStep &&
           current.height === next.height &&
           Math.abs(current.listTop - next.listTop) < 8
         ) {
@@ -1209,9 +1301,13 @@ export default function Feed() {
       frame = window.requestAnimationFrame(updateVirtualViewport);
     };
 
+    const layoutChanged=()=>{measureLayout=true;scheduleUpdate();};
+    const observer=typeof ResizeObserver==='undefined'?null:new ResizeObserver(layoutChanged);
+    if(feedRootRef.current)observer?.observe(feedRootRef.current);
+    if(postListRef.current)observer?.observe(postListRef.current);
     scheduleUpdate();
     window.addEventListener('scroll', scheduleUpdate, { passive: true });
-    window.addEventListener('resize', scheduleUpdate);
+    window.addEventListener('resize', layoutChanged);
 
     return () => {
       if (frame !== null) {
@@ -1219,7 +1315,8 @@ export default function Feed() {
       }
 
       window.removeEventListener('scroll', scheduleUpdate);
-      window.removeEventListener('resize', scheduleUpdate);
+      window.removeEventListener('resize', layoutChanged);
+      observer?.disconnect();
     };
   }, []);
 
@@ -1267,7 +1364,7 @@ export default function Feed() {
       setActiveTab(nextTab);
     };
 
-    const handleScrollTop=()=>{feedTabScrollPositionsRef.current[activeFeedTabForScrollRef.current]=0;pendingFeedTabScrollRestoreRef.current=null;};
+    const handleScrollTop=()=>{const tab=activeFeedTabForScrollRef.current;feedTabScrollPositionsRef.current[tab]=0;pendingFeedTabScrollRestoreRef.current=null;revealNewPosts(tab,newPostsByTabRef.current[tab]??[]);};
     window.addEventListener('lime-feed-scroll-top',handleScrollTop);
     window.addEventListener('lime-active-feed-tab-changed', handleActiveFeedTabChanged as EventListener);
     window.addEventListener('storage', handleStorage);
@@ -1277,7 +1374,7 @@ export default function Feed() {
       window.removeEventListener('lime-active-feed-tab-changed', handleActiveFeedTabChanged as EventListener);
       window.removeEventListener('storage', handleStorage);
     };
-  }, []);
+  }, [revealNewPosts]);
 
   // タブ内容のDOMが更新されたあと、記憶位置を2フレームかけて復元する。
   // behavior:'auto' のため、縦方向のスクロールアニメーションは発生せず、
@@ -1411,6 +1508,11 @@ export default function Feed() {
   const canReleaseToRefresh = pullDistance >= 58;
   const hasTimelineBackground = Boolean(timelineBackgroundUrl);
   const shouldVirtualizePosts = allPosts.length > MIN_VIRTUALIZED_POSTS;
+  const postOffsets=useMemo(()=>{
+    const offsets=[0];
+    for(const post of allPosts)offsets.push(offsets[offsets.length-1]+(postHeightsRef.current.get(post.id)??ESTIMATED_POST_HEIGHT));
+    return offsets;
+  },[allPosts,heightVersion]);
   const virtualRange = useMemo(() => {
     if (!shouldVirtualizePosts) {
       return {
@@ -1428,36 +1530,16 @@ export default function Feed() {
     // 累積オフセットを求める。固定値だけで範囲を決めていた以前の実装と違い、
     // 動画埋め込みなど高さのばらつきが大きい投稿があっても、範囲判定と
     // 実際の表示位置がズレにくくなる。
-    const postHeights = postHeightsRef.current;
-    const heights = allPosts.map((post) => postHeights.get(post.id) ?? ESTIMATED_POST_HEIGHT);
-
-    let rawStart = 0;
-    let offsetBeforeRawStart = 0;
-    while (rawStart < heights.length && offsetBeforeRawStart + heights[rawStart] < viewportTop) {
-      offsetBeforeRawStart += heights[rawStart];
-      rawStart += 1;
-    }
-
-    const start = Math.max(0, rawStart - VIRTUAL_OVERSCAN);
-
-    let topSpacer = 0;
-    for (let i = 0; i < start; i += 1) {
-      topSpacer += heights[i];
-    }
-
-    let rawEnd = start;
-    let offsetBeforeRawEnd = topSpacer;
-    while (rawEnd < heights.length && offsetBeforeRawEnd < viewportBottom) {
-      offsetBeforeRawEnd += heights[rawEnd];
-      rawEnd += 1;
-    }
-
-    const end = Math.min(allPosts.length, rawEnd + VIRTUAL_OVERSCAN);
-
-    let bottomSpacer = 0;
-    for (let i = end; i < heights.length; i += 1) {
-      bottomSpacer += heights[i];
-    }
+    const lowerBound=(target:number)=>{
+      let low=0,high=postOffsets.length-1;
+      while(low<high){const middle=(low+high)>>>1;if(postOffsets[middle]<target)low=middle+1;else high=middle;}
+      return low;
+    };
+    const rawStart=Math.max(0,lowerBound(viewportTop)-1);
+    const start=Math.max(0,rawStart-VIRTUAL_OVERSCAN);
+    const end=Math.min(allPosts.length,Math.max(start,lowerBound(viewportBottom))+VIRTUAL_OVERSCAN);
+    const topSpacer=postOffsets[start];
+    const bottomSpacer=postOffsets[allPosts.length]-postOffsets[end];
 
     return {
       start,
@@ -1471,7 +1553,7 @@ export default function Feed() {
     virtualViewport.height,
     virtualViewport.listTop,
     virtualViewport.scrollY,
-    heightVersion,
+    postOffsets,
   ]);
 
   const renderedPosts = useMemo(
@@ -1527,6 +1609,11 @@ export default function Feed() {
           : ''
       }`}
     >
+      {isFeedScrolled && !isInitialLoading && (newPostsByTab[activeTab]?.length ?? 0) > 0 && <TimelineNewPostsNotice posts={newPostsByTab[activeTab]!} anchor={feedRootRef} onShow={() => {
+        revealNewPosts(activeTab, newPostsByTab[activeTab] ?? []);
+        window.dispatchEvent(new Event('lime-feed-scroll-top'));
+        window.scrollTo({top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});
+      }} />}
       {hasTimelineBackground && isMobile && timelineBackgroundUrl && (
         <div
           className="pointer-events-none fixed left-0 top-0 z-0 bg-background"
@@ -1672,32 +1759,32 @@ export default function Feed() {
         </div>
       )}
 
-      {/* 
+      {/*
         コンテナの gap はPC表示時に影響を与えないよう sm:gap-0 にリセットしています。
       */}
       <div data-lime-feed-intro className="relative z-[1] flex flex-col sm:flex-row sm:items-center sm:justify-between sm:gap-0 px-1">
-        
-        {/* 
+
+        {/*
           PC表示（sm以上）のときは横並びになり余白は不要なため、
           スマホ表示のときだけ下に余白を作る「mb-2.5 sm:mb-0」を追加しました。
         */}
         <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-1.5">
-          
+
           {/* 公式サイト・お問い合わせボタンのコンテナ（スマホでは上部） */}
           {!hasTimelineBackground && (
             <div className="flex flex-wrap items-center gap-1.5 order-1 sm:order-2 mb-2.5 sm:mb-0">
-              <a 
-                href="https://toumeron.github.io/LimeNoteJP/" 
-                target="_blank" 
+              <a
+                href="https://toumeron.github.io/LimeNoteJP/"
+                target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center justify-center h-6 px-3 rounded-full bg-primary/15 hover:bg-primary/45 text-primary text-xs font-bold transition-colors whitespace-nowrap select-none leading-none border-none shadow-none"
               >
                 ↗︎ 公式サイト
               </a>
 
-              <a 
-                href="https://forms.gle/1FUHzrWL38iVbUju5" 
-                target="_blank" 
+              <a
+                href="https://forms.gle/1FUHzrWL38iVbUju5"
+                target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center justify-center h-6 px-3 rounded-full bg-primary/15 hover:bg-primary/25 text-primary text-xs font-bold transition-colors whitespace-nowrap select-none leading-none border-none shadow-none"
               >

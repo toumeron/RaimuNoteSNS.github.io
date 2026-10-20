@@ -1,18 +1,18 @@
-import { composerMediaDrop, isVideoAttachment } from "@/components/feed/ComposerIcon";
-import {preparePostVideo,type PreparedVideo} from '@/lib/postVideo';
+import { composerMediaDrop, isVideoAttachment } from "@/components/feed/PostPoll";
+import { preparePostVideo, type PreparedVideo } from "@/lib/mediaThumbnail";
 import {PostVideoPlayer} from '@/components/video/PostVideoPlayer';
 import { ScheduleControl, ScheduledPostNotice } from "@/components/feed/PostPoll";
 import { allowAccountWrite } from '@/lib/accountSuspension';
-import { AccountSuspensionFeedback } from '@/components/account/AccountSuspension';
+import { AccountSuspensionFeedback } from "@/components/layout/AppLayout";
 import { useAutoTextarea } from "@/hooks/useViewportWidth";
-import {ComposerIcon} from '@/components/feed/ComposerIcon';
-import {PollIcon} from "@/components/feed/ComposerIcon";
+import { ComposerIcon } from "@/components/feed/PostPoll";
+import { PollIcon } from "@/components/feed/PostPoll";
 import { PollEditor, newPollDraft } from "@/components/feed/PostPoll";
-import {validatePollDraft,type PollDraft} from '@/lib/polls';
+import { validatePollDraft, type PollDraft } from "@/lib/utils";
 import { MediaLightboxRoot } from '@/components/media/MediaLightbox';
 import {DraftEmojiText} from "@/components/stickers/Stickers";
 import { StickerPicker, StickerDraft } from '@/components/stickers/Stickers';
-import { appendSticker, insertDraftEmoji, draftEmojiCharacter } from '@/lib/stickers';
+import { appendSticker, insertDraftEmoji, draftEmojiCharacter } from "@/lib/utils";
 import { QuotedPost } from '@/components/feed/QuotedPost';
 import { PostOverlayContext } from "@/components/layout/DesktopLayoutContext";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -20,39 +20,39 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from 'react-router-dom';
-import { Toaster as Sonner } from "@/components/ui/sonner";
-import { Toaster } from "@/components/ui/toast";
-import { TooltipProvider } from "@/components/ui/popover";
-import { AuthProvider, useAuth } from "@/hooks/useAuth"; 
+import { SonnerToaster as Sonner } from "@/components/ui/button";
+import { Toaster } from "@/components/ui/button";
+import { TooltipProvider } from "@/components/ui/button";
+import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { AppLayout } from "@/components/layout/AppLayout";
-import { ThemeProvider } from "next-themes"; 
-import { useOSNotification } from "@/hooks/useOSNotification"; 
+import { ThemeProvider } from "next-themes";
+import { useOSNotification } from "@/hooks/useOSNotification";
 const AuthPage = lazy(() => import("./pages/Auth"));
 import Feed from "./pages/Feed";
 const Bookmarks = lazy(() => import("./pages/Bookmarks"));
-const Lists = lazy(() => import('./pages/Lists'));
+const Lists = lazy(() => import("@/pages/Bookmarks").then(module => ({default: module.Lists})));
 const Topics = lazy(() => import("./pages/Topics"));
 const PostDetail = lazy(() => import("./pages/PostDetail"));
 const Profile = lazy(() => import("./pages/Profile"));
 const Settings = lazy(() => import("./pages/Settings"));
 const SearchPage = lazy(() => import("./pages/SearchPage"));
 const DirectMessages = lazy(() => import("./pages/DirectMessages"));
-const PostActivity = lazy(() => import("./pages/PostActivity"));
-const Share = lazy(() => import("./pages/Share"));
-const NotFound = lazy(() => import("./pages/NotFound"));
-const Notifications = lazy(() => import("./pages/Notifications"));
+const PostActivity = lazy(() => import("@/pages/PostDetail").then(module => ({default: module.PostActivity})));
+const Share = lazy(() => import("@/pages/PostDetail").then(module => ({default: module.Share})));
+const NotFound = lazy(() => import("@/pages/Topics").then(module => ({default: module.NotFound})));
+const Notifications = lazy(() => import("@/pages/Topics").then(module => ({default: module.Notifications})));
 const WatchHistory = lazy(() => import("./pages/WatchHistory"));
-const AccountAboutPage = lazy(() => import("./pages/AccountAboutPage"));
-const FollowersFollowingPage = lazy(() => import("./pages/FollowersFollowingPage"));
-const SpacePage = lazy(() => import("./pages/SpacePage"));
+const AccountAboutPage = lazy(() => import("@/pages/Profile").then(module => ({default: module.AccountAboutPage})));
+const FollowersFollowingPage = lazy(() => import("@/pages/Bookmarks").then(module => ({default: module.FollowersFollowingPage})));
+const SpacePage = lazy(() => import("@/components/spaces/SpaceProvider").then(module => ({default: module.SpacePage})));
 import { SpaceProvider } from '@/components/spaces/SpaceProvider';
-const LimeMaps = lazy(() => import('./pages/LimeMaps'));
-const NewsPage = lazy(() => import("./pages/NewsPage"));
+const LimeMaps = lazy(() => import("./pages/LimeMaps"));
+const NewsPage = lazy(() => import("@/pages/Topics").then(module => ({default: module.NewsPage})));
 const TermsPage = lazy(() => import("./pages/terms"));
 const LimeProLanding = lazy(() => import("./pages/LimePro"));
 const MediaViewer = lazy(() => import("./pages/MediaViewer"));
 
-import { PostCardSkeleton } from "@/components/feed/PostCardSkeleton";
+import { PostCardSkeleton } from "@/components/feed/PostPoll";
 
 function RouteLoading() {
   return <div role="status" aria-label="読み込み中"><PostCardSkeleton /><PostCardSkeleton /><PostCardSkeleton /></div>;
@@ -60,22 +60,17 @@ function RouteLoading() {
 
 // PostComposer 用のインポート群
 import { Loader2, X, AtSign, Hash, Globe, Users, PenSquare, ArrowLeft, ChevronDown } from 'lucide-react';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from '@/components/ui/button';
 import { Textarea } from "@/components/ui/button";
 import { useCreatePost } from '@/hooks/useFeed';
 import { getPostById } from '@/api/posts';
-import { cn } from '@/lib/utils';
+import { cn, shouldRetryRead } from '@/lib/utils';
 import { toast } from 'sonner';
 import type { PostWithAuthor } from '@/types';
-import { formatRelative } from '@/lib/format';
+import { formatRelative } from "@/lib/utils";
 import { supabase } from '@/lib/supabase';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/button";
 
 import { useScrollDirection } from "@/hooks/useViewportWidth";
 
@@ -123,10 +118,10 @@ const ScrollToTop = () => {
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { 
-      staleTime: 1000 * 60 * 60, 
-      refetchOnWindowFocus: false, 
-      retry: 3,
+    queries: {
+      staleTime: 1000 * 60 * 60,
+      refetchOnWindowFocus: false,
+      retry: shouldRetryRead,
       retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
     },
   },
@@ -847,7 +842,7 @@ const getQuotedPostCached = async (postId: string, viewerId?: string) => {
 };
 
 interface PostComposerProps {
-  mapLocation?: import('@/lib/mapLocation').MapLocation;
+  mapLocation?: import("@/lib/mapLocation").MapLocation;
   initialQuotedPost?: PostWithAuthor | null;
   initialContent?: string;
   onSuccess?: () => void;
@@ -939,9 +934,9 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const quoteId = searchParams.get('quote');
-  
+
   const { mutateAsync, isPending } = useCreatePost();
-  
+
   const [content, setContent] = useState(initialContent);
   const [scheduledAt,setScheduledAt]=useState<string|null>(null);
   const [poll,setPoll]=useState<PollDraft|null>(null);
@@ -1013,7 +1008,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
   const [cursorPosition, setCursorPosition] = useState(0);
   const [popupPos, setPopupPos] = useState({ top: 0, left: 0 }); // 汎用的な名に変更
   const [scrollTop, setScrollTop] = useState(0);
-  
+
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   useAutoTextarea(textareaRef,content);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1903,7 +1898,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
         return;
       }
     }
-    
+
     // ハッシュタグ判定 (追加)
     if (lastHashIdx !== -1 && (lastAtIdx === -1 || lastHashIdx > lastAtIdx)) {
       const query = val.slice(lastHashIdx + 1, pos);
@@ -1922,9 +1917,9 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
   const updatePopupPosition = (pos: number) => {
     if (textareaRef.current) {
       const coords = getCaretCoordinates(textareaRef.current, pos);
-      setPopupPos({ 
-        top: coords.top + coords.height, 
-        left: Math.min(coords.left, 150) 
+      setPopupPos({
+        top: coords.top + coords.height,
+        left: Math.min(coords.left, 150)
       });
     }
   };
@@ -2008,7 +2003,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
     try {
       // 投稿処理を先に実行し、確実に完了を待つ (visibilityを追加)
       const savedPost = await mutateAsync({
-        content: trimmed, 
+        content: trimmed,
         imageUrls: previews,
         ...(video?{video}:{}),
         ...(poll?{poll}:{}),
@@ -2159,7 +2154,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
 
   // メンション候補ポップアップ(共有)
   const mentionPopup = (mentionResults.length > 0 && mentionQuery !== null) && (
-    <div 
+    <div
       className={cn("absolute z-[2147483647] w-64 overflow-hidden rounded-xl border border-border/60 bg-popover shadow-xl backdrop-blur-md transition-all duration-150", timelineGlass && "bg-popover/85 backdrop-blur-xl")}
       style={{ top: popupPos.top - scrollTop, left: popupPos.left, zIndex: 2147483647 }}
     >
@@ -2191,7 +2186,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
 
   // ハッシュタグ候補ポップアップ(共有)
   const hashtagPopup = (hashtagResults.length > 0 && hashtagQuery !== null) && (
-    <div 
+    <div
       className={cn("absolute z-[2147483647] w-64 overflow-hidden rounded-xl border border-border/60 bg-popover shadow-xl backdrop-blur-md transition-all duration-150", timelineGlass && "bg-popover/85 backdrop-blur-xl")}
       style={{ top: popupPos.top - scrollTop, left: popupPos.left, zIndex: 2147483647 }}
     >
@@ -2578,7 +2573,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
 // 新規投稿モーダル/全画面コンポーズ。
 // document.body へポータル描画することで、祖先(Provider群)のCSSに影響されず
 // 常に画面全体を基準に固定表示できるようにしている(iPhone PWAやモバイル幅Chromeでの表示崩れ対策)。
-export const PostOverlay = ({ isOpen, onClose, initialQuotedPost, mapLocation }: { isOpen: boolean; onClose: () => void; initialQuotedPost?: PostWithAuthor; mapLocation?: import('@/lib/mapLocation').MapLocation }) => {
+export const PostOverlay = ({ isOpen, onClose, initialQuotedPost, mapLocation }: { isOpen: boolean; onClose: () => void; initialQuotedPost?: PostWithAuthor; mapLocation?: import("@/lib/mapLocation").MapLocation }) => {
   const isMobile = useIsMobileViewport();
 
   useEffect(() => {
@@ -2659,9 +2654,9 @@ export const PostOverlay = ({ isOpen, onClose, initialQuotedPost, mapLocation }:
 
   return createPortal(
     <div role="dialog" aria-modal="true" aria-label={initialQuotedPost ? "引用リポスト" : "新規ポスト"} onClick={event => event.stopPropagation()} className="fixed inset-0 z-[2147483000] flex items-start justify-center bg-black/20 p-4 pt-16 sm:items-center sm:pt-4 overflow-y-auto">
-      <div 
-        className="fixed inset-0" 
-        onClick={onClose} 
+      <div
+        className="fixed inset-0"
+        onClick={onClose}
       />
       <div className="relative w-full max-w-xl animate-in fade-in zoom-in-95 duration-200">
         <PostComposer mapLocation={mapLocation} initialQuotedPost={initialQuotedPost} onSuccess={onClose} onCancel={onClose} />
@@ -2733,7 +2728,7 @@ const shouldHideFAB = isChatPage || isAuthPage || isTermsPage || isMediaPage || 
   return (
     <PostOverlayContext.Provider value={openPostOverlay}>
       <ScrollToTop />
-      
+
       <AuthProvider>
         <SpaceProvider>
         <AccountSuspensionFeedback />
@@ -2741,8 +2736,8 @@ const shouldHideFAB = isChatPage || isAuthPage || isTermsPage || isMediaPage || 
         <NotificationWatcher />
         <MediaLightboxRoot />
         <LimeDropReceiver />
-        <EmojiRainEffect /> 
-        
+        <EmojiRainEffect />
+
         <Routes>
           <Route path="/auth" element={<Suspense fallback={<RouteLoading />}><AuthPage /></Suspense>} />
           <Route path="/terms" element={<Suspense fallback={<RouteLoading />}><TermsPage /></Suspense>} />
@@ -2779,10 +2774,10 @@ const shouldHideFAB = isChatPage || isAuthPage || isTermsPage || isMediaPage || 
 
         <FloatingComposeButton hidden={shouldHideFAB} onOpen={() => openPostOverlay()} />
 
-        <PostOverlay 
-          isOpen={isPostModalOpen} 
+        <PostOverlay
+          isOpen={isPostModalOpen}
           initialQuotedPost={overlayQuotedPost}
-          onClose={() => setPostModalOpen(false)} 
+          onClose={() => setPostModalOpen(false)}
         />
 
         </SpaceProvider>
@@ -2798,8 +2793,8 @@ const App = () => {
         <TooltipProvider>
           <Toaster />
           <Sonner />
-          
-          <BrowserRouter 
+
+          <BrowserRouter
             basename={import.meta.env.BASE_URL}
           >
             <BackgroundMediaRoot>

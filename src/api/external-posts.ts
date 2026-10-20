@@ -1,15 +1,18 @@
-import {externalRead} from '@/lib/utils';
-import { supabase } from '@/lib/supabase';
-import { getCurrentUserId } from '@/lib/currentUser';
-import { fetchBlueskyPost } from '@/lib/bluesky';
-import type { PostWithAuthor } from '@/types';
+import { externalRead } from "@/lib/utils";
+import { supabase } from "@/lib/supabase";
+import { getCurrentUserId } from "@/lib/currentUser";
+import { fetchBlueskyPost } from "@/lib/bluesky";
+import { type PostWithAuthor } from "@/types/index";
+import { mapBoundsContain, type MapBounds, type MapPostPin } from "@/lib/mapLocation";
+import { type AccountReadContext } from "@/lib/accountReadClient";
 
-export const isExternalPostId = (id: string) => id.startsWith('bsky:at://') || /^x:\d{2,20}$/.test(id) || /^misskey:https:\/\/misskey[.]io\/notes\/[A-Za-z0-9]+$/.test(id);
+// external-posts
+const isExternalPostId = (id: string) => id.startsWith('bsky:at://') || /^x:\d{2,20}$/.test(id) || /^misskey:https:\/\/misskey[.]io\/notes\/[A-Za-z0-9]+$/.test(id);
 
 // Repost metadata is supplementary. Bound concurrent reads and stop a failing
 // backend from receiving another three requests for every card/remount.
 let repostReadFailure:{until:number;error:unknown}|undefined;
-export async function getExternalRepostState(postId: string, signal?:AbortSignal) {
+async function getExternalRepostState(postId: string, signal?:AbortSignal) {
  return externalRead(async()=>{
   signal?.throwIfAborted();
   if(repostReadFailure&&repostReadFailure.until>Date.now())throw repostReadFailure.error;
@@ -27,14 +30,14 @@ export async function getExternalRepostState(postId: string, signal?:AbortSignal
  },signal,'supplementary');
 }
 
-export async function getExternalPost(id: string): Promise<PostWithAuthor | null> {
+async function getExternalPost(id: string): Promise<PostWithAuthor | null> {
   const post = await fetchBlueskyPost(id);
   if (!post) return null;
   const state = await getExternalRepostState(id);
   return { ...post, ...state, author: { bio: '', coverUrl: '', createdAt: post.createdAt, ...post.author } };
 }
 
-export async function toggleExternalRepost(id: string) {
+async function toggleExternalRepost(id: string) {
   const userId = await getCurrentUserId();
   if (!userId) throw new Error('ログインが必要です');
   const { data: existing, error } = await supabase.from('external_reposts').select('post_id')
@@ -58,10 +61,219 @@ export async function toggleExternalRepost(id: string) {
   }
 }
 
-export async function getExternalProfileReposts(userId: string, limit: number, offset = 0): Promise<PostWithAuthor[]> {
+async function getExternalProfileReposts(userId: string, limit: number, offset = 0): Promise<PostWithAuthor[]> {
   const result = await supabase.from('external_reposts').select('post_snapshot, created_at')
     .eq('user_id', userId).order('created_at', { ascending: false }).order('post_id', { ascending: false }).range(offset, offset + limit - 1);
   if (result.error) throw result.error;
   return (result.data ?? []).map(row => ({ ...row.post_snapshot,
     profileRepostedAt: row.created_at, profileRepostedBy: userId } as PostWithAuthor));
 }
+
+// external-map-posts
+type ExternalMapCursor = { provider: 'flickr'; bounds: MapBounds; search: string; page: number; from: number; until: number }[];
+type PositionPage = { pins: MapPostPin[]; next: ExternalMapCursor };
+class MapRateLimitError extends Error {
+    constructor(public retryAfter: number) { super('Map rate limit'); }
+}
+const cacheKey = (search:string,bounds?:MapBounds) => `lime-map-geo-avatar-v3:${search}:${JSON.stringify(bounds)}`;
+function readPositions(search: string,bounds?:MapBounds): PositionPage | null {
+    try { const stored=JSON.parse(sessionStorage.getItem(cacheKey(search,bounds)) ?? 'null'); return stored?.expires > Date.now() && Array.isArray(stored.pins) && Array.isArray(stored.next) ? stored : null; } catch { return null; }
+}
+function storePositions(search: string, page: PositionPage, append: boolean,bounds?:MapBounds) {
+    try { const previous=append ? readPositions(search,bounds) : null; sessionStorage.setItem(cacheKey(search,bounds),JSON.stringify({pins:[...new Map([...(previous?.pins ?? []),...page.pins].map(pin=>[pin.id,pin])).values()],next:page.next,expires:Date.now()+300000})); } catch { /* A full browser cache must not interrupt map reads. */ }
+}
+async function getExternalMapPostPage(plan: ExternalMapCursor | undefined, signal?: AbortSignal, bounds?: MapBounds, search = ''): Promise<{ pins: MapPostPin[]; next: ExternalMapCursor }> {
+    if(signal?.aborted)throw signal.reason;
+    if(!plan){const stored=readPositions(search,bounds);if(stored)return {pins:stored.pins,next:stored.next};}
+    const body=plan ? {mode:'map-geo-pins',jobs:plan.slice(0,4)} : {mode:'map-geo-pins',bounds,search};
+    const result=await externalRead(()=>supabase.functions.invoke('link-preview',{body,signal}),signal);
+    if(signal?.aborted)throw signal.reason;
+    const response=(result.error as {context?:Response}|null)?.context;
+    if(response?.status===429)throw new MapRateLimitError(Math.max(300,Number(response.headers.get('Retry-After'))||300)*1000);
+    if(result.error || result.data?.schema!=='geo-v1' || !Array.isArray(result.data?.pins) || !Array.isArray(result.data?.next))throw new Error('外部SNSのポスト位置を読み込めませんでした。');
+    const page={pins:result.data.pins.filter((pin:MapPostPin)=>pin.source==='flickr'&&/^flickr:\d+@N\d+\/\d+$/.test(pin.id)&&pin.mapLocation&&Number.isFinite(pin.mapLocation.latitude)&&Number.isFinite(pin.mapLocation.longitude)),next:[...(plan?.slice(4) ?? []),...result.data.next]};
+    storePositions(search,page,!!plan,bounds);
+    return page;
+}
+function filterExternalMapPins(pins: MapPostPin[], bounds: MapBounds): MapPostPin[] {
+    return pins.filter(pin => pin.mapLocation && mapBoundsContain(bounds,pin.mapLocation));
+}
+
+type ExternalMapPostDetail={id:string;originalUrl:string;createdAt:string;content:string;author:{displayName:string;avatarUrl:string}};
+async function getExternalMapPostDetail(id:string):Promise<ExternalMapPostDetail|null>{
+ if(!/^flickr:\d+@N\d+\/\d+$/.test(id))return null;
+ const result=await externalRead(()=>supabase.functions.invoke('link-preview',{body:{mode:'map-geo-detail',id}}));
+ if(result.error)return null;return result.data?.post??null;
+}
+
+// external-likes
+type ExternalLikeState={liked:boolean;count:number;unmirroredCount:number};
+/** Keep a public rendering snapshot, never account tokens or private settings. */
+function externalLikeSnapshot(post:PostWithAuthor,depth=0){
+ if(!isExternalPostId(post.id)||post.visibility&&post.visibility!=='public')throw new Error('公開された外部投稿のみいいねできます');
+ return {id:post.id,userId:post.userId,source:post.source,visibility:'public',content:post.content,imageUrls:post.imageUrls,externalVideo:post.externalVideo,externalDetails:post.externalDetails,imageAltTexts:post.imageAltTexts,imageDimensions:post.imageDimensions,snapshotVersion:2,isQuote:!!post.isQuote,parentId:post.parentId,parentPost:depth<2&&post.parentPost&&isExternalPostId(post.parentPost.id)&&post.parentPost.visibility==='public'?externalLikeSnapshot(post.parentPost,depth+1):null,createdAt:post.createdAt,likesCount:post.likesCount,commentsCount:post.commentsCount,repostsCount:post.repostsCount,likedByMe:false,repostedByMe:false,blueskyUri:post.blueskyUri,blueskyUrl:post.blueskyUrl,cid:post.cid,externalReplyToId:post.externalReplyToId,externalReplyToUsername:post.externalReplyToUsername,languages:post.languages,recommendationLanguages:post.recommendationLanguages,recommendationTopics:post.recommendationTopics,recommendationAuthorTopics:post.recommendationAuthorTopics,recommendationSources:post.recommendationSources,recommendationVisual:post.recommendationVisual,contentLabels:post.contentLabels,linkPreview:post.linkPreview,author:{id:post.author.id,username:post.author.username,displayName:post.author.displayName,bio:post.author.bio,avatarUrl:post.author.avatarUrl,coverUrl:post.author.coverUrl,createdAt:post.author.createdAt,isOfficial:false,isPrivate:post.author.isPrivate===true,providerVerification:post.author.providerVerification}};
+}
+/** Repair legacy rendering snapshots on demand; no background polling or writes. */
+const savedPostReads=new Map<string,{expires:number;promise:Promise<PostWithAuthor|null>}>();
+export async function completeSavedPosts<T extends PostWithAuthor>(posts:T[],context?:AccountReadContext):Promise<T[]>{
+ const output=[...posts];let index=0;
+ await Promise.all(Array.from({length:Math.min(3,posts.length)},async()=>{
+  while(index<posts.length){const slot=index++,post=posts[slot];
+   const external=isExternalPostId(post.id);
+   const missingQuote=!!(post.isQuote||post.parentId)&&!post.parentPost;
+   const missingImages=post.imageUrls?.some((_,i)=>!post.imageDimensions?.[i]);
+   if(!missingQuote&&!(external&&((post as any).snapshotVersion!==2||missingImages)))continue;
+   try{
+    let fresh:PostWithAuthor|null;
+    if(external){
+     let read=savedPostReads.get(post.id);
+     if(!read||read.expires<Date.now()){
+      const promise=fetchBlueskyPost(post.id).then(row=>row?({...row,repostsCount:row.repostsCount??0,repostedByMe:false,author:{coverUrl:'',...row.author}} as PostWithAuthor):null).catch(()=>null);
+      read={expires:Date.now()+300000,promise};savedPostReads.set(post.id,read);
+      if(savedPostReads.size>200)savedPostReads.delete(savedPostReads.keys().next().value!);
+     }
+     fresh=await read.promise;
+    }else fresh=await (await import('./posts')).getPostById(post.id,context);
+    if(fresh&&(!external||fresh.visibility==='public'))output[slot]={...post,...fresh,likedByMe:post.likedByMe,repostedByMe:post.repostedByMe,profileRepostedAt:post.profileRepostedAt,profileRepostedBy:post.profileRepostedBy} as T;
+   }catch{/* Saved public content remains available when its provider is offline. */}
+  }
+ }));return output;
+}
+async function setExternalLike(post:PostWithAuthor,liked:boolean,mirrored=false):Promise<ExternalLikeState>{
+ const {data,error}=await supabase.rpc('set_external_like',{snapshot:externalLikeSnapshot(post),enabled:liked,mirrored});
+ if(error)throw error;return data as ExternalLikeState;
+}
+// Coalesce the visible cards' state reads into one RPC; opening a timeline
+// must not issue two queries per external post.
+const requests=new Map<string,{resolve:(state:ExternalLikeState)=>void;reject:(error:unknown)=>void;viewer?:string|null}[]>();
+let flush:ReturnType<typeof setTimeout>|undefined;
+function getExternalLikeState(postId:string,viewer?:string|null):Promise<ExternalLikeState>{
+ return new Promise((resolve,reject)=>{const entries=requests.get(postId)??[];entries.push({resolve,reject,viewer});requests.set(postId,entries);if(!flush)flush=setTimeout(async()=>{
+  const batch=new Map(requests);requests.clear();flush=undefined;
+  try{
+   const before=await getCurrentUserId().catch(()=>null);
+   const valid=new Map([...batch].map(([id,entries])=>[id,entries.filter(entry=>{
+    if(entry.viewer===undefined||entry.viewer===before)return true;
+    entry.reject(new Error('Account changed'));return false;
+   })] as const).filter(([,entries])=>entries.length));
+   const ids=[...valid.keys()],data:any[]=[];
+   for(let i=0;i<ids.length;i+=100){const result=await supabase.rpc('external_like_states',{post_ids:ids.slice(i,i+100)});if(result.error)throw result.error;data.push(...(result.data??[]));}
+   const after=await getCurrentUserId().catch(()=>null);
+   for(const [id,entries] of valid){const row=data.find(row=>row.post_id===id);const state={liked:!!row?.liked,count:Number(row?.likes_count??0),unmirroredCount:Number(row?.unmirrored_count??0)};entries.forEach(entry=>{
+    if(entry.viewer!==undefined&&entry.viewer!==after)entry.reject(new Error('Account changed'));else entry.resolve(state);
+   });}
+  }catch(error){for(const entries of batch.values())entries.forEach(entry=>entry.reject(error));}
+ },8);});
+}
+
+/** Update an existing owner's snapshot only, without creating a like or touching mirror state. */
+async function enrichExternalLike(post:PostWithAuthor,viewerId:string){
+ if(!post.recommendationVisual||!isExternalPostId(post.id)||await getCurrentUserId()!==viewerId)return;
+ const {error}=await supabase.from('likes').update({post_snapshot:externalLikeSnapshot(post)}).eq('user_id',viewerId).eq('external_post_id',post.id);
+ if(error)throw error;
+}
+
+// repost-state
+async function getNativeRepostState(postId:string) {
+  const viewer=await getCurrentUserId();
+  const [post,own]=await Promise.all([
+    supabase.from('posts').select('reposts_count').eq('id',postId).single(),
+    viewer ? supabase.from('reposts').select('post_id').eq('post_id',postId).eq('user_id',viewer).maybeSingle() : Promise.resolve({data:null,error:null}),
+  ]);
+  if(post.error) throw post.error;
+  if(own.error) throw own.error;
+  return {repostsCount:Number(post.data?.reposts_count ?? 0),repostedByMe:Boolean(own.data)};
+}
+
+// reply-reposts
+const isReplyPostId = (id: string) => id.startsWith('reply:');
+const REPLY_REPOST_SELECT = `*, profiles:user_id(*), post:post_id(user_id, profiles:user_id(username)), replying_to:parent_comment_id(profiles:user_id(username))`;
+
+/** The source post's RLS determines visibility before converting a reply. */
+function replyToPost(reply: any): PostWithAuthor {
+  const author = reply.author ?? reply.profiles ?? {};
+  return {
+    id: `reply:${reply.id}`, replyId: reply.id, replyPostId: reply.postId ?? reply.post_id,
+    replyToUsername: reply.replying_to?.profiles?.username ?? reply.post?.profiles?.username ?? reply.replyToUsername,
+    userId: reply.userId ?? reply.user_id ?? author.id,
+    content: reply.content ?? '', imageUrls: reply.imageUrls ?? reply.image_urls ?? [],
+    createdAt: reply.createdAt ?? reply.created_at, clientName:reply.clientName ?? reply.client_name, visibility:'public',
+    likesCount: Number(reply.likesCount ?? reply.likes_count ?? 0), likedByMe: Boolean(reply.likedByMe),
+    commentsCount: Number(reply.commentsCount ?? reply.comments_count ?? 0),
+    repostsCount: Number(reply.repostsCount ?? 0), repostedByMe: Boolean(reply.repostedByMe),
+    author: {id:author.id, username:author.username ?? '', displayName:author.displayName ?? author.display_name ?? author.username ?? '',
+      avatarUrl:author.avatarUrl ?? author.avatar_url ?? '',bio:author.bio ?? '', coverUrl:author.coverUrl ?? author.cover_url ?? '',
+      createdAt:author.createdAt ?? author.created_at ?? '',isOfficial:author.isOfficial ?? author.is_official ?? false},
+  };
+}
+
+async function getReplyRepostState(id: string, context?: AccountReadContext) {
+  const commentId = id.replace(/^reply:/,'');
+  const viewer = context?.userId ?? await getCurrentUserId();
+  const client = context?.client ?? supabase;
+  const [shares,quotes,own] = await Promise.all([
+    client.from('reply_reposts').select('*',{count:'exact',head:true}).eq('comment_id',commentId),
+    client.from('posts').select('*',{count:'exact',head:true}).eq('quoted_reply_id',commentId),
+    viewer ? client.from('reply_reposts').select('comment_id').eq('comment_id',commentId).eq('user_id',viewer).maybeSingle() : Promise.resolve({data:null,error:null}),
+  ]);
+  if(shares.error) throw shares.error;
+  if(quotes.error) throw quotes.error;
+  if(own.error) throw own.error;
+  return {repostsCount:(shares.count ?? 0)+(quotes.count ?? 0),repostedByMe:Boolean(own.data)};
+}
+
+async function getReplyPost(id: string, context?: AccountReadContext): Promise<PostWithAuthor | null> {
+  const client = context?.client ?? supabase;
+  context?.signal?.throwIfAborted();
+  const result = await client.from('comments').select(REPLY_REPOST_SELECT).eq('id',id.replace(/^reply:/,'')).single();
+  if(result.error || !result.data) return null;
+  const post=replyToPost(result.data);
+  const [state,viewer]=await Promise.all([getReplyRepostState(id, context),context?.userId ?? getCurrentUserId()]);
+  const like=viewer ? await client.from('comment_likes').select('user_id').eq('comment_id',post.replyId).eq('user_id',viewer).maybeSingle() : {data:null};
+  return {...post,...state,likedByMe:Boolean(like.data)};
+}
+
+async function toggleReplyRepost(id: string) {
+  const viewer=await getCurrentUserId();
+  if(!viewer) throw new Error('ログインが必要です');
+  const commentId=id.replace(/^reply:/,'');
+  const own=await supabase.from('reply_reposts').select('comment_id').eq('comment_id',commentId).eq('user_id',viewer).maybeSingle();
+  if(own.error) throw own.error;
+  const result=own.data ? await supabase.from('reply_reposts').delete().eq('comment_id',commentId).eq('user_id',viewer)
+    : await supabase.from('reply_reposts').insert({comment_id:commentId,user_id:viewer});
+  if(result.error) throw result.error;
+  try { return {reposted:!own.data,repostsCount:(await getReplyRepostState(id)).repostsCount}; }
+  catch { return {reposted:!own.data}; }
+}
+
+async function getProfileReplyReposts(userId:string,limit:number,offset=0):Promise<PostWithAuthor[]> {
+  const result=await supabase.from('reply_reposts').select(`created_at, comments!inner(${REPLY_REPOST_SELECT})`)
+    .eq('user_id',userId).order('created_at',{ascending:false}).order('comment_id',{ascending:false}).range(offset,offset+limit-1);
+  if(result.error) throw result.error;
+  return (result.data ?? []).map((row:any)=>({...replyToPost(row.comments),profileRepostedBy:userId,profileRepostedAt:row.created_at}));
+}
+
+export { getExternalRepostState };
+export { getExternalPost };
+export { toggleExternalRepost };
+export { getExternalProfileReposts };
+export { isExternalPostId };
+export { getExternalMapPostPage };
+export { filterExternalMapPins };
+export { getExternalMapPostDetail };
+export type { ExternalMapCursor };
+export { MapRateLimitError };
+export type { ExternalMapPostDetail };
+export { externalLikeSnapshot };
+export { setExternalLike };
+export { getExternalLikeState };
+export { enrichExternalLike };
+export type { ExternalLikeState };
+export { getNativeRepostState };
+export { replyToPost };
+export { getReplyRepostState };
+export { getReplyPost };
+export { toggleReplyRepost };
+export { getProfileReplyReposts };
+export { isReplyPostId };
+export { REPLY_REPOST_SELECT };

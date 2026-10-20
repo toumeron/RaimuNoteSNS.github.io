@@ -1,6 +1,8 @@
+vi.mock("@/hooks/useTopics", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useTopics")>(), useListCatalog:()=>({data:[]}), useInvalidateLists:()=>vi.fn()}));
+
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-vi.mock('@/hooks/useLists',()=>({useListCatalog:()=>({data:[]}),useInvalidateLists:()=>vi.fn()}));
+
 import { TimelineTabBar } from './TimelineTabBar';
 import { normalizeTimelineTabs, useTimelineTabs, saveTimelineTabs } from "@/components/feed/TimelineTabBar";
 beforeEach(()=>localStorage.clear());afterEach(cleanup);

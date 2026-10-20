@@ -1,5 +1,5 @@
 import {expect,it} from 'vitest';
-import {normalizePreferences,groupNotifications,notificationLink,type NotificationRow} from './notifications';
+import { normalizePreferences, groupNotifications, notificationLink, type NotificationRow } from "@/api/users";
 const row:NotificationRow={id:'1',user_id:'me',actor_id:'actor',post_id:'post',type:'like',actor_name:'Alice',actor_avatar_url:null,content_preview:'post',is_read:false,created_at:'2026-10-08T10:00:00Z'};
 it('defaults existing accounts to enabled while preserving explicit disabled preferences',()=>{expect(normalizePreferences({like:false,push:false})).toMatchObject({like:false,push:false,reply:true,follow:true});});
 it('groups matching events without merging different posts, emoji or dates',()=>{

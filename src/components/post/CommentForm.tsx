@@ -1,13 +1,13 @@
-import { displayUsername } from "@/lib/format";
-import { PrivateMediaImage } from "@/components/profile/ProfileMediaPreview";
-import {ComposerIcon} from '@/components/feed/ComposerIcon';
+import { displayUsername } from "@/lib/utils";
+import { PrivateMediaImage } from "@/components/ui/avatar";
+import { ComposerIcon } from "@/components/feed/PostPoll";
 import {DraftEmojiText} from "@/components/stickers/Stickers";
 import { StickerPicker, StickerDraft } from '@/components/stickers/Stickers';
-import { appendSticker, insertDraftEmoji, hasDraftEmojis, draftEmojiCharacter } from '@/lib/stickers';
+import { appendSticker, insertDraftEmoji, hasDraftEmojis, draftEmojiCharacter } from "@/lib/utils";
 import { createPortal } from 'react-dom';
 import type { PostWithAuthor } from '@/types';
 import { PostCard } from '@/components/feed/PostCard';
-import { ReplyChain } from '@/components/post/ReplyChain';
+import { ReplyChain } from '@/components/post/CommentList';
 import { Link } from 'react-router-dom';
 import { Input } from "@/components/ui/button";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from "@/components/ui/button";
 import { PostComposer } from '@/components/feed/PostComposer';
 import { useAuth } from '@/hooks/useAuth';
-import { useCreateComment } from '@/hooks/useComments';
+import { useCreateComment } from "@/hooks/useFeed";
 import { toast } from 'sonner';
 
 const MAX = 280;

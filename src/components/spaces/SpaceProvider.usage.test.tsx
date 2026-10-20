@@ -1,12 +1,21 @@
+vi.mock("@/api/users", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/api/users")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/api/users")>(), getLiveSpaces:api.live, getSpaceState:api.state, getSpaceToken:vi.fn(), spaceRpc:vi.fn()}))(importOriginal)};
+});
+vi.mock("@/components/spaces/SpaceProvider", async importOriginal => ({...await importOriginal<typeof import("@/components/spaces/SpaceProvider")>(), SpaceRoom:()=> <Title>スペース</Title>, SpaceEndConfirmation:()=>null, SpacePolicySelect:()=>null}));
+
+
+vi.mock("@/hooks/useAuth", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useAuth")>(), useAuth:()=>({user:{id:'viewer'}})}));
+
 import {useContext} from 'react';
 import {act,cleanup,fireEvent,render,screen} from '@testing-library/react';
 import {QueryClient,QueryClientProvider,focusManager} from '@tanstack/react-query';
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 import {Title} from '@radix-ui/react-dialog';
 const api=vi.hoisted(()=>({live:vi.fn(),state:vi.fn()}));
-vi.mock('@/hooks/useAuth',()=>({useAuth:()=>({user:{id:'viewer'}})}));
-vi.mock('@/api/spaces',()=>({getLiveSpaces:api.live,getSpaceState:api.state,getSpaceToken:vi.fn(),spaceRpc:vi.fn()}));
-vi.mock('./SpaceRoom',()=>({SpaceRoom:()=> <Title>スペース</Title>,SpaceEndConfirmation:()=>null,SpacePolicySelect:()=>null}));
+
+
+
 import {SpaceProvider} from './SpaceProvider';
 import {SpaceContext} from "@/components/spaces/SpaceProvider";
 function Open(){const context=useContext(SpaceContext);return <button onClick={()=>context!.open('demo')}>開く</button>;}

@@ -1,16 +1,15 @@
-import { useSharedDisplay, setSharedDisplay } from '@/lib/sharedAccountDisplay';
-import { ACCENT_COLORS, useAccentColor, setAccentColor } from "@/lib/settingsSections";
-import {AccountPrivacySettings} from '@/components/profile/AccountPrivacySettings';
-import { NotificationSettings } from "@/components/profile/AccountPrivacySettings";
-import { setExternalAccountAdded } from '@/lib/externalAccounts';
-import { uploadProfileMedia } from "@/lib/uploadPostMedia";
-import { getPrivateBotPrompt } from "@/lib/privateProfile";
+import { useSharedDisplay, setSharedDisplay } from "@/lib/externalAccounts";
+import { ACCENT_COLORS, useAccentColor, setAccentColor } from "@/components/ui/button";
+import { AccountPrivacySettings } from "@/components/profile/ProfileEditor";
+import { NotificationSettings } from "@/components/profile/ProfileEditor";
+import { importedFollowCount, removeImportedFollows, importPublicFollows, setExternalAccountOwner } from '@/lib/externalAccounts';
+import { uploadProfileMedia } from "@/lib/mediaThumbnail";
+import { getPrivateBotPrompt } from "@/lib/accountSuspension";
 import {createAccountExport,checkExportAbort} from '@/lib/accountExport';
-import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription} from '@/components/ui/dialog';
-import {useQueryClient} from '@tanstack/react-query';
-import {configuredMisskeyHandles,isMisskeyActor} from '@/lib/misskey';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/button";
+import {useQuery, useQueryClient} from '@tanstack/react-query';
 import { CompanionSettings } from "@/components/ai/PageCompanion";
-import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useEffect, useRef, useState, useId, type ChangeEvent } from 'react';
 import {
   Download,
   ImagePlus,
@@ -34,31 +33,23 @@ import {
   ChevronRight,
   ArrowLeft,
 } from 'lucide-react';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from '@/components/ui/button';
 import { Input } from "@/components/ui/button";
 import { Label } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/button";
-import { useDesktopLayout } from '@/components/layout/DesktopLayoutContext';
-import { SETTINGS_DESCRIPTIONS, SETTINGS_GROUPS, SETTINGS_SECTIONS, settingsGroupForSection } from '@/lib/settingsSections';
-import './settings.css';
+import { useDesktopLayout } from "@/components/layout/DesktopLayoutContext";
+import { SETTINGS_DESCRIPTIONS, SETTINGS_GROUPS, SETTINGS_SECTIONS, settingsGroupForSection } from "@/components/ui/button";
+
 import { useAuth } from '@/hooks/useAuth';
-import { useUpdateProfile } from '@/hooks/useProfile';
+import { useUpdateProfile } from "@/hooks/useFeed";
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useTheme } from 'next-themes';
 import { Switch } from "@/components/ui/button";
 import { User } from '@/types';
 import { supabase } from '@/lib/supabase';
-import {
-  fetchBlueskyProfile as fetchExternalProfile,
-  getConfiguredBlueskyHandles,
-  normalizeBlueskyHandle,
-  getStoredBlueskySession,
-  loginToBluesky,
-  logoutFromBluesky,
-  type BlueskySession,
-} from '@/lib/bluesky';
+
 
 
 interface CustomEmoji {
@@ -69,21 +60,6 @@ interface CustomEmoji {
   uploaded_by: string | null;
   created_at: string;
 }
-
-interface BlueskyProfileInfo {
-  handle: string;
-  displayName?: string;
-  avatar?: string;
-}
-
-const getInternalProfilePath = (handle:string) => `/u/${encodeURIComponent(handle)}`;
-const fetchBlueskyProfile = async (handle:string):Promise<BlueskyProfileInfo> => {
-  try {
-    const profile=await fetchExternalProfile(handle);
-    if(!profile)return {handle};
-    return {handle:profile.username,displayName:profile.displayName,avatar:profile.avatarUrl};
-  } catch { return {handle}; }
-};
 
 export default function Settings() {
   const queryClient=useQueryClient();
@@ -163,27 +139,6 @@ export default function Settings() {
   const emojiInputRef = useRef<HTMLInputElement>(null);
   const [hasLimePro, setHasLimePro] = useState(false);
   const [isLimeProPurchasing, setIsLimeProPurchasing] = useState(false);
-
-  const [misskeyHandles,setMisskeyHandles]=useState(()=>configuredMisskeyHandles(false));
-  useEffect(()=>{
-    const sync=()=>setMisskeyHandles(configuredMisskeyHandles(false));
-    window.addEventListener('lime-misskey-changed',sync);window.addEventListener('storage',sync);
-    return ()=>{window.removeEventListener('lime-misskey-changed',sync);window.removeEventListener('storage',sync);};
-  },[]);
-  const [blueskyHandles, setBlueskyHandles] = useState<string[]>(getConfiguredBlueskyHandles);
-  const [blueskyHandleInput, setBlueskyHandleInput] = useState('');
-  const [addingExternalAccount,setAddingExternalAccount]=useState(false);
-  const externalHandles=[...blueskyHandles,...misskeyHandles];
-  const [blueskyProfiles, setBlueskyProfiles] = useState<Record<string, BlueskyProfileInfo>>({});
-  const [blueskyProfilesLoading, setBlueskyProfilesLoading] = useState<Record<string, boolean>>({});
-
-  // 自分のBlueskyアカウントでのログイン(アプリパスワード認証)状態
-  const [blueskySession, setBlueskySession] = useState<BlueskySession | null>(getStoredBlueskySession);
-  const [blueskyLoginHandle, setBlueskyLoginHandle] = useState('');
-  const [blueskyAppPassword, setBlueskyAppPassword] = useState('');
-  const [isBlueskyLoggingIn, setIsBlueskyLoggingIn] = useState(false);
-  const [isBlueskyLoggingOut, setIsBlueskyLoggingOut] = useState(false);
-  const [showBlueskyAppPassword, setShowBlueskyAppPassword] = useState(false);
 
   const fetchCustomEmojis = async () => {
     try {
@@ -321,78 +276,10 @@ export default function Settings() {
     const currentEmoji = user.emojiEffect ?? localStorage.getItem('lime_emoji_pref') ?? '';
     setEmojiEffect(currentEmoji);
 
-    setBlueskyHandles(getConfiguredBlueskyHandles());
     fetchCustomEmojis();
     fetchLimeProStatus();
     fetchTimelineBackgroundSetting();
   }, [user?.id]);
-
-  useEffect(() => {
-    const handleBlueskyHandlesChanged = () => {
-      setBlueskyHandles(getConfiguredBlueskyHandles());
-    };
-
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key === 'lime_bluesky_author_handles') {
-        setBlueskyHandles(getConfiguredBlueskyHandles());
-      }
-    };
-
-    window.addEventListener('lime-bluesky-handles-changed', handleBlueskyHandlesChanged);
-    window.addEventListener('storage', handleStorage);
-
-    return () => {
-      window.removeEventListener('lime-bluesky-handles-changed', handleBlueskyHandlesChanged);
-      window.removeEventListener('storage', handleStorage);
-    };
-  }, []);
-
-  // 自分のBlueskyアカウントのログイン状態が(このタブ内・他タブ問わず)変わったら同期する
-  useEffect(() => {
-    const handleBlueskySessionChanged = (event: Event) => {
-      const detail = (event as CustomEvent<{ session: BlueskySession | null }>).detail;
-      setBlueskySession(detail?.session ?? getStoredBlueskySession());
-    };
-
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key === 'lime_bluesky_session') {
-        setBlueskySession(getStoredBlueskySession());
-      }
-    };
-
-    window.addEventListener('lime-bluesky-session-changed', handleBlueskySessionChanged);
-    window.addEventListener('storage', handleStorage);
-
-    return () => {
-      window.removeEventListener('lime-bluesky-session-changed', handleBlueskySessionChanged);
-      window.removeEventListener('storage', handleStorage);
-    };
-  }, []);
-
-  // 登録済みのBlueskyハンドルに対応するプロフィール（アイコン・表示名）を取得する
-  useEffect(() => {
-    const handlesToFetch = [...blueskyHandles,...misskeyHandles].filter(
-      (handle) => !blueskyProfiles[handle] && !blueskyProfilesLoading[handle]
-    );
-
-    if (handlesToFetch.length === 0) return;
-
-    setBlueskyProfilesLoading((prev) => {
-      const next = { ...prev };
-      handlesToFetch.forEach((handle) => {
-        next[handle] = true;
-      });
-      return next;
-    });
-
-    handlesToFetch.forEach((handle) => {
-      fetchBlueskyProfile(handle).then((profile) => {
-        setBlueskyProfiles((prev) => ({ ...prev, [handle]: profile }));
-        setBlueskyProfilesLoading((prev) => ({ ...prev, [handle]: false }));
-      });
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [blueskyHandles,misskeyHandles]);
 
   if (!user) return null;
 
@@ -589,76 +476,6 @@ export default function Settings() {
     }
   };
 
-  const handleAddBlueskyHandle = async () => {
-    const input=blueskyHandleInput.trim().replace(/^https:\/\/misskey\.io\/@/,'').replace(/^@+/, '');
-    const normalized=isMisskeyActor(input) ? input : normalizeBlueskyHandle(input);
-    if(!normalized || normalized==='handle.invalid') {toast.error('追加するユーザー名を入力してください');return;}
-    if(externalHandles.includes(normalized)) {toast.info(`@${normalized} はすでに登録されています`);return;}
-    setAddingExternalAccount(true);
-    try {
-      const profile=await fetchExternalProfile(normalized);
-      if(!profile)throw new Error('アカウントが見つかりません');
-      const handle=profile.username;
-      await setExternalAccountAdded(isMisskeyActor(handle) ? 'misskey' : 'bluesky',handle,true);
-      setBlueskyProfiles(prev=>({...prev,[handle]:{handle,displayName:profile.displayName,avatar:profile.avatarUrl}}));
-      setBlueskyHandleInput('');
-      void queryClient.invalidateQueries({queryKey:['feed']});
-      toast.success(`@${handle} を追加しました`);
-    } catch(error) {toast.error(error instanceof Error ? error.message : '追加できませんでした');}
-    finally {setAddingExternalAccount(false);}
-  };
-
-  const handleRemoveBlueskyHandle = async (handle: string) => {
-    if (addingExternalAccount) return;
-    setAddingExternalAccount(true);
-    try {
-      await setExternalAccountAdded(isMisskeyActor(handle) ? 'misskey' : 'bluesky',handle,false);
-      void queryClient.invalidateQueries({queryKey:['feed']});
-      setBlueskyProfiles((prev) => {
-        const next = { ...prev };
-        delete next[handle];
-        return next;
-      });
-      toast.success(`@${handle} を削除しました`);
-    } catch { toast.error('追加済みユーザーを保存できませんでした。もう一度お試しください。'); }
-    finally { setAddingExternalAccount(false); }
-  };
-
-  const handleBlueskyLogin = async () => {
-    if (!blueskyLoginHandle.trim() || !blueskyAppPassword.trim()) {
-      toast.error('ユーザー名とアプリパスワードを入力してください');
-      return;
-    }
-
-    setIsBlueskyLoggingIn(true);
-    try {
-      const session = await loginToBluesky(blueskyLoginHandle, blueskyAppPassword);
-      setBlueskySession(session);
-      setBlueskyLoginHandle('');
-      setBlueskyAppPassword('');
-      toast.success(`@${session.handle} でBlueskyにログインしました`);
-    } catch (err: any) {
-      console.error('Bluesky Login Error:', err);
-      toast.error(err.message || 'Blueskyログインに失敗しました');
-    } finally {
-      setIsBlueskyLoggingIn(false);
-    }
-  };
-
-  const handleBlueskyLogout = async () => {
-    setIsBlueskyLoggingOut(true);
-    try {
-      await logoutFromBluesky();
-      setBlueskySession(null);
-      toast.success('Blueskyからログアウトしました');
-    } catch (err) {
-      console.error('Bluesky Logout Error:', err);
-      toast.error('ログアウトに失敗しました');
-    } finally {
-      setIsBlueskyLoggingOut(false);
-    }
-  };
-
   const handleDummyLimeProPurchase = async () => {
     if (!user?.id) return;
 
@@ -810,180 +627,7 @@ export default function Settings() {
           <h2 className="font-display text-base font-bold">その他のSNS連携</h2>
         </div>
 
-        <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-          <Input
-            value={blueskyHandleInput}
-            onChange={(e) => setBlueskyHandleInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                handleAddBlueskyHandle();
-              }
-            }}
-            placeholder="@nakkar7.bsky.social..."
-            className="h-11 rounded-full bg-background"
-            aria-label="追加する外部アカウント"
-          />
-          <Button
-            type="button"
-            onClick={handleAddBlueskyHandle}
-            disabled={addingExternalAccount}
-            className="h-11 rounded-full bg-gradient-primary font-bold shadow-soft"
-          >
-            <Plus className="mr-1.5 h-4 w-4" />
-            追加
-          </Button>
-        </div>
-
-        <div className="mt-4 space-y-2">
-          <Label>登録済みアカウント（{externalHandles.length}）</Label>
-          {externalHandles.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border/60 bg-background/50 px-4 py-4 text-sm text-muted-foreground">
-              登録済みのアカウントはありません。
-            </div>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {externalHandles.map((handle) => {
-                const profile = blueskyProfiles[handle];
-                const isProfileLoading = !!blueskyProfilesLoading[handle];
-                const profilePath = getInternalProfilePath(handle);
-
-                return (
-                  <div
-                    key={handle}
-                    className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background py-1 pl-1.5 pr-1.5 text-sm font-bold"
-                  >
-                    <Link
-                      to={profilePath}
-                      className="flex min-w-0 items-center gap-2 rounded-full py-0.5 pr-2 transition hover:bg-muted"
-                      title={`@${handle} のプロフィールを開く`}
-                    >
-                      <Avatar className="h-6 w-6 shrink-0 border border-border/40">
-                        <AvatarImage src={profile?.avatar} alt={profile?.displayName || handle} />
-                        <AvatarFallback className="text-[10px] font-bold">
-                          {handle.slice(0, 1).toUpperCase()}
-                        </AvatarFallback>
-                      </Avatar>
-                      <span className="flex min-w-0 flex-col leading-tight">
-                        <span className="max-w-[200px] truncate">
-                          {isProfileLoading
-                            ? '読み込み中...'
-                            : profile?.displayName || `@${handle}`}
-                        </span>
-                        {profile?.displayName && (
-                          <span className="max-w-[200px] truncate text-[10px] font-normal text-muted-foreground">
-                            @{handle}
-                          </span>
-                        )}
-                      </span>
-                    </Link>
-                    <button
-                      type="button"
-                      onClick={() => void handleRemoveBlueskyHandle(handle)}
-                      disabled={addingExternalAccount}
-                      className="shrink-0 rounded-full p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                      aria-label={`@${handle}を削除`}
-                      title={`@${handle}を削除`}
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        <div className="mt-6 space-y-3 rounded-2xl border border-border/40 bg-background/50 p-4">
-          <div className="flex items-center justify-between gap-2">
-            <h3 className="text-xs font-bold text-muted-foreground">Blueskyアカウント</h3>
-            {blueskySession && (
-              <span className="rounded-full bg-primary-soft px-2.5 py-1 text-[10px] font-bold text-primary">
-                連携中
-              </span>
-            )}
-          </div>
-
-          {blueskySession ? (
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-2">
-                <Avatar className="h-9 w-9 border border-border/40">
-                  <AvatarFallback className="text-xs font-bold">
-                    {blueskySession.handle.slice(0, 1).toUpperCase()}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="min-w-0 leading-tight">
-                  <p className="truncate text-sm font-bold">@{blueskySession.handle}</p>
-                  <p className="text-[11px] text-muted-foreground">ログイン中</p>
-                </div>
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={handleBlueskyLogout}
-                disabled={isBlueskyLoggingOut}
-                className="rounded-full border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
-              >
-                {isBlueskyLoggingOut ? <Loader2 className="h-4 w-4 animate-spin" /> : 'ログアウト'}
-              </Button>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <Input
-                value={blueskyLoginHandle}
-                onChange={(e) => setBlueskyLoginHandle(e.target.value)}
-                placeholder="ユーザー名（例: nakkar7.bsky.social）"
-                className="h-10 rounded-full bg-background"
-                autoComplete="username"
-              />
-              <div className="relative">
-                <Input
-                  type={showBlueskyAppPassword ? 'text' : 'password'}
-                  value={blueskyAppPassword}
-                  onChange={(e) => setBlueskyAppPassword(e.target.value)}
-                  placeholder="アプリパスワード（xxxx-xxxx-xxxx-xxxx）"
-                  className="h-10 rounded-full bg-background pr-16"
-                  autoComplete="current-password"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleBlueskyLogin();
-                    }
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowBlueskyAppPassword((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground"
-                >
-                  {showBlueskyAppPassword ? '隠す' : '表示'}
-                </button>
-              </div>
-              <p className="text-[10px] leading-relaxed text-muted-foreground">
-※
-                <a
-                  href="https://bsky.app/settings/app-passwords"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mx-1 font-bold text-primary underline"
-                >
-                  アプリパスワード
-                </a>
-                を使用してください。
-              </p>
-              <Button
-                type="button"
-                onClick={handleBlueskyLogin}
-                disabled={isBlueskyLoggingIn}
-                className="w-full rounded-full bg-gradient-primary font-bold shadow-soft"
-              >
-                {isBlueskyLoggingIn ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Blueskyにログイン
-              </Button>
-            </div>
-          )}
-        </div>
+        {selectedSection?.id==='external'&&<ExternalFollowImport userId={user.id}/>}
       </div>
 
       </section>
@@ -1430,4 +1074,55 @@ export default function Settings() {
 
     </div>
   );
+}
+
+
+export function ExternalFollowImport({userId,disabled=false,onBusyChange}:{userId:string;disabled?:boolean;onBusyChange?:(busy:boolean)=>void}){
+ const id=useId(),client=useQueryClient();
+ const [twitter,setTwitter]=useState(''),[bluesky,setBluesky]=useState(''),[busy,setBusy]=useState(false);
+ const [removing,setRemoving]=useState(false);
+ const count=useQuery({queryKey:['external-follow-import-count',userId],queryFn:({signal})=>importedFollowCount(userId,signal),staleTime:30000,refetchOnWindowFocus:false});
+ const [progress,setProgress]=useState(''),[results,setResults]=useState<Array<{provider:string;message:string}>>([]);
+ const running=useRef<AbortController|null>(null);
+ useEffect(()=>{
+  setTwitter('');setBluesky('');setProgress('');setResults([]);setBusy(false);setRemoving(false);onBusyChange?.(false);
+  return()=>{running.current?.abort();running.current=null;onBusyChange?.(false);};
+ },[userId]);
+ const start=async(event:React.FormEvent)=>{
+  event.preventDefault();if(running.current||disabled||!twitter.trim()&&!bluesky.trim())return;
+  const controller=new AbortController();running.current=controller;setBusy(true);onBusyChange?.(true);setResults([]);
+  setExternalAccountOwner(userId);
+  try{
+   for(const [provider,input,label] of [['bluesky',bluesky,'Bluesky'],['x',twitter,'Twitter']] as const){
+    if(!input.trim()||controller.signal.aborted)continue;
+    let count=0;setProgress(`${label}を取得中…`);
+    try{
+     const result=await importPublicFollows(provider,input,userId,{signal:controller.signal,onProgress:added=>{count=added;if(running.current===controller)setProgress(`${label}：${added}件追加`);}});
+     if(running.current===controller)setResults(previous=>[...previous,{provider:label,message:result.added?`${result.added}件追加しました`:'新しいフォローはありません'}]);
+    }catch{
+     if(running.current!==controller)break;
+     if(count)setResults(previous=>[...previous,{provider:label,message:`${count}件追加しました`}]);
+    }
+   }
+  }finally{
+   if(running.current===controller){running.current=null;setBusy(false);setProgress('');onBusyChange?.(false);void client.invalidateQueries({queryKey:['feed']});void client.invalidateQueries({queryKey:['follow-stats']});void client.invalidateQueries({queryKey:['following']});void client.invalidateQueries({queryKey:['external-follow-import-count',userId]});}
+  }
+ };
+ const remove=async()=>{
+  if(running.current||disabled||!count.data)return;
+  const controller=new AbortController();running.current=controller;setRemoving(true);setResults([]);setProgress('引き継いだフォローを削除中…');onBusyChange?.(true);setExternalAccountOwner(userId);
+  try{const result=await removeImportedFollows(userId,controller.signal);await client.cancelQueries({queryKey:['external-follow-import-count',userId]});client.setQueryData(['external-follow-import-count',userId],0);if(running.current===controller)setResults([{provider:'引き継ぎ',message:`${result.removed}件のフォローを削除しました`+(result.refreshFailed?'。一覧を更新してください':'')}]);}
+  catch{/* Keep the action available without displaying errors on this page. */}
+  finally{if(running.current===controller){running.current=null;setRemoving(false);setProgress('');onBusyChange?.(false);void client.invalidateQueries({queryKey:['external-follow-import-count',userId]});void client.invalidateQueries({queryKey:['feed']});void client.invalidateQueries({queryKey:['follow-stats']});void client.invalidateQueries({queryKey:['following']});}}
+ };
+ return <form onSubmit={start} data-lime-follow-import className="mt-5 space-y-3">
+  <div className="grid gap-3 sm:grid-cols-2">
+   <div className="min-w-0 space-y-1"><Label htmlFor={id+'-twitter'}>TwitterのID</Label><Input id={id+'-twitter'} value={twitter} onChange={event=>setTwitter(event.target.value)} placeholder="@ユーザーID" autoComplete="off" autoCapitalize="none" spellCheck={false} disabled={busy||removing||disabled}/></div>
+   <div className="min-w-0 space-y-1"><Label htmlFor={id+'-bluesky'}>BlueskyのID</Label><Input id={id+'-bluesky'} value={bluesky} onChange={event=>setBluesky(event.target.value)} placeholder="name.bsky.social" autoComplete="off" autoCapitalize="none" spellCheck={false} disabled={busy||removing||disabled}/></div>
+  </div>
+  <div data-lime-follow-import-divider className="-mx-5 !mt-5 border-t border-border/60"/>
+  <div className="flex flex-wrap items-center gap-2"><Button type="submit" className="rounded-full" disabled={busy||removing||disabled||!twitter.trim()&&!bluesky.trim()}>{busy?'引き継ぎ中…':'フォロー中のアカウントを引き継ぐ！'}</Button>{!!count.data&&<Button type="button" variant="outline" aria-label="引き継いだフォローを削除" className="rounded-full text-destructive" disabled={busy||removing||disabled} onClick={()=>void remove()}>{removing?'削除中…':'削除'}</Button>}{(busy||removing)&&<button type="button" className="text-sm text-muted-foreground" onClick={()=>running.current?.abort()}>中止</button>}</div>
+  {progress&&<p role="status" className="text-sm text-muted-foreground">{progress}</p>}
+  {results.map(result=><p key={result.provider} role="status" className="text-sm text-muted-foreground">{result.provider}：{result.message}</p>)}
+ </form>;
 }

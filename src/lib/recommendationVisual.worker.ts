@@ -1,6 +1,6 @@
 import {AutoProcessor,CLIPVisionModelWithProjection,RawImage,env,type Tensor} from '@huggingface/transformers';
 import prototypes from './recommendationVisualPrototypes.json';
-import {createRecommendationVisualQueue} from './recommendationVisualQueue';
+import { createRecommendationVisualQueue } from "@/lib/recommendationVisualInference";
 
 env.allowLocalModels=false;
 env.backends.onnx.wasm.numThreads=1;

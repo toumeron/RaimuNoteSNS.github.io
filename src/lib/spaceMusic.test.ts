@@ -1,10 +1,14 @@
+import {readFileSync} from "node:fs";
+import {resolve} from "node:path";
 import { describe, expect, it, afterEach, vi } from "vitest";
 import { createSpaceMusic, SPACE_MUSIC_RATE } from "./spaceMusic";
-import { SPACE_SCORE_DURATION } from "@/lib/spaceMusicScore";
-import { SpacePlayback } from "./spacePlayback";
+import { SPACE_SCORE_DURATION } from "@/lib/spaceMusic";
+import { SpacePlayback } from "@/lib/callRecorder";
 
 describe("spaceMusic", () => {
 it('generates and reuses a complete audible stereo loop from synthesis parameters', async () => {
+  const spectrum = readFileSync(resolve("src/assets/audio/space-spectrum.gz"));
+  vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(new Uint8Array(spectrum).buffer));
   const pending = createSpaceMusic(); expect(createSpaceMusic()).toBe(pending);
   const blob = await pending; expect(await createSpaceMusic()).toBe(blob); expect(blob.type).toBe('audio/wav');
   const buffer = await new Promise<ArrayBuffer>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result as ArrayBuffer); reader.onerror = reject; reader.readAsArrayBuffer(blob); });
@@ -62,7 +66,7 @@ it('primes and resumes output in the original gesture and shares it between ring
  vi.resetModules();const start=vi.fn(),resume=vi.fn().mockResolvedValue(undefined),created=vi.fn();
  class Context{state='suspended';sampleRate=44100;destination={};constructor(){created();}resume=resume;createBuffer=vi.fn(()=>({}));createBufferSource=()=>({buffer:null,connect:vi.fn(),disconnect:vi.fn(),start,onended:null});}
  vi.stubGlobal('AudioContext',Context);const session={type:'auto'};Object.defineProperty(navigator,'audioSession',{configurable:true,value:session});
- const audio=await import("@/lib/callTranscription");audio.unlockAudioPlayback();
+ const audio=await import("@/lib/callRecorder");audio.unlockAudioPlayback();
  expect(start).toHaveBeenCalledWith(0);expect(resume).toHaveBeenCalledOnce();expect(session.type).toBe('playback');
  expect(audio.getAudioPlaybackContext()).toBe(audio.getAudioPlaybackContext());expect(created).toHaveBeenCalledOnce();
  delete (navigator as any).audioSession;

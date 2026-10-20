@@ -30,7 +30,7 @@
 ```
 npm test --prefix server/video
 npm run build --prefix server/video
-node scripts/post-video-browser-test.mjs
+node scripts/verify-media.mjs post-video
 ```
 
 B2無料枠は保存10GB。無料枠を超える運用へ自動的に移行する契約や支払方法登録は行っていません。アカウント側の利用上限・転送量制限に達したときは保存・再生エラーとして扱います。

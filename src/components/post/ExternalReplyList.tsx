@@ -1,11 +1,11 @@
 import { useEffect, useState, useLayoutEffect, useRef, type CSSProperties } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { CommentConversations, ExternalReplyCard } from "@/components/post/CommentList";
-import { PostCardSkeleton } from "@/components/feed/PostCardSkeleton";
+import { PostCardSkeleton } from "@/components/feed/PostPoll";
 import { type BlueskyMappedPost } from "@/lib/bluesky";
 import { type CommentWithAuthor, type PostWithAuthor } from "@/types/index";
 import { PostCard } from "@/components/feed/PostCard";
-import { ReplyChain } from "@/components/post/ReplyChain";
+import { ReplyChain } from "@/components/post/CommentList";
 
 // ExternalReplyList
 /** External replies use the same presentation as LimeNote comments, with external IDs intact. */

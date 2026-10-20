@@ -1,10 +1,11 @@
+vi.mock("@/hooks/useAuth", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useAuth")>(), useAuth:()=>auth}));
 import {render,screen,fireEvent,waitFor} from '@testing-library/react';
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
 import {vi,it,expect,beforeEach} from 'vitest';
-import {PostLinkPreview,useLinkPreview,LinkPreviewCard} from './LinkPreviewCard';
-import {OfflineBookmarkContext} from '@/components/stickers/OfflineBookmarkContext';
+import { PostLinkPreview, useLinkPreview, LinkPreviewCard } from "@/components/feed/QuotedPost";
+import { OfflineBookmarkContext } from "@/components/stickers/Stickers";
 const invoke=vi.hoisted(()=>vi.fn());vi.mock('@/lib/supabase',()=>({supabase:{functions:{invoke}}}));
-const auth=vi.hoisted(()=>({user:{id:'viewer'} as {id:string}|null,loading:false}));vi.mock('@/hooks/useAuth',()=>({useAuth:()=>auth}));
+const auth=vi.hoisted(()=>({user:{id:'viewer'} as {id:string}|null,loading:false}));
 const preview={url:'https://example.com/diary',domain:'example.com',title:'9月日記',image:'https://example.com/cover.jpg'};
 function mount(content:string){return render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><PostLinkPreview content={content}/></QueryClientProvider>);}
 beforeEach(()=>{invoke.mockReset();localStorage.clear();auth.user={id:'viewer'};auth.loading=false;});
@@ -60,7 +61,7 @@ it('renders supplied metadata when URL normalization adds the root slash',()=>{
 });
 
 it.each([{imageUrls:['https://example.com/attached.jpg']},{video:{url:'video.mp4'}},{externalVideo:{url:'video.m3u8'}},{embedded:true}])('does not render or request provided URL previews for media or quotes: %s',async extra=>{
- const {canShowPostLinkPreview}=await import('@/lib/postPresentation');
+ const {canShowPostLinkPreview}=await import("@/lib/utils");
  function Card(){const state=useLinkPreview(preview.url,canShowPostLinkPreview(extra,extra.embedded),preview);return <LinkPreviewCard {...state}/>;}
  const view=render(<QueryClientProvider client={new QueryClient()}><Card/></QueryClientProvider>);
  expect(view.container.querySelector('[data-link-preview]')).toBeNull();expect(invoke).not.toHaveBeenCalled();view.unmount();

@@ -1,9 +1,8 @@
+vi.mock("@/api/external-posts", async importOriginal => ({...await importOriginal<typeof import("@/api/external-posts")>(), isReplyPostId:(id:string)=>id.startsWith('reply:'), REPLY_REPOST_SELECT:'*', replyToPost:(row:any)=>row, getReplyPost:async()=>fixture.visible?{replyId:'comment-id',id:'reply:comment-id'}:null, getProfileReplyReposts:async()=>[], toggleReplyRepost:vi.fn()}));
 import { beforeEach, expect, it, vi } from 'vitest';
 const fixture=vi.hoisted(()=>({visible:true,writes:[] as any[]}));
 vi.mock('@/lib/currentUser',()=>({getCurrentUserId:async()=> 'viewer'}));
-vi.mock('./reply-reposts',()=>({isReplyPostId:(id:string)=>id.startsWith('reply:'),REPLY_REPOST_SELECT:'*',replyToPost:(row:any)=>row,
-  getReplyPost:async()=>fixture.visible?{replyId:'comment-id',id:'reply:comment-id'}:null,
-  getProfileReplyReposts:async()=>[],toggleReplyRepost:vi.fn()}));
+
 vi.mock('@/lib/supabase',()=>({supabase:{from(table:string){let write=false;const b={
   select:()=>b,eq:()=>b,in:()=>b,single:()=>b,maybeSingle:()=>b,
   insert:(input:any)=>{write=true;fixture.writes.push({table,input});return b;},

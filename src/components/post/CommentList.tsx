@@ -1,52 +1,580 @@
-import { useMinuteTick } from "@/hooks/useViewportWidth";
-import {useViewportWidth} from '@/hooks/useViewportWidth';
-import { twitterReplyText } from "@/lib/twitterReplyPaging";
-import { displayUsername } from "@/lib/format";
-import {canShowPostLinkPreview,hasAttachedPostVideo} from '@/lib/postPresentation';
-import {PostSourceLabel} from '@/components/post/PostSourceLabel';
-import { PrivateMediaImage } from "@/components/profile/ProfileMediaPreview";
-import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
-import {twitterReplyUrl} from '@/lib/fxTwitter';
-import { ProviderVerificationBadge } from "@/components/common/OfficialBadge";
-import { ExternalPostDetails } from "@/components/feed/QuotedPost";
-import {PostVideoPlayer} from '@/components/video/PostVideoPlayer';
-import { PrivateAccountBadge } from "@/components/common/OfficialBadge";
-import { mobilePostMenuOS } from "@/components/post/PostActionSheet";
-import "@/components/post/post-actions.css";
+import { initialImageFrame, initialMediaSize } from "@/lib/mediaThumbnail";
+import { ContentLink } from "@/components/ui/button";
+import { useMinuteTick, useViewportWidth } from "@/hooks/useViewportWidth";
+import { twitterReplyText, canShowPostLinkPreview, hasAttachedPostVideo, commentThreadUrl, getAuthorReplyConversations } from "@/lib/utils";
+import { displayUsername, splitMentionText, mentionProfileHandle, hasStickers, formatDate, formatRelative, getYouTubeId } from "@/lib/utils";
+import { PostSourceLabel, ExternalPostDetails, LinkPreviewCard, useLinkPreview, PostImages } from "@/components/feed/QuotedPost";
+import { PrivateMediaImage } from "@/components/ui/avatar";
+import { twitterReplyUrl } from "@/lib/fxTwitter";
+import { ProviderVerificationBadge, PrivateAccountBadge, Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/button";
+import { PostVideoPlayer } from "@/components/video/PostVideoPlayer";
+import { mobilePostMenuOS, ExternalLikeButton, RepostButton, BookmarkButton } from "@/components/feed/RepostButton";
 import { openMediaViewer } from "@/components/media/openMediaViewer";
-import { LinkPreviewCard, useLinkPreview } from "@/components/post/LinkPreviewCard";
-import { OfflineBookmarkContext } from "@/components/stickers/OfflineBookmarkContext";
-import { renderStickerText } from "@/components/stickers/Stickers";
-import { hasStickers } from "@/lib/stickers";
-import { useState, useContext, useEffect, useRef, useMemo } from "react";
+import { OfflineBookmarkContext, renderStickerText } from "@/components/stickers/Stickers";
+import { useState, useContext, useEffect, useRef, useMemo, useLayoutEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate } from "react-router-dom";
-import { MoreHorizontal, Download, Link as LinkIcon, ChartBarBig, Trash2, CalendarDays, X, Plus, MessageCircle } from "lucide-react";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { PostCardSkeleton } from "@/components/feed/PostCardSkeleton";
-import type { PostWithAuthor, CommentWithAuthor } from "@/types";
-import { ExternalLikeButton } from "@/components/post/ExternalLikeButton";
-import { ReplyShare } from "@/components/post/ReplyShare";
-import { RepostButton } from "@/components/feed/RepostButton";
-import { RepostIcon } from "@/components/feed/ComposerIcon";
-import { replyToPost } from "@/api/reply-reposts";
-import { Commentlikebutton } from "@/components/post/Commentlikebutton";
-import { FollowButton } from "@/components/profile/FollowButton";
-import { useFollowStats } from "@/hooks/useProfile";
-import { useComments } from "@/hooks/useComments";
+import { MoreHorizontal, Download, Link as LinkIcon, ChartBarBig, Trash2, CalendarDays, X, Plus, MessageCircle, Send, Upload } from "lucide-react";
+import { PostCardSkeleton, RepostIcon } from "@/components/feed/PostPoll";
+import { type PostWithAuthor, type CommentWithAuthor } from "@/types/index";
+import { replyToPost } from "@/api/external-posts";
+import { Commentlikebutton } from "@/components/feed/RepostButton";
+import { FollowButton } from "@/components/profile/ProfileHeader";
+import { useFollowStats } from "@/hooks/useFeed";
+import { useComments } from "@/hooks/useFeed";
 import { getCurrentUserId } from "@/lib/currentUser";
-import { formatDate, formatRelative } from "@/lib/format";
 import { supabase } from "@/lib/supabase";
-import { getYouTubeId } from "@/lib/utils";
-import { YouTubeEmbed } from "@/components/YouTubeEmbed";
-import { SpotifyEmbed } from "@/components/SpotifyEmbed";
-import { PostImages } from "@/components/feed/PostImages";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/popover";
+import { YouTubeEmbed, SpotifyEmbed } from "@/components/feed/PostCard";
 import dayjs from "dayjs";
-import { commentThreadUrl, getAuthorReplyConversations } from "@/lib/commentThread";
-import { ReplyChain } from "@/components/post/ReplyChain";
 import { useAuth } from "@/hooks/useAuth";
 
+// ReplyShare
+interface SharedReply { id: string; postId: string; content: string; author: { id: string; username: string; displayName: string } }
+interface LimeDropTarget { id: string; username: string; displayName: string; avatarUrl: string }
+
+// Keep the PostCard sharing choices and recipient rules for a reply's own URL.
+function ReplyShare({ comment, currentUserId, externalPost, className = '' }: { comment: SharedReply; currentUserId: string | null; className?: string; externalPost?: PostWithAuthor }) {
+  const [showShareMenu, setShowShareMenu] = useState(false);
+  const [shareMenuPosition, setShareMenuPosition] = useState<{ top: number; right: number } | null>(null);
+  const [shareFeedback, setShareFeedback] = useState<string | null>(null);
+  const [showLimeDropPanel, setShowLimeDropPanel] = useState(false);
+  const [limeDropTargets, setLimeDropTargets] = useState<LimeDropTarget[]>([]);
+  const [limeDropLoading, setLimeDropLoading] = useState(false);
+  const [limeDropSendingUserId, setLimeDropSendingUserId] = useState<string | null>(null);
+  const [limeDropFeedback, setLimeDropFeedback] = useState<string | null>(null);
+  const shareMenuRef = useRef<HTMLDivElement>(null);
+  const limeDropPanelRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!showShareMenu || !shareMenuRef.current) return;
+    const height = shareMenuRef.current.getBoundingClientRect().height;
+    setShareMenuPosition(position => position && { ...position, top: Math.max(8, Math.min(position.top, window.innerHeight - height - 8)) });
+  }, [showShareMenu]);
+  const getPostShareUrl = () => new URL((externalPost ? `/post/${encodeURIComponent(externalPost.id)}` : commentThreadUrl(comment.postId, comment.id)).slice(1), new URL(import.meta.env.BASE_URL, window.location.origin)).href;
+  const getPostShareText = () => {
+    const raw = comment.content.replace(/\s+/g, ' ').trim();
+    return raw ? `${comment.author.displayName}さんの返信: ${raw.length > 120 ? `${raw.slice(0, 120)}...` : raw}` : `${comment.author.displayName}さんの返信`;
+  };
+  useEffect(() => {
+    if (!showShareMenu && !showLimeDropPanel) return;
+    const dismiss = (event: KeyboardEvent) => { if (event.key === 'Escape') { setShowShareMenu(false); setShowLimeDropPanel(false); } };
+    const reposition = () => setShowShareMenu(false);
+    window.addEventListener('keydown', dismiss);
+    window.addEventListener('resize', reposition);
+    window.addEventListener('scroll', reposition, true);
+    return () => { window.removeEventListener('keydown', dismiss); window.removeEventListener('resize', reposition); window.removeEventListener('scroll', reposition, true); };
+  }, [showShareMenu, showLimeDropPanel]);
+  const copyTextToClipboard = async (text: string) => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.top = '-9999px';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+
+    try {
+      document.execCommand('copy');
+    } finally {
+      document.body.removeChild(textarea);
+    }
+  };
+
+  const closeShareMenu = () => {
+    setShowShareMenu(false);
+    setShareMenuPosition(null);
+  };
+
+  const handleShareButtonClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (showShareMenu) {
+      closeShareMenu();
+      return;
+    }
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    setShareMenuPosition({
+      top: rect.bottom + 4,
+      right: Math.max(8, window.innerWidth - rect.right),
+    });
+    setShowShareMenu(true);
+  };
+
+  const handleCopyPostLink = async (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    try {
+      await copyTextToClipboard(getPostShareUrl());
+      setShareFeedback('リンクをコピーしました');
+      window.setTimeout(() => {
+        setShareFeedback(null);
+      }, 1400);
+      closeShareMenu();
+    } catch (err) {
+      console.error('Copy post link failed:', err);
+      setShareFeedback('コピーに失敗しました');
+      window.setTimeout(() => {
+        setShareFeedback(null);
+      }, 1400);
+    }
+  };
+
+  const handleNativePostShare = async (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const url = getPostShareUrl();
+    const title = `${comment.author.displayName}さんの返信`;
+    const text = getPostShareText();
+
+    try {
+      if (typeof navigator !== 'undefined' && navigator.share) {
+        await navigator.share({ title, text, url });
+        closeShareMenu();
+        return;
+      }
+
+      await copyTextToClipboard(url);
+      setShareFeedback('共有非対応のためリンクをコピーしました');
+      window.setTimeout(() => {
+        setShareFeedback(null);
+      }, 1800);
+      closeShareMenu();
+    } catch (err) {
+      if ((err as DOMException)?.name === 'AbortError') {
+        closeShareMenu();
+        return;
+      }
+
+      console.error('Native post share failed:', err);
+      setShareFeedback('共有に失敗しました');
+      window.setTimeout(() => {
+        setShareFeedback(null);
+      }, 1400);
+    }
+  };
+
+  const fetchLimeDropTargets = async () => {
+    if (!currentUserId) {
+      setLimeDropTargets([]);
+      setLimeDropFeedback('ログイン状態を確認できません');
+      return;
+    }
+
+    setLimeDropLoading(true);
+    setLimeDropFeedback(null);
+
+    try {
+      const { data: currentProfile, error: currentProfileError } = await supabase
+        .from('profiles')
+        .select('is_official')
+        .eq('id', currentUserId)
+        .maybeSingle();
+
+      if (currentProfileError) throw currentProfileError;
+
+      if (currentProfile?.is_official === true) {
+        const { data: allProfileRows, error: allProfileError } = await supabase
+          .from('profiles')
+          .select('id, username, display_name, avatar_url')
+          .neq('id', currentUserId)
+          .order('display_name', { ascending: true });
+
+        if (allProfileError) throw allProfileError;
+
+        const targets: LimeDropTarget[] = (allProfileRows || []).map((profile: { id: string; username: string | null; display_name: string | null; avatar_url: string | null }) => ({
+          id: profile.id,
+          username: profile.username || 'unknown',
+          displayName: profile.display_name || profile.username || 'ユーザー',
+          avatarUrl: profile.avatar_url || '',
+        }));
+
+        setLimeDropTargets(targets);
+        return;
+      }
+
+      const { data: followingRows, error: followingError } = await supabase
+        .from('follows')
+        .select('followee_id')
+        .eq('follower_id', currentUserId);
+
+      if (followingError) throw followingError;
+
+      const followingIds = Array.from(
+        new Set(
+          (followingRows || [])
+            .map((row: { followee_id: string }) => row.followee_id)
+            .filter(Boolean)
+        )
+      );
+
+      const { data: followerRows, error: followerError } = followingIds.length > 0
+        ? await supabase
+            .from('follows')
+            .select('follower_id')
+            .eq('followee_id', currentUserId)
+            .in('follower_id', followingIds)
+        : { data: [], error: null };
+
+      if (followerError) throw followerError;
+
+      const mutualIds = Array.from(
+        new Set(
+          (followerRows || [])
+            .map((row: { follower_id: string }) => row.follower_id)
+            .filter(Boolean)
+        )
+      );
+
+      const { data: mutualProfileRows, error: mutualProfileError } = mutualIds.length > 0
+        ? await supabase
+            .from('profiles')
+            .select('id, username, display_name, avatar_url')
+            .in('id', mutualIds)
+        : { data: [], error: null };
+
+      if (mutualProfileError) throw mutualProfileError;
+
+      const targetMap = new Map<string, LimeDropTarget>();
+      (mutualProfileRows || []).forEach((profile: { id: string; username: string | null; display_name: string | null; avatar_url: string | null }) => {
+        targetMap.set(profile.id, {
+          id: profile.id,
+          username: profile.username || 'unknown',
+          displayName: profile.display_name || profile.username || 'ユーザー',
+          avatarUrl: profile.avatar_url || '',
+        });
+      });
+
+      const targets = Array.from(targetMap.values()).sort((a, b) => (
+        a.displayName.localeCompare(b.displayName, 'ja')
+      ));
+
+      setLimeDropTargets(targets);
+    } catch (err) {
+      console.error('Fetch LimeDrop targets failed:', err);
+      setLimeDropTargets([]);
+      setLimeDropFeedback('送信先の取得に失敗しました');
+    } finally {
+      setLimeDropLoading(false);
+    }
+  };
+
+  const handleOpenLimeDropPanel = async (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    closeShareMenu();
+    setLimeDropFeedback(null);
+    setShowLimeDropPanel(true);
+    await fetchLimeDropTargets();
+  };
+
+  const handleCloseLimeDropPanel = () => {
+    setShowLimeDropPanel(false);
+    setLimeDropSendingUserId(null);
+  };
+
+  const handleSendLimeDrop = async (target: LimeDropTarget) => {
+    if (!currentUserId) {
+      setLimeDropFeedback('ログイン状態を確認できません');
+      return;
+    }
+
+    setLimeDropSendingUserId(target.id);
+    setLimeDropFeedback(null);
+
+    try {
+      const url = getPostShareUrl();
+      const text = getPostShareText();
+
+      const { error } = await supabase
+        .from('lime_drops')
+        .insert({
+          sender_id: currentUserId,
+          recipient_id: target.id,
+          post_id: null,
+          post_url: url,
+          post_author_id: comment.author.id,
+          post_author_username: comment.author.username,
+          post_author_display_name: comment.author.displayName,
+          post_text: text,
+          status: 'pending',
+        });
+
+      if (error) throw error;
+
+      setLimeDropFeedback(`${target.displayName}さんに送信しました`);
+      window.setTimeout(() => {
+        handleCloseLimeDropPanel();
+        setLimeDropFeedback(null);
+      }, 900);
+    } catch (err) {
+      const supabaseError = err as { message?: string; details?: string | null; hint?: string | null; code?: string } | null;
+      console.error('Send LimeDrop failed:', {
+        message: supabaseError?.message,
+        details: supabaseError?.details,
+        hint: supabaseError?.hint,
+        code: supabaseError?.code,
+        raw: err,
+      });
+      setLimeDropFeedback('LimeDropの送信に失敗しました');
+    } finally {
+      setLimeDropSendingUserId(null);
+    }
+  };
+
+  return <>
+    <div className="ml-auto inline-flex shrink-0 items-center"><BookmarkButton post={externalPost ?? {id:`reply:${comment.id}`}} className={className} /><button type="button" onClick={handleShareButtonClick} aria-label="返信を共有" className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-accent ${className}`}><Upload className="h-5 w-5" /></button></div>
+                {showShareMenu && typeof document !== 'undefined' && createPortal(
+                  <>
+                    <div
+                      className="lime-post-action-sheet-backdrop-mobile fixed inset-0 bg-transparent"
+                      style={{ zIndex: 2147483646 }}
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        closeShareMenu();
+                      }}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                      }}
+                    />
+                    <div
+                      ref={shareMenuRef}
+                      className="lime-post-share-menu fixed w-[min(calc(100vw-16px),16rem)] rounded-xl border border-border bg-card p-1 shadow-lg overflow-hidden animate-in fade-in zoom-in duration-100"
+                      style={{
+                        top: shareMenuPosition?.top ?? 0,
+                        right: shareMenuPosition?.right ?? 8,
+                        zIndex: 2147483647,
+                      }}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        onClick={handleOpenLimeDropPanel}
+                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
+                      >
+                        <Send className="h-4 w-4 shrink-0" />
+                        <span>LimeDropで送信</span>
+                      </button>
+
+                      <button
+                        onClick={handleCopyPostLink}
+                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
+                      >
+                        <LinkIcon className="h-4 w-4 shrink-0" />
+                        <span>{shareFeedback ?? 'リンクをコピー'}</span>
+                      </button>
+
+                      <button
+                        onClick={handleNativePostShare}
+                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
+                      >
+                        <Upload className="h-4 w-4 shrink-0" />
+                        <span>その他の方法でポストを送信</span>
+                      </button>
+                    </div>
+                  </>,
+                  document.body
+                )}
+      {showLimeDropPanel && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed inset-0 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
+          style={{ zIndex: 2147483647 }}
+          onPointerDown={(e) => {
+            if (e.target === e.currentTarget) {
+              handleCloseLimeDropPanel();
+            }
+          }}
+        >
+          <div
+            ref={limeDropPanelRef}
+            className="w-full max-w-[520px] overflow-hidden rounded-t-[28px] border border-border bg-card shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-200 sm:rounded-[28px]"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 border-b border-border/70 px-5 py-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                <Send className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-bold text-muted-foreground">LimeDrop</p>
+                <h2 className="truncate text-lg font-black text-foreground">ポストを共有</h2>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseLimeDropPanel}
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted text-foreground transition-colors hover:bg-muted/80"
+                aria-label="LimeDropを閉じる"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="px-5 py-4">
+              <div className="mb-4 rounded-2xl border border-border/70 bg-muted/35 px-4 py-3">
+                <p className="line-clamp-2 text-sm font-medium leading-relaxed text-foreground">
+                  {getPostShareText()}
+                </p>
+                <p className="mt-1 truncate text-xs text-muted-foreground">
+                  {getPostShareUrl()}
+                </p>
+              </div>
+
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h3 className="text-sm font-black text-foreground">人</h3>
+                {limeDropLoading && (
+                  <span className="text-xs font-bold text-muted-foreground">読み込み中...</span>
+                )}
+              </div>
+
+              {limeDropFeedback && (
+                <div className="mb-3 rounded-xl bg-primary/10 px-3 py-2 text-sm font-bold text-primary">
+                  {limeDropFeedback}
+                </div>
+              )}
+
+              {!limeDropLoading && limeDropTargets.length === 0 && (
+                <div className="rounded-2xl border border-dashed border-border px-4 py-8 text-center">
+                  <p className="text-sm font-bold text-foreground">送信できる相互フォロー中のユーザーがいません</p>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    LimeDropは相互フォロー中のユーザーにだけ送信できます。
+                  </p>
+                </div>
+              )}
+
+              {limeDropTargets.length > 0 && (
+                <div className="grid max-h-[320px] grid-cols-3 gap-3 overflow-y-auto pb-1 sm:grid-cols-4">
+                  {limeDropTargets.map((target) => {
+                    const isSending = limeDropSendingUserId === target.id;
+
+                    return (
+                      <button
+                        key={target.id}
+                        type="button"
+                        disabled={Boolean(limeDropSendingUserId)}
+                        onClick={() => handleSendLimeDrop(target)}
+                        className="flex min-w-0 flex-col items-center rounded-2xl px-2 py-3 text-center transition-colors hover:bg-muted disabled:cursor-wait disabled:opacity-70"
+                      >
+                        <Avatar className="h-14 w-14 border border-border">
+                          <AvatarImage src={target.avatarUrl} alt={target.displayName} />
+                          <AvatarFallback>{target.displayName.slice(0, 1)}</AvatarFallback>
+                        </Avatar>
+                        <span className="mt-2 w-full truncate text-xs font-black text-foreground">
+                          {isSending ? '送信中...' : target.displayName}
+                        </span>
+                        <span className="mt-0.5 w-full truncate text-[11px] text-muted-foreground">
+                          @{displayUsername(target.username)}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+  </>;
+}
+
+// ReplyChain
+type Segment = { x: number; top: number; bottom: number; dashed?: boolean };
+
+function ReplyChain({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [segments, setSegments] = useState<Segment[]>([]);
+  useLayoutEffect(() => {
+    const host = ref.current;
+    if (!host) return;
+    let active = true;
+    const measure = () => {
+      if (!active) return;
+      const origin = host.getBoundingClientRect();
+      const belongs=(element:Element)=>element.closest('[data-lime-reply-chain]')===host&&!element.closest('[data-lime-embedded]');
+      const avatars = [...host.querySelectorAll<HTMLElement>('[data-lime-thread-avatar]')].filter(belongs).map(el => ({
+        rect: el.getBoundingClientRect(),
+        owner: el.closest<HTMLElement>('[data-lime-conversation-comment]'),
+      }));
+      const next: Segment[] = [];
+      const add = (avatar: DOMRect, top: number, bottom: number, dashed = false) => {
+        if (bottom > top) next.push({ x: avatar.left + avatar.width / 2 - origin.left, top: top - origin.top, bottom: bottom - origin.top, dashed });
+      };
+      avatars.forEach(({ rect, owner }, index) => {
+        // Only a real child continues this line. Consecutive siblings must not
+        // appear to be replies to each other, even when flattened for display.
+        const following = avatars[index + 1];
+        const connected = following && (!owner || following.owner?.dataset.limeConversationParent === owner.dataset.limeConversationComment);
+        if (connected) add(rect, rect.bottom + 8, following.rect.top - 8);
+      });
+      host.querySelectorAll<HTMLElement>('[data-lime-thread-more]').forEach(more => {
+        if(!belongs(more))return;
+        const parentId = more.dataset.limeThreadMore;
+        const parent = avatars.some(avatar => avatar.owner)
+          ? avatars.find(avatar => avatar.owner?.dataset.limeConversationComment === parentId)
+          : avatars.at(-1);
+        if (!parent) return;
+        const button = more.getBoundingClientRect();
+        const preceding = avatars.filter(avatar => avatar.rect.top < button.top).at(-1);
+        // A footer for siblings is not a continuation of the preceding leaf.
+        if (preceding === parent && !avatars.some(avatar => avatar.rect.top > button.top && avatar.owner?.dataset.limeConversationParent === parentId)) {
+          add(parent.rect, parent.rect.bottom + 8, button.top - 8);
+        }
+        add(parent.rect, button.top + 8, button.bottom - 8, true);
+      });
+      setSegments(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
+    };
+    const resize = new ResizeObserver(measure);
+    resize.observe(host);
+    host.querySelectorAll('[data-lime-thread-item]').forEach(el => resize.observe(el));
+    const changes = new MutationObserver(measure);
+    changes.observe(host, { childList: true, subtree: true, characterData: true });
+    host.addEventListener('load', measure, true);
+    window.addEventListener('resize', measure);
+    document.fonts?.ready.then(measure);
+    measure();
+    return () => {
+      active = false;
+      resize.disconnect(); changes.disconnect();
+      host.removeEventListener('load', measure, true);
+      window.removeEventListener('resize', measure);
+    };
+  }, []);
+  return (
+    <div ref={ref} data-lime-reply-chain className="relative">
+      <style>{`
+        [data-lime-reply-chain] [data-lime-thread-item]:not([data-lime-embedded]) {
+          padding: 12px 0 !important;
+          margin: 0 !important;
+          border: 0 !important;
+          border-radius: 0 !important;
+          box-shadow: none !important;
+          background: transparent !important;
+          max-width: none !important;
+        }
+      `}</style>
+      {children}
+      <svg aria-hidden="true" data-lime-thread-lines className="pointer-events-none absolute inset-0 z-[1] h-full w-full" style={{ overflow: 'visible' }}>
+        {segments.map((segment, i) => <line key={i} x1={segment.x} x2={segment.x} y1={segment.top} y2={segment.bottom} stroke="hsl(var(--border))" strokeWidth="2" strokeDasharray={segment.dashed ? '2 6' : undefined} strokeLinecap="round" />)}
+      </svg>
+    </div>
+  );
+}
+
+// CommentList
 // ─── 型 ───────────────────────────────────────────────────────────────────────
 interface CommentAuthor {
   id: string;
@@ -137,7 +665,7 @@ const getChannelSuffix = () => {
 };
 
 // ─── CommentCard ──────────────────────────────────────────────────────────────
-export function CommentCard({
+function CommentCard({
   comment,
   currentUserId,
   mobileFlat,
@@ -174,7 +702,7 @@ export function CommentCard({
 
   const [showMenu, setShowMenu] = useState(false);
   const [deleted, setDeleted] = useState(false);
-  const [imageSize, setImageSize] = useState<{ url: string; width: number; height: number } | null>(null);
+  const imageGeometry=useRef<{url:string;size:{width:number;height:number}}>();
   const [failedUrls, setFailedUrls] = useState<string[]>([]);
   useMinuteTick();
 
@@ -233,7 +761,6 @@ export function CommentCard({
         }
       )
       .subscribe();
-
 
     return () => {
       if (channel) supabase.removeChannel(channel);
@@ -511,59 +1038,11 @@ export function CommentCard({
   displayContent = linkPreview.text(displayContent.trim());
 
   const useMobilePresentation = mobileFlat || isMobile;
-  const naturalSize = imageSize?.url === allImageUrls[0] ? imageSize : null;
-  const singleImageFrameStyle = useMemo<React.CSSProperties>(() => {
-    if (!naturalSize) {
-      return {
-        width: '100%',
-        maxWidth: '100%',
-      };
-    }
-
-    const naturalWidth = Math.max(1, naturalSize.width);
-    const naturalHeight = Math.max(1, naturalSize.height);
-    const ratio = naturalWidth / naturalHeight;
-
-    const maxTimelineImageHeight = useMobilePresentation ? 300 : 480;
-    const minimumReadableWidth = useMobilePresentation ? 88 : 110;
-    const heightLimitedWidth = Math.max(
-      minimumReadableWidth,
-      Math.round(maxTimelineImageHeight * ratio)
-    );
-    const shouldLimitByHeight = ratio < (useMobilePresentation ? 1.64 : 1.72);
-    const shouldAvoidUpscale = naturalWidth <= (useMobilePresentation ? 360 : 520);
-    const shouldNarrowUltraWide = ratio >= 2.35;
-
-    if (shouldLimitByHeight) {
-      const width = shouldAvoidUpscale
-        ? Math.min(naturalWidth, heightLimitedWidth)
-        : heightLimitedWidth;
-
-      return {
-        width: `min(100%, ${Math.max(minimumReadableWidth, width)}px)`,
-        maxWidth: '100%',
-      };
-    }
-
-    if (shouldAvoidUpscale) {
-      return {
-        width: `${naturalWidth}px`,
-        maxWidth: '100%',
-      };
-    }
-
-    if (shouldNarrowUltraWide) {
-      return {
-        width: useMobilePresentation ? '100%' : 'min(100%, 560px)',
-        maxWidth: '100%',
-      };
-    }
-
-    return {
-      width: '100%',
-      maxWidth: '100%',
-    };
-  }, [naturalSize, useMobilePresentation]);
+  if(imageGeometry.current?.url!==allImageUrls[0]){
+    const index=externalPost?.imageUrls.indexOf(allImageUrls[0])??-1;
+    imageGeometry.current={url:allImageUrls[0],size:initialMediaSize(externalPost?.imageDimensions?.[index],allImageUrls[0])};
+  }
+  const singleImageFrameStyle=initialImageFrame(imageGeometry.current?.size??initialMediaSize(),useMobilePresentation);
 
   const renderContentWithLinks = (text: string) => {
     if (!text) return null;
@@ -574,7 +1053,7 @@ export function CommentCard({
     return parts.map((part, index) => {
       if (part.match(urlRegex)) {
         return (
-          <a
+          <ContentLink
             key={`link-${index}`}
             href={part}
             target="_blank"
@@ -583,7 +1062,7 @@ export function CommentCard({
             onClick={(e) => e.stopPropagation()}
           >
             {part}
-          </a>
+          </ContentLink>
         );
       }
 
@@ -621,9 +1100,10 @@ export function CommentCard({
     if (hasStickers(text)) return renderStickerText(text, renderContentWithMentions);
     if (!text) return null;
 
-    const parts = externalPost?splitMentionText(text):text.split(/(@\w+)/g);
+    const parts = externalPost?splitMentionText(text):text.split(/(https?:\/\/[^\s]+|@\w+)/g);
 
     return parts.map((part, index) => {
+      if (/^https?:\/\//.test(part)) return renderContentWithLinks(part);
       if (part.startsWith('@')) {
         const username = externalPost?mentionProfileHandle(part,externalPost.author):part.substring(1);
 
@@ -670,8 +1150,6 @@ export function CommentCard({
 
   const HoverStats = ({ userId }: { userId: string }) => {
     const { data: stats } = useFollowStats(userId);
-
-
 
   return (
       <div className="mt-3 flex items-center gap-4 text-[14px]">
@@ -1339,8 +1817,8 @@ export function CommentCard({
 
               {allImageUrls.length === 1 && !failedUrls.includes(allImageUrls[0]) ? (
                 <div data-lime-post-images={allImageUrls.length>0||undefined} className="mt-3 flex max-w-full justify-start" onClick={(e) => e.stopPropagation()}>
-                  <button type="button" data-lime-single-post-image aria-label="画像を拡大表示" className="block max-w-full cursor-zoom-in overflow-hidden rounded-2xl border border-border/50 bg-black/[0.025] text-left shadow-none dark:bg-white/[0.035]" style={singleImageFrameStyle} onClick={(e) => handleImageClick(e, allImageUrls[0])}>
-                    <PrivateMediaImage src={allImageUrls[0]} alt={externalPost?.imageAltTexts?.[0]||"返信画像"} referrerPolicy={externalPost?.source==='x'?'no-referrer':undefined} className="block select-none" style={{ width: '100%', height: 'auto', objectFit: 'contain' }} draggable={false} loading="lazy" decoding="async" onLoad={(e) => { const image = e.currentTarget; if (image.naturalWidth && image.naturalHeight) setImageSize({ url: allImageUrls[0], width: image.naturalWidth, height: image.naturalHeight }); }} onError={() => setFailedUrls((prev) => prev.includes(allImageUrls[0]) ? prev : [...prev, allImageUrls[0]])} />
+                  <button key={allImageUrls[0]} type="button" data-lime-single-post-image data-lime-media-fallback={imageGeometry.current?.size.width===16&&imageGeometry.current?.size.height===9||undefined} aria-label="画像を拡大表示" className="relative block max-w-full cursor-zoom-in overflow-hidden rounded-2xl border border-border/60 bg-background text-left shadow-none" style={singleImageFrameStyle} onClick={(e) => handleImageClick(e, allImageUrls[0])}>
+                    <PrivateMediaImage data-lime-media-loading-frame src={allImageUrls[0]} alt={externalPost?.imageAltTexts?.[0]||"返信画像"} referrerPolicy={externalPost?.source==='x'?'no-referrer':undefined} className="block select-none" style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'contain'}} draggable={false} loading="lazy" decoding="async" onError={event=>{event.currentTarget.style.opacity='0';}} />
                   </button>
                 </div>
               ) : allImageUrls.length > 1 && (
@@ -1380,13 +1858,12 @@ export function CommentCard({
         </div>
       </article>}
 
-
     </>
   );
 }
 
 // ─── CommentList ──────────────────────────────────────────────────────────────
-export function CommentList({
+function CommentList({
   postId,
   mobileFlat = false,
   parentCommentId = null,
@@ -1439,7 +1916,7 @@ export function CommentList({
 }
 
 /** Shared conversation layout for native and external replies. */
-export function CommentConversations({ comments, currentUserId, mobileFlat, threadAuthorId, parentCommentId = null, expandedReplies, onExpand }: {
+function CommentConversations({ comments, currentUserId, mobileFlat, threadAuthorId, parentCommentId = null, expandedReplies, onExpand }: {
   comments: (CommentWithAuthor & { externalPost?: PostWithAuthor })[];
   currentUserId: string | null;
   mobileFlat: boolean;
@@ -1468,7 +1945,7 @@ export function CommentConversations({ comments, currentUserId, mobileFlat, thre
   );
 }
 
-export function ExternalReplyCard({ post, parentId, replyToUsername, mobileFlat = true, detail = false, thread = false, embedded = false, repostedByLabel }: {
+function ExternalReplyCard({ post, parentId, replyToUsername, mobileFlat = true, detail = false, thread = false, embedded = false, repostedByLabel }: {
   post: PostWithAuthor; parentId?: string; replyToUsername?: string; mobileFlat?: boolean;
   detail?: boolean; thread?: boolean; embedded?: boolean; repostedByLabel?: string;
 }) {
@@ -1478,9 +1955,17 @@ export function ExternalReplyCard({ post, parentId, replyToUsername, mobileFlat 
     repostedByLabel={repostedByLabel} replyToUsername={replyToUsername ?? post.externalReplyToUsername} />;
 }
 
-export function RepostedReplyCard({post,repostedByLabel,embedded=false}:{post:PostWithAuthor;repostedByLabel?:string;embedded?:boolean}) {
+function RepostedReplyCard({post,repostedByLabel,embedded=false}:{post:PostWithAuthor;repostedByLabel?:string;embedded?:boolean}) {
   const {user}=useAuth();
   return <CommentCard currentUserId={user?.id ?? null} mobileFlat thread={embedded} embedded={embedded} repostedByLabel={repostedByLabel} replyToUsername={post.replyToUsername}
     comment={{id:post.replyId!,postId:post.replyPostId!,userId:post.userId,content:post.content,imageUrls:post.imageUrls,
       createdAt:post.createdAt,likesCount:post.likesCount,likedByMe:post.likedByMe,commentsCount:post.commentsCount,author:post.author}} />;
 }
+
+export { CommentCard };
+export { CommentList };
+export { CommentConversations };
+export { ExternalReplyCard };
+export { RepostedReplyCard };
+export { ReplyShare };
+export { ReplyChain };

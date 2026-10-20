@@ -1,18 +1,31 @@
-vi.mock('@/api/post-activity',()=>({hasExternalActivity:(id:string)=>id.startsWith('bsky:')||id.startsWith('x:'),getExternalPostActivity:state.external}));
+vi.mock("@/components/feed/PostCard", async importOriginal => ({...await importOriginal<typeof import("@/components/feed/PostCard")>(), PostCard:()=>null}));
+vi.mock("@/api/comments", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/api/comments")>();
+ const overrides = [
+  await (()=>({hasExternalActivity:(id:string)=>id.startsWith('bsky:')||id.startsWith('x:'),getExternalPostActivity:state.external}))(),
+  await (() => ({ getCommentLikers: state.replies }))()
+ ];
+ return Object.assign({}, actual, ...overrides.map(values => Object.fromEntries(Object.entries(values).filter(([key, value]) => value !== actual[key]))));
+});
+vi.mock("@/components/profile/ProfileHeader", async importOriginal => ({...await importOriginal<typeof import("@/components/profile/ProfileHeader")>(), FollowButton: () => null}));
+
+
+vi.mock("@/hooks/useAuth", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useAuth")>(), useAuth:()=>({user:{id:'viewer'}})}));
+
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({ external:vi.fn(),posts: vi.fn(), replies: vi.fn(), removed: vi.fn(), callbacks: [] as (() => void)[] }));
 vi.mock('@/api/posts', () => ({ getPostLikers: state.posts, getPostQuotes: vi.fn().mockResolvedValue([]), getPostReposters: vi.fn().mockResolvedValue([]) }));
-vi.mock('@/api/comments', () => ({ getCommentLikers: state.replies }));
-vi.mock('@/components/profile/FollowButton', () => ({ FollowButton: () => null }));
+
+
 vi.mock('@/lib/supabase', () => ({ supabase: {
   channel: () => { const channel = { on: (_event: string, _filter: unknown, callback: () => void) => { state.callbacks.push(callback); return channel; }, subscribe: () => channel }; return channel; },
   removeChannel: state.removed,
 } }));
-vi.mock('@/hooks/useAuth',()=>({useAuth:()=>({user:{id:'viewer'}})}));
-vi.mock('@/components/feed/PostCard',()=>({PostCard:()=>null}));
-import PostActivity from './PostActivity';
+
+
+import { PostActivity } from "@/pages/PostDetail";
 beforeEach(() => { state.external.mockReset().mockResolvedValue({posts:[],users:[],next:undefined}); state.posts.mockReset().mockResolvedValue([]); state.replies.mockReset().mockResolvedValue([{ id: 'person', username: 'person', displayName: 'Reply liker' }]); state.removed.mockReset(); state.callbacks = []; });
 afterEach(cleanup);
 function mount(search = '?tab=likes',id='root') { return render(<MemoryRouter initialEntries={['/post/'+encodeURIComponent(id)+'/activity' + search]}><Routes><Route path="/post/:postId/activity" element={<PostActivity />} /></Routes></MemoryRouter>); }

@@ -14,7 +14,7 @@ vi.mock('@/lib/supabase', () => ({ supabase: {
     return builder;
   },
 } }));
-import { isPostHighlighted, setPostHighlighted } from './profile-highlights';
+import { isPostHighlighted, setPostHighlighted } from "@/api/comments";
 beforeEach(() => { fixture.data = null; fixture.error = null; fixture.calls = []; });
 it('checks membership for the given owner and post', async () => {
   expect(await isPostHighlighted('owner', 'post')).toBe(false);

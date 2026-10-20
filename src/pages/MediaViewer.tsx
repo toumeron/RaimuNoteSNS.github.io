@@ -1,10 +1,10 @@
-import { displayUsername } from "@/lib/format";
-import { PrivateMediaImage } from "@/components/profile/ProfileMediaPreview";
-import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
+import { displayUsername } from "@/lib/utils";
+import { PrivateMediaImage } from "@/components/ui/avatar";
+import { PrivateAccountBadge } from "@/components/ui/avatar";
 import {splitMentionText} from '@/lib/utils';
 import { openMediaViewer } from '@/components/media/openMediaViewer';
 import { renderStickerText } from "@/components/stickers/Stickers";
-import { hasStickers } from '@/lib/stickers';
+import { hasStickers } from "@/lib/utils";
 import {
   useCallback,
   useEffect,

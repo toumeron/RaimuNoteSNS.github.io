@@ -1,5 +1,5 @@
-import {page} from './http.ts';
-import {metadata,publicUrl,type LinkPreview} from './metadata.ts';
+import { page } from "./http.ts";
+import { metadata, publicUrl, type LinkPreview } from "./metadata.ts";
 
 // Fixed-server API reader for clients whose cross-origin requests are blocked.
 // This is a public-data reader; provider credentials and writes are never accepted.

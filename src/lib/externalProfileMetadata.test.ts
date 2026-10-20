@@ -1,7 +1,7 @@
 import {beforeEach,expect,it,vi} from 'vitest';
 const reader=vi.hoisted(()=>vi.fn());
 vi.mock('./bluesky',()=>({fetchBlueskyProfile:reader}));
-import {completeExternalPostAuthors} from './externalProfileMetadata';
+import { completeExternalPostAuthors } from "@/lib/externalAccounts";
 beforeEach(()=>{reader.mockReset();});
 it('fills missing external author metadata, coalesces an author and preserves native posts',async()=>{
  reader.mockResolvedValue({id:'did:artist',username:'metadata-artist.bsky.social',displayName:'作者',avatarUrl:'https://images.example/avatar',bio:'作品'});

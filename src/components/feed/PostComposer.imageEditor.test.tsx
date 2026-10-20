@@ -1,8 +1,14 @@
+vi.mock("@/hooks/useFeed", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/hooks/useFeed")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/hooks/useFeed")>(), useCreatePost: () => ({ mutateAsync: vi.fn(), isPending: false })}))(importOriginal)};
+});
+
+vi.mock("@/hooks/useAuth", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useAuth")>(), useAuth: () => ({ user: { id: 'viewer', username: 'viewer', displayName: 'Viewer' } })}));
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ user: { id: 'viewer', username: 'viewer', displayName: 'Viewer' } }) }));
-vi.mock('@/hooks/useFeed', () => ({ useCreatePost: () => ({ mutateAsync: vi.fn(), isPending: false }) }));
+
+
 import { PostComposer } from './PostComposer';
 const draw = vi.fn();
 const apply = vi.fn();

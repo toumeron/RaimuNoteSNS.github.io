@@ -1,15 +1,26 @@
+vi.mock("@/api/external-posts", async importOriginal => ({...await importOriginal<typeof import("@/api/external-posts")>(), getExternalLikeState:mocks.read, setExternalLike:mocks.save}));
+vi.mock("@/lib/recommendations", async importOriginal => ({...await importOriginal<typeof import("@/lib/recommendations")>(), recordRecommendationLike:mocks.record, addRecommendationInterest:vi.fn()}));
+vi.mock("@/hooks/useAuth", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/hooks/useAuth")>();
+ const overrides = [
+  await (()=>({useAuth:()=>({user:{id:'viewer'}})}))(),
+  await (()=>({useBlueskySession:()=>mocks.session}))()
+ ];
+ return Object.assign({}, actual, ...overrides.map(values => Object.fromEntries(Object.entries(values).filter(([key, value]) => value !== actual[key]))));
+});
+
 import {render,screen,fireEvent,waitFor,cleanup} from '@testing-library/react';
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 const mocks=vi.hoisted(()=>({save:vi.fn(),read:vi.fn(),remote:vi.fn(),like:vi.fn(),unlike:vi.fn(),session:null as any,record:vi.fn(),toast:vi.fn()}));
-vi.mock('@/hooks/useAuth',()=>({useAuth:()=>({user:{id:'viewer'}})}));
-vi.mock('@/hooks/useBlueskySession',()=>({useBlueskySession:()=>mocks.session}));
-vi.mock('@/api/external-likes',()=>({getExternalLikeState:mocks.read,setExternalLike:mocks.save}));
+
+
+
 vi.mock('@/lib/bluesky',()=>({getBlueskyUriFromPostId:(id:string)=>id.replace(/^bsky:/,''),fetchBlueskyPostViewerState:mocks.remote,likeBlueskyPost:mocks.like,unlikeBlueskyPost:mocks.unlike}));
-vi.mock('@/lib/recommendations',()=>({recordRecommendationLike:mocks.record,addRecommendationInterest:vi.fn()}));
+
 vi.mock('sonner',()=>({toast:{info:mocks.toast,error:mocks.toast}}));
 vi.mock('./LikeButton',()=>({LikeButton:({liked,persistLike,count}:any)=><button aria-label={liked?'undo':'like'} onClick={()=>persistLike(!liked)}>{count}</button>}));
-import {ExternalLikeButton} from './ExternalLikeButton';
+import { ExternalLikeButton } from "@/components/feed/RepostButton";
 const post:any={id:'bsky:at://did:plc:test/app.bsky.feed.post/abc',userId:'artist',content:'',imageUrls:['image'],likesCount:4,author:{id:'artist'},cid:'cid'};
 function mount(row=post){const client=new QueryClient({defaultOptions:{queries:{retry:false}}});render(<QueryClientProvider client={client}><ExternalLikeButton post={row}/></QueryClientProvider>);return client;}
 beforeEach(()=>{vi.clearAllMocks();mocks.session=null;mocks.read.mockResolvedValue({liked:false,count:0,unmirroredCount:0});mocks.save.mockResolvedValue({liked:true,count:1,unmirroredCount:1});mocks.remote.mockResolvedValue({cid:'cid'});mocks.like.mockResolvedValue('like-uri');});afterEach(cleanup);

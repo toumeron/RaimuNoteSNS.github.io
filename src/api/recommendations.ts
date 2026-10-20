@@ -1,26 +1,21 @@
-import {searchXPage} from '@/lib/fxTwitter';
-import {TOPICS} from '@/lib/topics';
-import { learnedRecommendationScores } from "@/api/topics";
-import { supabase } from '@/lib/supabase';
-import { getFeed, getPostsByUser, searchPosts } from './posts';
-import {discoverBlueskyTopicFeeds,fetchBlueskyTopicFeed,fetchBlueskyAuthorFeed, fetchBlueskyLikedPosts,fetchBlueskyTopicPosts, fetchTrendingJapaneseBlueskyPosts } from '@/lib/bluesky';
-import {recommendationOriginLanguages,topicAuthorCandidates} from '@/lib/recommendationSignals';
-import {recommendationIdentity,recommendationFingerprint} from "@/lib/recommendationSignals";
-import {recommendationIsEligible} from "@/lib/recommendationSignals";
-import {isDeclaredGeneratedArt} from "@/lib/recommendationSignals";
-import {applyCachedRecommendationVisuals,visualSimilarity,restoreRecommendationVisuals} from '@/lib/recommendationVisual';
-import type {TopicId} from '@/lib/topics';
-import { normalizeTimelineBlueskyPost } from '@/lib/timelinePaging';
-import { addRecommendationInterest, rejectedRecommendationTopics,isRecommendationAuthorRejected,rankRecommendations, recommendationQueries, readRecommendationLikes,selectRecommendationLikeSamples,readRecommendationImpressions,recommendationIsDismissed,selectRecommendationPage, type RecommendationPreferences } from '@/lib/recommendations';
-import type { PostWithAuthor } from '@/types';
-import type { FeedCursor } from './posts';
-import {getTopicPreferences} from './topics';
-import {fetchMisskeyTopicPosts} from '@/lib/misskey';
+import { searchXPage } from "@/lib/fxTwitter";
+import { TOPICS, type TopicId } from "@/lib/topics";
+import { learnedRecommendationScores, getTopicPreferences } from "@/api/topics";
+import { supabase } from "@/lib/supabase";
+import { getFeed, getPostsByUser, searchPosts, type FeedCursor } from "@/api/posts";
+import { discoverBlueskyTopicFeeds, fetchBlueskyTopicFeed, fetchBlueskyAuthorFeed, fetchBlueskyLikedPosts, fetchBlueskyTopicPosts, fetchTrendingJapaneseBlueskyPosts } from "@/lib/bluesky";
+import { recommendationOriginLanguages, topicAuthorCandidates, recommendationIdentity, recommendationFingerprint, recommendationIsEligible, isDeclaredGeneratedArt, clearRecommendationReserve, recommendationTopicSignals } from "@/lib/recommendations";
+import { applyCachedRecommendationVisuals, visualSimilarity, restoreRecommendationVisuals } from "@/lib/recommendationVisual";
+import { normalizeTimelineBlueskyPost } from "@/lib/timelinePaging";
+import { addRecommendationInterest, rejectedRecommendationTopics, isRecommendationAuthorRejected, rankRecommendations, recommendationQueries, readRecommendationLikes, selectRecommendationLikeSamples, readRecommendationImpressions, recommendationIsDismissed, selectRecommendationPage, type RecommendationPreferences, type RecommendationFeedback } from "@/lib/recommendations";
+import { type PostWithAuthor } from "@/types/index";
+import { fetchMisskeyTopicPosts } from "@/lib/misskey";
 
+// recommendations
 // Read additional saved likes only during history hydration, never on the
 // critical first-page path. Joined payloads are retained only while building
 // the compact preference profile, not in timeline pages.
-export async function readRecommendationLikeHistory(viewerId:string,extended:boolean,signal?:AbortSignal) {
+async function readRecommendationLikeHistory(viewerId:string,extended:boolean,signal?:AbortSignal) {
   const rows:any[]=[];
   const pageSize=200,max=extended?1000:200;
   for(let offset=0;offset<max;offset+=pageSize){
@@ -35,7 +30,7 @@ export async function readRecommendationLikeHistory(viewerId:string,extended:boo
   return {data:rows,error:null};
 }
 
-export async function getRecommendationPreferences(viewerId:string|null,onTopics?:(preferences:RecommendationPreferences)=>void,signal?:AbortSignal):Promise<RecommendationPreferences> {
+async function getRecommendationPreferences(viewerId:string|null,onTopics?:(preferences:RecommendationPreferences)=>void,signal?:AbortSignal):Promise<RecommendationPreferences> {
  const controller=new AbortController();
  const abort=()=>controller.abort(signal?.reason??new DOMException('Aborted','AbortError'));
  if(signal?.aborted)abort();else signal?.addEventListener('abort',abort,{once:true});
@@ -102,7 +97,7 @@ async function loadRecommendationPreferences(viewerId:string|null,onTopics:((pre
   for(const post of likes)if(!learnedLikes.has(recommendationIdentity(post)))addRecommendationInterest(preferences,post,2,post.engagedAt ?? new Date(Date.now()-30*86400000).toISOString());
   return preferences;
 }
-export type RecommendationCursor={
+type RecommendationCursor={
   learnedScores?:Record<string,number>;
   pageKey?:number;
   lime:{page:number;before?:FeedCursor;done:boolean};
@@ -131,7 +126,7 @@ export type RecommendationCursor={
   catalogRead?:boolean;
   remaining:PostWithAuthor[];seen:string[];preferences?:RecommendationPreferences;
 };
-export function createRecommendationCursor(handles:string[]):RecommendationCursor {
+function createRecommendationCursor(handles:string[]):RecommendationCursor {
   const buckets=[handles.filter(actor=>/@(?:twitter|x)\.com$/i.test(actor)||actor.startsWith('x-user:')),handles.filter(actor=>!/@(?:twitter|x)\.com$/i.test(actor)&&!actor.startsWith('x-user:'))];
   const ordered=Array.from({length:Math.max(...buckets.map(rows=>rows.length))},(_,i)=>buckets.flatMap(rows=>rows[i]?[rows[i]]:[])).flat();
   return {lime:{page:0,done:false},trending:{cursor:null,done:false},authors:Object.fromEntries(ordered.map(actor=>[actor,{cursor:null,done:false}])),topics:{},nativeAuthors:{},history:[],remaining:[],seen:[]};
@@ -338,7 +333,7 @@ function finishRecommendationPage(cursor:RecommendationCursor,preferences:Recomm
 }
 
 /** Preserve visible order while removing media rejected by newly learned evidence. */
-export function refreshRecommendationVisualPage(page:ReturnType<typeof finishRecommendationPage>,viewerId:string|null,checked?:PostWithAuthor,emit=true) {
+function refreshRecommendationVisualPage(page:ReturnType<typeof finishRecommendationPage>,viewerId:string|null,checked?:PostWithAuthor,emit=true) {
  const initial=page.next??createRecommendationCursor([]);
  if(!page.next){
   initial.preferences=page.preferences;initial.lime.done=true;initial.trending.done=true;
@@ -382,9 +377,9 @@ function recommendationSourcePosition(cursor:RecommendationCursor) {
  return JSON.stringify({lime:cursor.lime,trending:cursor.trending,twitter:cursor.twitterDiscovery,authors:cursor.authors,topics:cursor.topics,nativeAuthors:cursor.nativeAuthors,discovery:Object.fromEntries(Object.entries(cursor.topicDiscovery??{}).map(([id,state])=>[id,{feeds:state.feeds,positions:state.positions,done:state.done}]))});
 }
 // A deadline bounds a stalled source; it must not discard ordinary two-second responses.
-export const RECOMMENDATION_WAIT_MS=5000;
+const RECOMMENDATION_WAIT_MS=5000;
 let requestSequence=0;
-export async function getRecommendationPage(previous:RecommendationCursor,viewerId:string|null,signal?:AbortSignal,options?:{deferTwitter?:boolean}) {
+async function getRecommendationPage(previous:RecommendationCursor,viewerId:string|null,signal?:AbortSignal,options?:{deferTwitter?:boolean}) {
  const startedAt=Date.now();
  const controller=new AbortController();
  const abort=()=>controller.abort(signal?.reason);
@@ -428,3 +423,30 @@ export async function getRecommendationPage(previous:RecommendationCursor,viewer
   return {...page,automaticPaused:!!page.next&&(page.next.stalledPages??0)>=3,requestKey};}
  finally {clearTimeout(timer!);if(readyTimer)clearTimeout(readyTimer);signal?.removeEventListener('abort',abort);controller.abort();}
 }
+
+// recommendation-feedback
+function createRecommendationFeedback(post:PostWithAuthor):RecommendationFeedback {
+ return {id:recommendationIdentity(post),userId:post.userId,fingerprint:recommendationFingerprint(post)??undefined,topics:post.recommendationVisual?.topics??recommendationTopicSignals(post),vector:post.recommendationVisual?.vector,imageUrls:post.imageUrls.slice(0,4),visualKind:post.recommendationVisual?.kind,createdAt:new Date().toISOString()};
+}
+async function dismissRecommendation(post:PostWithAuthor):Promise<RecommendationFeedback>{
+ const feedback=createRecommendationFeedback(post);
+ const {error}=await supabase.rpc('dismiss_recommendation',{feedback});if(error)throw error;clearRecommendationReserve();return feedback;
+}
+
+/** Enrich only an existing dismissal; preserve its date and never recreate one. */
+async function enrichRecommendationFeedback(post:PostWithAuthor){
+ if(!post.recommendationVisual)return;
+ const {error}=await supabase.rpc('dismiss_recommendation',{feedback:{enrichment:true,id:recommendationIdentity(post),userId:post.userId,vector:post.recommendationVisual.vector,visualKind:post.recommendationVisual.kind,imageUrls:post.imageUrls.slice(0,4)}});
+ if(error)throw error;
+}
+
+export { readRecommendationLikeHistory };
+export { getRecommendationPreferences };
+export { createRecommendationCursor };
+export { refreshRecommendationVisualPage };
+export { getRecommendationPage };
+export type { RecommendationCursor };
+export { RECOMMENDATION_WAIT_MS };
+export { createRecommendationFeedback };
+export { dismissRecommendation };
+export { enrichRecommendationFeedback };

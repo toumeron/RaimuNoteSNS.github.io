@@ -1,13 +1,17 @@
+import spectrumUrl from "@/assets/audio/space-spectrum.gz?url";
+
+// spaceMusic
 /** Synthesize the corrected Spaces track from its measured Fourier coefficients. */
-export const SPACE_MUSIC_RATE = 22050;
+const SPACE_MUSIC_RATE = 22050;
 let cached: Promise<Blob> | undefined;
-export function createSpaceMusic(): Promise<Blob> {
+function createSpaceMusic(): Promise<Blob> {
   return cached ??= renderSpaceMusic().catch(error => { cached = undefined; throw error; });
 }
 async function renderSpaceMusic(): Promise<Blob> {
-  const [score, { gunzipSync }] = await Promise.all([import('./spaceMusicScore'), import('fflate')]);
-  const { SPACE_SCORE_SAMPLES: samples, SPACE_SCORE_FRAMES: frames, SPACE_SPECTRUM_SIZE: size, SPACE_SPECTRUM_HOP: hop } = score;
-  const bytes = gunzipSync(Uint8Array.from(atob(score.SPACE_SPECTRUM_GZIP), c => c.charCodeAt(0)));
+  const [response, { gunzipSync }] = await Promise.all([fetch(spectrumUrl), import('fflate')]);
+  if (!response.ok) throw new Error("スペースの音楽データを読み込めませんでした");
+  const { SPACE_SCORE_SAMPLES: samples, SPACE_SCORE_FRAMES: frames, SPACE_SPECTRUM_SIZE: size, SPACE_SPECTRUM_HOP: hop } = {SPACE_SCORE_SAMPLES, SPACE_SCORE_FRAMES, SPACE_SPECTRUM_SIZE, SPACE_SPECTRUM_HOP};
+  const bytes = gunzipSync(new Uint8Array(await response.arrayBuffer()));
   const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const window = Float64Array.from({ length: size }, (_, i) => .5 - .5 * Math.cos(2 * Math.PI * i / size));
   const reverse = new Uint16Array(size);
@@ -76,3 +80,20 @@ async function renderSpaceMusic(): Promise<Blob> {
   }
   return new Blob([buffer], { type: 'audio/wav' });
 }
+
+// spaceMusicScore
+/** Sparse frequency, amplitude and phase coefficients from the supplied corrected preview.
+ * Used by inverse Fourier synthesis; contains no MP3 or time-domain PCM samples. */
+const SPACE_SCORE_DURATION = 226.2225396825397;
+const SPACE_SCORE_SAMPLES = 4988207;
+const SPACE_SCORE_FRAMES = 4873;
+const SPACE_SPECTRUM_SIZE = 2048;
+const SPACE_SPECTRUM_HOP = 1024;
+
+export { createSpaceMusic };
+export { SPACE_MUSIC_RATE };
+export { SPACE_SCORE_DURATION };
+export { SPACE_SCORE_SAMPLES };
+export { SPACE_SCORE_FRAMES };
+export { SPACE_SPECTRUM_SIZE };
+export { SPACE_SPECTRUM_HOP };

@@ -1,7 +1,12 @@
+vi.mock("@/lib/callRecorder", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/lib/callRecorder")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/lib/callRecorder")>(), unlockIncomingRingtone: vi.fn()}))(importOriginal)};
+});
+
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { incomingCallDelay, useIncomingFriendCalls } from './useIncomingFriendCalls';
-vi.mock('@/lib/incomingRingtone', () => ({ unlockIncomingRingtone: vi.fn() }));
+import { incomingCallDelay, useIncomingFriendCalls } from "@/components/chat/CallSessionProvider";
+
 beforeEach(() => { vi.useFakeTimers(); localStorage.clear(); Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' }); });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 it('varies first and subsequent call times rather than using an interval', () => {

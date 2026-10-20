@@ -1,3 +1,9 @@
+vi.mock("@/lib/mediaThumbnail", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/lib/mediaThumbnail")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/lib/mediaThumbnail")>(), uploadPostMedia: state.uploads}))(importOriginal)};
+});
+
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({
   inserted: null as Record<string, unknown> | null,
@@ -10,7 +16,7 @@ const state = vi.hoisted(() => ({
   uploads: vi.fn(), updates: vi.fn(),
 }));
 vi.mock('@/lib/currentUser', () => ({ getCurrentUserId: async () => state.userId }));
-vi.mock('@/lib/uploadPostMedia', () => ({ uploadPostMedia: state.uploads }));
+
 vi.mock('@/lib/supabase', () => ({ supabase: { from: (table: string) => {
   let operation = 'read', head = false;
   const row = () => ({ id: 'reply', ...state.inserted, created_at: '2026-10-02T00:00:00Z', profiles: { id: 'viewer', username: 'viewer', display_name: 'Viewer' } });

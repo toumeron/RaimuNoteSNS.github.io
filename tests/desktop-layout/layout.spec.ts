@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import {loadMisskey} from '../../supabase/functions/link-preview/load';
+import { loadMisskey } from "./../../supabase/functions/link-preview/load.ts";
 
 const user = { id: '11111111-1111-1111-1111-111111111111', username: 'lime', displayName: 'Lime Note', avatarUrl: '', bio: '', coverUrl: '', createdAt: '2026-10-01T00:00:00Z' };
 const profile = { id: user.id, username: user.username, display_name: user.displayName, avatar_url: '', bio: '', cover_url: '', created_at: user.createdAt };
@@ -920,7 +920,7 @@ for (const width of [390,1440]) {
     const reply={id:'22222222-2222-2222-2222-222222222222',post_id:'post-0',user_id:user.id,content:'プロフィールの返信本文',created_at:'2026-10-03T00:00:00Z',image_urls:[image],likes_count:0,parent_comment_id:null,profiles:profile,post:{user_id:user.id,profiles:{username:'lime'}},replying_to:null};
     let shared=false;
     await page.route('**/src/api/posts.ts*',route=>route.fulfill({contentType:'application/javascript',body:`
-      import {toggleReplyRepost,getProfileReplyReposts,getReplyPost} from '/RaimuNoteSNS.github.io/src/api/reply-reposts.ts';
+      import {toggleReplyRepost,getProfileReplyReposts,getReplyPost} from '/RaimuNoteSNS.github.io/src/api/external-posts.ts';
       const posts=${JSON.stringify(posts)};
       export const getHighlightedPosts=async()=>[];export const getPostQuotes=async()=>[];export const getPostReposters=async()=>[];export const getMapPosts=async()=>[];export const setPostMapLocation=async()=>{};
       export const getFeed=async()=>posts;export const getFollowingFeed=async()=>posts;export const getPostsByUser=async()=>posts;
@@ -1934,7 +1934,7 @@ for(const width of [320,390,834,1440])for(const provider of ['lime','bluesky','m
  const target={id:provider==='lime'?'22222222-2222-4222-8222-222222222222':provider==='misskey'?'misskey-user:owner':'did:plc:owner',username:actor,displayName:'とんペチ🐷☕',bio:'',avatarUrl:image,coverUrl:'',createdAt:user.createdAt};
  let followed=false;await page.route('**/rest/v1/rpc/get_account_follow_state',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({followed,requested:false,canView:true})}));await page.route('**/rest/v1/rpc/toggle_account_follow',route=>{followed=!followed;return route.fulfill({contentType:'application/json',body:JSON.stringify({followed,requested:false,canView:true})});});
  const accounts=Array.from({length:8},(_,i)=>i).map(i=>({...target,id:provider==='lime'?`33333333-3333-4333-8333-${String(i).padStart(12,'0')}`:provider==='misskey'?`misskey-user:friend${i}`:`did:plc:friend${i}`,username:provider==='lime'?`friend${i}`:provider==='misskey'?`friend${i}@misskey.io`:`friend${i}.bsky.social`,displayName:i?'とても長い名前'.repeat(9):'CORE',bio:'自己紹介の全文を表示します。'.repeat(12)+' https://example.com/profile',isOfficial:provider==='lime',avatarUrl:image}));
- await page.route('**/src/api/followLists.ts*',route=>route.fulfill({contentType:'application/javascript',body:`const accounts=${JSON.stringify(accounts)};export async function fetchFollowListPage(target,tab,viewer,cursor){window.__followListCalls=[...(window.__followListCalls??[]),{target,tab,cursor}];return {users:tab==='known'?[accounts[1]]:accounts,cursor:null};}` }));
+ await page.route('**/src/api/users.ts*',route=>route.fulfill({contentType:'application/javascript',body:`const accounts=${JSON.stringify(accounts)};export async function fetchFollowListPage(target,tab,viewer,cursor){window.__followListCalls=[...(window.__followListCalls??[]),{target,tab,cursor}];return {users:tab==='known'?[accounts[1]]:accounts,cursor:null};}` }));
  await page.route('**/*.supabase.co/rest/v1/profiles*',route=>{const isTarget=new URL(route.request().url()).searchParams.get('username')===`eq.${actor}`;return route.fulfill({contentType:'application/json',body:JSON.stringify(isTarget&&provider!=='lime'?null:isTarget?{...target,display_name:target.displayName,avatar_url:image}:profile)});});
  await page.route('**/public.api.bsky.app/xrpc/app.bsky.actor.getProfile*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({did:target.id,handle:actor,displayName:target.displayName,avatar:image})}));
  await page.route('https://misskey.io/api/users/show',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({id:'owner',username:'listowner',name:target.displayName,avatarUrl:image})}));

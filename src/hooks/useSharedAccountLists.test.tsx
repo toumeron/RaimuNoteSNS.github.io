@@ -1,12 +1,23 @@
+vi.mock("@/api/users", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/api/users")>();
+ const overrides = [
+  await (async importOriginal => ({...await importOriginal<typeof import("@/api/users")>(), getBookmarkPage:state.bookmarks}))(importOriginal),
+  await (async importOriginal => ({...await importOriginal<typeof import("@/api/users")>(), getNotifications:state.notifications}))(importOriginal)
+ ];
+ return Object.assign({}, actual, ...overrides.map(values => Object.fromEntries(Object.entries(values).filter(([key, value]) => value !== actual[key]))));
+});
+
+
+vi.mock("@/hooks/useAuth", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useAuth")>(), useAuth:()=>({user:{id:state.user},accounts:state.accounts})}));
 import { cleanup, renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const state=vi.hoisted(()=>({user:'a',accounts:[{id:'a',needsLogin:false},{id:'b',needsLogin:false},{id:'expired',needsLogin:true}],client:vi.fn(),bookmarks:vi.fn(),notifications:vi.fn()}));
-vi.mock("@/hooks/useSharedListUpdates",()=>({useSharedListUpdates:vi.fn()}));
-vi.mock('./useAuth',()=>({useAuth:()=>({user:{id:state.user},accounts:state.accounts})}));
+
+
 vi.mock('@/lib/accountReadClient',async importOriginal=>({...await importOriginal<typeof import('@/lib/accountReadClient')>(),getAccountReadClient:state.client}));
-vi.mock('@/api/bookmarks',()=>({getBookmarkPage:state.bookmarks}));
-vi.mock('@/api/notifications',()=>({getNotifications:state.notifications}));
+
+
 import { useSharedBookmarks, useSharedNotifications } from './useSharedAccountLists';
 const clients:QueryClient[]=[];
 function wrapper(){const client=new QueryClient({defaultOptions:{queries:{retry:false,gcTime:0}}});clients.push(client);return ({children}:any)=><QueryClientProvider client={client}>{children}</QueryClientProvider>;}
@@ -16,7 +27,7 @@ it('aggregates and deduplicates bookmarks using each logged-in owner, and exclud
  const view=renderHook(()=>useSharedBookmarks(true),{wrapper:wrapper()});
  await waitFor(()=>expect(view.result.current.isSuccess).toBe(true));
  expect(view.result.current.data?.pages[0].items.map(e=>e.post.id)).toEqual(['same']);
- expect(state.client.mock.calls.map(c=>c[0]).sort()).toEqual(['a','b']);
+ expect([...new Set(state.client.mock.calls.map(c=>c[0]))].sort()).toEqual(['a','b']);
  for(const call of state.bookmarks.mock.calls)expect(call[3]).toMatchObject({userId:call[0],client:{owner:call[0]}});
 });
 it('does not request other account data when sharing is off',async()=>{

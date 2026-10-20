@@ -5,7 +5,7 @@ vi.mock('@/lib/supabase',()=>({supabase:{from:()=>{
  const query={select:(value:string)=>{call.select=value;return query;},eq:(key:string,value:unknown)=>{call.filters[key]=value;return query;},order:()=>query,in:(key:string,ids:string[])=>{call.filters[key]=ids;return query;},range:async()=>call.select==='followee_id'?{data:state.following.map(followee_id=>({followee_id})),error:null}:{data:state.matches.slice(0,3).map(id=>({profile:{id,username:id,display_name:id.toUpperCase(),avatar_url:''}})),count:state.matches.length,error:null}};
  return query;
 }}}));
-import {getKnownFollowers} from './follows';
+import { getKnownFollowers } from "@/api/users";
 beforeEach(()=>{state.calls=[];state.following=['a','b','c','d','e','a'];});
 it('counts the intersection and only loads three avatar profiles, excluding pending requests',async()=>{
  const result=await getKnownFollowers('viewer','target');

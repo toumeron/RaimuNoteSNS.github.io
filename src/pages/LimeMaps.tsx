@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
-import { getExternalMapPostPage, getExternalMapPostDetail, MapRateLimitError, type ExternalMapCursor } from '@/api/external-map-posts';
+import { getExternalMapPostPage, getExternalMapPostDetail, MapRateLimitError, type ExternalMapCursor } from "@/api/external-posts";
 import { getMapPosts, type FeedCursor } from '@/api/posts';
-import { expandedMapBounds, mapAreaContains, type MapBounds, type MapLocation, type MapPostPin } from '@/lib/mapLocation';
+import { expandedMapBounds, mapAreaContains, type MapBounds, type MapLocation, type MapPostPin } from "@/lib/mapLocation";
 import LimeMap from '@/components/maps/LimeMap';
 import { PostOverlay } from '@/App';
 import { getPostById } from '@/api/posts';

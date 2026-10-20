@@ -1,11 +1,11 @@
-import {relayBlueskySearch} from './blueskySearchRelay';
+import { relayBlueskySearch } from "@/api/search-news";
 import { isAccountReadOnly } from '@/lib/accountSuspension';
-import { extractPostMapLocation } from './mapLocation';
+import { extractPostMapLocation } from "@/lib/mapLocation";
 import { cloudExternalHandles, saveExternalProviderHandles } from './externalAccounts';
 import {externalFetch, accountSearchScore} from './utils';
 import {isXActor,isXId,xFeed,xProfile,xThread,xConversationPage,xFollowList,configuredXHandles,searchX} from './fxTwitter';
 import { searchMisskey, configuredMisskeyHandles, isMisskeyActor, isMisskeyId, misskeyFeed, misskeyProfile, misskeyThread, misskeyFollowList, misskeyRequest, mapMisskeyNote, type MisskeyNote, misskeyEnabled, misskeyViewer, likeMisskey, unlikeMisskey, misskeyFollowState, followMisskey, unfollowMisskey } from './misskey';
-import {singlePreviewUrl,previewUrlMatches,type LinkPreview} from './linkPreview';
+import { singlePreviewUrl, previewUrlMatches, type LinkPreview } from "@/lib/mediaThumbnail";
 import {TOPICS,matchingTopics,type TopicId} from './topics';
 import { ACTIVE_ACCOUNT_KEY } from './savedAccounts';
 // 初期状態ではBlueskyアカウントを1件も登録しない。
@@ -536,10 +536,11 @@ export type BlueskyMappedPost = {
   externalPinned?: boolean;
   externalRepostedBy?: {id:string;displayName:string;username:string};
   externalVideo?: import('@/types').ExternalVideo;
-  mapLocation?: import('./mapLocation').MapLocation | null;
+  mapLocation?: import("@/lib/mapLocation").MapLocation | null;
   languages?: string[];
   recommendationLanguages?: string[];
   imageAltTexts?: string[];
+  imageDimensions?: Array<{width:number;height:number}|undefined>;
   contentLabels?: string[];
   recommendationTopics?: string[];
   recommendationSources?: string[];
@@ -617,7 +618,7 @@ const blueskySearchRequests = new Map<string, Promise<BlueskySearchResults>>();
 
 type BlueskyEmbed = {
   $type?: string;
-  images?: Array<{ fullsize?: string; thumb?: string;alt?:string }>;
+  images?: Array<{ fullsize?: string; thumb?: string;alt?:string;aspectRatio?:{width:number;height:number} }>;
   thumbnail?: string;
   playlist?: string;
   alt?: string;
@@ -936,6 +937,7 @@ export function mapBlueskyFeedItemToPost(item: BlueskyFeedItem): BlueskyMappedPo
     userId: post.author.did,
     content,
     imageUrls,
+    imageDimensions:(post.embed?.images??post.embed?.media?.images??[]).map(image=>image.aspectRatio),
     externalVideo: extractVideo(post.embed),
     languages:post.record?.langs??[],
     imageAltTexts:(post.embed?.images??post.embed?.media?.images??[]).map(image=>image.alt??''),
@@ -999,8 +1001,14 @@ export async function fetchBlueskyLikedPosts(signal?:AbortSignal):Promise<Bluesk
 export async function fetchBlueskyPostThread(postId: string, signal?: AbortSignal): Promise<BlueskyPostThread> {
   if (isXId(postId)) return xConversationPage(postId, undefined, signal);
   if (isMisskeyId(postId)) return misskeyThread(postId, signal);
-  const uri = getBlueskyUriFromPostId(postId);
+  let uri = getBlueskyUriFromPostId(postId);
   if (!uri) return { post: null, replies: [] };
+  const authority=uri.match(/^at:\/\/([^/]+)\//)?.[1];
+  if(authority&&!authority.startsWith('did:')){
+    const profile=await fetchBlueskyProfile(authority,signal);
+    if(!profile)return {post:null,replies:[]};
+    uri=uri.replace(`at://${authority}/`,`at://${profile.id}/`);
+  }
 
   const params = new URLSearchParams({ uri, depth: '6' });
   const response = await fetch(
@@ -1421,7 +1429,7 @@ async function fetchBlueskyFollowList(
     params.set('cursor', options.cursor);
   }
 
-  const response = await fetch(
+  const response = await externalFetch(
     `${BSKY_PUBLIC_API}/${endpoint}?${params.toString()}`,
     {
       method: 'GET',

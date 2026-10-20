@@ -5,7 +5,7 @@ vi.mock('hls.js',()=>({FetchLoader:class{},default:class{
  handlers=new Map();destroy=vi.fn();loadSource=vi.fn();attachMedia=vi.fn();
  constructor(public config:any){state.instances.push(this);}on(event:string,fn:any){this.handlers.set(event,fn);}
 }}));
-import {attachHls} from './hlsPlayback';
+import { attachHls } from "@/components/video/PostVideoPlayer";
 afterEach(()=>{state.instances=[];vi.restoreAllMocks();});
 it('loads HLS through MediaSource and destroys streaming requests on close',async()=>{
  const media=document.createElement('video'),abort=new AbortController();vi.spyOn(media,'canPlayType').mockReturnValue('');

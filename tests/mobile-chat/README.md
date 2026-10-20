@@ -1,6 +1,6 @@
 # モバイルPWAのチャット・通話回帰テスト
 
-実行: `npx playwright test --config tests/mobile-chat/playwright.config.ts`
+実行: `LIME_BROWSER_SUITE=mobile-chat npx playwright test --config playwright.config.ts`
 
 本番のChatPageとCallSessionProviderをローカルで描画し、390×844の画面で確認する。
 マイクAPI・認証・ネットワークはモック。下部ナビの実測値に相当する98px（セーフエリアを含む）を与え、入力欄の重なり、動的な高さ変更、キーボード表示・解除、フレンド発信時の許可要求、縮小後のページ往復と終了を検証する。

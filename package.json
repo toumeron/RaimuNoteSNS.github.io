@@ -12,8 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:avatars": "playwright test",
-    "test:security-db": "node scripts/security-db-test.mjs",
-    "test:security-browser": "node scripts/security-browser-test.mjs",
+    "test:security-db": "node scripts/verify-database.mjs security",
+    "test:security-browser": "node scripts/verify-security.mjs security",
     "test:secrets": "python3 scripts/check-secrets.py",
     "build:anime-extension": "node extensions/anime-history/package.mjs"
   },

@@ -1,21 +1,21 @@
-import {uploadPostVideo,discardPostVideo,deleteVideoPost} from '@/lib/postVideoStorage';
-import type {PreparedVideo} from '@/lib/postVideo';
-import { validSchedule } from "@/components/feed/ComposerIcon";
+import { uploadPostVideo, discardPostVideo, deleteVideoPost } from "@/lib/mediaThumbnail";
+import type { PreparedVideo } from "@/lib/mediaThumbnail";
+import { validSchedule } from "@/components/feed/PostPoll";
 import { isAccountReadOnly } from '@/lib/accountSuspension';
-import {preparePoll,discardPollImages} from './polls';
-import {validatePollDraft,type PollDraft} from '@/lib/polls';
+import { preparePoll, discardPollImages } from "@/api/comments";
+import { validatePollDraft, type PollDraft } from "@/lib/utils";
 import type { AccountReadContext } from '@/lib/accountReadClient';
-import { randomUUID } from '@/lib/randomUUID';
-import { collectProfilePages } from "@/lib/profileReplyThreads";
-import { validMapLocation, type MapLocation, type MapBounds, type MapPostPin } from '@/lib/mapLocation';
-import { uploadPostMedia } from '@/lib/uploadPostMedia';
-import { getClientName } from '@/lib/clientName';
+import { randomUUID } from "@/lib/utils";
+import { collectProfilePages } from "@/lib/utils";
+import { validMapLocation, type MapLocation, type MapBounds, type MapPostPin } from "@/lib/mapLocation";
+import { uploadPostMedia } from "@/lib/mediaThumbnail";
+import { getClientName } from "@/lib/utils";
 import type { PostWithAuthor } from '@/types';
 import type { User } from '@/types';
 import { supabase } from '@/lib/supabase';
 import { getCurrentUserId } from '@/lib/currentUser';
 import { getExternalPost, getExternalProfileReposts, isExternalPostId, toggleExternalRepost } from './external-posts';
-import { getReplyPost, getProfileReplyReposts, isReplyPostId, toggleReplyRepost, replyToPost, REPLY_REPOST_SELECT } from './reply-reposts';
+import { getReplyPost, getProfileReplyReposts, isReplyPostId, toggleReplyRepost, replyToPost, REPLY_REPOST_SELECT } from "@/api/external-posts";
 
 export type FeedCursor = { createdAt: string; id: string };
 
@@ -121,7 +121,7 @@ async function getViewerReactions(userId: string, rows: ViewerPostRow[],signal?:
  */
 export async function getFeed(page: number = 0, limit: number = 10, before?: FeedCursor,signal?:AbortSignal): Promise<PostWithAuthor[]> {
   const userId = await getCurrentUserId();
-  
+
   if(signal?.aborted)throw signal.reason;
   const from = before ? 0 : page * limit;
   const to = from + limit - 1;
@@ -205,7 +205,7 @@ export async function getFollowingFeed(page: number = 0, limit: number = 10, bef
   // 「フォローしている人の公開投稿」 OR 「フォローしており、かつ相手も自分をフォローしている限定公開投稿」
   // OR 「フォローしており、かつ自分がメンバーになっているメンバー限定投稿」
   let filterConditions = `and(user_id.in.(${followingIds.join(',')}),visibility.eq.public)`;
-  
+
   // 相互フォロー（相手が自分をフォローしている）の人がいれば、その人の限定公開投稿も加える
   const mutualFollowIds = followingIds.filter(id => authorsWhoFollowMe.includes(id));
   if (mutualFollowIds.length > 0) {
@@ -242,7 +242,7 @@ export async function getFollowingFeed(page: number = 0, limit: number = 10, bef
  */
 export async function getPostsByUser(targetUserId: string, page: number = 0, limit: number = 10,signal?:AbortSignal): Promise<PostWithAuthor[]> {
   const userId = await getCurrentUserId();
-  
+
   if(signal?.aborted)throw signal.reason;
   const from = page * limit;
   const to = from + limit - 1;
@@ -285,7 +285,7 @@ export async function getPostsByUser(targetUserId: string, page: number = 0, lim
  */
 export async function getLikedPostsByUser(targetUserId: string, page: number = 0, limit: number = 10): Promise<any[]> {
   const userId = await getCurrentUserId();
-  
+
   const from = page * limit;
   const to = from + limit - 1;
 
@@ -325,7 +325,7 @@ export async function getLikedPostsByUser(targetUserId: string, page: number = 0
 export async function searchPosts(query: string, page: number = 0, limit: number = 10,signal?:AbortSignal): Promise<PostWithAuthor[]> {
   if (isAccountReadOnly()) return [];
   const userId = await getCurrentUserId();
-  
+
   if(signal?.aborted)throw signal.reason;
   const from = page * limit;
   const to = from + limit - 1;
@@ -384,7 +384,7 @@ export async function getPostById(id: string, context?: AccountReadContext): Pro
   const userId = context?.userId ?? await getCurrentUserId();
   const client = context?.client ?? supabase;
   context?.signal?.throwIfAborted();
-  
+
   const postRes = await client.from('posts').select(POST_SELECT_QUERY).eq('id', id).single();
 
   if (postRes.error || !postRes.data) return null;
@@ -397,7 +397,7 @@ export async function getPostById(id: string, context?: AccountReadContext): Pro
       .eq('follower_id', postRes.data.user_id)
       .eq('followee_id', userId)
       .maybeSingle();
-    
+
     if (!authorFollowsMe) return null;
   }
 

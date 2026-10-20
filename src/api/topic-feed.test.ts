@@ -1,3 +1,4 @@
+vi.mock("@/api/recommendations", async importOriginal => ({...await importOriginal<typeof import("@/api/recommendations")>(), getRecommendationPreferences:mocks.preferences, getRecommendationPage:mocks.general}));
 vi.mock('@/lib/fxTwitter',()=>({searchXPage:mocks.twitter}));
 import {beforeEach,expect,it,vi} from 'vitest';
 import type {PostWithAuthor} from '@/types';
@@ -6,9 +7,9 @@ vi.mock('./posts',()=>({searchPosts:mocks.native}));
 vi.mock('@/lib/bluesky',()=>({fetchBlueskyTopicPosts:mocks.blue,discoverBlueskyTopicFeeds:mocks.discover,fetchBlueskyTopicFeed:mocks.feed}));
 vi.mock('@/lib/misskey',()=>({fetchMisskeyTopicPosts:mocks.misskey}));
 vi.mock('@/lib/timelinePaging',async importOriginal=>({...await importOriginal<typeof import('@/lib/timelinePaging')>(),normalizeTimelineBlueskyPost:(post:PostWithAuthor)=>post}));
-vi.mock('./recommendations',()=>({getRecommendationPreferences:mocks.preferences,getRecommendationPage:mocks.general}));
+
 vi.mock('@/lib/recommendationVisual',()=>({applyCachedRecommendationVisuals:(posts:PostWithAuthor[])=>posts}));
-import {createTopicCursor,getTopicPage} from './topic-feed';
+import { createTopicCursor, getTopicPage } from "@/api/topics";
 const post=(id:string,content:string):PostWithAuthor=>({id,userId:id,content,createdAt:new Date().toISOString(),imageUrls:[],likesCount:1,commentsCount:0,repostsCount:0,author:{id,username:id}} as PostWithAuthor);
 beforeEach(()=>{vi.clearAllMocks();mocks.preferences.mockResolvedValue({authors:{},terms:{}});mocks.native.mockResolvedValue([]);mocks.blue.mockResolvedValue({posts:[],cursor:null});mocks.misskey.mockResolvedValue({posts:[],cursor:null});mocks.discover.mockResolvedValue([]);mocks.twitter.mockResolvedValue({posts:[],cursor:null});});
 it('loads the selected topic independently, filtering unrelated posts from every service',async()=>{

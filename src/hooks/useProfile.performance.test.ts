@@ -1,3 +1,4 @@
+vi.mock("@/lib/bluesky",async original=>({...await original<typeof import("@/lib/bluesky")>(),fetchBlueskyPost:async()=>null}));
 import {renderHook} from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -6,7 +7,7 @@ const db = vi.hoisted(() => ({
   likes: [] as any[],
   calls: [] as { table: string; filters: Record<string, unknown>; select: string }[],
 }));
-vi.mock('@tanstack/react-query', () => ({
+vi.mock('@tanstack/react-query', async original => ({...await original<typeof import('@tanstack/react-query')>(),
   useInfiniteQuery: (options: unknown) => options,
   useQuery: (options: unknown) => options,
   useMutation: vi.fn(), useQueryClient: vi.fn(),
@@ -34,7 +35,7 @@ vi.mock('@/lib/supabase', () => ({ supabase: {
   },
 } }));
 
-import { useUserPostsInfinite, useUserMediaInfinite, useUserLikesInfinite, useUserReactionsInfinite } from './useProfile';
+import { useUserPostsInfinite, useUserMediaInfinite, useUserLikesInfinite, useUserReactionsInfinite } from "@/hooks/useFeed";
 type QueryOptions = { queryFn: (context: { pageParam: number }) => Promise<unknown> };
 const run = (options: unknown) => (options as QueryOptions).queryFn({ pageParam: 0 });
 beforeEach(() => {
@@ -69,10 +70,11 @@ describe('profile permission request scope', () => {
 
  it('mixes cloud Bluesky/Misskey snapshots with native likes while filtering inaccessible native posts',async()=>{
   const native=(id:string,visibility:string)=>({id,user_id:'other',content:'native',image_urls:[],visibility,author:{id:'other',username:'other'}});
-  const external=(id:string)=>({id,userId:'external',content:'',imageUrls:['https://example.com/art.jpg'],visibility:'public',author:{id:'external',username:'artist'}});
-  db.likes=[{posts:native('visible','public')},{posts:native('hidden','private')},{post_snapshot:external('bsky:at://did:plc:artist/app.bsky.feed.post/abc'),posts:null},{post_snapshot:external('misskey:https://misskey.io/notes/abc'),posts:null}];
+  const external=(id:string)=>({id,userId:'external',content:'',imageUrls:['https://example.com/art.jpg'],visibility:'public',author:{id:'external',username:'artist',providerVerification:{provider:'twitter',type:'individual'},isPrivate:true}});
+  db.likes=[{posts:native('visible','public')},{posts:native('hidden','private')},{post_snapshot:external('bsky:at://did:plc:artist/app.bsky.feed.post/abc'),posts:null},{post_snapshot:external('misskey:https://misskey.io/notes/abc'),posts:null},{post_snapshot:external('x:123456'),posts:null}];
   const rows=await run(renderHook(()=>useUserLikesInfinite('viewer')).result.current) as any[];
-  expect(rows.map(row=>row.posts.id)).toEqual(['visible','bsky:at://did:plc:artist/app.bsky.feed.post/abc','misskey:https://misskey.io/notes/abc']);
+  expect(rows.map(row=>row.posts.id)).toEqual(['visible','bsky:at://did:plc:artist/app.bsky.feed.post/abc','misskey:https://misskey.io/notes/abc','x:123456']);
+  expect(rows[1].posts.author.providerVerification).toEqual({provider:'twitter',type:'individual'});expect(rows[1].posts.author.isPrivate).toBe(true);
   expect(rows[1].posts.imageUrls).toEqual(['https://example.com/art.jpg']);
   expect(db.calls.find(call=>call.table==='likes')?.select).not.toContain('posts!inner');
  });

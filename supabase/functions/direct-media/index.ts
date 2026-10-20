@@ -1,9 +1,20 @@
-import {createClient} from 'https://esm.sh/@supabase/supabase-js@2';
-import {authenticate,boundedRequest,quota,rejectSuspended} from '../_shared/security.ts';
-import {cloudinarySignature,cloudinaryDownloadUrl} from './signing.ts';
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { authenticate, boundedRequest, quota, rejectSuspended } from "./../_shared/security.ts";
+
+// signing
+async function cloudinarySignature(params:Record<string,string>,secret:string):Promise<string>{
+ const value=Object.entries(params).sort(([a],[b])=>a.localeCompare(b)).map(([key,value])=>`${key}=${value}`).join('&')+secret;
+ const digest=await crypto.subtle.digest('SHA-1',new TextEncoder().encode(value));return [...new Uint8Array(digest)].map(byte=>byte.toString(16).padStart(2,'0')).join('');
+}
+async function cloudinaryDownloadUrl(cloud:string,key:string,secret:string,publicId:string,format:string,now=Math.floor(Date.now()/1000)):Promise<string>{
+ const params={public_id:publicId,format,type:'authenticated',timestamp:String(now),expires_at:String(now+3600),attachment:'false'};
+ const query=new URLSearchParams({...params,signature:await cloudinarySignature(params,secret),api_key:key});return `https://api.cloudinary.com/v1_1/${encodeURIComponent(cloud)}/image/download?${query}`;
+}
+
+// index
 const headers={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization, x-client-info, apikey, content-type','Access-Control-Allow-Methods':'POST, OPTIONS','Cache-Control':'no-store'};
 const uuid=/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
-export async function handleDirectMedia(request:Request):Promise<Response>{
+async function handleDirectMedia(request:Request):Promise<Response>{
  if(request.method==='OPTIONS')return new Response(null,{headers});
  if(request.method!=='POST')return Response.json({error:'Method not allowed'},{status:405,headers});
  const actor=await authenticate(request,headers,true);if(actor instanceof Response)return actor;
@@ -49,3 +60,7 @@ export async function handleDirectMedia(request:Request):Promise<Response>{
  }catch{return Response.json({error:'DM画像の処理に失敗しました'},{status:400,headers});}
 }
 if(import.meta.main)Deno.serve(handleDirectMedia);
+
+export { handleDirectMedia };
+export { cloudinarySignature };
+export { cloudinaryDownloadUrl };

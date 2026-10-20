@@ -1,14 +1,320 @@
-import {isTimelinePost} from './timelinePaging';
-import {recordRecommendationEngagement} from "@/lib/recommendationSignals";
-import {matchingTopics} from './topics';
-import type { PostWithAuthor } from '@/types';
-import {TOPICS,isTopicId,topicAffinity,type TopicId} from './topics';
-import {recommendationIdentity,recommendationFingerprint} from "@/lib/recommendationSignals";
-import {recommendationIsEligible,recommendationMatchesFollowedTopics,hasCuratedArtworkSource,hasDeclaredArtworkContext} from "@/lib/recommendationSignals";
-import {isDeclaredGeneratedArt} from "@/lib/recommendationSignals";
-import {recommendationOriginLanguages,recommendationTopicAffinity,recommendationTopicSignals,recommendationText} from './recommendationSignals';
-import {visualSimilarity as directVisualSimilarity,createVisualSimilarityComparator,readVisualCache,applyCachedRecommendationVisuals,visualMatchesRecommendationTopic,restoreRecommendationVisuals} from './recommendationVisual';
+import { isTimelinePost } from "@/lib/timelinePaging";
+import { matchingTopics, TOPICS, isTopicId, topicAffinity, type TopicId, type TopicPreferences, GLOBAL_TOPICS } from "@/lib/topics";
+import { type PostWithAuthor } from "@/types/index";
+import { visualSimilarity as directVisualSimilarity, createVisualSimilarityComparator, readVisualCache, applyCachedRecommendationVisuals, visualMatchesRecommendationTopic, restoreRecommendationVisuals, classifyRecommendationVisual, recommendationImageIdentity } from "@/lib/recommendationVisual";
+import { type RecommendationCursor } from "@/api/recommendations";
+import { type getBalancedRecommendationPage } from "@/api/balanced-recommendations";
 
+// recommendationSignals
+type Signals={content?:string;imageAltTexts?:string[];recommendationTopics?:string[];recommendationVisual?:PostWithAuthor['recommendationVisual'];author?:{id?:string;bio?:string};linkPreview?:{title?:string;description?:string};parentPost?:Signals|null};
+function recommendationText(post:Signals):string {
+ return [post.content,...(post.imageAltTexts??[]),post.linkPreview?.title,post.linkPreview?.description,post.parentPost?.content,...(post.parentPost?.imageAltTexts??[]),post.parentPost?.linkPreview?.title,post.parentPost?.linkPreview?.description].filter(Boolean).join(' ');
+}
+/** Source context and media/link metadata remain usable when body text is empty. */
+function recommendationTopicSignals(post:Signals):TopicId[] {
+ const own=[...(post.recommendationVisual?.topics??[]),...(post.recommendationTopics??[]).filter(isTopicId),...matchingTopics([post.content,...(post.imageAltTexts??[]),post.linkPreview?.title,post.linkPreview?.description].filter(Boolean).join(' '))];
+ const parent=post.parentPost?[...(post.parentPost.recommendationTopics??[]).filter(isTopicId),...matchingTopics([post.parentPost.content,...(post.parentPost.imageAltTexts??[]),post.parentPost.linkPreview?.title,post.parentPost.linkPreview?.description].filter(Boolean).join(' '))]:[];
+ return [...new Set([...own,...parent])];
+}
+/** Work content overrides broad creator biographies and retrieval-feed labels. */
+function hasCuratedArtworkSource(post:PostWithAuthor,followed:TopicId[]):boolean {
+ if(!post.imageUrls.length||post.imageUrls.every(url=>url===post.linkPreview?.image)||isDeclaredGeneratedArt(post)||(post.recommendationVisual&&post.recommendationVisual.kind!=='unknown'))return false;
+ if(!(post.recommendationTopics??[]).some(topic=>(topic==='anime'||topic==='digital-illustration')&&followed.includes(topic)))return false;
+ return (post.recommendationSources??[]).some(source=>/^at:\/\/did:[^/]+\/app\.bsky\.feed\.generator\/[^/]+$/.test(source));
+}
+/** Require both work-specific subject and creator evidence for twitter artwork. */
+function hasDeclaredArtworkContext(post:PostWithAuthor,followed:TopicId[]):boolean {
+ if(!(post.source==='x'||post.id.startsWith('x:'))||!post.imageUrls.length||(post.recommendationVisual&&post.recommendationVisual.kind!=='unknown')||isDeclaredGeneratedArt(post))return false;
+ if(!/イラストレーター|絵描|お絵(?:描|か)き|落書き|らくがき|漫画家|漫画描|アニメーター|絵(?:を)?描|イラスト.*(?:描|制作)|artist|illustrat|animator|drawing|sketch/i.test(post.author?.bio??''))return false;
+ return matchingTopics(recommendationText(post)).some(topic=>(topic==='anime'||topic==='digital-illustration')&&followed.includes(topic))||((post.recommendationSources??[]).some(source=>source.startsWith('twitter-interest:#'))&&(post.recommendationTopics??[]).some(topic=>(topic==='anime'||topic==='digital-illustration')&&followed.includes(topic)));
+}
+function recommendationMatchesFollowedTopics(post:PostWithAuthor,followed:TopicId[]):boolean {
+ if(!followed.length)return true;
+ if(followed.includes('ai')&&isDeclaredGeneratedArt(post))return true;
+ const visual=post.recommendationVisual;
+ const workTopics=[...new Set([
+   ...(visual&&visual.kind!=='unknown'?visual.topics:[]),
+   ...matchingTopics(recommendationText(post).replace(/(?:no|non|not|anti)[ -]?ai(?:[ -]?(?:art|generated))?|AI(?:学習|生成)?(?:に)?(?:禁止|反対|不使用)|AI(?:生成|イラスト|画像|絵)(?:ではない|ではありません|じゃない)|生成AI(?:不使用|反対)|AIを(?:使わない|使用しない)/gi,'')),
+ ])];
+ const specificTopics=workTopics.filter(topic=>topic!=='art');
+ if(specificTopics.length)return specificTopics.some(topic=>followed.includes(topic));
+ if(workTopics.length&&followed.includes('art'))return true;
+ if(hasCuratedArtworkSource(post,followed)||hasDeclaredArtworkContext(post,followed))return true;
+ // Image-only work may use a curated feed or learned creator subject, never a generic author affinity.
+ const source=[...(post.recommendationTopics??[]),...(post.parentPost?.recommendationTopics??[])];
+ // General illustration feeds also contain cars, landscapes and animals.
+ // Retrieval labels alone cannot establish an anime/character-art subject.
+ if(source.some(topic=>isTopicId(topic)&&followed.includes(topic)&&topic!=='anime'&&topic!=='digital-illustration'))return true;
+ const creatorTopics=matchingTopics(post.author?.bio??'');
+ if(creatorTopics.some(topic=>followed.includes(topic)&&(topic==='anime'||topic==='digital-illustration'))&&
+   (!recommendationText(post).trim()||/イラスト|線画|お絵描き|落書き|らくがき|illustration|drawing|sketch/i.test(recommendationText(post))))return true;
+ // A daily caption does not become art because the author also draws art.
+ if(recommendationText(post).trim())return false;
+ return (post.recommendationAuthorTopics??[]).some(topic=>isTopicId(topic)&&followed.includes(topic));
+}
+
+function recommendationTopicAffinity(post:PostWithAuthor,preferences:Partial<TopicPreferences>,learned:Partial<Record<TopicId,number>>={}):number {
+ const sources=new Set([...(post.recommendationTopics??[]),...(post.parentPost?.recommendationTopics??[])]);
+ const text=new Set(matchingTopics(`${post.content} ${post.parentPost?.content??''}`));
+ const metadata=new Set(matchingTopics([...(post.imageAltTexts??[]),post.linkPreview?.title,post.linkPreview?.description,...(post.parentPost?.imageAltTexts??[]),post.parentPost?.linkPreview?.title].filter(Boolean).join(' ')));
+ const hints=new Set([...(post.recommendationAuthorTopics??[]).filter(isTopicId),...matchingTopics(post.author?.bio??'')]);
+ const visual=post.recommendationVisual;
+ const strength=(id:TopicId)=>{
+  if(visual?.topics.includes(id))return .8+.2*visual.confidence;
+  // A feed is a retrieval hint, not a content label. A confidently different
+  // image must not inherit full relevance from its retrieval source.
+  const conflict=!!visual&&visual.kind!=='unknown'&&visual.topics.length>0;
+  return Math.max(sources.has(id)?(conflict?.08:.2):0,metadata.has(id)?(conflict?.08:.2):0,text.has(id)?.08:0,hints.has(id)?(conflict?.08:.25):0,Math.min(.35,Math.log1p(learned[id]??0)/6));
+ };
+ // Mentioning many topic names cannot accumulate a larger relevance boost.
+ return Math.min(1,(preferences.followed??[]).reduce((sum,id)=>sum+strength(id),0))-2*Math.min(1,(preferences.dismissed??[]).reduce((sum,id)=>sum+strength(id),0));
+}
+function topicAuthorCandidates(posts:PostWithAuthor[],followed:TopicId[]):{actor:string;topics:TopicId[]}[] {
+ const authors=new Map<string,Map<TopicId,Set<string>>>();
+ for(const post of posts){
+  // Text-only search hits do not recruit creators into a topic indefinitely.
+  const topics=(post.recommendationVisual?post.recommendationVisual.topics:post.imageUrls.length?[]:(post.recommendationTopics??[]).filter(isTopicId)).filter(topic=>followed.includes(topic));
+  if(!topics.length)continue;
+  const counts=authors.get(post.userId)??new Map<TopicId,Set<string>>();
+  for(const topic of topics){const ids=counts.get(topic)??new Set<string>();ids.add(post.id);counts.set(topic,ids);}
+  authors.set(post.userId,counts);
+ }
+ const ranked=[...authors].map(([actor,counts])=>({actor,topics:[...counts].filter(([,ids])=>ids.size>=2).map(([topic])=>topic),works:Math.max(...[...counts.values()].map(ids=>ids.size))})).filter(row=>row.topics.length).sort((a,b)=>b.works-a.works);
+ const selected:{actor:string;topics:TopicId[]}[]=[];
+ for(const topic of followed)for(const prefix of ['did:','misskey-user:','x-user:']){
+  const candidate=ranked.find(row=>row.actor.startsWith(prefix)&&row.topics.includes(topic)&&!selected.some(old=>old.actor===row.actor));
+  if(candidate&&selected.filter(row=>row.actor.startsWith(prefix)).length<2)selected.push({actor:candidate.actor,topics:candidate.topics});
+ }
+ return selected;
+}
+/** Language context can follow a creator's works without requiring text on each work. */
+function recommendationOriginLanguages(post:{languages?:string[];recommendationLanguages?:string[];content?:string;author?:{bio?:string;displayName?:string}}):string[] {
+ if(post.languages?.length)return post.languages.filter(lang=>/^ja(?:-|$)/i.test(lang)).length?['ja']:[];
+ if(post.recommendationLanguages?.includes('ja'))return ['ja'];
+ return /[\u3040-\u30ff]/.test([post.content,post.author?.bio,post.author?.displayName].filter(Boolean).join(' '))?['ja']:[];
+}
+
+function recommendationIdentity(post:Pick<PostWithAuthor,'id'|'blueskyUri'>):string {
+ const uri=post.blueskyUri??post.id.replace(/^bsky:/,'');
+ return uri.startsWith('at://')?`bsky:${uri}`:post.id;
+}
+/** Identify the same work across resized CDN URLs, copied posts and page boundaries. */
+function recommendationFingerprint(post:Pick<PostWithAuthor,'content'|'imageUrls'>):string|undefined {
+ const media=post.imageUrls.map(raw=>{
+  try{const url=new URL(raw);for(const key of ['w','h','width','height','format','q','quality','fit','auto','resize'])url.searchParams.delete(key);url.hash='';const blob=url.hostname==='cdn.bsky.app'?url.pathname.match(/\/(baf[a-z0-9]+)(?:@[a-z]+)?$/i)?.[1]:undefined;if(blob)return `bsky-media:${blob}`;url.pathname=url.pathname.replace(/\/img\/feed_(?:thumbnail|fullsize)\//,'/img/feed/');return url.toString();}catch{return raw;}
+ }).sort();
+ const text=post.content.normalize('NFKC').toLowerCase().replace(/\s+/g,' ').trim();
+ if(!media.length&&text.length<32)return undefined;
+ const value=media.length?JSON.stringify(media):text;
+ let a=2166136261,b=5381;for(let i=0;i<value.length;i++){a=Math.imul(a^value.charCodeAt(i),16777619);b=Math.imul(b,33)^value.charCodeAt(i);}
+ return `fp:${(a>>>0).toString(36)}:${(b>>>0).toString(36)}`;
+}
+
+function isDeclaredGeneratedArt(post:PostWithAuthor):boolean {
+ const text=[post.content,...(post.imageAltTexts??[]),post.author?.bio??''].join('\n').normalize('NFKC')
+  .replace(/(?:no|non|not|anti)[ -]?ai(?:[ -]?(?:art|generated))?|AI(?:学習|生成)?(?:に)?(?:禁止|反対|不使用)|AI(?:生成|イラスト|画像|絵)(?:ではない|ではありません|じゃない)|生成AI(?:不使用|反対)|AIを(?:使わない|使用しない)/gi,'');
+ return (post.contentLabels??[]).some(label=>/^(?:ai-generated|generative-ai|synthetic-media)$/i.test(label)) || /AI[ _-]?(?:イラスト|画像|生成|絵|art|generated)|生成AI|人工知能で(?:描|生成)|midjourney|stable[ _-]?diffusion|novelai|dall[ -]?e|#AIart/i.test(text);
+}
+
+const japanese=(text:string)=>/[\u3040-\u30ff]/.test(text);
+/** Language records take precedence over inferred origin. Country is never inferred from a name. */
+/** Crypto promotion is not character-art interest, even when its picture is a drawing. */
+function isUnrelatedCryptoRecommendation(post:PostWithAuthor,followed:TopicId[]):boolean {
+ if(followed.includes('crypto'))return false;
+ const text=recommendationText(post).normalize('NFKC').replace(/(?:no|not|anti)[ -]?(?:NFTs?|crypto)|NFT(?:化)?(?:禁止|不可|お断り)|NFT(?:化)?(?:は|を)?(?:しない|しません)/gi,'');
+ return /\b(?:NFTs?|web3|opensea|rarible|ethereum|crypto|blockchain|minting)\b|暗号資産|仮想通貨|ミント(?:開始|販売)|エアドロップ/i.test(text)||/https?:\/\/(?:[^/]+\.)?(?:opensea\.io|foundation\.app|rarible\.com)\//i.test(post.content);
+}
+function recommendationIsEligible(post:PostWithAuthor,followed:TopicId[]=[]):boolean {
+ if(isUnrelatedCryptoRecommendation(post,followed))return false;
+ if(!isTimelinePost(post))return false;
+ const external=post.source==='bluesky'||post.source==='misskey'||post.source==='x'||post.id.startsWith('bsky:')||post.id.startsWith('misskey:')||post.id.startsWith('x:');
+ const signals=recommendationTopicSignals(post);
+ const digital=followed.includes('digital-illustration');
+ const visual=post.recommendationVisual;
+ if(followed.length&&visual&&visual.kind!=='unknown'&&visual.topics.length&&!visual.topics.some(topic=>followed.includes(topic)))return false;
+ const digitalContext=post.recommendationTopics?.includes('digital-illustration')||post.recommendationAuthorTopics?.includes('digital-illustration')||hasDeclaredArtworkContext(post,followed);
+ const digitalMatch=digital&&post.imageUrls.length>0&&!isDeclaredGeneratedArt(post)&&(visual?.kind==='moe'||(!visual&&!post.recommendationVisualStatus&&digitalContext)||(visual?.kind==='unknown'&&(hasCuratedArtworkSource(post,followed)||hasDeclaredArtworkContext(post,followed))));
+ // A generic art feed, a photograph, or an author's unrelated update is not digital illustration.
+ if(digital&&!digitalMatch&&!signals.some(id=>id!=='digital-illustration'&&followed.includes(id)))return false;
+ if(!external)return true;
+ const text=recommendationText(post);
+ const prose=text.replace(/https?:\/\/\S+/g,'').replace(/#[\p{L}\p{N}_]+/gu,'');
+ const jp=prose.match(/[\u3040-\u30ff\u3400-\u9fff]/g)?.length??0;
+ const latin=prose.match(/[a-z]/gi)?.length??0;
+ if((japanese(prose)&&jp>=latin/2)||post.languages?.some(lang=>/^ja(?:-|$)/i.test(lang)))return true;
+ // An English post is allowed only when its actual topic matches a followed global topic.
+ const globalSignals=visual&&visual.kind!=='unknown'?visual.topics:signals;
+ if(globalSignals.some(id=>GLOBAL_TOPICS.includes(id)&&followed.includes(id)))return true;
+ if(post.languages?.length)return false;
+ if(/[\u3400-\u9fff]/.test(text)&&signals.length>0&&!/[a-z]{3,}/i.test(text))return true;
+ const readable=text.replace(/https?:\/\/\S+/g,'').replace(/#[\p{L}\p{N}_]+/gu,'').trim();
+ if(/[a-z]{3,}/i.test(readable))return false;
+ // Empty/short posts need Japanese source or creator context, rather than a body keyword.
+ return japanese(post.author?.bio??'')||japanese(post.author?.displayName??'')||post.recommendationLanguages?.includes('ja')===true;
+}
+
+type RecommendationAction = 'impression' | 'like' | 'repost' | 'bookmark' | 'not_interested';
+function recordRecommendationEngagement(post: Pick<PostWithAuthor, 'id' | 'blueskyUri'>, viewer: string | null, action: RecommendationAction, active = true) {
+ if (viewer) window.dispatchEvent(new CustomEvent('lime:recommendation-engagement', {detail: {id: recommendationIdentity(post), viewer, action, active}}));
+}
+
+// topicRecommendations
+/** Content evidence outranks retrieval hints; a creator's bio is not post evidence. */
+function topicPostRelevance(post:PostWithAuthor,topic:TopicId):number {
+ const visual=post.recommendationVisual;
+ if(visual?.kind!=='unknown'&&visual?.topics.length&&!visual.topics.includes(topic)&&!matchingTopics(post.content).includes(topic))return 0;
+ if(visual?.topics.includes(topic)&&visual.confidence>=.6)return 3;
+ if(matchingTopics(recommendationText(post)).includes(topic))return 2;
+ return post.recommendationTopics?.includes(topic)?1:0;
+}
+/** Topic-only ranking. It deliberately does not consume the general feed's delivered history. */
+function rankTopicPosts(posts:PostWithAuthor[],topic:TopicId,preferences:RecommendationPreferences,now:number):PostWithAuthor[] {
+ const ids=new Set<string>(),fingerprints=new Set<string>();
+ const score=(post:PostWithAuthor)=>{
+  const age=Math.max(0,now-Date.parse(post.createdAt))/3600000;
+  const affinity=Math.max(0,preferences.authors[post.userId]??0);
+  const engagement=Math.log1p(Math.max(0,post.likesCount)+2*Math.max(0,post.repostsCount)+Math.max(0,post.commentsCount));
+  const interest=recommendationTerms(recommendationText(post)).reduce((sum,term)=>sum+Math.log1p(Math.max(0,preferences.terms[term]??0)+Math.max(0,preferences.recentTerms?.[term]??0)),0);
+  return topicPostRelevance(post,topic)*100+Math.min(8,interest)+Math.min(8,Math.log1p(affinity)*2)+Math.min(6,engagement)+5*Math.exp(-(Number.isFinite(age)?age:720)/72);
+ };
+ return posts.filter(post=>{
+  const id=recommendationIdentity(post),fingerprint=recommendationFingerprint(post);
+  if(ids.has(id)||fingerprint&&fingerprints.has(fingerprint)||!topicPostRelevance(post,topic)||!recommendationIsEligible(post,[topic])||recommendationIsDismissed(post,{...preferences,dismissedTopics:preferences.dismissedTopics?.filter(id=>id!==topic)}))return false;
+  ids.add(id);if(fingerprint)fingerprints.add(fingerprint);return true;
+ }).sort((a,b)=>score(b)-score(a)||b.createdAt.localeCompare(a.createdAt)||recommendationIdentity(a).localeCompare(recommendationIdentity(b)));
+}
+
+// recommendationPaging
+function preserveRecommendationHistory(cursor:RecommendationCursor,shown:PostWithAuthor[]):RecommendationCursor {
+ const seen=[...new Set([...cursor.seen,...shown.flatMap(post=>[recommendationIdentity(post),...(recommendationFingerprint(post)?[recommendationFingerprint(post)!]:[])])])];
+ const allCounts={...(cursor.authorCounts??{})},shownCounts:Record<string,number>={};
+ for(const post of shown)shownCounts[post.userId]=(shownCounts[post.userId]??0)+1;
+ for(const [actor,count] of Object.entries(shownCounts))allCounts[actor]=Math.max(allCounts[actor]??0,count);
+ const counts={...(cursor.twitterAuthorCounts??{})},handles={...(cursor.twitterAuthorHandles??{})},visibleCounts:Record<string,number>={};
+ for(const post of shown)if(post.source==='x'||post.id.startsWith('x:')){visibleCounts[post.userId]=(visibleCounts[post.userId]??0)+1;handles[post.userId]=post.author.username;}
+ for(const [actor,count] of Object.entries(visibleCounts))counts[actor]=Math.max(counts[actor]??0,count);
+ const twitter=shown.filter(post=>post.source==='x'||post.id.startsWith('x:')).length;
+ return {...cursor,seen,authorCounts:allCounts,twitterAuthorCounts:counts,twitterAuthorHandles:handles,history:shown.slice(-20),providerTotals:{twitter,other:shown.length-twitter}};
+}
+function uniqueRecommendationPosts(posts:PostWithAuthor[],shown:PostWithAuthor[]=[]):PostWithAuthor[] {
+ const seen=new Set(shown.flatMap(post=>[recommendationIdentity(post),...(recommendationFingerprint(post)?[recommendationFingerprint(post)!]:[])]));
+ return posts.filter(post=>{
+  const id=recommendationIdentity(post),fingerprint=recommendationFingerprint(post);
+  if(seen.has(id)||fingerprint&&seen.has(fingerprint))return false;
+  seen.add(id);if(fingerprint)seen.add(fingerprint);return true;
+ });
+}
+
+// recommendationReserve
+type Page=Awaited<ReturnType<typeof getBalancedRecommendationPage>>;
+const KEY='lime-recommendation-reserve-v2';
+const MAX_AGE=120_000;
+/** Only an unconsumed, accepted reserve is persisted, scoped to the active account and sources. */
+function readRecommendationReserve(scope:string):Page|undefined{
+ try{
+  const entry=JSON.parse(sessionStorage.getItem(KEY)??'null');
+  if(!entry||entry.scope!==scope||Date.now()-entry.at>MAX_AGE||Date.now()<entry.at)return;
+  const page=entry.page;
+  if(!Array.isArray(page?.posts)||page.posts.length<20||!page.preferences?.authors||!page.preferences?.terms)return;
+  if(!page.posts.every((post:any)=>typeof post.id==='string'&&typeof post.userId==='string'&&post.author&&Array.isArray(post.imageUrls)))return;
+  if(page.next&&(!Array.isArray(page.next.remaining)||!Array.isArray(page.next.seen)||!Array.isArray(page.next.history)))return;
+  const posts=restoreRecommendationVisuals(page.posts);
+  if(posts.some(post=>{const visual=post.recommendationVisual;return !visual||['unknown','render-3d','vehicle'].includes(visual.kind)||visual.confidence<.25||visual.similarity<.24||page.preferences.followedTopics?.length&&!page.preferences.followedTopics.some((topic:any)=>visualMatchesRecommendationTopic(visual,topic));}))return;
+  return {...page,posts,preferences:{...page.preferences,visualOnly:true,allowUnverifiedMedia:false,likedSamples:restoreRecommendationVisuals(page.preferences.likedSamples??[])}};
+ }catch{return;}
+}
+function saveRecommendationReserve(scope:string,page:Page){
+ if(page.posts.length<20)return;
+ try{sessionStorage.setItem(KEY,JSON.stringify({scope,at:Date.now(),page}));}catch{}
+}
+function clearRecommendationReserve(){try{sessionStorage.removeItem(KEY);sessionStorage.removeItem('lime-recommendation-reserve-v1');}catch{}}
+
+// recommendationCatalog
+const RECOMMENDATION_CATALOG_VERSION=1;
+const RECOMMENDATION_CATALOG_MAX_AGE=2*60*60*1000;
+type Catalog={version:number;generatedAt:string;model:string;revision:string;posts:PostWithAuthor[]};
+const model='Xenova/clip-vit-base-patch32';
+const revision='d15189d7028b43f1d3e65039190477f6af591c2a';
+let cached:{expires:number;validUntil:number;posts:PostWithAuthor[]}|undefined;
+let pending:Promise<PostWithAuthor[]>|undefined;
+let bootstrapRead=false;
+
+/** Restore reference and candidate vectors only for the same immutable image.
+ * A matching author or caption is never sufficient evidence. */
+function applyCatalogRecommendationVisuals(posts:PostWithAuthor[],catalog:PostWithAuthor[]):PostWithAuthor[]{
+ const visuals=new Map(catalog.filter(post=>post.imageUrls[0]&&post.recommendationVisual).map(post=>[recommendationImageIdentity(post.imageUrls[0]),post.recommendationVisual!]));
+ return posts.map(post=>{
+  const visual=!post.recommendationVisual&&post.imageUrls[0]?visuals.get(recommendationImageIdentity(post.imageUrls[0])):undefined;
+  return visual?{...post,recommendationVisual:visual,recommendationVisualStatus:'checked'}:post;
+ });
+}
+
+/** Only public, already analysed candidates belong in the shared catalog.
+ * Personal interests, likes and dismissals are applied locally by the ranker. */
+function parseRecommendationCatalog(value:unknown,now=Date.now(),maxAge=RECOMMENDATION_CATALOG_MAX_AGE):PostWithAuthor[]{
+ if(!value||typeof value!=='object')return [];
+ const input=value as Catalog;
+ const age=now-Date.parse(input.generatedAt);
+ if(input.version!==RECOMMENDATION_CATALOG_VERSION||input.model!==model||input.revision!==revision||!Number.isFinite(age)||age< -60000||age>maxAge||!Array.isArray(input.posts)||input.posts.length>1000)return [];
+ const ids=new Set<string>();
+ return input.posts.filter(post=>{
+  const visual=post?.recommendationVisual;
+  if(!post||typeof post.id!=='string'||ids.has(post.id)||typeof post.userId!=='string'||post.author?.id!==post.userId||typeof post.author?.username!=='string'||post.visibility!=='public'||!['x','bluesky','misskey'].includes(post.source??'')||typeof post.content!=='string'||!Number.isFinite(Date.parse(post.createdAt))||!Array.isArray(post.imageUrls)||!post.imageUrls.length||!post.imageUrls.every(url=>{try{return new URL(url).protocol==='https:';}catch{return false;}})||!visual||visual.version!==1||!Array.isArray(visual.vector)||visual.vector.length!==512||!visual.vector.every(Number.isFinite))return false;
+  // Reclassify with the application prototypes instead of trusting labels in
+  // a shared artifact. No caption or feed label can certify an image.
+  ids.add(post.id);return true;
+ }).map(post=>({...post,likedByMe:false,repostedByMe:false,recommendationVisual:classifyRecommendationVisual(post.recommendationVisual!.vector),recommendationVisualStatus:'checked'}));
+}
+
+/** A bounded public read; never download the image model to read this catalog. */
+async function readRecommendationCatalog(signal?:AbortSignal):Promise<PostWithAuthor[]>{
+ if(signal?.aborted)throw signal.reason;
+ const url=import.meta.env.VITE_RECOMMENDATION_CATALOG_URL;
+ if(!url)return [];
+ if(cached&&cached.validUntil>Date.now()){
+  if(cached.expires<=Date.now()){
+   cached.expires=Date.now()+60000;
+   pending??=loadCatalog(url,5000).finally(()=>{pending=undefined;});
+  }
+  return cached.posts;
+ }
+ if(!bootstrapRead){
+  bootstrapRead=true;
+  // Public pixels are analysed during the build. This is a source catalog,
+  // not a saved user's timeline; all personal quality gates still run below.
+  // Keep a bounded offline fallback while the hourly public snapshot refreshes.
+  const raw=import.meta.env.VITE_RECOMMENDATION_BOOTSTRAP;
+  let bootstrap:unknown;try{bootstrap=typeof raw==='string'?JSON.parse(raw):raw;}catch{/* Ignore an invalid build artifact. */}
+  const posts=parseRecommendationCatalog(bootstrap,Date.now(),7*24*60*60*1000);
+  if(posts.length){
+   cached={posts,expires:Date.now()+60000,validUntil:Date.parse((bootstrap as Catalog).generatedAt)+7*24*60*60*1000};
+   pending??=loadCatalog(url,5000).finally(()=>{pending=undefined;});
+   return posts;
+  }
+ }
+ const job=pending??=loadCatalog(url).finally(()=>{pending=undefined;});
+ if(!signal)return job;
+ let abort:()=>void;
+ const cancelled=new Promise<never>((_,reject)=>{abort=()=>reject(signal.reason);signal.addEventListener('abort',abort,{once:true});if(signal.aborted)abort();});
+ try{return await Promise.race([job,cancelled]);}
+ finally{signal.removeEventListener('abort',abort!);}
+}
+async function loadCatalog(url:string,timeout=400):Promise<PostWithAuthor[]>{
+ const controller=new AbortController();
+ const timer=setTimeout(()=>controller.abort(),timeout);
+ try{
+  const response=await fetch(url,{credentials:'omit',signal:controller.signal,referrerPolicy:'no-referrer'});
+  if(!response.ok||Number(response.headers.get('content-length'))>8*1024*1024)return [];
+  const text=await response.text();if(text.length>8*1024*1024)return [];
+  const input=JSON.parse(text),posts=parseRecommendationCatalog(input);
+  if(!posts.length)return [];
+  cached={posts,validUntil:Date.parse(input.generatedAt)+7*24*60*60*1000,expires:Math.min(Date.now()+60000,Date.parse(input?.generatedAt)+RECOMMENDATION_CATALOG_MAX_AGE)};
+  return posts;
+ }catch{return [];}
+ finally{clearTimeout(timer);}
+}
+
+// recommendations
 // The scope ends with each scoring pass: no stale cache after feedback changes.
 let compareVisual:ReturnType<typeof createVisualSimilarityComparator>|undefined;
 const visualSimilarity=(a:number[],b:number[])=>compareVisual?compareVisual(a,b):directVisualSimilarity(a,b);
@@ -16,8 +322,8 @@ function withScoringComparisons<T>(read:()=>T):T{
  if(compareVisual)return read();
  compareVisual=createVisualSimilarityComparator();try{return read();}finally{compareVisual=undefined;}
 }
-export type RecommendationFeedback={id:string;userId:string;fingerprint?:string;topics?:TopicId[];vector?:number[];imageUrls?:string[];visualKind?:string;createdAt:string};
-export type RecommendationPreferences = {
+type RecommendationFeedback={id:string;userId:string;fingerprint?:string;topics?:TopicId[];vector?:number[];imageUrls?:string[];visualKind?:string;createdAt:string};
+type RecommendationPreferences = {
   visualOnly?:boolean;
   allowUnverifiedMedia?:boolean;
   authors: Record<string, number>;
@@ -36,7 +342,7 @@ export type RecommendationPreferences = {
   feedback?:RecommendationFeedback[];
 };
 /** Keep diverse compact references while all loaded likes contribute to scores. */
-export function selectRecommendationLikeSamples(rows:(PostWithAuthor & {engagedAt?:string})[],limit=128) {
+function selectRecommendationLikeSamples(rows:(PostWithAuthor & {engagedAt?:string})[],limit=128) {
  const ids=new Set<string>(),authors=new Set<string>();
  const unique=rows.filter(row=>{const id=recommendationIdentity(row);if(ids.has(id))return false;ids.add(id);return true;}).sort((a,b)=>(Date.parse(b.engagedAt??'')||0)-(Date.parse(a.engagedAt??'')||0));
  const selected:typeof rows=[],rest:typeof rows=[];
@@ -54,7 +360,7 @@ const concepts = [
 ];
 let wordSegmenter:any;
 const termCache=new Map<string,string[]>();
-export function recommendationTerms(content: string): string[] {
+function recommendationTerms(content: string): string[] {
   const text=content.replace(/https?:\/\/\S+/g,' ').normalize('NFKC').toLowerCase();
   const cached=termCache.get(text);if(cached)return [...cached];
   const Segmenter=(Intl as any).Segmenter;
@@ -65,7 +371,7 @@ export function recommendationTerms(content: string): string[] {
   if(termCache.size>=512)termCache.delete(termCache.keys().next().value!);
   termCache.set(text,terms);return [...terms];
 }
-export function addRecommendationInterest(preferences: RecommendationPreferences, post: {content?:string;userId?:string;user_id?:string;imageAltTexts?:string[];recommendationTopics?:string[];recommendationAuthorTopics?:string[];recommendationVisual?:PostWithAuthor['recommendationVisual'];linkPreview?:{title?:string;description?:string};languages?:string[];recommendationLanguages?:string[];author?:{id?:string;username?:string;bio?:string;displayName?:string}}, weight:number, eventAt?:string, now=Date.now()) {
+function addRecommendationInterest(preferences: RecommendationPreferences, post: {content?:string;userId?:string;user_id?:string;imageAltTexts?:string[];recommendationTopics?:string[];recommendationAuthorTopics?:string[];recommendationVisual?:PostWithAuthor['recommendationVisual'];linkPreview?:{title?:string;description?:string};languages?:string[];recommendationLanguages?:string[];author?:{id?:string;username?:string;bio?:string;displayName?:string}}, weight:number, eventAt?:string, now=Date.now()) {
   const timestamp=eventAt ? Date.parse(eventAt) : now;
   const age=Number.isFinite(timestamp)?Math.max(0,(now-timestamp)/86400000):30;
   const longWeight=weight*Math.pow(0.5,age/60);
@@ -96,7 +402,7 @@ export function addRecommendationInterest(preferences: RecommendationPreferences
     preferences.recentTerms[term]=(preferences.recentTerms[term] ?? 0)+recentWeight*lengthWeight;
   }
 }
-export function recommendationQueries(preferences:RecommendationPreferences):string[] {
+function recommendationQueries(preferences:RecommendationPreferences):string[] {
   if(preferences.visualOnly)return [];
   const explicit=TOPICS.filter(topic=>preferences.followedTopics?.includes(topic.id)).map(topic=>topic.queries[0]);
   const learned=Object.entries(preferences.terms).filter(([term])=>!term.startsWith('topic:') && topicAffinity(term,{dismissed:preferences.dismissedTopics})>=0)
@@ -107,13 +413,13 @@ export function recommendationQueries(preferences:RecommendationPreferences):str
 }
 type Impression={at:number;count:number};
 const impressionKey=(viewerId:string|null)=>`lime_recommendation_impressions:${viewerId ?? 'guest'}`;
-export function readRecommendationImpressions(viewerId:string|null,now=Date.now()):Record<string,Impression> {
+function readRecommendationImpressions(viewerId:string|null,now=Date.now()):Record<string,Impression> {
   try {
     const data:Record<string,Impression>=JSON.parse(localStorage.getItem(impressionKey(viewerId)) ?? '{}');
     return Object.fromEntries(Object.entries(data).filter(([,row]:[string,any])=>row && Number.isFinite(row.at) && row.at<=now && now-row.at<30*86400000 && Number.isFinite(row.count)));
   } catch {return {};}
 }
-export function recordRecommendationImpression(id:string,viewerId:string|null,now=Date.now(),fingerprint?:string) {
+function recordRecommendationImpression(id:string,viewerId:string|null,now=Date.now(),fingerprint?:string) {
   try {
     const data=readRecommendationImpressions(viewerId,now);
     for(const key of [id,...(fingerprint?[fingerprint]:[])])data[key]={at:now,count:Math.min(10,(data[key]?.count ?? 0)+1)};
@@ -124,21 +430,21 @@ export function recordRecommendationImpression(id:string,viewerId:string|null,no
 type RecommendationDelivery={at:number;userId:string;fingerprint?:string};
 const deliveredMemory=new Map<string,Record<string,RecommendationDelivery>>();
 const deliveredKey=(viewerId:string|null)=>`lime_recommendation_deliveries:${viewerId??'guest'}`;
-export function readRecommendationDeliveries(viewerId:string|null,now=Date.now()):Record<string,RecommendationDelivery>{
+function readRecommendationDeliveries(viewerId:string|null,now=Date.now()):Record<string,RecommendationDelivery>{
  // A fetched card is not a view. Reserve it briefly in this document so
  // overlapping requests cannot repeat it; only visible impressions persist.
  // Ignore legacy persisted deliveries, which suppressed unseen work for 30 days.
  const stored=deliveredMemory.get(deliveredKey(viewerId))??{};
  return Object.fromEntries(Object.entries(stored).filter(([,row])=>Number.isFinite(row.at)&&row.at<=now&&now-row.at<120000)) as Record<string,RecommendationDelivery>;
 }
-export function recordRecommendationDelivery(posts:PostWithAuthor[],viewerId:string|null,now=Date.now()):void{
+function recordRecommendationDelivery(posts:PostWithAuthor[],viewerId:string|null,now=Date.now()):void{
  const key=deliveredKey(viewerId),rows=readRecommendationDeliveries(viewerId,now);
  for(const post of posts)rows[recommendationIdentity(post)]={at:now,userId:post.userId,fingerprint:recommendationFingerprint(post)};
  const bounded=Object.fromEntries(Object.entries(rows).sort((a,b)=>b[1].at-a[1].at).slice(0,5000));
  deliveredMemory.set(key,bounded);
 }
 /** Keep a hard run limit independently of popularity or creator affinity. */
-export function selectRecommendationPage(ranked:PostWithAuthor[],preferences:RecommendationPreferences,history:PostWithAuthor[],limit=20){
+function selectRecommendationPage(ranked:PostWithAuthor[],preferences:RecommendationPreferences,history:PostWithAuthor[],limit=20){
  return withScoringComparisons(()=>selectRecommendationPageInternal(ranked,preferences,history,limit));
 }
 function selectRecommendationPageInternal(ranked:PostWithAuthor[],preferences:RecommendationPreferences,history:PostWithAuthor[],limit:number){
@@ -184,14 +490,14 @@ function imageFeedbackSimilarity(post:PostWithAuthor,feedback:RecommendationFeed
 function positiveImageSimilarity(post:PostWithAuthor,preferences:RecommendationPreferences):number {
  return post.recommendationVisual?Math.max(0,...(preferences.visualInterests??[]).map(vector=>visualSimilarity(vector,post.recommendationVisual!.vector)),...(preferences.likedSamples??[]).filter(row=>row.recommendationVisual).map(row=>visualSimilarity(row.recommendationVisual!.vector,post.recommendationVisual!.vector))):0;
 }
-export type RecommendationScore = {
+type RecommendationScore = {
   interest:number;recentInterest:number;author:number;follow:number;freshness:number;quality:number;seenPenalty:number;spamPenalty:number;selfPenalty:number;total:number;
 };
 type ScoringContext={idf?:Record<string,number>;impressions?:Record<string,Impression>;now?:number;profiles?:{long:CosineProfile;recent:CosineProfile};feedback?:RecommendationFeedback[]};
 function prepareScoringContext(preferences:RecommendationPreferences,idf:Record<string,number>,now:number,impressions?:Record<string,Impression>):ScoringContext {
  return {idf,now,impressions,profiles:{long:prepareCosine(preferences.terms,idf),recent:prepareCosine(preferences.recentTerms??preferences.terms,idf)},feedback:activeRecommendationFeedback(preferences,now)};
 }
-export function scoreRecommendation(post:PostWithAuthor,preferences:RecommendationPreferences,viewerId:string|null,context:ScoringContext={}):RecommendationScore {
+function scoreRecommendation(post:PostWithAuthor,preferences:RecommendationPreferences,viewerId:string|null,context:ScoringContext={}):RecommendationScore {
   const now=context.now ?? Date.now();
   if(preferences.visualOnly){
    const visual=post.recommendationVisual,similarity=visual?positiveImageSimilarity(post,preferences):0;
@@ -254,7 +560,7 @@ function relatedRecommendationScore(post:PostWithAuthor,anchors:PostWithAuthor[]
  return supported.size>=2?1:0;
 }
 /** A whole followed topic is not a negative visual match. Require actual image evidence. */
-export function recommendationNeedsPersonalMediaEvidence(post:PostWithAuthor,preferences:RecommendationPreferences,feedback=activeRecommendationFeedback(preferences,Date.now())):boolean {
+function recommendationNeedsPersonalMediaEvidence(post:PostWithAuthor,preferences:RecommendationPreferences,feedback=activeRecommendationFeedback(preferences,Date.now())):boolean {
  if(!post.imageUrls?.length||!post.recommendationVisual||post.recommendationVisual.kind==='unknown')return false;
  const neighbors=feedback.filter(row=>row.vector&&visualSimilarity(row.vector,post.recommendationVisual!.vector)>=.70);
  return new Set(neighbors.map(row=>row.id)).size>=3;
@@ -264,14 +570,14 @@ function hasPersonalMediaEvidence(post:PostWithAuthor,preferences:Recommendation
  const positive=positiveImageSimilarity(post,preferences);
  return !!post.recommendationVisual&&post.recommendationVisual.kind!=='unknown'&&positive>=.8;
 }
-export function rejectedRecommendationTopics(preferences:RecommendationPreferences):TopicId[]{
+function rejectedRecommendationTopics(preferences:RecommendationPreferences):TopicId[]{
  // Only an explicit topic dismissal disables discovery. Work-level feedback stays work-level.
  return [...new Set(preferences.dismissedTopics??[])];
 }
-export function isRecommendationAuthorRejected(author:string,preferences:RecommendationPreferences):boolean{
+function isRecommendationAuthorRejected(author:string,preferences:RecommendationPreferences):boolean{
  return activeRecommendationFeedback(preferences,Date.now()).some(row=>row.userId===author);
 }
-export function recommendationIsDismissed(post:PostWithAuthor,preferences:RecommendationPreferences,now=Date.now(),feedback=activeRecommendationFeedback(preferences,now)):boolean {
+function recommendationIsDismissed(post:PostWithAuthor,preferences:RecommendationPreferences,now=Date.now(),feedback=activeRecommendationFeedback(preferences,now)):boolean {
  const identity=recommendationIdentity(post),fingerprint=recommendationFingerprint(post);
  if(preferences.feedback?.some(row=>row.id===identity||!!fingerprint&&row.fingerprint===fingerprint))return true;
  if(feedback.some(row=>row.userId===post.userId))return true;
@@ -284,7 +590,7 @@ export function recommendationIsDismissed(post:PostWithAuthor,preferences:Recomm
  const neighbors=post.recommendationVisual?feedback.filter(row=>row.vector&&visualSimilarity(row.vector,post.recommendationVisual!.vector)>=.70).map(row=>visualSimilarity(row.vector!,post.recommendationVisual!.vector)).sort((a,b)=>b-a):[];
  return neighbors.length>=3&&neighbors.slice(0,3).reduce((sum,value)=>sum+value,0)/3>positive+.025;
 }
-export function rankRecommendations(posts:PostWithAuthor[], preferences:RecommendationPreferences, viewerId:string|null, now=Date.now(), history:PostWithAuthor[]=[],rankLimit=Infinity,includeReserved=false):PostWithAuthor[] {
+function rankRecommendations(posts:PostWithAuthor[], preferences:RecommendationPreferences, viewerId:string|null, now=Date.now(), history:PostWithAuthor[]=[],rankLimit=Infinity,includeReserved=false):PostWithAuthor[] {
  return withScoringComparisons(()=>rankRecommendationsInternal(posts,preferences,viewerId,now,history,rankLimit,includeReserved));
 }
 /** Home recommendations deliberately do not inspect captions, tags, alt text or biographies. */
@@ -445,7 +751,7 @@ function rankRecommendationsInternal(posts:PostWithAuthor[], preferences:Recomme
 }
 const preferenceKey=(viewerId:string|null)=>`lime_recommendation_likes:${viewerId ?? 'guest'}`;
 const restoredLikes=new Map<string,{raw:string;posts:(PostWithAuthor&{engagedAt?:string})[]}>();
-export function readRecommendationLikes(viewerId:string|null):(PostWithAuthor & {engagedAt?:string})[] {
+function readRecommendationLikes(viewerId:string|null):(PostWithAuthor & {engagedAt?:string})[] {
   try {
    const key=preferenceKey(viewerId),raw=localStorage.getItem(key)??'[]',previous=restoredLikes.get(key);
    if(previous?.raw===raw)return applyCachedRecommendationVisuals(previous.posts);
@@ -455,13 +761,13 @@ export function readRecommendationLikes(viewerId:string|null):(PostWithAuthor & 
   } catch {return [];}
 }
 const likedIdsKey=(viewerId:string|null)=>`lime_recommendation_liked_ids:${viewerId ?? 'guest'}`;
-export function readRecommendationLikedIds(viewerId:string|null):string[] {
+function readRecommendationLikedIds(viewerId:string|null):string[] {
   try {
     const data=JSON.parse(localStorage.getItem(likedIdsKey(viewerId)) ?? '[]');
     return Array.isArray(data)?data.filter((id):id is string=>typeof id==='string').slice(0,3000):[];
   } catch {return [];}
 }
-export function recordRecommendationLike(post:PostWithAuthor,liked:boolean,viewerId:string|null,eventAt?:string) {
+function recordRecommendationLike(post:PostWithAuthor,liked:boolean,viewerId:string|null,eventAt?:string) {
  recordRecommendationEngagement(post,viewerId,'like',liked);
   // Consumed IDs outlive the small content sample used to learn current interests.
   try {
@@ -477,3 +783,52 @@ export function recordRecommendationLike(post:PostWithAuthor,liked:boolean,viewe
     localStorage.setItem(preferenceKey(viewerId),JSON.stringify(current.slice(0,100)));
   } catch { /* A disabled/full local store must not fail a successful like. */ }
 }
+
+export { selectRecommendationLikeSamples };
+export { recommendationTerms };
+export { addRecommendationInterest };
+export { recommendationQueries };
+export { readRecommendationImpressions };
+export { recordRecommendationImpression };
+export { readRecommendationDeliveries };
+export { recordRecommendationDelivery };
+export { selectRecommendationPage };
+export { scoreRecommendation };
+export { recommendationNeedsPersonalMediaEvidence };
+export { rejectedRecommendationTopics };
+export { isRecommendationAuthorRejected };
+export { recommendationIsDismissed };
+export { rankRecommendations };
+export { readRecommendationLikes };
+export { readRecommendationLikedIds };
+export { recordRecommendationLike };
+export type { RecommendationFeedback };
+export type { RecommendationPreferences };
+export type { RecommendationScore };
+export { recommendationText };
+export { recommendationTopicSignals };
+export { hasCuratedArtworkSource };
+export { hasDeclaredArtworkContext };
+export { recommendationMatchesFollowedTopics };
+export { recommendationTopicAffinity };
+export { topicAuthorCandidates };
+export { recommendationOriginLanguages };
+export { recommendationIdentity };
+export { recommendationFingerprint };
+export { isDeclaredGeneratedArt };
+export { isUnrelatedCryptoRecommendation };
+export { recommendationIsEligible };
+export { recordRecommendationEngagement };
+export type { RecommendationAction };
+export { topicPostRelevance };
+export { rankTopicPosts };
+export { preserveRecommendationHistory };
+export { uniqueRecommendationPosts };
+export { readRecommendationReserve };
+export { saveRecommendationReserve };
+export { clearRecommendationReserve };
+export { applyCatalogRecommendationVisuals };
+export { parseRecommendationCatalog };
+export { readRecommendationCatalog };
+export { RECOMMENDATION_CATALOG_VERSION };
+export { RECOMMENDATION_CATALOG_MAX_AGE };

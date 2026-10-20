@@ -1,9 +1,9 @@
 import { act, cleanup, render, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { useRecommendationImpressions } from "@/hooks/useRecommendationImpressions";
+import { useRecommendationImpressions } from "@/hooks/useRecommendedFeed";
 import { readRecommendationImpressions } from "@/lib/recommendations";
-import { useTrendViews, readTrendViews } from "@/hooks/useTrendViews";
-import { useTimelineContinuation } from "@/hooks/useRecommendationImages";
+import { useTrendViews, readTrendViews } from "@/hooks/useTopics";
+import { useTimelineContinuation } from "@/hooks/useRecommendedFeed";
 
 describe("useRecommendationImpressions", () => {
 let callback:IntersectionObserverCallback;

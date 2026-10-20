@@ -43,7 +43,7 @@ test('production startup, repeated launches and cached shell survive a server ou
   const cached = await page.evaluate(async () => (await Promise.all(
     (await caches.keys()).map(async name => (await (await caches.open(name)).keys()).map(request => request.url))
   )).flat());
-  const optionalEngine = /\/(?:AgoraRTC|pdfjs|three\.|three-vrm|ChatPage|Settings|MediaViewer|spaceMusicScore|draco|.*Loader-|space-waiting\.mp3)/;
+  const optionalEngine = /\/(?:LimeMap|DirectMessages|hls-|AgoraRTC|pdfjs|three\.|three-vrm|ChatPage|Settings|MediaViewer|spaceMusicScore|space-spectrum|draco|.*Loader-|space-waiting\.mp3)/;
   expect(cached.filter(url => optionalEngine.test(url))).toEqual([]);
   expect(requests.filter(url => optionalEngine.test(url))).toEqual([]);
   for (let launch = 0; launch < 3; launch++) {
@@ -55,12 +55,19 @@ test('production startup, repeated launches and cached shell survive a server ou
   const settingsUrl = `/RaimuNoteSNS.github.io/assets/${settingsAsset}`;
   expect(await page.evaluate(async url => (await fetch(url)).status, settingsUrl)).toBe(200);
   await expect.poll(() => page.evaluate(async url => !!(await caches.match(url)), settingsUrl)).toBe(true);
+  const spectrumAsset = readdirSync('dist/assets').find(name => /^space-spectrum-.*\.gz$/.test(name))!;
+  expect(spectrumAsset).toBeTruthy();
+  const spectrumUrl = `/RaimuNoteSNS.github.io/assets/${spectrumAsset}`;
+  const spectrumSize = await page.evaluate(async url => (await (await fetch(url)).arrayBuffer()).byteLength, spectrumUrl);
+  expect(spectrumSize).toBeGreaterThan(8_000_000);
+  await expect.poll(() => page.evaluate(async url => !!(await caches.match(url)), spectrumUrl)).toBe(true);
   // Playwright 1.63 WebKit rejects even locally fulfilled SW requests with setOffline.
   // https://github.com/microsoft/playwright/issues/42775
   // Stop the origin for both engines; also emulate network loss in Chrome.
   await stopServer();
   if (browserName === 'chromium') await context.setOffline(true);
   expect(await page.evaluate(async url => (await fetch(url)).status, settingsUrl)).toBe(200);
+  expect(await page.evaluate(async url => (await (await fetch(url)).arrayBuffer()).byteLength, spectrumUrl)).toBe(spectrumSize);
   await page.reload();
   await expect(page.getByRole('button', { name: 'ログインする', exact: true })).toBeVisible();
   expect(errors).toEqual([]);

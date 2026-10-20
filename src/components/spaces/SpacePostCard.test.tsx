@@ -1,11 +1,17 @@
+vi.mock("@/api/users", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/api/users")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/api/users")>(), spaceRpc: rpc}))(importOriginal)};
+});
+
+
 import { render, screen, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { SpaceContext } from "@/components/spaces/SpaceProvider";
-import { SpacePostCard } from './SpacePostCard';
-import { spaceLinkIn } from "@/lib/postPresentation";
+import { SpacePostCard } from "@/components/spaces/SpaceProvider";
+import { spaceLinkIn } from "@/lib/utils";
 const rpc = vi.hoisted(() => vi.fn());
-vi.mock('@/api/spaces', () => ({ spaceRpc: rpc }));
+
 const room = { id: 'demo', title: '夜の雑談', host_id: 'host', speaker_policy: 'host' as const, profiles: { display_name: 'ホスト', username: 'lime', avatar_url: '' }, is_active: true };
 beforeEach(() => rpc.mockResolvedValue(room));
 function mount(joinedId?: string) {

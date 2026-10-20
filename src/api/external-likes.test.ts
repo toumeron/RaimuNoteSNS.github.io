@@ -2,7 +2,7 @@ import {beforeEach,describe,expect,it,vi} from 'vitest';
 const rpc=vi.hoisted(()=>vi.fn());
 vi.mock('@/lib/currentUser',()=>({getCurrentUserId:async()=> 'viewer'}));
 vi.mock('@/lib/supabase',()=>({supabase:{rpc}}));
-import {externalLikeSnapshot,getExternalLikeState,setExternalLike} from './external-likes';
+import { externalLikeSnapshot, getExternalLikeState, setExternalLike } from "@/api/external-posts";
 const post:any={id:'bsky:at://did:plc:artist/app.bsky.feed.post/abc',userId:'bsky:did:plc:artist',visibility:'public',content:'',imageUrls:['https://example.com/art.jpg'],createdAt:'2026-10-09',likesCount:3,author:{id:'artist',username:'artist',isOfficial:true,token:'secret'},token:'secret'};
 beforeEach(()=>rpc.mockReset());
 describe('cloud external likes',()=>{
@@ -28,4 +28,11 @@ describe('cloud external likes',()=>{
  });
  it('rejects state reads queued for a different signed-in account',async()=>{await expect(getExternalLikeState('post','other-viewer')).rejects.toThrow('Account changed');expect(rpc).not.toHaveBeenCalled();});
  it('propagates failures instead of claiming a successful like',async()=>{rpc.mockResolvedValue({data:null,error:new Error('write failed')});await expect(setExternalLike(post,true)).rejects.toThrow('write failed');});
+});
+
+it('preserves bounded public quote trees and portrait dimensions without saving private parents',()=>{
+ const parent={...post,id:'bsky:at://did:plc:artist/app.bsky.feed.post/parent',content:'parent'};
+ const snapshot=externalLikeSnapshot({...post,isQuote:true,parentId:parent.id,parentPost:parent,imageDimensions:[{width:600,height:900}]});
+ expect(snapshot.parentPost?.content).toBe('parent');expect(snapshot.isQuote).toBe(true);expect(snapshot.imageDimensions).toEqual([{width:600,height:900}]);
+ expect(externalLikeSnapshot({...post,isQuote:true,parentPost:{...parent,visibility:'following'}}).parentPost).toBeNull();
 });

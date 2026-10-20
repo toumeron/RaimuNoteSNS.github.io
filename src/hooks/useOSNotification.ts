@@ -1,9 +1,12 @@
-import { getNotificationPreferences, notificationDescription, notificationLink, markNotificationsRead, type NotificationRow } from '@/api/notifications';
-import { useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
-import {refreshNotificationBadge as updateAppBadge} from '@/lib/notificationBadge';
-import {showNotificationToast,dismissNotificationToasts} from '@/lib/notificationToast';
+import { getNotificationPreferences, notificationDescription, notificationLink, markNotificationsRead, type NotificationRow } from "@/api/users";
+import { useEffect, useCallback, useState } from "react";
+import { supabase } from "@/lib/supabase";
+import { refreshNotificationBadge as updateAppBadge, showNotificationToast, dismissNotificationToasts } from "@/lib/registerPwa";
+import { useQuery, useQueryClient, useQueries } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
+import { getAccountReadClient } from "@/lib/accountReadClient";
 
+// useOSNotification
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
 
 type PushSubscriptionWithKeys = PushSubscription & {
@@ -68,7 +71,25 @@ function getSubscriptionKey(subscription: PushSubscriptionWithKeys, keyName: Pus
   return arrayBufferToBase64Url(subscription.getKey?.(keyName) ?? null);
 }
 
-async function savePushSubscription(currentUserId: string) {
+let pushSave: {owner: string; promise: Promise<boolean>} | undefined;
+let savedPush: {owner: string; fingerprint: string; at: number} | undefined;
+function savePushSubscription(currentUserId: string): Promise<boolean> {
+  if (pushSave?.owner === currentUserId) return pushSave.promise;
+  // Serialise account changes: an older registration must not take ownership
+  // of the same browser endpoint after a newer account has saved it.
+  const previous = pushSave?.promise;
+  const promise = (async () => {
+    if (previous) await previous;
+    return persistPushSubscription(currentUserId);
+  })();
+  const work = {owner: currentUserId, promise};
+  pushSave = work;
+  const done = () => { if (pushSave === work) pushSave = undefined; };
+  void promise.then(done, done);
+  return promise;
+}
+
+async function persistPushSubscription(currentUserId: string) {
   if (!isPushSupported()) return false;
 
   if (!VAPID_PUBLIC_KEY) {
@@ -111,6 +132,11 @@ async function savePushSubscription(currentUserId: string) {
       return false;
     }
 
+    const {data: {session}} = await supabase.auth.getSession();
+    if (session?.user.id !== currentUserId) return false;
+    const fingerprint = JSON.stringify([subscription.endpoint, p256dh, auth, navigator.userAgent]);
+    if (savedPush?.owner === currentUserId && savedPush.fingerprint === fingerprint && Date.now() - savedPush.at < 15 * 60_000) return true;
+
     // 同じブラウザ(endpoint)で別アカウントにログインし直した場合、既存行が別ユーザーのものだと
     // RLSでupsertが弾かれる(42501)。そのため、endpointを現在のユーザーに付け替えて保存する
     // SECURITY DEFINER のDB関数(supabase_fix_push_subscriptions.sql)経由で保存する。
@@ -126,6 +152,7 @@ async function savePushSubscription(currentUserId: string) {
       return false;
     }
 
+    savedPush = {owner: currentUserId, fingerprint, at: Date.now()};
     return true;
   } catch (error) {
     console.error('Save push subscription failed:', error);
@@ -134,7 +161,7 @@ async function savePushSubscription(currentUserId: string) {
 }
 
 // プロフィールのベルボタン(usePostNotifications.ts)からも使うため export している。
-export async function requestPermissionAndSubscribe(currentUserId: string) {
+async function requestPermissionAndSubscribe(currentUserId: string) {
   if (!isPushSupported()) return false;
 
   try {
@@ -205,7 +232,7 @@ async function showRealtimeOSNotification({
   }
 }
 
-export function useOSNotification(currentUserId: string | null) {
+function useOSNotification(currentUserId: string | null) {
   useEffect(() => {
     if (!currentUserId) return;
 
@@ -339,3 +366,158 @@ export function useOSNotification(currentUserId: string | null) {
     };
   }, [currentUserId]);
 }
+
+// usePostNotifications
+type PostNotificationToggleResult =
+  | { ok: true; enabled: boolean }
+  | { ok: false; reason: 'login' | 'unsupported' | 'denied' | 'push-failed' | 'db-failed' };
+
+const queryKeyFor = (myId?: string, targetUserId?: string) => ['post-notification-subscription', myId, targetUserId];
+
+function isNotificationApiAvailable() {
+  return (
+    typeof window !== 'undefined' &&
+    'Notification' in window &&
+    'serviceWorker' in navigator &&
+    'PushManager' in window
+  );
+}
+
+/**
+ * 指定ユーザーの「新しい投稿を通知する」ON/OFF状態と切り替え処理。
+ * targetUserId が undefined のときは何も取得しない。
+ */
+function usePostNotificationSubscription(targetUserId?: string, external?: {provider:'bluesky'|'misskey';actor:string;name:string;avatarUrl:string}) {
+  const { user: me } = useAuth();
+  const queryClient = useQueryClient();
+  const [isPending, setIsPending] = useState(false);
+
+  const { data: enabled = false } = useQuery({
+    queryKey: queryKeyFor(me?.id, targetUserId),
+    enabled: Boolean(me?.id && targetUserId && me.id !== targetUserId),
+    staleTime: 1000 * 60,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('post_notification_subscriptions')
+        .select('id')
+        .eq('subscriber_id', me!.id)
+        .eq(external ? 'external_actor' : 'target_user_id', external?.actor ?? targetUserId!)
+        .eq('provider', external?.provider ?? 'limenote')
+        .maybeSingle();
+
+      if (error) throw error;
+      return Boolean(data?.id);
+    },
+  });
+
+  // 注意: iOS(Safari/PWA)では Notification.requestPermission() をユーザー操作(タップ)の
+  // 直後に呼ぶ必要がある。そのため、この関数はボタンの onClick から直接呼び、
+  // 通知許可のリクエストを他の await より先に実行している。
+  const toggle = useCallback(async (): Promise<PostNotificationToggleResult> => {
+    if (!me?.id || !targetUserId) return { ok: false, reason: 'login' };
+    if (isPending) return { ok: true, enabled };
+
+    setIsPending(true);
+
+    try {
+      if (enabled) {
+        const { error } = await supabase
+          .from('post_notification_subscriptions')
+          .delete()
+          .eq('subscriber_id', me.id)
+          .eq(external ? 'external_actor' : 'target_user_id', external?.actor ?? targetUserId)
+          .eq('provider', external?.provider ?? 'limenote');
+
+        if (error) {
+          console.error('Disable post notification failed:', error);
+          return { ok: false, reason: 'db-failed' };
+        }
+
+        queryClient.setQueryData(queryKeyFor(me.id, targetUserId), false);
+        void queryClient.invalidateQueries({queryKey:['notification-subscriptions',me.id]});
+        return { ok: true, enabled: false };
+      }
+
+      // Save in-app subscriptions even on devices without Web Push.
+      // Request permission immediately from the gesture when supported.
+      if (isNotificationApiAvailable() && Notification.permission !== 'denied') {
+        await requestPermissionAndSubscribe(me.id);
+      }
+
+      const { error } = await supabase
+        .from('post_notification_subscriptions')
+        // 既に登録済みなら何もしない(ON CONFLICT DO NOTHING)。
+        // DO UPDATE 形式のupsertだと UPDATE 権限とポリシーが必要になり 42501 になるため、
+        // INSERT権限だけで動く ignoreDuplicates を使う。
+        .upsert(
+          external ? {subscriber_id:me.id,provider:external.provider,external_actor:external.actor,target_name:external.name,target_avatar_url:external.avatarUrl} : { subscriber_id: me.id, target_user_id: targetUserId, provider:'limenote' },
+          external ? {ignoreDuplicates:true} : { onConflict: 'subscriber_id,target_user_id', ignoreDuplicates: true },
+        );
+
+      if (error) {
+        console.error('Enable post notification failed:', error);
+        return { ok: false, reason: 'db-failed' };
+      }
+
+      queryClient.setQueryData(queryKeyFor(me.id, targetUserId), true);
+      void queryClient.invalidateQueries({queryKey:['notification-subscriptions',me.id]});
+      return { ok: true, enabled: true };
+    } finally {
+      setIsPending(false);
+    }
+  }, [me?.id, targetUserId, enabled, isPending, queryClient, external]);
+
+  return { enabled, isPending, toggle };
+}
+
+// useUnreadNotifications
+const unreadNotificationKey = (userId: string) => ['notification-unread-count', userId] as const;
+async function getUnreadNotificationCount(userId: string, activeUserId?: string, signal?: AbortSignal) {
+  let client = supabase;
+  if (userId !== activeUserId) client = await getAccountReadClient(userId);
+  let request = client.from('notifications').select('id', {count: 'exact', head: true}).eq('user_id', userId).eq('is_read', false);
+  if (signal) request = request.abortSignal(signal);
+  const {count, error} = await request;
+  if (error) throw error;
+  return Math.max(0, count ?? 0);
+}
+
+function useUnreadNotifications(userId?: string, enabled = true) {
+  const {user} = useAuth();
+  const client = useQueryClient();
+  useEffect(() => {
+    const update = (event: Event) => {
+      const detail = (event as CustomEvent<{userId: string; count: number}>).detail;
+      if (userId && detail?.userId === userId && Number.isFinite(detail.count)) {
+        // Cancel stale reads before applying the count produced by a read/new-notification update.
+        void client.cancelQueries({queryKey: unreadNotificationKey(userId), exact: true});
+        client.setQueryData(unreadNotificationKey(userId), Math.max(0, detail.count));
+      }
+    };
+    window.addEventListener('lime-notification-count-changed', update);
+    return () => window.removeEventListener('lime-notification-count-changed', update);
+  }, [client, userId]);
+  return useQuery({queryKey: unreadNotificationKey(userId ?? ''), queryFn: ({signal}) => getUnreadNotificationCount(userId!, user?.id, signal), enabled: enabled && !!userId, staleTime: 30_000, retry: false});
+}
+
+function useSavedAccountUnreadTotal(enabled = true) {
+  const {user, accounts} = useAuth();
+  const active = useUnreadNotifications(user?.id);
+  const others = useQueries({queries: accounts.filter(account => account.id !== user?.id && !account.needsLogin).map(account => ({
+    queryKey: unreadNotificationKey(account.id),
+    queryFn: ({signal}: {signal: AbortSignal}) => getUnreadNotificationCount(account.id, user?.id, signal),
+    enabled: enabled && !!user,
+    staleTime: 30_000,
+    retry: false,
+  }))});
+  return (active.isError ? 0 : active.data ?? 0) + others.reduce((total, result) => total + (result.isError ? 0 : result.data ?? 0), 0);
+}
+
+export { requestPermissionAndSubscribe };
+export { useOSNotification };
+export { usePostNotificationSubscription };
+export type { PostNotificationToggleResult };
+export { getUnreadNotificationCount };
+export { useUnreadNotifications };
+export { useSavedAccountUnreadTotal };
+export { unreadNotificationKey };

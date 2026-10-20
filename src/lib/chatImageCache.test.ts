@@ -1,7 +1,8 @@
+vi.mock("@/lib/offlineBookmarks", async importOriginal => ({...await importOriginal<typeof import("@/lib/offlineBookmarks")>(), readChatImage:async(account:string,url:string)=>records.get(JSON.stringify([account,url])), writeChatImage:async(account:string,url:string,blob:Blob)=>{records.set(JSON.stringify([account,url]),blob)}}));
 import {afterEach,expect,it,vi} from 'vitest';
-import {loadChatImage} from './chatImageCache';
+import { loadChatImage } from "@/lib/aiFriends";
 const records=vi.hoisted(()=>new Map<string,Blob>());
-vi.mock('./chatImageStore',()=>({readChatImage:async(account:string,url:string)=>records.get(JSON.stringify([account,url])),writeChatImage:async(account:string,url:string,blob:Blob)=>{records.set(JSON.stringify([account,url]),blob)}}));
+
 afterEach(()=>{vi.unstubAllGlobals();records.clear()});
 it('deduplicates concurrent downloads and reuses saved bytes only within the same account',async()=>{
  const download=vi.fn(async()=>new Response(new Blob(['image'],{type:'image/png'}),{headers:{'content-type':'image/png'}}));vi.stubGlobal('fetch',download);const url='https://res.cloudinary.com/example/image/upload/photo.png';

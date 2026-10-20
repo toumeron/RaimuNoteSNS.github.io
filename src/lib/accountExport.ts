@@ -1,12 +1,12 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { Home, UserRound, Search, Bell, MessageSquare, Settings as SettingsIcon, CircleEllipsis, Heart, MessageCircle, Plus, Bookmark, Upload, ArrowLeft, X, Pin, Sun, Moon, Mic, Images, BadgeCheck } from 'lucide-react';
-import { RepostIcon } from "@/components/feed/ComposerIcon";
+import { RepostIcon } from "@/components/feed/PostPoll";
 import archiveDesignCss from '../index.css?inline';
 import { supabase } from './supabase';
 import { readOfflineBookmarks } from './offlineBookmarks';
-import { savedPreviewImage } from "@/lib/linkPreview";
-import { stickerUrl, type CustomSticker } from './stickers';
+import { savedPreviewImage } from "@/lib/mediaThumbnail";
+import { stickerUrl, type CustomSticker } from "@/lib/utils";
 import { listModels } from "@/lib/avatarModels";
 type Row = Record<string, unknown>;
 export type AccountArchive = {

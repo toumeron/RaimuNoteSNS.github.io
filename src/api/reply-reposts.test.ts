@@ -11,7 +11,7 @@ vi.mock('@/lib/supabase',()=>({supabase:{from(table:string){
       return Promise.resolve({data:counting?null:data,count:counting?(table==='reply_reposts'?2:1):null,error:db.error?new Error('denied'):null}).then(resolve);
     }};return b;
 }}}));
-import { replyToPost,getProfileReplyReposts,getReplyPost,toggleReplyRepost } from './reply-reposts';
+import { replyToPost, getProfileReplyReposts, getReplyPost, toggleReplyRepost } from "@/api/external-posts";
 beforeEach(()=>{db.existing=false;db.error=false;db.writes=[];});
 it('maps reply author, actual parent recipient and media without copying the root content',()=>{
   expect(replyToPost(reply)).toMatchObject({id:'reply:comment',replyId:'comment',replyPostId:'root',replyToUsername:'parent-author',content:'Reply body',imageUrls:['image.png'],author:{displayName:'Author'}});

@@ -1,5 +1,7 @@
+vi.mock("@/api/search-news", async importOriginal => ({...await importOriginal<typeof import("@/api/search-news")>(), relayTwitterSearch:relay}));
+
 import{afterEach,expect,it,vi}from'vitest';
-const relay=vi.hoisted(()=>vi.fn());vi.mock('./twitterSearchRelay',()=>({relayTwitterSearch:relay}));
+const relay=vi.hoisted(()=>vi.fn());
 import{searchXPage}from'./fxTwitter';
 afterEach(()=>{vi.unstubAllGlobals();});
 it('uses alternative search on a 404, hydrates at most six posts with current counts, and resumes directly',async()=>{

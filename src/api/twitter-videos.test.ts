@@ -1,9 +1,10 @@
+vi.mock("@/api/recommendations", async importOriginal => ({...await importOriginal<typeof import("@/api/recommendations")>(), getRecommendationPreferences:(...args:unknown[])=>mocks.preferences(...args)}));
 import {beforeEach,expect,it,vi} from 'vitest';
 const mocks=vi.hoisted(()=>({feed:vi.fn(),search:vi.fn(),preferences:vi.fn(),eq:vi.fn(),in:vi.fn(),rows:[] as any[]}));
 vi.mock('@/lib/fxTwitter',()=>({xFeed:(...args:unknown[])=>mocks.feed(...args),searchXPage:(...args:unknown[])=>mocks.search(...args)}));
-vi.mock('./recommendations',()=>({getRecommendationPreferences:(...args:unknown[])=>mocks.preferences(...args)}));
+
 vi.mock('@/lib/supabase',()=>({supabase:{from:()=>{const b={select:()=>b,eq:(...args:unknown[])=>{mocks.eq(...args);return b;},in:(...args:unknown[])=>{mocks.in(...args);return b;},abortSignal:async()=>({data:mocks.rows,error:null})};return b;}}}));
-import {getTwitterVideoPage} from './twitter-videos';
+import { getTwitterVideoPage } from "@/api/search-news";
 const video=(id:string,content='アニメ',hasVideo=true)=>({id,userId:'x-user:123',source:'x',content,languages:['ja'],imageUrls:[],createdAt:new Date().toISOString(),author:{id:'x-user:123',username:'artist@twitter.com'},...(hasVideo?{externalVideo:{playlist:'https://video.example/'+id+'.m3u8',format:'hls',duration:16,width:1280,height:720}}:{})});
 beforeEach(()=>{vi.clearAllMocks();mocks.rows=[{external_profile:{id:'x-user:123'}}];mocks.preferences.mockResolvedValue({authors:{},terms:{},followedTopics:['anime'],dismissedTopics:[]});});
 it('combines followed twitter videos with related discoveries, rejects non-videos/unrelated posts, and preserves pagination',async()=>{

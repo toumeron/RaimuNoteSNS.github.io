@@ -1,7 +1,13 @@
+vi.mock("@/lib/mediaThumbnail", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/lib/mediaThumbnail")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/lib/mediaThumbnail")>(), deleteVideoPost:(id:string)=>mocks.remove(id), uploadPostVideo:vi.fn(), discardPostVideo:vi.fn()}))(importOriginal)};
+});
+
+
 import {beforeEach,expect,it,vi} from 'vitest';
 const mocks=vi.hoisted(()=>({remove:vi.fn(),readError:null as Error|null,writeError:null as Error|null,post:{id:'post',video:{key:'video'}} as {id:string;video:object|null}|null,filters:[] as [string,unknown][],deletes:0}));
 vi.mock('@/lib/currentUser',()=>({getCurrentUserId:async()=> 'owner'}));
-vi.mock('@/lib/postVideoStorage',()=>({deleteVideoPost:(id:string)=>mocks.remove(id),uploadPostVideo:vi.fn(),discardPostVideo:vi.fn()}));
+
 vi.mock('@/lib/supabase',()=>({supabase:{from:()=>{
  let write=false;const builder={select:()=>builder,eq:(key:string,value:unknown)=>{mocks.filters.push([key,value]);return builder;},maybeSingle:()=>builder,delete:()=>{mocks.deletes++;write=true;return builder;},then:(resolve:(value:unknown)=>unknown)=>Promise.resolve({data:write?null:mocks.post,error:write?mocks.writeError:mocks.readError}).then(resolve)};return builder;
 }}}));

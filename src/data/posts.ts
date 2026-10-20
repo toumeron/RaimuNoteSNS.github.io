@@ -1,4 +1,4 @@
-import type { Post } from '@/types';
+import type {Post, User, Comment} from '@/types';
 
 // ダミー投稿データ（新着順は API 層でソート）
 export const postsData: Post[] = [
@@ -125,4 +125,107 @@ export const postsData: Post[] = [
     imageUrls: [],
     createdAt: '2025-01-17T23:18:00Z', likesCount: 86, commentsCount: 7, likedByMe: false, repostsCount: 0, repostedByMe: false,
   },
+];
+
+
+// ダミーユーザー（後でDBから取得）
+export const usersData: User[] = [
+  {
+    id: 'u1',
+    username: 'renako_pink',
+    displayName: 'れな子',
+    bio: 'ピンクとハートが大好き💗 マンガ・アニメ・お絵かき。今日もムリムリ！',
+    avatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=200&h=200&fit=crop',
+    coverUrl: 'https://images.unsplash.com/photo-1557264337-e8a93017fe92?w=1200&h=400&fit=crop',
+    createdAt: '2024-04-01T09:00:00Z',
+  },
+  {
+    id: 'u2',
+    username: 'ayaka_teal',
+    displayName: '綾香',
+    bio: 'カフェ巡り☕とイラスト🎨 ティールカラーが推し色。',
+    avatarUrl: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=200&h=200&fit=crop',
+    coverUrl: 'https://images.unsplash.com/photo-1499209974431-9dddcece7f88?w=1200&h=400&fit=crop',
+    createdAt: '2024-05-12T10:00:00Z',
+  },
+  {
+    id: 'u3',
+    username: 'mikan_03',
+    displayName: 'みかん',
+    bio: '甘いものとお花と猫🐈 ムリムリって言いながら全部やっちゃうタイプ。',
+    avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&h=200&fit=crop',
+    coverUrl: 'https://images.unsplash.com/photo-1490750967868-88aa4486c946?w=1200&h=400&fit=crop',
+    createdAt: '2024-06-20T14:00:00Z',
+  },
+  {
+    id: 'u4',
+    username: 'yuki_snow',
+    displayName: 'ゆき',
+    bio: 'メイド服コレクター🎀 紅茶とクッキーと刺繍。',
+    avatarUrl: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=200&h=200&fit=crop',
+    coverUrl: 'https://images.unsplash.com/photo-1502082553048-f009c37129b9?w=1200&h=400&fit=crop',
+    createdAt: '2024-07-05T08:30:00Z',
+  },
+  {
+    id: 'u5',
+    username: 'hina_ribbon',
+    displayName: 'ひな🎀',
+    bio: 'リボン総選挙開催中。今日もどこかで結んでます。',
+    avatarUrl: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=200&h=200&fit=crop',
+    coverUrl: 'https://images.unsplash.com/photo-1521747116042-5a810fda9664?w=1200&h=400&fit=crop',
+    createdAt: '2024-08-15T11:00:00Z',
+  },
+  {
+    id: 'u6',
+    username: 'kuro_neko',
+    displayName: 'クロ',
+    bio: '黒髪ロング・読書・お抹茶🍵 静かに暮らしてます。',
+    avatarUrl: 'https://images.unsplash.com/photo-1531123897727-8f129e1688ce?w=200&h=200&fit=crop',
+    coverUrl: 'https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1200&h=400&fit=crop',
+    createdAt: '2024-09-01T13:00:00Z',
+  },
+  {
+    id: 'u7',
+    username: 'momo_chu',
+    displayName: 'もも🍑',
+    bio: '推し活と桃と日傘。今日も全力ムリムリ！',
+    avatarUrl: 'https://images.unsplash.com/photo-1487412720507-e7ab37603c6f?w=200&h=200&fit=crop',
+    coverUrl: 'https://images.unsplash.com/photo-1465056836041-7f43ac27dcb5?w=1200&h=400&fit=crop',
+    createdAt: '2024-10-10T15:00:00Z',
+  },
+  {
+    id: 'u8',
+    username: 'sakura_03',
+    displayName: 'さくら',
+    bio: '春が好き🌸 制服とカメラとパステル。',
+    avatarUrl: 'https://images.unsplash.com/photo-1502823403499-6ccfcf4fb453?w=200&h=200&fit=crop',
+    coverUrl: 'https://images.unsplash.com/photo-1490750967868-88aa4486c946?w=1200&h=400&fit=crop',
+    createdAt: '2024-11-22T09:30:00Z',
+  },
+  {
+    id: 'me',
+    username: 'you',
+    displayName: 'あなた',
+    bio: 'はじめまして！ムリムリSNS、今日からはじめます💗',
+    avatarUrl: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=200&h=200&fit=crop',
+    coverUrl: 'https://images.unsplash.com/photo-1557264337-e8a93017fe92?w=1200&h=400&fit=crop',
+    createdAt: '2025-01-15T10:00:00Z',
+  },
+];
+
+
+export const commentsData: Comment[] = [
+  { id: 'c1', postId: 'p1', userId: 'u2', content: 'えっかわいい🍓 場所教えてー！', createdAt: '2025-01-20T14:40:00Z' },
+  { id: 'c2', postId: 'p1', userId: 'u5', content: 'パフェの上のリボン、私が結びたかった🎀', createdAt: '2025-01-20T14:55:00Z' },
+  { id: 'c3', postId: 'p1', userId: 'u7', content: '行きたーーい💗', createdAt: '2025-01-20T15:10:00Z' },
+  { id: 'c4', postId: 'p2', userId: 'u1', content: 'え、絵柄好きすぎる🎨 配信観に行く！', createdAt: '2025-01-20T13:20:00Z' },
+  { id: 'c5', postId: 'p2', userId: 'u8', content: 'ティール、にあいすぎ', createdAt: '2025-01-20T13:35:00Z' },
+  { id: 'c6', postId: 'p3', userId: 'u4', content: 'むちむちで天才……🐈‍⬛💕', createdAt: '2025-01-20T12:00:00Z' },
+  { id: 'c7', postId: 'p3', userId: 'u6', content: 'うちの子もこの顔します', createdAt: '2025-01-20T12:30:00Z' },
+  { id: 'c8', postId: 'p5', userId: 'u3', content: 'ピンク派🎀💗', createdAt: '2025-01-20T09:15:00Z' },
+  { id: 'c9', postId: 'p5', userId: 'u6', content: '黒のリボンも候補に……🖤', createdAt: '2025-01-20T09:25:00Z' },
+  { id: 'c10', postId: 'p7', userId: 'u1', content: 'おめでとーーー🎉🎉🎉', createdAt: '2025-01-19T20:55:00Z' },
+  { id: 'c11', postId: 'p7', userId: 'u5', content: 'よかったね本当に💗 私も一緒に泣いた', createdAt: '2025-01-19T21:00:00Z' },
+  { id: 'c12', postId: 'p15', userId: 'u2', content: 'ようこそー！よろしくね💗', createdAt: '2025-01-18T15:10:00Z' },
+  { id: 'c13', postId: 'p15', userId: 'u4', content: 'フォローしました🎀', createdAt: '2025-01-18T15:20:00Z' },
 ];

@@ -49,7 +49,7 @@ it('rejects metadata-only replies when both providers have no visible answer',as
 });
 
 it('delivers a visible LimeAI reply through the real frontend SSE parser after server failover',async()=>{
- const {streamChatWithFallback}=await import('./chatModelFallback');
+ const {streamChatWithFallback}=await import("@/lib/aiFriends");
  const fetcher=vi.fn().mockResolvedValueOnce(stream('<image-query>noodles</image-query>')).mockResolvedValueOnce(stream('<image-query>noodles</image-query>麺料理の説明です。'));vi.stubGlobal('fetch',fetcher);
  let received='';await streamChatWithFallback({model:'fast',retry:false,request:()=>requestModelWithFailover('groq-key',{stream:true,messages:[]},config,undefined,visibleAnswer),onEvent:event=>{received+=event.choices?.[0]?.delta?.content??'';}});
  expect(parseFriendResponse(received).reply).toBe('麺料理の説明です。');expect(fetcher).toHaveBeenCalledTimes(2);

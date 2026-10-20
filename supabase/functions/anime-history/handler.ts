@@ -1,4 +1,4 @@
-import {AnnictCatalog,animeEntry,animeEpisodeNumber,animeTitleQueries,exactAnimeWork,importWorkTitle,parseAnimeImport,fetchAnimeArtwork,type AnimeHistoryState,type AnimeHistoryEntry} from '../_shared/animeHistory.ts';
+import {AnnictCatalog,animeEntry,animeEpisodeNumber,animeTitleQueries,parseAnimeImport,fetchAnimeArtwork,type AnimeHistoryState,type AnimeHistoryEntry} from '../_shared/animeHistory.ts';
 const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization, apikey, content-type, x-client-info','Access-Control-Allow-Methods':'POST, OPTIONS','Cache-Control':'no-store'};
 const reply=(status:number,body:unknown)=>Response.json(body,{status,headers:cors});
 
@@ -52,7 +52,7 @@ export function createAnimeHistoryHandler(deps:AnimeHandlerDependencies){return 
   }
   if(body.op==='resolve'){
    const items=parseAnimeImport({format:'limenote-anime-history',version:1,items:body.items});if(items.length>10)return reply(400,{error:'照合は10件ずつ実行してください'});
-   const rows=[];for(const item of items){const title=importWorkTitle(item),works=title.length>=2?await catalog.search(title):[];const match=exactAnimeWork(title,works);let episode=null;if(match)episode=await catalog.episodeForText(match.id,item.episodeText||item.title);rows.push({item,work:match,episode,candidates:works.slice(0,10),ambiguous:!match});}
+   const rows=[];for(const item of items)rows.push({item,...await catalog.resolveImport(item)});
    // Resolution is read-only. The user chooses which records to save.
    return reply(200,{rows});
   }

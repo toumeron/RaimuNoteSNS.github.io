@@ -1,11 +1,16 @@
+vi.mock("@/api/users", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/api/users")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/api/users")>(), deleteDirectMessage:vi.fn(), toggleDirectReaction:vi.fn()}))(importOriginal)};
+});
+
 import {afterEach,expect,it,vi} from 'vitest';
 import {cleanup,fireEvent,render,screen} from '@testing-library/react';
-import { FriendPhoto } from "@/components/chat/DirectChatMessage";
-import {DirectChatMessage} from './DirectChatMessage';
-import {appendFriendPhoto} from '../../../supabase/functions/_shared/friendImages';
+import { FriendPhoto } from "@/components/chat/FriendProfile";
+import { DirectChatMessage } from "@/components/chat/FriendProfile";
+import { appendFriendPhoto } from "./../../../supabase/functions/_shared/chatContext.ts";
 const viewer=vi.hoisted(()=>vi.fn());
 vi.mock('@/components/media/openMediaViewer',()=>({openMediaViewer:viewer}));
-vi.mock('@/api/directMessages',()=>({deleteDirectMessage:vi.fn(),toggleDirectReaction:vi.fn()}));
+
 const photo={url:'https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a1/Noodles.jpg/960px-Noodles.jpg',sourceUrl:'https://commons.wikimedia.org/wiki/File:Noodles.jpg',title:'Noodles.jpg',artist:'Photographer',license:'CC BY-SA 4.0'};
 afterEach(()=>{cleanup();vi.clearAllMocks()});
 it('group friend messages display real photo metadata and use the existing viewer',()=>{

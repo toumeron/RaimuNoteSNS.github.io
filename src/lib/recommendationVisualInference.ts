@@ -1,22 +1,70 @@
-import type {PostWithAuthor} from '@/types';
-import {type TopicId} from './topics';
-import {classifyRecommendationVisual,readVisualCache,writeVisualCache,recommendationImageIdentity,type RecommendationVisual} from './recommendationVisual';
-import {isDeferredPrivateMedia,resolvePrivateMediaUrl} from './privateMediaFetch';
-import { prepareRecommendationImage, recommendationThumbnailUrl } from "@/lib/recommendationVisualQueue";
+import { type PostWithAuthor } from "@/types/index";
+import { type TopicId } from "@/lib/topics";
+import { classifyRecommendationVisual, readVisualCache, writeVisualCache, recommendationImageIdentity, type RecommendationVisual } from "@/lib/recommendationVisual";
+import { isDeferredPrivateMedia, resolvePrivateMediaUrl } from "@/lib/privateMediaFetch";
 
+// recommendationVisualQueue
+/** Fetch a few images concurrently, but keep the model and decoded pixels serial. */
+function createRecommendationVisualQueue<Context,Input,Prepared,Output>(options:{
+ load:()=>Promise<Context>;
+ prepare:(input:Input)=>Promise<Prepared>;
+ infer:(context:Context,prepared:Prepared,input:Input)=>Promise<Output>;
+ capacity?:number;
+}){
+ const capacity=options.capacity??3;
+ let active=0,tail:Promise<unknown>=Promise.resolve();
+ const waiting:Array<()=>void>=[];
+ const acquire=()=>new Promise<void>(resolve=>{
+  const start=()=>{active++;resolve();};
+  if(active<capacity)start();else waiting.push(start);
+ });
+ return async(input:Input):Promise<Output>=>{
+  await acquire();
+  try{
+   // Model initialization and image/PDS reads do not depend on each other.
+   const [context,prepared]=await Promise.all([options.load(),options.prepare(input)]);
+   const result=tail.then(()=>options.infer(context,prepared,input));
+   tail=result.catch(()=>{});
+   return await result;
+  }finally{active--;waiting.shift()?.();}
+ };
+}
+
+// recommendationImageInput
+/** CLIP reads 224 px. Fetching multi-megabyte originals adds no useful detail. */
+function recommendationThumbnailUrl(raw:string):string|null{
+ try{
+  const url=new URL(raw);
+  if(url.protocol!=='https:')return null;
+  if(url.hostname==='cdn.bsky.app'&&/^\/img\/feed_(fullsize|thumbnail)\/plain\//.test(url.pathname)){
+   url.pathname=url.pathname.replace('/feed_fullsize/','/feed_thumbnail/');return url.href;
+  }
+  if(url.hostname==='pbs.twimg.com'&&url.pathname.startsWith('/media/')){url.searchParams.set('name','small');return url.href;}
+ }catch{/* Other media keep their existing reader. */}
+ return null;
+}
+
+/** Public pixels never consume the URL-preview/search quota. The worker reads
+ * Bluesky blobs from the creator's public PDS when the CDN lacks CORS. */
+async function prepareRecommendationImage(raw:string,signal?:AbortSignal):Promise<{url:string;release:()=>void}>{
+ if(signal?.aborted)throw signal.reason;
+ return {url:recommendationThumbnailUrl(raw)??raw,release:()=>{}};
+}
+
+// recommendationVisualInference
 export {classifyRecommendationVisual} from './recommendationVisual';
 
 let worker:Worker|undefined;
 let idleTimer:ReturnType<typeof setTimeout>|undefined;
-export function idleRecommendationVisualWorker(){clearTimeout(idleTimer);idleTimer=setTimeout(releaseRecommendationVisualWorker,120000);}
-export function warmRecommendationVisualWorker(){if(typeof Worker==='undefined')return;visualWorker().postMessage({warm:true});idleRecommendationVisualWorker();}
+function idleRecommendationVisualWorker(){clearTimeout(idleTimer);idleTimer=setTimeout(releaseRecommendationVisualWorker,120000);}
+function warmRecommendationVisualWorker(){if(typeof Worker==='undefined')return;visualWorker().postMessage({warm:true});idleRecommendationVisualWorker();}
 // A failed public image must not be fetched again on every scroll page.
 const unavailableUntil=new Map<string,number>();
 const FAILURE_COOLDOWN=60_000;
 let nextId=0;
 const pending=new Map<number,{resolve:(vector:number[])=>void;reject:(error:Error)=>void}>();
 /** Release the WASM heap and model after a bounded analysis job. */
-export function releaseRecommendationVisualWorker(){
+function releaseRecommendationVisualWorker(){
  clearTimeout(idleTimer);
  if(pending.size)return;
  worker?.terminate();worker=undefined;
@@ -61,7 +109,7 @@ async function analyze(url:string,signal?:AbortSignal):Promise<RecommendationVis
 }
 /** Only on a requested feed page, in a worker. No upload of image pixels,
  * server inference, paid API, background loop or database is used. */
-export async function enrichRecommendationVisuals(posts:PostWithAuthor[],followed:TopicId[],signal?:AbortSignal,onChecked?:(post:PostWithAuthor)=>void,budget=32):Promise<PostWithAuthor[]> {
+async function enrichRecommendationVisuals(posts:PostWithAuthor[],followed:TopicId[],signal?:AbortSignal,onChecked?:(post:PostWithAuthor)=>void,budget=32):Promise<PostWithAuthor[]> {
  if(typeof Worker==='undefined'){const rows=posts.map(post=>post.imageUrls.length&&!post.recommendationVisual?{...post,recommendationVisualStatus:'unavailable' as const}:post);rows.forEach(post=>onChecked?.(post));return rows;}
  const rows=posts.map(post=>({...post}));
  // Round-robin sources prevents a large feed from consuming the image budget.
@@ -97,3 +145,11 @@ export async function enrichRecommendationVisuals(posts:PostWithAuthor[],followe
  // cannot be certified as character artwork by a tag or a source alone.
  return rows;
 }
+
+export { idleRecommendationVisualWorker };
+export { warmRecommendationVisualWorker };
+export { releaseRecommendationVisualWorker };
+export { enrichRecommendationVisuals };
+export { createRecommendationVisualQueue };
+export { recommendationThumbnailUrl };
+export { prepareRecommendationImage };

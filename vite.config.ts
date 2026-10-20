@@ -144,7 +144,7 @@ export default defineConfig(({ mode }) => {
         // Audio, document and 3D engines are cached only when the feature is opened.
         // Do not download them all during installation on an iOS home-screen launch.
         globIgnores: [
-          "decoders/**", "assets/AgoraRTC*", "assets/pdfjs*", "assets/three*",
+          "decoders/**", "assets/LimeMap-*", "assets/LimeMaps-*", "assets/DirectMessages-*", "assets/hls-*", "assets/AgoraRTC*", "assets/pdfjs*", "assets/three*",
           "assets/*Loader-*", "assets/draco*", "assets/meshopt*",
           "assets/mmdAvatar-*", "assets/avatarRuntime-*",
           "assets/spaceMusicScore-*", "assets/ChatPage-*", "assets/Settings-*", "assets/MediaViewer-*",
@@ -156,7 +156,7 @@ export default defineConfig(({ mode }) => {
         ],
         runtimeCaching: [{
           urlPattern: ({ url, sameOrigin }) => sameOrigin &&
-            /\/RaimuNoteSNS\.github\.io\/(assets|decoders)\/.*\.(js|css|wasm)$/.test(url.pathname),
+            /\/RaimuNoteSNS\.github\.io\/(assets|decoders)\/.*\.(js|css|wasm|gz)$/.test(url.pathname),
           handler: "CacheFirst",
           options: {
             cacheName: "lime-feature-assets-v1",

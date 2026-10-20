@@ -1,14 +1,25 @@
+vi.mock("@/hooks/useFeed", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/hooks/useFeed")>();
+ const overrides = [
+  await (() => ({ useComments: () => ({ data: [], isLoading: false }) }))(),
+  await (() => ({ useFollowStats: () => ({ data: {} }) }))()
+ ];
+ return Object.assign({}, actual, ...overrides.map(values => Object.fromEntries(Object.entries(values).filter(([key, value]) => value !== actual[key]))));
+});
+vi.mock("@/components/feed/RepostButton", async importOriginal => ({...await importOriginal<typeof import("@/components/feed/RepostButton")>(), Commentlikebutton: ({ commentId }: { commentId: string }) => <button onClick={() => db.likes(commentId)}>いいね</button>}));
+vi.mock("@/components/profile/ProfileHeader", async importOriginal => ({...await importOriginal<typeof import("@/components/profile/ProfileHeader")>(), FollowButton: () => null}));
+vi.mock("@/components/feed/QuotedPost", async importOriginal => ({...await importOriginal<typeof import("@/components/feed/QuotedPost")>(), PostImages: ({ urls }: { urls: string[] }) => <img src={urls[0]} alt="返信画像" />}));
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 const db = vi.hoisted(() => ({ likes: vi.fn() }));
 vi.mock('@/lib/currentUser', () => ({ getCurrentUserId: async () => 'author' }));
-vi.mock('@/hooks/useComments', () => ({ useComments: () => ({ data: [], isLoading: false }) }));
-vi.mock('@/hooks/useProfile', () => ({ useFollowStats: () => ({ data: {} }) }));
-vi.mock('@/components/profile/FollowButton', () => ({ FollowButton: () => null }));
-vi.mock('@/components/post/Commentlikebutton', () => ({ Commentlikebutton: ({ commentId }: { commentId: string }) => <button onClick={() => db.likes(commentId)}>いいね</button> }));
-vi.mock('@/components/feed/PostImages', () => ({ PostImages: ({ urls }: { urls: string[] }) => <img src={urls[0]} alt="返信画像" /> }));
+
+
+
+
+
 vi.mock('@/lib/supabase', () => ({ supabase: {
   from: () => {
     const query = { select: () => query, eq: () => query, in: () => query, order: () => query, then: (resolve: (value: unknown) => void) => Promise.resolve({ data: [], error: null }).then(resolve) }; return query;

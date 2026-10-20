@@ -1,7 +1,13 @@
+vi.mock("@/lib/mediaThumbnail", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/lib/mediaThumbnail")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/lib/mediaThumbnail")>(), resolvePostVideo:(...args:unknown[])=>mocks.resolve(...args), resolvePostVideoPoster:(...args:unknown[])=>mocks.poster(...args)}))(importOriginal)};
+});
+
+
 import {render,screen,fireEvent,waitFor,cleanup} from '@testing-library/react';
 import {afterEach,beforeEach,it,expect,vi} from 'vitest';
 const mocks=vi.hoisted(()=>({resolve:vi.fn(),poster:vi.fn()}));
-vi.mock('@/lib/postVideoStorage',()=>({resolvePostVideo:(...args:unknown[])=>mocks.resolve(...args),resolvePostVideoPoster:(...args:unknown[])=>mocks.poster(...args)}));
+
 import {PostVideoPlayer} from './PostVideoPlayer';
 let running=false;
 beforeEach(()=>{localStorage.clear();running=false;vi.clearAllMocks();vi.stubGlobal('IntersectionObserver',class{observe(){}disconnect(){}});vi.spyOn(HTMLMediaElement.prototype,'paused','get').mockImplementation(()=>!running);vi.spyOn(HTMLMediaElement.prototype,'play').mockImplementation(async function(this:HTMLMediaElement){await Promise.resolve();running=true;this.dispatchEvent(new Event('play'));});vi.spyOn(HTMLMediaElement.prototype,'pause').mockImplementation(function(this:HTMLMediaElement){running=false;this.dispatchEvent(new Event('pause'));});});
@@ -38,13 +44,13 @@ it('hides focused controls on pointer leave and shows only remaining time and so
  fireEvent.click(screen.getByRole('button',{name:'一時停止'}));fireEvent.pointerLeave(root);
  expect(screen.getByRole('button',{name:'動画を再生'})).toBeInTheDocument();expect(screen.queryByRole('slider')).not.toBeInTheDocument();
 });
-it('uses the decoded video dimensions when stored metadata has a different aspect ratio',()=>{
+it('keeps the initial frame when decoded video metadata has a different aspect ratio',()=>{
  const view=render(<PostVideoPlayer previewUrl="blob:portrait" video={{duration:16,width:1920,height:1080}}/>);
  const media=view.container.querySelector('video')!;
  Object.defineProperties(media,{videoWidth:{value:1080},videoHeight:{value:1920}});
  fireEvent.loadedMetadata(media);
- expect(media.style.aspectRatio).toBe('1080/1920');
- expect(screen.getByLabelText('投稿動画').style.aspectRatio).toBeFalsy();
+ expect(media.style.aspectRatio).toBe('1920/1080');
+ expect(screen.getByLabelText('投稿動画').style.aspectRatio).toBe('1920/1080');
 });
 it('opens the shared viewer on mobile without inline playback or controls',()=>{
  const descriptor=Object.getOwnPropertyDescriptor(window,'innerWidth')!;
@@ -68,8 +74,9 @@ it('plays an external native-HLS video with one click and never requests Lime st
  Object.defineProperty(media,'duration',{value:138});fireEvent.loadedMetadata(media);expect(screen.getByText('0:00 / 2:18')).toBeInTheDocument();
 });
 
-it('fits decoded portrait dimensions into the inline image-sized frame',()=>{
- const view=render(<PostVideoPlayer previewUrl="blob:portrait" video={{duration:16,width:1920,height:1080}}/>);
+it('reserves portrait dimensions before metadata arrives',()=>{
+ const view=render(<PostVideoPlayer previewUrl="blob:portrait" video={{duration:16,width:1080,height:1920}}/>);
+ expect(screen.getByLabelText('投稿動画').style.width).toContain('270px');
  const media=view.container.querySelector('video')!;Object.defineProperties(media,{videoWidth:{value:1080},videoHeight:{value:1920}});fireEvent.loadedMetadata(media);
  expect(screen.getByLabelText('投稿動画').style.width).toContain('270px');
 });
@@ -87,10 +94,10 @@ it.each([390,1024])('plays quoted portrait videos inline in a landscape crop at 
  try{
   const view=render(<PostVideoPlayer embedded previewUrl="blob:quote" postId="quoted-video" video={{duration:27,width:1080,height:1920}}/>);
   const media=view.container.querySelector('video')!;
-  expect(screen.getByLabelText('投稿動画').style.width).toBe('100%');expect(media.style.aspectRatio).toBe('16/9');expect(media.style.objectFit).toBe('cover');expect(screen.getByText('0:27')).toBeInTheDocument();
+  expect(screen.getByLabelText('投稿動画').style.width).toBe('100%');expect(media.style.aspectRatio).toBe('16/9');expect(media.style.objectFit).toBe('contain');expect(screen.getByText('0:27')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button',{name:'動画を再生'}));
   await screen.findByRole('button',{name:'一時停止'});
-  expect(media.style.aspectRatio).toBe('16/9');expect(media.style.objectFit).toBe('contain');expect(screen.getByLabelText('投稿動画').style.backgroundColor).toBe('black');
+  expect(media.style.aspectRatio).toBe('16/9');expect(media.style.objectFit).toBe('contain');expect(screen.getByLabelText('投稿動画').style.aspectRatio).toBe('16/9');
   expect(opened).not.toHaveBeenCalled();expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
   expect(mocks.resolve).not.toHaveBeenCalled();expect(view.container.querySelector('.post-video-controls')).not.toBeNull();
  }finally{Object.defineProperty(window,'innerWidth',descriptor);window.removeEventListener('lime-open-media-viewer',opened);}
@@ -101,4 +108,53 @@ it('keeps quoted fullscreen video uncropped',()=>{
  const root=screen.getByLabelText('投稿動画'),media=view.container.querySelector('video')!;
  try{Object.defineProperty(document,'fullscreenElement',{configurable:true,value:root});fireEvent(document,new Event('fullscreenchange'));expect(root.style.width).toBe('');expect(media.style.aspectRatio).toBe('1080/1920');}
  finally{if(descriptor)Object.defineProperty(document,'fullscreenElement',descriptor);else delete (document as any).fullscreenElement;}
+});
+
+it('uses native HLS without loading the JavaScript engine when the browser supports it',async()=>{
+ const {attachHls}=await import('./PostVideoPlayer');const media=document.createElement('video');
+ vi.spyOn(media,'canPlayType').mockReturnValue('probably');
+ await attachHls(media,'https://video.example/playlist.m3u8',new AbortController().signal,vi.fn());
+ expect(media.src).toBe('https://video.example/playlist.m3u8');
+ const abort=new AbortController();abort.abort();await expect(attachHls(media,'https://video.example/other.m3u8',abort.signal,vi.fn())).rejects.toHaveProperty('name','AbortError');
+ expect(media.src).toBe('https://video.example/playlist.m3u8');
+});
+it('registers audible playback and lock-screen controls without pausing when the PWA is hidden',async()=>{
+ const {bindBackgroundPlayback}=await import('./PostVideoPlayer');
+ const actions=new Map<string,Function|null>(),audio={type:'auto'},session={metadata:null as unknown,playbackState:'none',setActionHandler:vi.fn((action:string,handler:Function|null)=>actions.set(action,handler)),setPositionState:vi.fn()};
+ Object.defineProperty(navigator,'audioSession',{configurable:true,value:audio});Object.defineProperty(navigator,'mediaSession',{configurable:true,value:session});vi.stubGlobal('MediaMetadata',class{constructor(readonly data:unknown){}});
+ const media=document.createElement('video');let paused=false;
+ Object.defineProperty(media,'paused',{configurable:true,get:()=>paused});Object.defineProperty(media,'duration',{value:60});
+ media.pause=vi.fn(()=>{paused=true;media.dispatchEvent(new Event('pause'));});media.play=vi.fn(async()=>{paused=false;media.dispatchEvent(new Event('play'));});media.currentTime=20;
+ const dispose=bindBackgroundPlayback(media,{title:'投稿動画',artist:'作者'});
+ try{
+  expect(audio.type).toBe('playback');expect(session.playbackState).toBe('playing');expect(session.metadata).toBeTruthy();
+  document.dispatchEvent(new Event('visibilitychange'));expect(media.pause).not.toHaveBeenCalled();
+  actions.get('seekforward')!({seekOffset:5});expect(media.currentTime).toBe(25);
+  actions.get('seekbackward')!({seekOffset:100});expect(media.currentTime).toBe(0);
+  actions.get('seekto')!({seekTime:100});expect(media.currentTime).toBe(60);
+  actions.get('pause')!();expect(paused).toBe(true);expect(audio.type).toBe('auto');
+  await actions.get('play')!();expect(paused).toBe(false);expect(audio.type).toBe('playback');
+ }finally{dispose();delete (navigator as any).audioSession;delete (navigator as any).mediaSession;}
+ expect(session.playbackState).toBe('none');expect(audio.type).toBe('auto');expect([...actions.values()].every(handler=>handler===null)).toBe(true);
+});
+it('does not steal audio focus for muted playback or replace a microphone session',async()=>{
+ const {bindBackgroundPlayback}=await import('./PostVideoPlayer');const audio={type:'play-and-record'},session={metadata:null,playbackState:'none',setActionHandler:vi.fn(),setPositionState:vi.fn()};
+ Object.defineProperty(navigator,'audioSession',{configurable:true,value:audio});Object.defineProperty(navigator,'mediaSession',{configurable:true,value:session});
+ const media=document.createElement('video');Object.defineProperty(media,'paused',{get:()=>false});media.muted=true;
+ const dispose=bindBackgroundPlayback(media);
+ try{expect(session.setActionHandler).not.toHaveBeenCalled();expect(audio.type).toBe('play-and-record');media.muted=false;media.dispatchEvent(new Event('volumechange'));expect(audio.type).toBe('play-and-record');}
+ finally{dispose();delete (navigator as any).audioSession;delete (navigator as any).mediaSession;}
+});
+it('supports Safari presentation-mode PiP when the standard API is unavailable',async()=>{
+ const {supportsVideoPip,requestVideoPip}=await import('./PostVideoPlayer');
+ const media=document.createElement('video')as HTMLVideoElement&{webkitSupportsPresentationMode:(mode:string)=>boolean;webkitSetPresentationMode:ReturnType<typeof vi.fn>};
+ media.webkitSupportsPresentationMode=mode=>mode==='picture-in-picture';media.webkitSetPresentationMode=vi.fn();
+ expect(supportsVideoPip(media)).toBe(true);await requestVideoPip(media);expect(media.webkitSetPresentationMode).toHaveBeenCalledWith('picture-in-picture');
+});
+
+it('streams public external MP4 directly instead of downloading a whole video into memory before playback',async()=>{
+ const fetcher=vi.fn();vi.stubGlobal('fetch',fetcher);
+ const view=render(<PostVideoPlayer postId="external-mp4" video={{duration:16,width:1920,height:1080}} externalVideo={{playlist:'https://video.twimg.com/movie.mp4',format:'mp4',duration:16,width:1920,height:1080}}/>);
+ fireEvent.click(screen.getByRole('button',{name:'動画を再生'}));await waitFor(()=>expect(screen.getByRole('button',{name:'一時停止'})).toBeInTheDocument());
+ expect(view.container.querySelector('video')).toHaveAttribute('src','https://video.twimg.com/movie.mp4');expect(fetcher).not.toHaveBeenCalled();expect(mocks.resolve).not.toHaveBeenCalled();
 });

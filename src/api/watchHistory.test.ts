@@ -3,9 +3,9 @@ import {afterEach,describe,expect,it,vi} from 'vitest';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import {JSDOM} from 'jsdom';
-import {AnnictCatalog,animeEntry,animeEpisodeNumber,animeService,animeTitleQueries,exactAnimeWork,fetchAnimeArtwork,fetchAnimeStreamingLinks,preferredAnimeStreamingUrl,animeStreamingPriority,mentionedAnime,parseAnimeImport,type AnimeWork} from '../../supabase/functions/_shared/animeHistory';
+import {AnnictCatalog,animeEntry,animeEpisodeNumber,animeService,animeTitleQueries,exactAnimeWork,matchImportedAnimeWork,animeImportSearchQueries,importWorkTitle,fetchAnimeArtwork,fetchAnimeYouTubeId,animeYouTubeUrl,animeArtworkUrl,mentionedAnime,parseAnimeImport,type AnimeWork} from '../../supabase/functions/_shared/animeHistory';
 import {createAnimeHistoryHandler} from '../../supabase/functions/anime-history/handler';
-const work:AnimeWork={id:10079,title:'葬送のフリーレン',aliases:['葬送のフリーレン','#frieren'],image:'https://images.example/frieren.jpg',copyright:'',season:'2023年秋',episodesCount:28};
+const work:AnimeWork={id:10079,title:'葬送のフリーレン',aliases:['葬送のフリーレン','#frieren'],image:'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/frieren.jpg',copyright:'',season:'2023年秋',episodesCount:28};
 const apiWork={id:10079,title:work.title,twitter_hashtag:'frieren',images:{recommended_url:work.image},season_name_text:work.season,episodes_count:28};
 afterEach(()=>vi.restoreAllMocks());
 it('matches canonical titles and hashtags without accepting a shorter overlapping sequel or unrelated short word',()=>{
@@ -34,12 +34,12 @@ it('uses fixed Annict endpoints, header authentication and an on-demand cache',a
 it('tries independent artwork providers without forwarding credentials and rejects a different season',async()=>{
  const fetcher=vi.fn(async(url:any,options?:any)=>{
   expect(options?.headers?.Authorization).toBeUndefined();
-  return String(url).includes('anilist')?Response.json({data:{Page:{media:[{title:{native:work.title},seasonYear:2026,bannerImage:'https://bad.example/sequel.jpg'}]}}}):Response.json({data:[{title_japanese:work.title,year:2023,images:{webp:{large_image_url:'https://cdn.myanimelist.net/frieren.webp'}},url:'https://myanimelist.net/anime/52991'}]});
+  return String(url).includes('anilist')?Response.json({data:{Page:{media:[{title:{native:work.title},seasonYear:2026,bannerImage:'https://bad.example/sequel.jpg'}]}}}):Response.json({data:[{title_japanese:work.title,year:2023,images:{webp:{large_image_url:'https://cdn.myanimelist.net/images/anime/frieren.webp'}},url:'https://myanimelist.net/anime/52991'}]});
  });
- const images=await fetchAnimeArtwork(work,fetcher as typeof fetch);expect(images.imageFallbacks).toEqual(['https://cdn.myanimelist.net/frieren.webp']);expect(fetcher).toHaveBeenCalledTimes(2);
+ const images=await fetchAnimeArtwork(work,fetcher as typeof fetch);expect(images.imageFallbacks).toEqual(['https://cdn.myanimelist.net/images/anime/frieren.webp']);expect(fetcher).toHaveBeenCalledTimes(2);
 });
 it('uses matching AniList banner and cover images and tolerates independent provider outages',async()=>{
- const images=await fetchAnimeArtwork(work,async()=>Response.json({data:{Page:{media:[{title:{native:work.title},seasonYear:2023,bannerImage:'https://s4.anilist.co/banner.jpg',coverImage:{extraLarge:'https://s4.anilist.co/cover.jpg'},siteUrl:'https://anilist.co/anime/154587'}]}}}));
+ const images=await fetchAnimeArtwork(work,async()=>Response.json({data:{Page:{media:[{title:{native:work.title},seasonYear:2023,bannerImage:'https://s4.anilist.co/file/anilistcdn/media/anime/banner/frieren.jpg',coverImage:{extraLarge:'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/frieren.jpg'},siteUrl:'https://anilist.co/anime/154587'}]}}}));
  expect(images.imageFallbacks).toHaveLength(2);expect(images.imageCredits?.[0].name).toBe('AniList');
  expect((await fetchAnimeArtwork(work,async()=>{throw new Error('offline');})).imageFallbacks).toEqual([]);
 });
@@ -93,17 +93,15 @@ it('uses AniList independently and rejects a wrong-year match without treating f
  expect(await new AnnictCatalog('fixture',fetcher as typeof fetch).suggest('fuzzy')).toEqual([]);
 });
 
-it('prioritizes Prime Video, ABEMA, d-anime, Nico channels, then Netflix and rejects lookalike hosts',()=>{
- const urls=['https://www.netflix.com/title/81641170','https://ch.nicovideo.jp/bocchi','https://animestore.docomo.ne.jp/animestore/ci_pc?workId=123','https://abema.tv/video/title/1-2','https://www.amazon.co.jp/gp/video/detail/B123'];
- for(let count=urls.length;count>0;count--)expect(preferredAnimeStreamingUrl(work,[],urls.slice(0,count))).toBe(urls[count-1]);
- expect(animeStreamingPriority('https://www.amazon.co.jp.evil.example/movie')).toBeNull();expect(animeStreamingPriority('javascript:alert(1)')).toBeNull();
- expect(preferredAnimeStreamingUrl(work,[],['https://evil.example/movie'])).toBe(`https://www.amazon.co.jp/s?i=instant-video&k=${encodeURIComponent(work.title)}`);
+it('links only to YouTube using a validated trailer ID or an encoded title search',()=>{
+ expect(animeYouTubeUrl(work,'nFljVg8xELU')).toBe('https://www.youtube.com/watch?v=nFljVg8xELU');
+ for(const bad of [null,'https://evil.example/','x&redirect=evil'])expect(animeYouTubeUrl(work,bad)).toBe(`https://www.youtube.com/results?search_query=${encodeURIComponent(`${work.title}`)}`);
 });
-it('uses only streaming links for an unambiguous matching anime and tolerates provider failures',async()=>{
- const data={data:{Page:{media:[{title:{native:work.title},seasonYear:2023,externalLinks:[{type:'STREAMING',url:'https://www.netflix.com/title/123'},{type:'INFO',url:'https://www.amazon.co.jp/book/123'},{type:'STREAMING',url:'https://evil.example/123'}]}]}}};
- expect(await fetchAnimeStreamingLinks(work,async()=>Response.json(data))).toEqual(['https://www.netflix.com/title/123']);
- data.data.Page.media[0].seasonYear=2026;expect(await fetchAnimeStreamingLinks(work,async()=>Response.json(data))).toEqual([]);
- expect(await fetchAnimeStreamingLinks(work,async()=>{throw Error('offline')})).toEqual([]);
+it('uses a trailer only for the matching anime and year, tolerating missing trailers or provider failure',async()=>{
+ const data={data:{Page:{media:[{title:{native:work.title},seasonYear:2023,trailer:{id:'nFljVg8xELU',site:'youtube'}}]}}};
+ expect(await fetchAnimeYouTubeId(work,async()=>Response.json(data))).toBe('nFljVg8xELU');data.data.Page.media[0].seasonYear=2026;expect(await fetchAnimeYouTubeId(work,async()=>Response.json(data))).toBeNull();
+ data.data.Page.media[0].seasonYear=2023;data.data.Page.media[0].trailer.site='other';expect(await fetchAnimeYouTubeId(work,async()=>Response.json(data))).toBeNull();
+ expect(await fetchAnimeYouTubeId(work,async()=>{throw Error('offline')})).toBeNull();
 });
 
 const extractFixture=(url:string,html:string)=>{const dom=new JSDOM(html,{url});try{return vm.runInNewContext(extractor,{document:dom.window.document,location:dom.window.location,URL,URLSearchParams,Date,getComputedStyle:dom.window.getComputedStyle.bind(dom.window)});}finally{dom.window.close();}};
@@ -151,4 +149,55 @@ it('does not expose extension storage to a different origin or unrelated LimeNot
  receive({type:'read-transfer'},{id:'fixture',url:'https://evil.example/RaimuNoteSNS.github.io/watch-history'},reply);
  receive({type:'read-transfer'},{id:'fixture',url:'https://toumeron.github.io/unrelated'},reply);expect(get).not.toHaveBeenCalled();
  receive({type:'read-transfer'},{id:'fixture',url:'http://localhost:8080/RaimuNoteSNS.github.io/u/alice/watch-history'},reply);await vi.waitFor(()=>expect(reply).toHaveBeenCalledWith({ok:true,items:[{title:'test'}]}));
+});
+
+it('preserves Japanese punctuation for Annict import queries and removes only episode/service decorations',()=>{
+ expect(importWorkTitle({title:'私に天使が舞い降りた！'})).toBe('私に天使が舞い降りた！');
+ expect(importWorkTitle({title:'TVアニメ 私に天使が舞い降りた！ 第３話'})).toBe('私に天使が舞い降りた！');
+ expect(importWorkTitle({title:'私に天使が舞い降りた！ （字幕版）'})).toBe('私に天使が舞い降りた！');
+ expect(animeImportSearchQueries({title:'私に天使が舞い降りた! 第1話'})).toContain('私に天使が舞い降りた');
+});
+it('resolves Wataten even when Annict distinguishes full-width and ASCII punctuation, without choosing its movie or OVA',async()=>{
+ const tv={...apiWork,id:6130,title:'私に天使が舞い降りた！'},movie={...apiWork,id:8122,title:'私に天使が舞い降りた！プレシャス・フレンズ'},ova={...apiWork,id:7340,title:'私に天使が舞い降りた！OVA「私がお姉ちゃんだよ」'};
+ const fetcher=vi.fn(async(input:any)=>{const url=new URL(String(input));if(url.hostname!=='api.annict.com')throw Error('External search not needed');return Response.json({works:url.searchParams.get('filter_title')==='私に天使が舞い降りた!'?[]:[ova,tv,movie]});});
+ const catalog=new AnnictCatalog('fixture',fetcher as typeof fetch);
+ const result=await catalog.resolveImport({title:'私に天使が舞い降りた!',episodeText:'',watchedAt:null,source:'abema',sourceUrl:'https://abema.tv/video/title/1-2'});
+ expect(result.work?.id).toBe(6130);expect(result.ambiguous).toBe(false);expect(fetcher).toHaveBeenCalledTimes(2);
+});
+it('matches season spelling variants, retains explicit sequels, and refuses identical-title remakes',()=>{
+ const one={...work,id:1,title:'テストアニメ',aliases:['テストアニメ']},two={...work,id:2,title:'テストアニメ 第2期',aliases:['テストアニメ 第2期']};
+ expect(matchImportedAnimeWork('テストアニメ シーズン1',[one,two])?.id).toBe(1);
+ expect(matchImportedAnimeWork('テストアニメ Season 2',[one,two])?.id).toBe(2);
+ expect(matchImportedAnimeWork('テストアニメ 2nd Season',[one])?.id).toBeUndefined();
+ expect(matchImportedAnimeWork('テストアニメ',[one,{...one,id:3}])).toBeNull();
+ expect(matchImportedAnimeWork('けいおん!!',[{...one,title:'けいおん!',aliases:['けいおん!']},{...two,title:'けいおん!!',aliases:['けいおん!!']}])?.id).toBe(2);
+});
+it('uses expanded external aliases for import resolution when ordinary Annict title search finds nothing',async()=>{
+ const catalog=new AnnictCatalog('fixture',async()=>Response.json({works:[]}));
+ vi.spyOn(catalog,'suggest').mockResolvedValue([{...work,aliases:[...work.aliases,'フリーレン略称']}]);
+ const result=await catalog.resolveImport({title:'フリーレン略称',episodeText:'',watchedAt:null,source:'primevideo',sourceUrl:'https://www.primevideo.com/detail/B12345678'});
+ expect(result.work?.id).toBe(work.id);
+});
+it('routes import resolution through the corrected matcher while leaving resolution read-only',async()=>{
+ const f=fixture(),item={title:work.title,episodeText:'',watchedAt:null,source:'abema',sourceUrl:'https://abema.tv/video/title/1-2'};
+ const response=await call(f.handler,{op:'resolve',items:[item]});expect(response.status).toBe(200);const data=await response.json();expect(data.rows[0].work.id).toBe(work.id);expect(f.rpc).not.toHaveBeenCalled();
+});
+
+it('rejects parking and unverified official-site images even when HTTPS and HTTP 200 would succeed',()=>{
+ for(const url of ['https://www.onamae.com/backorder/images/ogimage.jpg','https://old-anime.example/ogp.jpg','https://s4.anilist.co.evil.test/file/anilistcdn/media/anime/banner/1.jpg','https://s4.anilist.co/file/anilistcdn/user/avatar/1.jpg','https://cdn.myanimelist.net/images/userimages/1.jpg'])expect(animeArtworkUrl(url)).toBe('');
+ expect(animeArtworkUrl(work.image)).toBe(work.image);expect(animeArtworkUrl('https://cdn.myanimelist.net/images/anime/1/2.jpg')).toBeTruthy();
+});
+it('does not adopt Annict official-site or parking OG images as canonical work artwork',async()=>{
+ const catalog=new AnnictCatalog('fixture',async()=>Response.json({works:[{...apiWork,images:{facebook:{og_image_url:'https://www.onamae.com/backorder/images/ogimage.jpg'},recommended_url:'https://old-anime.example/ogp.jpg'}}]}));
+ expect((await catalog.work(work.id)).image).toBe('');expect((await catalog.search(work.title))[0].image).toBe('');
+});
+it('rejects advertising URLs in provider metadata and falls back to verified Jikan anime images',async()=>{
+ const fetcher=vi.fn(async(url:any)=>String(url).includes('anilist')?Response.json({data:{Page:{media:[{title:{native:work.title},seasonYear:2023,bannerImage:'https://www.onamae.com/backorder/images/ogimage.jpg'}]}}}):Response.json({data:[{title_japanese:work.title,year:2023,images:{jpg:{large_image_url:'https://cdn.myanimelist.net/images/anime/1/2.jpg'}},url:'https://myanimelist.net/anime/52991'}]}));
+ const result=await fetchAnimeArtwork(work,fetcher as typeof fetch);expect(result.imageFallbacks).toEqual(['https://cdn.myanimelist.net/images/anime/1/2.jpg']);expect(result.imageCredits?.[0].name).toBe('MyAnimeList / Jikan');expect(fetcher).toHaveBeenCalledTimes(2);
+});
+
+it('shares a single catalog lookup between artwork and YouTube metadata',async()=>{
+ const shared={...work,id:998877};const fetcher=vi.fn(async()=>Response.json({data:{Page:{media:[{title:{native:shared.title},seasonYear:2023,bannerImage:shared.image,trailer:{id:'nFljVg8xELU',site:'youtube'}}]}}}));
+ vi.stubGlobal('fetch',fetcher);
+ try{const [artwork,id]=await Promise.all([fetchAnimeArtwork(shared),fetchAnimeYouTubeId(shared)]);expect(artwork.imageFallbacks).toEqual([shared.image]);expect(id).toBe('nFljVg8xELU');expect(fetcher).toHaveBeenCalledTimes(1);}finally{vi.unstubAllGlobals();}
 });

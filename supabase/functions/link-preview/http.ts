@@ -1,5 +1,5 @@
 import {lookup} from 'node:dns/promises';
-import {publicAddress} from './metadata.ts';
+import { publicAddress } from "./metadata.ts";
 const LIMIT=1_500_000;
 export function decodeHttp(bytes:Uint8Array,truncated=false):{status:number;location?:string;html:string} {
   const text=new TextDecoder('latin1').decode(bytes),end=text.indexOf('\r\n\r\n');

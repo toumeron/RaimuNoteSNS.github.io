@@ -1,3 +1,5 @@
+vi.mock("@/hooks/useViewportWidth", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useViewportWidth")>(), useIsPWA: () => false}));
+
 import { act, fireEvent, render, screen, waitFor, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,7 +14,7 @@ const db = vi.hoisted(() => ({
   initialReads: 0,
 }));
 vi.mock('@/lib/currentUser', () => ({ getCurrentUserId: async () => 'viewer' }));
-vi.mock("@/hooks/use-mobile", () => ({ useIsPWA: () => false }));
+
 vi.mock('@/lib/supabase', () => ({ supabase: {
   from: () => {
     let head = false;
@@ -197,4 +199,33 @@ it('reuses an already fetched viewer like flag while retaining live count update
  expect(screen.getByRole('button')).toHaveClass('text-pink-500');
  const change=db.handlers.find(handler=>handler.kind==='postgres_changes'&&handler.table==='likes');
  db.count=8;await act(async()=>change?.callback({}));await expectCount(8);
+});
+
+it('starts no per-card requests off screen, catches up on entry and releases subscriptions when hidden', async () => {
+ db.initialReads=0;
+ const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
+ const body=(live:boolean)=><QueryClientProvider client={client}><LikeButton postId="viewport-post" liked={false} count={4} live={live}/></QueryClientProvider>;
+ const view=render(body(false));
+ await act(async()=>{});expect(db.handlers).toHaveLength(0);expect(db.initialReads).toBe(0);await expectCount(4);
+ view.rerender(body(true));await expectCount(7);expect(db.handlers).toHaveLength(3);
+ const hidden=Object.getOwnPropertyDescriptor(document,'hidden');
+ try {
+  Object.defineProperty(document,'hidden',{configurable:true,value:true});act(()=>document.dispatchEvent(new Event('visibilitychange')));
+  expect(db.removed).toHaveBeenCalledTimes(3);
+  db.count=12;Object.defineProperty(document,'hidden',{configurable:true,value:false});act(()=>document.dispatchEvent(new Event('visibilitychange')));
+  await expectCount(12);expect(db.handlers).toHaveLength(6);
+ } finally {if(hidden)Object.defineProperty(document,'hidden',hidden);else delete (document as any).hidden;}
+});
+
+
+it('keeps forty mounted timeline cards to the three visible cards subscriptions and initial reads',async()=>{
+ db.initialReads=0;
+ const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
+ const listener=vi.spyOn(document,'addEventListener');
+ try {
+  render(<QueryClientProvider client={client}>{Array.from({length:40},(_,index)=><LikeButton key={index} postId={'card-'+index} liked={false} count={2} live={index<3}/>)}</QueryClientProvider>);
+  await waitFor(()=>expect(db.initialReads).toBe(3));
+  expect(screen.getAllByRole('button')).toHaveLength(40);expect(db.handlers).toHaveLength(9);
+  expect(listener.mock.calls.filter(([name])=>name==='visibilitychange')).toHaveLength(1);
+ }finally{listener.mockRestore();}
 });

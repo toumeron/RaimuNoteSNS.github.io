@@ -1,9 +1,15 @@
+vi.mock("@/lib/mediaThumbnail", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/lib/mediaThumbnail")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/lib/mediaThumbnail")>(), resolvePostVideoPoster:m.poster}))(importOriginal)};
+});
+
+
 import {act,cleanup,render,screen,waitFor} from '@testing-library/react';
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 const m=vi.hoisted(()=>({setVisibility:((value:boolean)=>{}) as (value:boolean)=>void,visible:false,poster:vi.fn(),options:vi.fn()}));
 vi.mock('react-intersection-observer',async()=>{const {useState}=await import('react');return {useInView:(options:unknown)=>{const [inView,setInView]=useState(false);m.setVisibility=setInView;m.options(options);return {ref:()=>{},inView};}};});
-vi.mock('@/lib/postVideoStorage',()=>({resolvePostVideoPoster:m.poster}));
-import {ProfileMediaPreview} from './ProfileMediaPreview';
+
+import { ProfileMediaPreview } from "@/components/ui/avatar";
 beforeEach(()=>{
  m.visible=false;vi.clearAllMocks();m.poster.mockResolvedValue('blob:poster');
  const NativeURL=globalThis.URL;vi.stubGlobal('URL',class extends NativeURL{static revokeObjectURL=vi.fn();});

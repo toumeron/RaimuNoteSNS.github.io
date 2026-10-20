@@ -1,7 +1,8 @@
+vi.mock("@/lib/spaceMusic", async importOriginal => ({...await importOriginal<typeof import("@/lib/spaceMusic")>(), createSpaceMusic: vi.fn().mockResolvedValue({ arrayBuffer: async () => new ArrayBuffer(8) })}));
 import { expect, it, vi } from 'vitest';
-vi.mock('./spaceMusic', () => ({ createSpaceMusic: vi.fn().mockResolvedValue({ arrayBuffer: async () => new ArrayBuffer(8) }) }));
+
 import { createSpaceMusic } from './spaceMusic';
-import { playIncomingRingtone, unlockIncomingRingtone } from './incomingRingtone';
+import { playIncomingRingtone, unlockIncomingRingtone } from "@/lib/callRecorder";
 it('reuses Spaces music, loops it, cancels pending playback and stops on dismissal', async () => {
   const voices: { start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; loop: boolean }[] = [];
   const decode = vi.fn().mockResolvedValue({});
@@ -40,7 +41,7 @@ it('resumes a suspended iOS output, retries after a gesture, and never restarts 
   vi.stubGlobal('AudioContext', Context);
   let stop: (() => void) | undefined;
   try {
-    const ringtone = await import('./incomingRingtone');
+    const ringtone = await import("@/lib/callRecorder");
     stop = ringtone.playIncomingRingtone();
     await vi.waitFor(() => expect(context.resume).toHaveBeenCalledOnce());
     await new Promise(resolve => setTimeout(resolve, 0));

@@ -1,16 +1,19 @@
-export const SUSPENSION_EVENT = 'lime-account-suspended-action';
-export const SUSPENSION_MESSAGE = 'あなたのアカウントは停止されているため、この操作は許可されていません。';
+import { supabase } from "@/lib/supabase";
+
+// accountSuspension
+const SUSPENSION_EVENT = 'lime-account-suspended-action';
+const SUSPENSION_MESSAGE = 'あなたのアカウントは停止されているため、この操作は許可されていません。';
 let suspended = false;
-export function setAccountSuspended(value: boolean) { suspended = value; }
-export function isAccountReadOnly() { return suspended; }
-export function allowAccountWrite() { if (!suspended) return true; notifySuspendedAction(); return false; }
-export function notifySuspendedAction() {
+function setAccountSuspended(value: boolean) { suspended = value; }
+function isAccountReadOnly() { return suspended; }
+function allowAccountWrite() { if (!suspended) return true; notifySuspendedAction(); return false; }
+function notifySuspendedAction() {
   if (typeof window !== 'undefined') window.dispatchEvent(new Event(SUSPENSION_EVENT));
 }
 // POST is also used for read-only RPCs and private-media resolution.
 const readRpc = /^(get_|list_|can_|is_|has_|resolve_|count_)/;
 const readFunctions = new Set(['link-preview', 'recommendation-ranker', 'get-trends', 'friend-images']);
-export function createSuspensionFetch(baseUrl: string, transport: typeof fetch): typeof fetch {
+function createSuspensionFetch(baseUrl: string, transport: typeof fetch): typeof fetch {
   const origin = new URL(baseUrl).origin;
   return async (input, init) => {
     const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
@@ -44,3 +47,38 @@ export function createSuspensionFetch(baseUrl: string, transport: typeof fetch):
     return response;
   };
 }
+
+// companyLoginReturn
+// The login return target is restricted to the company site on this origin.
+function companyReturnUrl(value: string | null, origin: string): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value, origin);
+    if (url.origin !== origin || url.username || url.password) return null;
+    if (url.pathname !== '/LimeNoteJP' && !url.pathname.startsWith('/LimeNoteJP/')) return null;
+    return url.href;
+  } catch { return null; }
+}
+function returnToCompany(url: string) { window.location.replace(url); }
+
+// privateProfile
+async function getPrivateBotPrompt(userId: string): Promise<string> {
+  const {data, error} = await supabase.from('profile_private_settings').select('bot_prompt').eq('user_id', userId).maybeSingle();
+  if (error) throw error;
+  return data?.bot_prompt ?? '';
+}
+
+// listLimits
+const LIST_MEMBER_LIMIT=500;
+
+export { setAccountSuspended };
+export { isAccountReadOnly };
+export { allowAccountWrite };
+export { notifySuspendedAction };
+export { createSuspensionFetch };
+export { SUSPENSION_EVENT };
+export { SUSPENSION_MESSAGE };
+export { companyReturnUrl };
+export { returnToCompany };
+export { getPrivateBotPrompt };
+export { LIST_MEMBER_LIMIT };

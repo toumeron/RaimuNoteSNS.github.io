@@ -60,7 +60,7 @@ Cloudflareはログイン済みアカウントに設定名`limenote-notification
 
 - Vitest：125ファイル、961テスト通過。DM列選択とIP検査の変更後にも対象テストを実行。
 - `npm run test:security-db`：隔離PostgreSQLで70項目通過。
-- `node scripts/direct-messages-db-test.mjs`：既存DM機能と今回の列権限・identity変更の検証通過。
+- `node scripts/verify-database.mjs direct-messages`：既存DM機能と今回の列権限・identity変更の検証通過。
 - リスト、投票、保護アカウントの各DBテスト：通過。追加の`security-legacy-db-test.mjs`でビュー漏洩、タグ、旧返信RPC、LimeDrop、保守RPCを検証し通過。
 - Deno：認証ヘルパー、エクスポート、グループAI、DM・リスト・投票画像、Push、背景削除、トレンド、リンクプレビュー、ランカーの65テスト通過。公開サイトに接続するオプションの1テストは未実行。
 - 変更した8つのEdgeエントリポイントの`deno check`：通過。トレンドのテスト用エクスポート後にも再確認。

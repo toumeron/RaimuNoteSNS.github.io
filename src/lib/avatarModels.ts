@@ -1,5 +1,3 @@
-
-
 // avatarModels
 type ModelFormat = "vrm" | "glb" | "gltf" | "fbx" | "obj" | "mmd" | "archive";
 type ModelSource =

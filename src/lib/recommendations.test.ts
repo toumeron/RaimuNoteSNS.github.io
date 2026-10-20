@@ -1,13 +1,18 @@
-import { recommendationFingerprint } from "@/lib/recommendationSignals";
-import { beforeEach, expect, it, afterEach, vi } from "vitest";
-import { addRecommendationInterest, rankRecommendations, recommendationTerms, recordRecommendationLike, readRecommendationLikes, recordRecommendationImpression, readRecommendationImpressions, scoreRecommendation } from "@/lib/recommendations";
+import { recommendationFingerprint, preserveRecommendationHistory, uniqueRecommendationPosts, readRecommendationReserve, saveRecommendationReserve, clearRecommendationReserve, recommendationTopicSignals, recommendationTopicAffinity, topicAuthorCandidates, recommendationIsEligible, rankTopicPosts, topicPostRelevance } from "@/lib/recommendations";
+import { beforeEach, expect, it, afterEach, vi, describe } from "vitest";
+import { addRecommendationInterest, rankRecommendations, recommendationTerms, recordRecommendationLike, readRecommendationLikes, recordRecommendationImpression, readRecommendationImpressions, scoreRecommendation, type RecommendationPreferences, recommendationQueries } from "@/lib/recommendations";
 import { type PostWithAuthor } from "@/types/index";
 import { createRecommendationCursor } from "@/api/recommendations";
-import { preserveRecommendationHistory, uniqueRecommendationPosts, readRecommendationReserve, saveRecommendationReserve, clearRecommendationReserve } from "@/lib/topicRecommendations";
 import visuals from "@/lib/fixtures/recommendationVisual.json";
 import document from "@/lib/fixtures/recommendationDocument.json";
-import { classifyRecommendationVisual } from "@/lib/recommendationVisual";
+import { classifyRecommendationVisual, visualSimilarity, createVisualSimilarityComparator } from "@/lib/recommendationVisual";
+import { TOPICS, type TopicId, matchingTopics, topicAffinity, rankPersonalTrends } from "@/lib/topics";
+import { FEATURE_NAMES, predictRank, validFeatures, validRankModel, type RankModel } from "./../../supabase/functions/_shared/recommendationModel.ts";
+import { classifyRecommendationVisual as recommendationVisualTestClassifyRecommendationVisual, createRecommendationVisualQueue } from "@/lib/recommendationVisualInference";
+import { PGlite } from "@electric-sql/pglite";
+import { readFileSync } from "node:fs";
 
+describe("recommendations", () => {
 describe("recommendations", () => {
 const post=(id:string,content:string,userId='author'):PostWithAuthor=>({id,content,userId,createdAt:'2026-10-03T00:00:00Z',likesCount:1,commentsCount:0,repostsCount:0,repostedByMe:false,likedByMe:false,imageUrls:[],author:{id:userId,username:userId} as any});
 beforeEach(()=>localStorage.clear());
@@ -118,7 +123,7 @@ it('remembers liked IDs beyond the 100-post interest sample and permits confirme
   expect(rankRecommendations([post('bsky:older-like','猫')],{authors:{},terms:{}},'viewer')).toHaveLength(1);
 });
 it('remembers the same media across copied IDs and CDN resize variants on later reloads',async()=>{
- const {recommendationFingerprint}=await import("@/lib/recommendationSignals");
+ const {recommendationFingerprint}=await import("@/lib/recommendations");
  const original={...post('original',''),imageUrls:['https://cdn.example/work.png?width=800']};
  recordRecommendationImpression(original.id,'viewer',Date.now(),recommendationFingerprint(original));
  const copied={...original,id:'copied',content:'キャプションを変えた再投稿',imageUrls:['https://cdn.example/work.png?width=400']};
@@ -137,7 +142,7 @@ it('uses the viewer’s own creator history across subjects rather than treating
  expect(rankRecommendations([generic,favorite],prefs,'viewer')[0].id).toBe('favorite-work');
 });
 it('recognizes the same Bluesky media blob shared by different creators and formats',async()=>{
- const {recommendationFingerprint}=await import("@/lib/recommendationSignals");
+ const {recommendationFingerprint}=await import("@/lib/recommendations");
  const a={...post('one',''),imageUrls:['https://cdn.bsky.app/img/feed_fullsize/plain/did:plc:one/bafkreiexampleimage@jpeg']};
  const b={...post('two',''),imageUrls:['https://cdn.bsky.app/img/feed_thumbnail/plain/did:plc:two/bafkreiexampleimage@webp']};
  expect(recommendationFingerprint(a)).toBe(recommendationFingerprint(b));
@@ -477,5 +482,316 @@ it('expires prepared work after two minutes and rejects malformed checkpoints',(
 it('rejects an old reserve that falsely labels the reported document as character artwork',()=>{
  const old=page();old.posts[0].recommendationVisual={...old.posts[0].recommendationVisual,vector:document.vector};
  saveRecommendationReserve('viewer',old);expect(readRecommendationReserve('viewer')).toBeUndefined();
+});
+});
+});
+
+describe("recommendationSignals", () => {
+describe("recommendationSignals", () => {
+const imagePost=(id:string,extra:Partial<PostWithAuthor>={}):PostWithAuthor=>({id,userId:id,content:'',imageUrls:[`https://images.example/${id}.jpg`],createdAt:new Date().toISOString(),likesCount:0,commentsCount:0,repostsCount:0,likedByMe:false,repostedByMe:false,author:{id,username:id,bio:''},...extra} as PostWithAuthor);
+beforeEach(()=>localStorage.clear());
+it.each(TOPICS.map(topic=>[topic.name,topic.id] as const))('%s: a topic feed can recommend an image-only post without a body keyword',(_name,id)=>{
+ const candidate=imagePost('topic',{recommendationTopics:[id],...(id==='anime'?{imageAltTexts:['アニメのキャラクター作品']}:{}),...(id==='digital-illustration'?{recommendationVisual:{version:1 as const,kind:'moe',topics:[id],confidence:.8,similarity:.3,vector:Array(512).fill(0)}}:{})});
+ expect(recommendationTopicSignals(candidate)).toContain(id);
+ expect(rankRecommendations([imagePost('unrelated'),candidate],{authors:{},terms:{},followedTopics:[id]},null)[0].id).toBe('topic');
+});
+it('uses media alt text and link title instead of requiring a matching body',()=>{
+ expect(recommendationTopicSignals(imagePost('sports',{imageAltTexts:['サッカーの試合']}))).toContain('sports');
+ expect(recommendationTopicSignals(imagePost('science',{linkPreview:{url:'https://example.com',domain:'example.com',title:'宇宙の研究',image:''}}))).toContain('science');
+});
+it('rates source context above a keyword and caps bonus for keyword stuffing',()=>{
+ const prefs={followed:['science','sports'] as TopicId[]};
+ expect(recommendationTopicAffinity(imagePost('feed',{recommendationTopics:['science']}),prefs)).toBeGreaterThan(recommendationTopicAffinity(imagePost('keyword',{content:'科学'}),prefs));
+ expect(recommendationTopicAffinity(imagePost('stuffed',{recommendationTopics:['science','sports']}),prefs)).toBeCloseTo(.4);
+});
+it('does not let saturated unrelated text likes override an explicitly followed topic source',()=>{
+ const old=imagePost('old',{content:'猫の写真',userId:'old-favorite',likesCount:10000});
+ const source=imagePost('new',{recommendationTopics:['science']});
+ const prefs:RecommendationPreferences={authors:{'old-favorite':10000},recentAuthors:{'old-favorite':10000},terms:{猫:10000,写真:10000},recentTerms:{猫:10000,写真:10000},followedAuthors:['old-favorite'],followedTopics:['science']};
+ expect(rankRecommendations([old,source],prefs,null)[0].id).toBe('new');
+});
+it('learns author topic context from prior likes and retains context when the liked post has no body',()=>{
+ const liked=imagePost('liked',{userId:'did:plc:science',recommendationTopics:['science']});
+ recordRecommendationLike(liked,true,'viewer');
+ const prefs:RecommendationPreferences={authors:{},terms:{},followedTopics:['science']};
+ for(const post of readRecommendationLikes('viewer'))addRecommendationInterest(prefs,post,2);
+ const next=imagePost('next',{userId:'did:plc:science'});
+ expect(recommendationTopicAffinity(next,{followed:['science']},prefs.authorTopics?.[next.userId])).toBeGreaterThan(0);
+});
+it('keeps discovery metadata when the same post was first returned by general discovery',()=>{
+ const post=imagePost('same');
+ expect(rankRecommendations([post,{...post,recommendationTopics:['music']},imagePost('other')],{authors:{},terms:{},followedTopics:['music']},null).map(p=>p.id)).toEqual(['same']);
+});
+it('needs distinct topic works before expanding an author and limits expansion to one per provider',()=>{
+ const post=imagePost('one',{userId:'misskey-user:creator',recommendationVisual:{version:1,kind:'food',topics:['food'],confidence:.8,similarity:.3,vector:Array(512).fill(0)},recommendationTopics:['food']});
+ expect(topicAuthorCandidates([post,post],['food'])).toEqual([]);
+ expect(topicAuthorCandidates([post,{...post,id:'two'}],['food'])).toEqual([{actor:'misskey-user:creator',topics:['food']}]);
+});
+it('filters declared AI art from art recommendations and preserves anti-AI declarations',()=>{
+ const ai=imagePost('ai',{content:'#AIart'}),altAi=imagePost('alt-ai',{imageAltTexts:['Stable Diffusion generated picture']}),bioAi=imagePost('bio-ai',{author:{id:'artist',username:'artist',bio:'AIイラストを投稿しています'} as any});
+ const human=imagePost('human',{content:'AI学習禁止・No AI・AI生成ではありません',recommendationTopics:['art']});
+ expect(rankRecommendations([ai,altAi,bioAi,human],{authors:{},terms:{},followedTopics:['art']},null).map(p=>p.id)).toEqual(['human']);
+ expect(rankRecommendations([ai],{authors:{},terms:{},followedTopics:['ai']},null)).toHaveLength(1);
+});
+it.each(TOPICS.map(topic=>[topic.name,topic.id] as const))('%s: an image-only liked creator retains language context without body or alt text',(_name,id)=>{
+ const visual={version:1 as const,kind:'moe',topics:[id],confidence:.8,similarity:.3,vector:Array.from({length:512},(_,i)=>i===0?1:0)};
+ const author='did:plc:creator';const liked=imagePost('liked',{userId:author,source:'bluesky',recommendationTopics:[id],recommendationLanguages:['ja'],recommendationVisual:visual,author:{id:author,username:'creator.bsky.social'} as any});
+ recordRecommendationLike(liked,true,'viewer');const prefs:RecommendationPreferences={authors:{},terms:{},followedTopics:[id]};
+ for(const sample of readRecommendationLikes('viewer'))addRecommendationInterest(prefs,sample,2);
+ const next=imagePost('bsky:next',{recommendationVisual:visual,userId:author,source:'bluesky',recommendationAuthorTopics:[id],author:{id:author,username:'creator.bsky.social'} as any});
+ expect(rankRecommendations([next],prefs,'viewer').map(row=>row.id)).toEqual(['bsky:next']);
+});
+
+it('does not let a saturated matching body keyword outrank an image-only topic source',()=>{const prefs:RecommendationPreferences={authors:{},terms:{イラスト:10000,猫:10000},recentTerms:{イラスト:10000,猫:10000},followedTopics:['art']};const keyword=imagePost('keyword',{content:'イラスト 猫'});const media=imagePost('source',{recommendationTopics:['art']});expect(rankRecommendations([keyword,media],prefs,null)[0].id).toBe('source');});
+});
+
+describe("recommendationEligibility", () => {
+const post=(extra:Partial<PostWithAuthor>={}):PostWithAuthor=>({id:'bsky:post',userId:'did:creator',source:'bluesky',content:'',imageUrls:['image'],author:{id:'did:creator',username:'artist.bsky.social',displayName:'Artist',bio:''},...extra} as PostWithAuthor);
+it('excludes English posts for local topics even if returned by a Japanese feed',()=>{
+ expect(recommendationIsEligible(post({content:'My cute cat today',languages:['en'],recommendationTopics:['pets'],recommendationLanguages:['ja']}),['pets'])).toBe(false);
+});
+it('requires actual global topic relevance, not merely following finance',()=>{
+ expect(recommendationIsEligible(post({content:'Markets and stocks',languages:['en'],recommendationTopics:['economy']}),['economy'])).toBe(true);
+ expect(recommendationIsEligible(post({content:'My cute cat',languages:['en'],recommendationTopics:['pets']}),['economy'])).toBe(false);
+});
+it('accepts Japanese and preserves image-only posts from Japanese creators and feeds',()=>{
+ expect(recommendationIsEligible(post({languages:['ja']}),['pets'])).toBe(true);
+ expect(recommendationIsEligible(post({author:{id:'creator',username:'creator',bio:'猫を描いています'}} as any),['pets'])).toBe(true);
+ expect(recommendationIsEligible(post({recommendationLanguages:['ja']}),['art'])).toBe(true);
+ expect(recommendationIsEligible(post(),['art'])).toBe(false);
+});
+it('digital illustration requires images and media/source context without requiring an initial model download and rejects declared AI',()=>{
+ const character=post({recommendationVisual:{version:1,kind:'moe',topics:['digital-illustration'],confidence:.8,similarity:.3,vector:Array(512).fill(0)},recommendationTopics:['digital-illustration'],recommendationLanguages:['ja']});
+ expect(recommendationIsEligible(character,['digital-illustration'])).toBe(true);
+ expect(recommendationIsEligible({...character,imageUrls:[]},['digital-illustration'])).toBe(false);
+ expect(recommendationIsEligible({...character,content:'#AIart'},['digital-illustration','ai'])).toBe(false);
+ expect(recommendationIsEligible(post({content:'猫の写真',recommendationTopics:['art'],languages:['ja']}),['digital-illustration'])).toBe(false);
+ expect(recommendationIsEligible(post({content:'ファンアート',languages:['ja']}),['digital-illustration'])).toBe(false);
+});
+
+it('Japanese hashtags do not disguise an otherwise English post',()=>{expect(recommendationIsEligible(post({content:'Here is my beautiful illustration of an anime character #猫 #イラスト',languages:['en'],recommendationLanguages:['ja']}),['art'])).toBe(false);});
+
+it('rejects replies from ranked feeds even when language and topic match',()=>{
+ expect(recommendationIsEligible(post({content:'科学のニュース',languages:['ja'],externalReplyToId:'bsky:parent'}),['science'])).toBe(false);
+ expect(recommendationIsEligible(post({id:'native',source:undefined,replyId:'comment'}),[])).toBe(false);
+});
+});
+
+describe("topicRecommendations", () => {
+const now=Date.parse('2026-10-12T00:00:00Z');
+const post=(id:string,content:string,source='bluesky'):PostWithAuthor=>({id,userId:id,source,content,createdAt:new Date(now-3600000).toISOString(),imageUrls:[],likesCount:1,commentsCount:0,repostsCount:0,author:{id,username:id},likedByMe:false,repostedByMe:false} as PostWithAuthor);
+it('prioritizes actual topic content over popular retrieval hints and rejects unrelated creators',()=>{
+ const exact=post('exact','科学の新しい研究結果');
+ const noisy={...post('hint','今日はいい天気'),recommendationTopics:['science'],likesCount:1000000};
+ const unrelated={...post('bio','昼ごはん'),author:{...post('bio','').author,bio:'科学研究者'}};
+ expect(rankTopicPosts([noisy,unrelated,exact],'science',{authors:{bio:100},terms:{}},now).map(post=>post.id)).toEqual(['exact','hint']);
+ expect(topicPostRelevance(unrelated,'science')).toBe(0);
+});
+it('uses personal affinity within the topic and treats all providers alike with deterministic ties',()=>{
+ const native=post('native','科学の実験をしました','native'),blue=post('blue','研究の成果を発表しました'),misskey=post('misskey','宇宙についての新しい発見','misskey');
+ const prefs={authors:{misskey:10},terms:{},dismissedTopics:['science'] as const};
+ const rank=(rows:PostWithAuthor[])=>rankTopicPosts(rows,'science',{...prefs,dismissedTopics:['science']},now).map(post=>post.id);
+ expect(rank([native,blue,misskey])[0]).toBe('misskey');expect(rank([native,blue,misskey])).toEqual(rank([misskey,native,blue]));
+});
+it('rejects a feed hint contradicted by verified image evidence and removes duplicates',()=>{
+ const wrong={...post('wrong','写真'),recommendationTopics:['science'],recommendationVisual:{kind:'photo',topics:['pets'],confidence:.9}} as PostWithAuthor;
+ const exact=post('exact','科学の研究');
+ expect(topicPostRelevance(wrong,'science')).toBe(0);
+ expect(rankTopicPosts([exact,exact,wrong],'science',{authors:{},terms:{}},now)).toHaveLength(1);
+});
+});
+
+describe("topics", () => {
+const post=(id:string,content:string,source:'bluesky'|'misskey'):PostWithAuthor=>({id,userId:id,source,content,createdAt:new Date().toISOString(),imageUrls:[],likesCount:1,commentsCount:0,repostsCount:0,likedByMe:false,repostedByMe:false,author:{id,username:id}} as PostWithAuthor);
+describe('explicit topic preferences',()=>{
+ it('contains exactly the requested topics with unique IDs',()=>{expect(TOPICS).toHaveLength(22);expect(new Set(TOPICS.map(t=>t.id)).size).toBe(22);});
+ it('matches Japanese and English content without matching AI inside an unrelated word or URL',()=>{
+  expect(matchingTopics('猫と犬の写真')).toContain('pets');expect(matchingTopics('AI research')).toContain('ai');
+  expect(matchingTopics('daily email https://example.org/AI')).not.toContain('ai');
+ });
+ it('uses explicit interests for discovery even without likes and never searches dismissed learned interests',()=>{
+  const prefs:RecommendationPreferences={authors:{},terms:{猫:100,音楽:2},followedTopics:['games'],dismissedTopics:['pets']};
+  expect(recommendationQueries(prefs)).toContain('ゲーム');expect(recommendationQueries(prefs)).not.toContain('猫');
+ });
+ it('promotes both external providers for a followed topic and excludes unrelated dismissed interests',()=>{
+  const prefs:RecommendationPreferences={authors:{},terms:{},followedTopics:['pets'],dismissedTopics:['sports']};
+  const ranked=rankRecommendations([post('sports','サッカーの試合','bluesky'),post('blue-cat','猫の写真','bluesky'),post('misskey-cat','犬の写真','misskey')],prefs,null);
+  expect(ranked.slice(0,2).map(p=>p.id)).toEqual(expect.arrayContaining(['blue-cat','misskey-cat']));
+  expect(ranked.map(post=>post.id)).not.toContain('sports');expect(topicAffinity('サッカー速報',{dismissed:['sports']})).toBeLessThan(0);
+ });
+ it('personalizes explore trends but preserves the source volume and rank metadata',()=>{
+  const rows=[{title:'選挙',traffic:'100万',rank:1},{title:'猫の写真',traffic:'100',rank:2}];
+  const ranked=rankPersonalTrends(rows,{authors:{},terms:{},followedTopics:['pets']});
+  expect(ranked[0]).toEqual(rows[1]);expect(rows[0].rank).toBe(1);
+ });
+});
+});
+
+describe("recommendationModel", () => {
+const model:RankModel={version:1,featureNames:FEATURE_NAMES,trainedAt:new Date().toISOString(),metrics:{baselineNdcg:.4,modelNdcg:.5,validationGroups:6},trees:[{split_feature:0,threshold:.5,default_left:true,decision_type:'<=',left_child:{leaf_value:-.1},right_child:{leaf_value:.2}},{leaf_value:.1}]};
+it('scores numeric LightGBM trees including missing/default directions and sums baked-in leaf weights',()=>{
+ const row=Array(15).fill(0);expect(predictRank(model,row)).toBeCloseTo(0);row[0]=1;expect(predictRank(model,row)).toBeCloseTo(.3);row[0]=NaN;expect(predictRank(model,row)).toBeCloseTo(0);
+});
+it('rejects incompatible features, unsafe trees, and unvalidated models',()=>{
+ expect(validRankModel(model)).toBe(true);expect(validFeatures(Array(15).fill(0))).toBe(true);expect(validFeatures([NaN])).toBe(false);
+ expect(validRankModel({...model,featureNames:['wrong']})).toBe(false);
+ expect(validRankModel({...model,trees:[{leaf_value:Infinity}]})).toBe(false);
+ expect(validRankModel({...model,metrics:{...model.metrics,modelNdcg:.3}})).toBe(false);
+ expect(validRankModel({...model,trees:[{...model.trees[0],decision_type:'=='}]})).toBe(false);
+});
+});
+
+it('keeps curated illustration discovery available after learning personal art tastes without downloading a vision model',()=>{
+ const author='did:plc:liked-artist';
+ const base={imageUrls:['https://images.example/liked.jpg'],content:'キャラクターイラスト',createdAt:new Date().toISOString(),likesCount:1,commentsCount:0,repostsCount:0,likedByMe:false,repostedByMe:false,source:'bluesky',languages:['ja'],author:{id:author,username:'liked.bsky.social'}} as any;
+ const preferences:RecommendationPreferences={authors:{[author]:8},terms:{},followedTopics:['digital-illustration'],authorTopics:{[author]:{'digital-illustration':8}},likedSamples:[{...base,id:'bsky:liked',userId:author,recommendationTopics:['digital-illustration']}]};
+ const candidate={...base,id:'bsky:unseen-curated',userId:'did:plc:new-artist',imageUrls:['https://images.example/new.jpg'],content:'',recommendationTopics:['digital-illustration'],recommendationSources:['at://did:plc:pbznmgl4g4srad5kabmmfkmi/app.bsky.feed.generator/aaaewbdiflbom'],recommendationLanguages:['ja'],author:{id:'did:plc:new-artist',username:'new.bsky.social'}} as PostWithAuthor;
+ expect(rankRecommendations([candidate],preferences,'viewer').map(post=>post.id)).toContain(candidate.id);
+ expect(rankRecommendations([{...candidate,id:'bsky:keyword-only',recommendationSources:['search:萌え']}],preferences,'viewer')).toEqual([]);
+ expect(rankRecommendations([{...candidate,id:'bsky:unrelated',recommendationTopics:['pets'],recommendationVisual:{version:1,kind:'photo',topics:['pets'],confidence:.9,similarity:0,vector:Array(512).fill(0)}}],preferences,'viewer')).toEqual([]);
+});
+});
+
+describe("recommendationVisual", () => {
+describe("recommendationVisual", () => {
+// Embeddings measured from real pixels: public original artwork, a male
+// character sketch, the Luanti project's game screenshot, and the official
+// Transformers.js cats/football images. No caption/alt/tag is encoded here.
+const visual=(name:string)=>recommendationVisualTestClassifyRecommendationVisual(visuals.find(row=>row.name===name)!.vector);
+const post=(id:string,name:string,extra:Partial<PostWithAuthor>={}):PostWithAuthor=>({id,userId:id,content:'',imageUrls:[`https://images.example/${id}.jpg`],createdAt:new Date().toISOString(),source:'bluesky',languages:['ja'],likesCount:0,commentsCount:0,repostsCount:0,likedByMe:false,repostedByMe:false,author:{id,username:id},recommendationVisual:visual(name),...extra} as PostWithAuthor);
+beforeEach(()=>localStorage.clear());
+it.each([['original-moe','moe'],['game-screen','game-screen'],['pets','pets'],['sports','sports']])('classifies measured %s pixels as %s without post text',(name,kind)=>expect(visual(name).kind).toBe(kind));
+it('does not certify male characters, screenshots or unknown images as moe artwork merely because of a feed label',()=>{
+ const expected=post('original','original-moe',{recommendationTopics:['digital-illustration']});
+ expect(recommendationIsEligible(expected,['digital-illustration'])).toBe(true);
+ for(const kind of ['male-character','game-screen','pets'])expect(recommendationIsEligible(post(kind,kind,{content:'ファンアート オリキャラ イラスト',recommendationTopics:['digital-illustration']}),['digital-illustration'])).toBe(false);
+ expect(recommendationIsEligible({...expected,recommendationVisual:undefined,recommendationVisualStatus:'unavailable'},['digital-illustration'])).toBe(false);
+});
+it.each([['pets','pets'],['sports','sports'],['games','game-screen']] as const)('%s ranks genuine image context above a keyword-stuffed post retrieved from the same feed',(topic,name)=>{
+ const genuine=post('genuine',name,{recommendationTopics:[topic]});
+ const misleading=post('misleading','original-moe',{content:'ペット 猫 スポーツ サッカー ゲーム',recommendationTopics:[topic],likesCount:999999});
+ expect(rankRecommendations([misleading,genuine],{authors:{},terms:{猫:99999,サッカー:99999,ゲーム:99999},followedTopics:[topic]},'viewer')[0].id).toBe('genuine');
+});
+it('keeps a mistaken finance source label from admitting English pet pictures',()=>expect(recommendationIsEligible(post('cat','pets',{languages:['en'],recommendationTopics:['economy']}),['economy'])).toBe(false));
+it('learns visual interests from an image-only like and keeps them scoped to the viewer',()=>{
+ const liked=post('liked','original-moe');recordRecommendationLike(liked,true,'alice');const prefs:RecommendationPreferences={authors:{},terms:{}};
+ for(const sample of readRecommendationLikes('alice'))addRecommendationInterest(prefs,sample,2);
+ expect(prefs.visualInterests).toHaveLength(1);expect(readRecommendationLikes('bob')).toEqual([]);
+ expect(visualSimilarity(prefs.visualInterests![0],visual('original-moe').vector)).toBeCloseTo(1);
+});
+it('does not expand a creator from two keyword-only matches or an ambiguous image',()=>{
+ const make=(id:string)=>({...post(id,'original-moe'),userId:'did:plc:creator',recommendationVisual:undefined,content:'料理 レシピ'});
+ expect(topicAuthorCandidates([make('one'),make('two')],['food'])).toEqual([]);
+ const unknown={...visual('original-moe'),kind:'unknown',topics:[] as TopicId[]};
+ expect(topicAuthorCandidates([{...make('one'),recommendationVisual:unknown,recommendationTopics:['food']},{...make('two'),recommendationVisual:unknown,recommendationTopics:['food']}],['food'])).toEqual([]);
+});
+it('spreads the first page across independent sources even when a large source has more popular posts',()=>{
+ const dominant=Array.from({length:30},(_,i)=>post(`dominant-${i}`,'pets',{recommendationSources:['dominant'],likesCount:100000}));
+ const alternatives=Array.from({length:6},(_,i)=>post(`alternative-${i}`,'pets',{recommendationSources:[`source-${i}`]}));
+ const page=rankRecommendations([...dominant,...alternatives],{authors:{},terms:{},followedTopics:['pets']},'viewer').slice(0,20);
+ expect(page.filter(row=>row.id.startsWith('alternative-')).length).toBeGreaterThanOrEqual(4);
+});
+it('learns image preferences for any topic without using a caption or character gender label',()=>{
+ const liked=post('liked','original-moe');const prefs:RecommendationPreferences={authors:{},terms:{},followedTopics:['art']};addRecommendationInterest(prefs,liked,2);
+ const preferred=post('preferred','original-moe',{recommendationVisual:{...visual('original-moe'),kind:'illustration',topics:['art'],confidence:.8},recommendationSources:['one']});
+ const different=post('different','male-character',{recommendationVisual:{...visual('male-character'),kind:'illustration',topics:['art'],confidence:.8},likesCount:999999,recommendationSources:['two']});
+ expect(rankRecommendations([different,preferred],prefs,'viewer')[0].id).toBe('preferred');
+ const opposite:RecommendationPreferences={authors:{},terms:{},followedTopics:['art'],visualInterests:[visual('male-character').vector]};
+ expect(rankRecommendations([preferred,different],opposite,'viewer')[0].id).toBe('different');
+});
+it('retains a liked image URL and full sample when an ID-only state synchronization follows',()=>{
+ const original=post('liked','original-moe');recordRecommendationLike(original,true,'viewer');
+ recordRecommendationLike({id:'liked',content:''} as PostWithAuthor,true,'viewer');
+ const [sample]=readRecommendationLikes('viewer');expect(sample.imageUrls).toEqual(original.imageUrls);expect(sample.userId).toBe(original.userId);expect(sample.recommendationVisual?.vector).toEqual(original.recommendationVisual?.vector);
+});
+
+ it('reuses vector comparisons within a pass and creates fresh comparisons for changed evidence',()=>{
+ const a=Array.from({length:512},(_,i)=>Math.sin(i)),b=Array.from({length:512},(_,i)=>Math.cos(i));
+ const compare=createVisualSimilarityComparator();
+ expect(compare(a,b)).toBeCloseTo(visualSimilarity(a,b),12);expect(compare(b,a)).toBeCloseTo(visualSimilarity(b,a),12);
+ b.fill(0);b[0]=1;
+ expect(createVisualSimilarityComparator()(a,b)).toBeCloseTo(visualSimilarity(a,b),12);
+ expect(compare(a,Array(512).fill(NaN))).toBe(0);expect(compare(a,[])).toBe(0);
+ });
+it('does not turn an uncertain pixel classification into a confident rejection of creator-supported art',()=>{
+ const candidate=post('x:991','original-moe',{author:{id:'x-user:991',username:'artist@twitter.com',bio:'イラストレーター'} as any,source:'x',content:'#ファンアート',recommendationTopics:['digital-illustration'],recommendationVisual:{version:1,kind:'unknown',topics:[],confidence:0,similarity:.1,vector:Array(512).fill(0)}});
+ expect(recommendationIsEligible(candidate,['digital-illustration'])).toBe(true);expect(candidate.recommendationVisual?.kind).toBe('unknown');
+ expect(recommendationIsEligible({...candidate,recommendationVisual:visual('pets')},['digital-illustration'])).toBe(false);
+});
+it('classifies the supplied mascot picture from its measured pixels as 3D rather than trusting character-art captions',async()=>{
+ const regression=(await import("@/lib/fixtures/recommendationVisualRegression.json")).default;
+ const visual=recommendationVisualTestClassifyRecommendationVisual(regression.render3d);
+ expect(visual.kind).toBe('render-3d');expect(visual.classifierVersion).toBe(3);
+ const prefs={visualOnly:true,authors:{},terms:{オリジナルキャラクター:9999},followedTopics:['digital-illustration'] as TopicId[]};
+ for(const source of ['bluesky','x'] as const){
+  const candidate={id:source+':render-regression',userId:source+':creator',source,content:'#オリジナルキャラクター #ファンアート',imageUrls:['https://images.example/render-regression.jpg'],createdAt:new Date().toISOString(),likesCount:99999,commentsCount:0,repostsCount:0,likedByMe:false,repostedByMe:false,recommendationVisual:visual,author:{id:source+':creator',username:'artist',bio:'イラストレーター'}} as PostWithAuthor;
+  expect(rankRecommendations([candidate],prefs,'regression-viewer')).toEqual([]);
+ }
+});
+it('has an independent animal-drawing class rather than treating all drawings as anime people',async()=>{
+ const prototypes=(await import("@/lib/recommendationVisualPrototypes.json")).default;
+ const animal=prototypes.prototypes.find(row=>row.id==='animal-illustration')!;
+ const classified=recommendationVisualTestClassifyRecommendationVisual(animal.vectors[0]);
+ expect(classified.kind).toBe('animal-illustration');expect(classified.topics).not.toContain('digital-illustration');
+});
+});
+
+describe("recommendationVisualQueue", () => {
+const delay=(ms:number)=>new Promise<void>(resolve=>setTimeout(resolve,ms));
+it('overlaps model startup and bounded downloads while keeping inference serial',async()=>{
+ vi.useFakeTimers();try{
+  const start=Date.now();let downloads=0,maxDownloads=0,inferences=0,maxInferences=0;
+  const context=delay(1000).then(()=>({ready:true}));
+  const run=createRecommendationVisualQueue({load:()=>context,prepare:async(id:number)=>{downloads++;maxDownloads=Math.max(downloads,maxDownloads);await delay(1000);downloads--;return id;},infer:async(_context,id)=>{inferences++;maxInferences=Math.max(inferences,maxInferences);await delay(100);inferences--;return id;}});
+  const done=Promise.all(Array.from({length:6},(_,i)=>run(i)));let finished=false;void done.then(()=>{finished=true;});
+  await vi.advanceTimersByTimeAsync(2399);expect(finished).toBe(false);
+  await vi.advanceTimersByTimeAsync(1);expect(await done).toEqual([0,1,2,3,4,5]);
+  expect(Date.now()-start).toBe(2400);expect(maxDownloads).toBe(3);expect(maxInferences).toBe(1);
+ }finally{vi.useRealTimers();}
+});
+it('lets ready images run before a slow earlier image download',async()=>{
+ vi.useFakeTimers();try{
+  const prepared:number[]=[],inferred:number[]=[];
+  const run=createRecommendationVisualQueue({load:async()=>null,prepare:async(id:number)=>{await delay(id===0?3000:10);prepared.push(id);return id;},infer:async(_context,id)=>{inferred.push(id);return id;}});
+  const jobs=[run(0),run(1),run(2)];await vi.advanceTimersByTimeAsync(20);
+  expect(prepared).toEqual([1,2]);expect(inferred).toEqual([1,2]);
+  await vi.advanceTimersByTimeAsync(3000);expect(await Promise.all(jobs)).toEqual([0,1,2]);
+ }finally{vi.useRealTimers();}
+});
+it('releases capacity after failures and continues later images',async()=>{
+ const run=createRecommendationVisualQueue({capacity:1,load:async()=>null,prepare:async(id:number)=>{if(id===0)throw new Error('unavailable');return id;},infer:async(_context,id)=>id});
+ const result=await Promise.allSettled([run(0),run(1),run(2)]);
+ expect(result.map(row=>row.status)).toEqual(['rejected','fulfilled','fulfilled']);
+});
+});
+});
+
+describe("trendViews", () => {
+it('persists actual views across reloads and isolates accounts',async()=>{
+ localStorage.clear();
+ const first=await import("@/hooks/useTopics");first.recordTrendView('x:123','account-a');
+ vi.resetModules();
+ const reloaded=await import("@/hooks/useTopics");
+ expect(reloaded.readTrendViews('account-a')).toEqual(new Set(['x:123']));
+ expect(reloaded.readTrendViews('account-b')).toEqual(new Set());
+ expect(reloaded.readTrendViews(null)).toEqual(new Set());
+});
+it('retains session views when local storage cannot be written',async()=>{
+ const store=await import("@/hooks/useTopics");
+ const failing=vi.spyOn(Storage.prototype,'setItem').mockImplementation(()=>{throw new Error('quota');});
+ try{store.recordTrendView('x:quota','blocked');expect(store.readTrendViews('blocked').has('x:quota')).toBe(true);}finally{failing.mockRestore();}
+});
+
+it('persists delivered batches before a view timer can fire and deduplicates them',async()=>{
+ const store=await import("@/hooks/useTopics");store.recordTrendDeliveries(['x:fast-a','x:fast-b','x:fast-a'],'fast-scroll');
+ expect(store.readTrendViews('fast-scroll')).toEqual(new Set(['x:fast-a','x:fast-b']));
+ vi.resetModules();const reloaded=await import("@/hooks/useTopics");expect(reloaded.readTrendViews('fast-scroll')).toEqual(new Set(['x:fast-a','x:fast-b']));
+});
+
+it('does not repeatedly parse or rewrite an unchanged delivered history',async()=>{
+ const store=await import("@/hooks/useTopics");store.recordTrendDeliveries(['x:same'],'stable-history');
+ const parse=vi.spyOn(JSON,'parse'),write=vi.spyOn(Storage.prototype,'setItem');
+ try{for(let i=0;i<100;i++){store.readTrendViews('stable-history');store.recordTrendView('x:same','stable-history');}
+ expect(parse).not.toHaveBeenCalled();expect(write).not.toHaveBeenCalled();}finally{parse.mockRestore();write.mockRestore();}
 });
 });

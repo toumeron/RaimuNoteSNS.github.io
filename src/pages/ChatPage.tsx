@@ -1,39 +1,39 @@
 import {LOCAL_GEMMA_MODEL,normalizeChatModel,isLocalGemmaSession,canChangeChatModel,type LimeChatModel} from '@/lib/localGemmaConfig';
 import {checkLocalGemmaDownload,getLocalGemmaState,subscribeLocalGemma,downloadLocalGemma,loadLocalGemma,deleteLocalGemma,releaseLocalGemma,generateLocalGemma} from '@/lib/localGemma';
 import { listLocalGemmaSessions, saveLocalGemmaSession, deleteLocalGemmaSession } from "@/lib/localGemmaConfig";
-import { LocalGemmaModelRow } from "@/components/ai/ChatPostPreview";
+import { LocalGemmaModelRow } from "@/components/ai/PageCompanion";
 import { PostPoll } from '@/components/feed/PostPoll';
 import { allowAccountWrite } from '@/lib/accountSuspension';
-import {TypingPixelCat,MessagePixelCat,useMessagePixelCat,LIME_AI_CAT_ICON} from '@/components/chat/PixelCat';
-import { streamChatWithFallback } from '@/lib/chatModelFallback';
-import {extractDocumentText} from '@/lib/documentText';
-import { playIncomingRingtone, unlockIncomingRingtone } from '@/lib/incomingRingtone';
+import { TypingPixelCat, MessagePixelCat, useMessagePixelCat, LIME_AI_CAT_ICON } from "@/components/chat/FriendProfile";
+import { streamChatWithFallback } from "@/lib/aiFriends";
+import { extractDocumentText } from "@/lib/sandboxExecution";
+import { playIncomingRingtone, unlockIncomingRingtone } from "@/lib/callRecorder";
 import { GROUP_CALL_INSTRUCTION, runGroupFriendTurn, type FriendCallUtterance } from "@/lib/aiFriends";
-import { randomUUID } from '@/lib/randomUUID';
-import { useIncomingFriendCalls } from '@/hooks/useIncomingFriendCalls';
+import { randomUUID } from "@/lib/utils";
+import { useIncomingFriendCalls } from "@/components/chat/CallSessionProvider";
 import { FriendProfile } from '@/components/chat/FriendProfile';
 import { IncomingFriendCall } from "@/components/chat/CallSessionProvider";
-import {FRIEND_IMAGE_INSTRUCTION,chooseFriendImageQuery,stripImageQuery,appendFriendPhoto,readFriendPhoto,validFriendPhoto} from '../../supabase/functions/_shared/friendImages';
-import { FriendPhoto } from "@/components/chat/DirectChatMessage";
+import { FRIEND_IMAGE_INSTRUCTION, chooseFriendImageQuery, stripImageQuery, appendFriendPhoto, readFriendPhoto, validFriendPhoto } from "./../../supabase/functions/_shared/chatContext.ts";
+import { FriendPhoto } from "@/components/chat/FriendProfile";
 import { waitForFriendReply } from "./../../supabase/functions/_shared/chatContext.ts";
 import { FRIEND_REACTION_INSTRUCTION, parseFriendResponse } from "./../../supabase/functions/_shared/chatContext.ts";
 import {boundedChatContext} from '../../supabase/functions/_shared/chatContext';
-import {ChatPostPreview} from '@/components/ai/ChatPostPreview';
-import { ChatMenuContent } from "@/components/ai/ChatPostPreview";
-import { ProfileImageCropper } from '@/components/profile/ProfileImageCropper';
+import { ChatPostPreview } from "@/components/ai/PageCompanion";
+import { ChatMenuContent } from "@/components/ai/PageCompanion";
+import { ProfileImageCropper } from "@/components/profile/ProfileEditor";
 import { AI_CHAT_DELETED, AI_CHAT_HISTORY_CHANGED, AI_FRIENDS_CHANGED, avatarOf, loadAvatars, saveAvatars, defaultAvatarUrl, listAssistants, findAssistant, saveCustomAssistant, deleteCustomAssistant, type AssistantItem, type AssistantDraft, type AvatarMap } from '@/lib/aiFriends';
 import { Skeleton } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/button";
 import { DirectMessagePanelHeader } from '@/components/layout/Header';
-import { DropdownMenu,  DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/button";
 import { Video, MoreHorizontal } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { PrivateAccountBadge } from "@/components/common/OfficialBadge";
+import { PrivateAccountBadge } from "@/components/ui/avatar";
 import { createSandboxWorker, sandboxDocument, type SandboxWorker } from '@/lib/sandboxExecution';
-import {LipSync, type Emotion} from '@/lib/avatarLipSync';
+import { LipSync, type Emotion } from "@/lib/avatarRuntime";
 import {VrmStage, createBus, triggerGesture, type GestureName, type AvatarBus, type CameraPreset, type StageStatus, type ModelInfo} from '@/components/ai/AvatarStage';
 import { listModels, putModel, deleteModel, type StoredModel } from "@/lib/avatarModels";
-export {LipSync} from '@/lib/avatarLipSync';
+export { LipSync } from "@/lib/avatarRuntime";
 export {VrmStage, createBus} from '@/components/ai/AvatarStage';
 import { isValidElement, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
@@ -46,7 +46,7 @@ import { useTheme } from 'next-themes'
 import { BUILTIN_MODELS, MODEL_ACCEPT, MODEL_FORMAT_LABEL, isSupportedModelFile, inferModelFormat, type ModelSource } from '@/lib/avatarModels'
 import { supabase } from '@/lib/supabase'
 import { createPost, getPostById } from '@/api/posts'
-import { formatRelative } from '@/lib/format'
+import { formatRelative } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth"
 import {
   AudioLines,
@@ -101,13 +101,13 @@ import {
   Wrench,
   X,
 } from 'lucide-react'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { toast } from 'sonner'
 import { CallRecorder } from '@/lib/callRecorder'
-import { preferRecordedCallSpeech, requestCallTranscription } from '@/lib/callTranscription'
-import { Speaker, ttsSupported, unlockAiAudio, CALM_FEMALE_VOICE_ID, CALM_FEMALE_VOICE_NAME } from '@/lib/aiSpeech'
+import { preferRecordedCallSpeech, requestCallTranscription } from "@/lib/callRecorder";
+import { Speaker, ttsSupported, unlockAiAudio, CALM_FEMALE_VOICE_ID, CALM_FEMALE_VOICE_NAME } from "@/lib/callRecorder";
 import { useCallSession } from '@/components/chat/CallSessionProvider'
-import { microphoneErrorMessage, requestMicrophonePermission } from '@/lib/microphone'
+import { microphoneErrorMessage, requestMicrophonePermission } from "@/lib/callRecorder";
 
 /* ==================================================================
    LimeAI 拡張: 型定義・モード定義
@@ -4820,10 +4820,10 @@ const MessageMarkdown = memo(function MessageMarkdown({
 export default function ChatPage({ embedded = false, initialAction, friendId, onEditFriend, onFriendCreated, onBack, onBackgroundChange }: { embedded?: boolean; initialAction?: 'friend'; friendId?: string; onEditFriend?: () => void; onFriendCreated?: (id: string) => void; onBack?: () => void; onBackgroundChange?: () => void } = {}) {
   const { user } = useAuth()
   const uid: string | null = user?.id ?? null
-  
+
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
-  
+
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [assistantStreamStatus, setAssistantStreamStatus] = useState<AssistantStreamStatus>('idle')
@@ -4833,7 +4833,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
   const [postLinkPreview, setPostLinkPreview] = useState<PostLinkPreview | null>(null)
   const [postLinkPreviewLoading, setPostLinkPreviewLoading] = useState(false)
   const [dismissedPostPreviewId, setDismissedPostPreviewId] = useState<string | null>(null)
-  
+
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const sidebarRef = useRef<HTMLDivElement>(null)
   const sidebarOpenerRef = useRef<HTMLButtonElement>(null)
@@ -5354,7 +5354,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
       const { [id]: _removed, ...rest } = prev
       return rest
     })
-    
+
     if (currentSessionId === id) {
       if (filtered.length > 0) {
         setCurrentSessionId(filtered[0].id);setSelectedModel(isLocalGemmaSession(filtered[0].id)?LOCAL_GEMMA_MODEL:sessionMeta[filtered[0].id]?.model??'fast')
@@ -5890,7 +5890,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
     }
 
     const updatedMessages = [...messages, userMessage]
-    
+
     let currentTitle = currentSession?.title || '新しいチャット'
     if (messages.length === 0) {
       const titleSource = trimmedInput || pendingAttachments[0]?.name || '新しいチャット'
@@ -6275,7 +6275,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
                       onClick={() => selectSession(s.id)}
                       className={`vpop-card group flex items-center justify-between px-3 py-2.5 rounded-2xl cursor-pointer text-sm transition duration-150 ${
                         s.id === currentSessionId && view === 'chat'
-                          ? 'bg-[#e2e6ea] dark:bg-[#1c2128] text-[#333a42] dark:text-[#e4e7ea] font-bold border-l-4 border-[#3aa5e0] shadow-[0_6px_16px_-10px_rgba(58,165,224,0.9)]' 
+                          ? 'bg-[#e2e6ea] dark:bg-[#1c2128] text-[#333a42] dark:text-[#e4e7ea] font-bold border-l-4 border-[#3aa5e0] shadow-[0_6px_16px_-10px_rgba(58,165,224,0.9)]'
                           : 'text-[#333a42]/90 dark:text-[#e4e7ea] hover:bg-[#e2e6ea]/45 dark:hover:bg-[#1c2128]'
                       }`}
                     >
@@ -6346,7 +6346,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
       </>}
       {/* メインエリア */}
       <div className="flex flex-col flex-1 h-full bg-transparent relative min-w-0 w-full">
-        
+
         {friendProfileOpen && assistant && <FriendProfile friend={assistant} uid={uid} avatars={avatars} onClose={() => setFriendProfileOpen(false)} onTalk={() => setView('chat')} onCall={openAssistantCall}/>}
         {/* ヘッダーエリア */}
         {embedded && <DirectMessagePanelHeader className={`dm-thread-header ${view === 'assistants' ? 'dm-ai-friends' : ''}`} back={onBack} actions={<>
@@ -6364,7 +6364,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
           </ChatMenuContent></DropdownMenu>
         </>}><div className="dm-thread-peer" role={friendId ? "button" : undefined} tabIndex={friendId ? 0 : undefined} aria-label={friendId ? "フレンドのプロフィール" : undefined} onClick={() => { if (friendId) setFriendProfileOpen(true); }} onKeyDown={e => { if (friendId && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); setFriendProfileOpen(true); } }}><Avatar className="dm-avatar"><AvatarImage src={friendId && assistant ? avatarOf(assistant,avatars) : LIME_AI_CAT_ICON} style={!friendId?{objectFit:'contain',background:'#090c0e'}:undefined}/><AvatarFallback>AI</AvatarFallback></Avatar><span className="dm-peer-name">{view === 'assistants' ? 'フレンド' : assistant?.name ?? 'LimeAI'}</span></div></DirectMessagePanelHeader>}
         <div hidden={embedded} className={embedded ? "hidden" : "flex items-center h-12 md:h-16 px-2 md:px-5 w-full shrink-0 z-30"}>
-          
+
           {!isSidebarOpen && (
             <button
               ref={sidebarOpenerRef}

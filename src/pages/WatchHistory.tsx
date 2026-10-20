@@ -3,26 +3,26 @@ import {useParams,Link,Navigate} from 'react-router-dom';
 import {useInfiniteQuery,useQuery,useQueryClient} from '@tanstack/react-query';
 import {Search,Trash2} from 'lucide-react';
 import {useAuth} from '@/hooks/useAuth';
-import {useProfile} from '@/hooks/useProfile';
-import {Avatar,AvatarImage,AvatarFallback} from '@/components/ui/avatar';
-import {PrivateAccountBadge,ProviderVerificationBadge} from '@/components/common/OfficialBadge';
-import {displayUsername} from '@/lib/format';
+import { useProfile } from "@/hooks/useFeed";
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
+import { PrivateAccountBadge, ProviderVerificationBadge } from "@/components/ui/avatar";
+import { displayUsername } from "@/lib/utils";
 import {Button} from '@/components/ui/button';
-import {Dialog,DialogContent,DialogTitle,DialogDescription} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/button";
 import {toast} from 'sonner';
 import {useInView} from 'react-intersection-observer';
 import {externalRead} from '@/lib/utils';
-import {ANIME_SOURCES,ANIME_HISTORY_CHANGED,animeHistoryKey,animeHttps,groupAnimeHistory,fetchAnimeArtwork,fetchAnimeStreamingLinks,preferredAnimeStreamingUrl,getAnimeHistory,changeAnimeHistory,searchAnimeWorks,getAnimeEpisodes,saveAnimeViewing,resolveAnimeImport,saveAnimeImport,scanAnimePosts,parseAnimeImport,type AnimeHistoryState,type AnimeWork,type AnimeImportItem,type AnimeImportResolution} from '@/api/watchHistory';
-import './watch-history.css';
+import {ANIME_HISTORY_CHANGED,animeHistoryKey,animeArtworkUrl,groupAnimeHistory,fetchAnimeArtwork,fetchAnimeYouTubeId,animeYouTubeUrl,getAnimeHistory,changeAnimeHistory,searchAnimeWorks,getAnimeEpisodes,saveAnimeViewing,resolveAnimeImport,saveAnimeImport,scanAnimePosts,parseAnimeImport,importWorkTitle,type AnimeHistoryState,type AnimeWork,type AnimeImportItem,type AnimeImportResolution} from '@/api/watchHistory';
+
 const importKey=(item:AnimeImportItem)=>JSON.stringify([item.source,item.sourceUrl,item.title,item.episodeText]);
 const dateLabel=(value:string|null)=>value?new Intl.DateTimeFormat('ja-JP',{dateStyle:'medium',timeStyle:'short'}).format(new Date(value)):'視聴日時不明';
 function AnimeImage({work,title}:{work:AnimeWork;title:string}){
  const {ref,inView}=useInView({triggerOnce:true,rootMargin:'200px'});
  const [failed,setFailed]=useState<string[]>([]);
- const original=[work.image,...(work.imageFallbacks??[])].filter(animeHttps);
+ const original=[work.image,...(work.imageFallbacks??[])].filter(animeArtworkUrl);
  const remaining=original.filter(url=>!failed.includes(url));
- const artwork=useQuery({queryKey:['anime-artwork',work.id,work.title],queryFn:({signal})=>externalRead(()=>fetchAnimeArtwork(work),signal),enabled:inView&&!remaining.length,staleTime:24*60*60000,gcTime:30*60000,retry:false});
- const src=[...remaining,...(artwork.data?.imageFallbacks??[])].find(url=>!failed.includes(url));
+ const artwork=useQuery({queryKey:['anime-artwork-v2',work.id,work.title,work.season],queryFn:({signal})=>externalRead(()=>fetchAnimeArtwork(work),signal),enabled:inView&&!remaining.length,staleTime:query=>query.state.data?.imageFallbacks?.length?24*60*60000:60000,gcTime:30*60000,retry:false});
+ const src=[...remaining,...(artwork.data?.imageFallbacks??[])].find(url=>animeArtworkUrl(url)&&!failed.includes(url));
  return <div ref={ref} className="anime-history-image">{src?<img src={src} alt={title} loading="lazy" referrerPolicy="no-referrer" onError={()=>setFailed(previous=>[...previous,src])}/>:<span aria-label="画像なし"/>}</div>;
 }
 export default function WatchHistory(){
@@ -60,7 +60,7 @@ function History({username,owner}:{username:string;owner:string|null}){
  const results=useQuery({queryKey:['anime-catalog',owner,search],queryFn:({signal})=>searchAnimeWorks(owner,search,signal),enabled:!!owner&&searchFocused&&search.length>=2,staleTime:5*60000,retry:false});
  const episodes=useInfiniteQuery({queryKey:['anime-episodes',owner,work?.id],queryFn:({pageParam,signal})=>getAnimeEpisodes(owner,work!.id,pageParam,signal),initialPageParam:1,getNextPageParam:page=>page.nextPage??undefined,enabled:addOpen&&!!work,staleTime:5*60000,retry:false});
  useEffect(()=>{const timer=setTimeout(()=>setSearch(filter.trim()),350);return()=>clearTimeout(timer);},[filter]);
- const openAdd=(item?:AnimeImportItem)=>{setImportOpen(false);setManualImport(item);setFilter(item?.title??'');setSearch(item?.title??'');setSearchFocused(true);requestAnimationFrame(()=>searchInput.current?.focus());};
+ const openAdd=(item?:AnimeImportItem)=>{setImportOpen(false);setManualImport(item);setFilter(item?importWorkTitle(item):'');setSearch(item?importWorkTitle(item):'');setSearchFocused(true);requestAnimationFrame(()=>searchInput.current?.focus());};
  const chooseWork=(row:AnimeWork)=>{
   setWork(row);setEpisodeId('');setWatchedAt(manualImport?.watchedAt?new Date(Date.parse(manualImport.watchedAt)-new Date(manualImport.watchedAt).getTimezoneOffset()*60000).toISOString().slice(0,16):manualImport?'':new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16));setSearchFocused(false);setAddOpen(true);
  };
@@ -71,10 +71,10 @@ function History({username,owner}:{username:string;owner:string|null}){
  };
  const acceptTransfer=async(items:unknown)=>{
   if(!owner)return;
-  setAddOpen(false);setImportOpen(true);setImportError('');setImportProgress('Annictで作品を照合しています…');setImportRows([]);setSelected(new Set());setBusy(true);
+  setAddOpen(false);setImportOpen(true);setImportError('');setImportProgress('照合中…');setImportRows([]);setSelected(new Set());setBusy(true);
   try{
    const parsed=parseAnimeImport({format:'limenote-anime-history',version:1,items});let rows:AnimeImportResolution[]=[];
-   for(let i=0;i<parsed.length;i+=10){if(!alive.current)return;const result=await resolveAnimeImport(owner,parsed.slice(i,i+10));rows=[...rows,...result.rows];setImportRows(rows);setSelected(new Set(rows.flatMap(row=>row.work?[importKey(row.item)]:[])));setImportProgress(`${Math.min(i+10,parsed.length)} / ${parsed.length} 件を照合`);}
+   for(let i=0;i<parsed.length;i+=10){if(!alive.current)return;const result=await resolveAnimeImport(owner,parsed.slice(i,i+10));rows=[...rows,...result.rows];setImportRows(rows);setSelected(new Set(rows.flatMap(row=>row.work?[importKey(row.item)]:[])));setImportProgress(`${Math.min(i+10,parsed.length)} / ${parsed.length}`);}
    if(!parsed.length)setImportError('移行する履歴がありません');
   }catch(error){setImportError((error as Error).message);}finally{if(alive.current){setBusy(false);setImportProgress('');}}
  };
@@ -89,7 +89,7 @@ function History({username,owner}:{username:string;owner:string|null}){
  },[owner,busy]);
  const importSelected=async()=>{
   const rows=importRows.filter((row,index)=>row.work&&selected.has(importKey(row.item)));if(!rows.length)return;setBusy(true);setImportError('');let saved=0;
-  try{for(let i=0;i<rows.length;i+=10){if(!alive.current)return;const chunk=rows.slice(i,i+10),result=await saveAnimeImport(owner,chunk);update(result.state);saved+=chunk.length;setImportProgress(`${saved} / ${rows.length} 件を保存`);setImportRows(previous=>previous.filter(row=>!chunk.includes(row)));}setSelected(new Set());toast.success(`${saved}件の履歴を取り込みました`);}
+  try{for(let i=0;i<rows.length;i+=10){if(!alive.current)return;const chunk=rows.slice(i,i+10),result=await saveAnimeImport(owner,chunk);update(result.state);saved+=chunk.length;setImportProgress(`${saved} / ${rows.length}`);setImportRows(previous=>previous.filter(row=>!chunk.includes(row)));}setSelected(new Set());if(importRows.every(row=>rows.includes(row)))setImportOpen(false);toast.success(`${saved}件の履歴を取り込みました`);}
   catch(error){setSelected(new Set());setImportError(`${saved}件保存済み。${(error as Error).message}`);}finally{if(alive.current){setBusy(false);setImportProgress('');}}
  };
  const removeWork=async(workId:number)=>{
@@ -113,7 +113,10 @@ function History({username,owner}:{username:string;owner:string|null}){
   {history.isPending?<p role="status" className="anime-history-empty">読み込み中…</p>:history.isError?<p role="alert" className="anime-history-empty">{(history.error as Error).message}</p>:groups.length?<ol className="anime-history-list">{groups.map(group=><AnimeHistoryRow key={group.work.id} group={group} removable={!!owner} deleting={busy} onRemove={()=>void removeWork(group.work.id)}/>)}</ol>:<div className="anime-history-empty"><p>{filter?'一致する履歴がありません':'まだ視聴履歴がありません。'}</p></div>}
   {owner&&<footer className="anime-history-tools"><a href={`${import.meta.env.BASE_URL}extensions/anime-history.zip`} download="LimeNote-anime-history.zip">拡張機能をダウンロード</a><button type="button" disabled={busy||transferPending} onClick={requestTransfer}>{transferPending?'接続中…':'取り込み'}</button></footer>}
   <Dialog open={addOpen} onOpenChange={open=>{if(!busy){setAddOpen(open);if(!open&&manualImport){setManualImport(undefined);setImportOpen(true);}}}}><DialogContent aria-describedby={undefined} className="anime-history-dialog anime-history-add-screen" overlayClassName="anime-history-add-backdrop"><DialogTitle>{work?.title??'視聴履歴に追加'}</DialogTitle>{work&&<><label className="anime-history-field">エピソード<select aria-label="エピソード" value={episodeId} onChange={e=>setEpisodeId(e.target.value)}><option value="">作品全体（話数指定なし）</option>{episodes.data?.pages.flatMap(page=>page.episodes).map(e=><option key={e.id} value={e.id}>{e.number} {e.title}</option>)}</select></label>{episodes.isError&&<p role="alert">エピソードを取得できませんでした。</p>}{episodes.hasNextPage&&<button type="button" className="text-sm underline" disabled={episodes.isFetchingNextPage} onClick={()=>void episodes.fetchNextPage()}>続きのエピソードを表示</button>}<label className="anime-history-field">視聴日時<input aria-label="視聴日時" type="datetime-local" value={watchedAt} disabled={!!manualImport} onChange={e=>setWatchedAt(e.target.value)}/></label><Button onClick={()=>void save()} disabled={busy}>{busy?'保存中…':'視聴履歴に追加'}</Button></>}</DialogContent></Dialog>
-  <Dialog open={importOpen} onOpenChange={open=>{if(!busy)setImportOpen(open);}}><DialogContent className="anime-history-dialog"><DialogTitle>視聴履歴を取り込む</DialogTitle><DialogDescription>Annictで照合した作品を確認し、保存する履歴を選んでください。照合だけでは保存されません。</DialogDescription>{importProgress&&<p role="status">{importProgress}</p>}{importError&&<p role="alert">{importError}</p>}<div className="anime-history-import">{importRows.map((row,index)=><div key={`${row.item.sourceUrl}:${index}`}><label><input type="checkbox" disabled={!row.work||busy} checked={!!row.work&&selected.has(importKey(row.item))} onChange={e=>setSelected(previous=>{const next=new Set(previous);if(e.target.checked)next.add(importKey(row.item));else next.delete(importKey(row.item));return next;})}/><span>{row.item.title}<small>{row.item.episodeText} · {ANIME_SOURCES[row.item.source]} · {dateLabel(row.item.watchedAt)}</small><small>{row.work?`照合：${row.work.title}`:'作品未照合・確認が必要です'}</small></span></label>{!row.work&&<button type="button" className="text-sm underline" disabled={busy} onClick={()=>openAdd(row.item)}>作品を選ぶ</button>}</div>)}</div><Button disabled={busy||!importRows.some((row,index)=>row.work&&selected.has(importKey(row.item)))} onClick={()=>void importSelected()}>選択した履歴を取り込む</Button></DialogContent></Dialog>
+  <Dialog open={importOpen} onOpenChange={open=>{if(!busy)setImportOpen(open);}}><DialogContent aria-describedby={undefined} className="anime-history-dialog anime-history-add-screen anime-history-import-screen" overlayClassName="anime-history-add-backdrop"><DialogTitle>取り込み</DialogTitle>{importProgress&&<p role="status" className="anime-history-import-progress">{importProgress}</p>}{importError&&<p role="alert">{importError}</p>}<div className="anime-history-import">{importRows.map((row,index)=><div key={`${row.item.sourceUrl}:${index}`}>
+   {row.work?<label><input type="checkbox" disabled={busy} aria-label={`${row.work.title}を取り込む`} checked={selected.has(importKey(row.item))} onChange={e=>setSelected(previous=>{const next=new Set(previous);if(e.target.checked)next.add(importKey(row.item));else next.delete(importKey(row.item));return next;})}/><span>{row.work.title}{row.item.episodeText&&<small>{row.item.episodeText}</small>}</span></label>:<><span>{importWorkTitle(row.item)||row.item.title}</span><button type="button" className="text-sm underline" aria-label={`${row.item.title}の作品を選ぶ`} disabled={busy} onClick={()=>openAdd(row.item)}>選ぶ</button></>}
+  </div>)}</div><Button disabled={busy||!importRows.some(row=>row.work&&selected.has(importKey(row.item)))} onClick={()=>void importSelected()}>取り込む</Button></DialogContent></Dialog>
+
  </section>;
 }
 
@@ -121,8 +124,8 @@ function AnimeHistoryRow({group,removable,deleting,onRemove}:{group:ReturnType<t
  const row=useRef<HTMLLIElement>(null),pointer=useRef('');const [touched,setTouched]=useState(false);
  useEffect(()=>{if(!touched)return;const outside=(event:PointerEvent)=>{if(!row.current?.contains(event.target as Node))setTouched(false);};document.addEventListener('pointerdown',outside);return()=>document.removeEventListener('pointerdown',outside);},[touched]);
  const {ref,inView}=useInView({triggerOnce:true,rootMargin:'200px'});
- const streaming=useQuery({queryKey:['anime-streaming',group.work.id,group.work.title,group.work.season],queryFn:({signal})=>externalRead(()=>fetchAnimeStreamingLinks(group.work),signal),enabled:inView,staleTime:24*60*60000,gcTime:30*60000,retry:false});
+ const trailer=useQuery({queryKey:['anime-youtube',group.work.id,group.work.title,group.work.season],queryFn:({signal})=>externalRead(()=>fetchAnimeYouTubeId(group.work),signal),enabled:inView,staleTime:24*60*60000,gcTime:30*60000,retry:false});
  const entry=group.entries[0],multiple=group.entries.length>1;
- const href=preferredAnimeStreamingUrl(group.work,group.entries,streaming.data??[]);
- return <li ref={element=>{row.current=element;ref(element);}} className={`anime-history-item${touched?' anime-history-touched':''}`}><a onPointerDown={event=>{pointer.current=event.pointerType;}} onClick={event=>{if(removable&&pointer.current==='touch'&&!touched&&event.detail!==0){event.preventDefault();setTouched(true);}}} className={`anime-history-row${multiple?' anime-history-group':''}`} href={href} aria-label={`${group.work.title}を配信サービスで開く`}><div className={multiple?'anime-history-stack':''}><AnimeImage work={group.work} title={group.work.title}/></div><div className="anime-history-details">{!multiple&&entry.episodeText&&<p className="anime-history-series">{group.work.title}</p>}<h2>{multiple?group.work.title:entry.episodeText||group.work.title}</h2>{!multiple&&entry.watchedAt&&<p className="anime-history-date">{dateLabel(entry.watchedAt)}</p>}</div></a>{removable&&<button type="button" className="anime-history-delete" aria-label={`${group.work.title}を視聴履歴から削除`} disabled={deleting} onClick={event=>{event.preventDefault();event.stopPropagation();onRemove();}}><Trash2 size={24} aria-hidden="true"/></button>}</li>;
+ const href=animeYouTubeUrl(group.work,trailer.data);
+ return <li ref={element=>{row.current=element;ref(element);}} className={`anime-history-item${touched?' anime-history-touched':''}`}><a onPointerDown={event=>{pointer.current=event.pointerType;}} onClick={event=>{if(removable&&pointer.current==='touch'&&!touched&&event.detail!==0){event.preventDefault();setTouched(true);}}} className={`anime-history-row${multiple?' anime-history-group':''}`} href={href} aria-label={`${group.work.title}をYouTubeで開く`}><div className={multiple?'anime-history-stack':''}><AnimeImage work={group.work} title={group.work.title}/></div><div className="anime-history-details">{!multiple&&entry.episodeText&&<p className="anime-history-series">{group.work.title}</p>}<h2>{multiple?group.work.title:entry.episodeText||group.work.title}</h2>{!multiple&&entry.watchedAt&&<p className="anime-history-date">{dateLabel(entry.watchedAt)}</p>}</div></a>{removable&&<button type="button" className="anime-history-delete" aria-label={`${group.work.title}を視聴履歴から削除`} disabled={deleting} onClick={event=>{event.preventDefault();event.stopPropagation();onRemove();}}><Trash2 size={24} aria-hidden="true"/></button>}</li>;
 }

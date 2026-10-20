@@ -6,7 +6,7 @@ vi.mock('@/lib/supabase', () => ({ supabase: { from: (table: string) => {
   return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { is_official: true }, error: null }) }), neq: () => ({ order: async () => ({ data: [{ id: 'recipient', username: 'friend', display_name: 'Friend', avatar_url: '' }], error: null }) }) }) };
 } } }));
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ReplyShare } from './ReplyShare';
+import { ReplyShare } from "@/components/post/CommentList";
 const comment = { id: 'child', postId: 'root', content: 'reply text', author: { id: 'author', username: 'author', displayName: 'Author' } };
 beforeEach(() => { Object.defineProperty(window, 'isSecureContext', { configurable: true, value: true }); state.insert.mockReset().mockResolvedValue({ error: null }); Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn().mockResolvedValue(undefined) } }); Object.defineProperty(navigator, 'share', { configurable: true, value: vi.fn().mockResolvedValue(undefined) }); });
 afterEach(cleanup);

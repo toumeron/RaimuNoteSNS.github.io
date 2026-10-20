@@ -1,6 +1,6 @@
 import {createClient} from 'https://esm.sh/@supabase/supabase-js@2';
 import {authenticate,boundedRequest,quota} from '../_shared/security.ts';
-import {cloudinarySignature,cloudinaryDownloadUrl} from '../direct-media/signing.ts';
+import { cloudinarySignature, cloudinaryDownloadUrl } from "./../direct-media/index.ts";
 async function providerFetch(url:string,options:RequestInit){const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),30000);try{return await fetch(url,{...options,signal:controller.signal});}finally{clearTimeout(timer);}}
 const headers={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization, x-client-info, apikey, content-type','Access-Control-Allow-Methods':'POST, OPTIONS','Cache-Control':'no-store'};
 export async function handleListMedia(request:Request):Promise<Response> {

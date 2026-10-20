@@ -5,13 +5,13 @@ import { Heart, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from "@/components/ui/button";
 import { Label } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/button";
 import { supabase } from '@/lib/supabase';
-import { Logo } from '@/components/layout/Logo';
+import { Logo } from "@/components/layout/AppLayout";
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
-import { SavedAccountList } from '@/components/layout/AccountSwitcher';
-import { companyReturnUrl, returnToCompany } from '@/lib/companyLoginReturn';
+import { SavedAccountList } from "@/components/layout/AppLayout";
+import { companyReturnUrl, returnToCompany } from "@/lib/accountSuspension";
 
 const schema = z.object({
   email: z.string().email('メールアドレスの形式が正しくありません'),
@@ -141,14 +141,14 @@ function AuthForm({ mode, returnUrl }: { mode: Mode; returnUrl: string | null })
             onChange={(e) => setIsAgreed(e.target.checked)}
             className="h-4 w-4 rounded border-gray-300 dark:border-zinc-700 accent-primary cursor-pointer"
           />
-          <Label 
-            htmlFor="terms-agreement" 
+          <Label
+            htmlFor="terms-agreement"
             className="text-sm font-medium text-muted-foreground cursor-pointer select-none"
           >
-            <Link 
-              to="/terms" 
-              target="_blank" 
-              rel="noopener noreferrer" 
+            <Link
+              to="/terms"
+              target="_blank"
+              rel="noopener noreferrer"
               className="text-primary hover:underline font-semibold mr-1"
               onClick={(e) => e.stopPropagation()}
             >
@@ -211,7 +211,7 @@ export default function AuthPage() {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden p-4 bg-black text-foreground transition-colors duration-200">
-      
+
       {/* 背景画像：指定されたURLを全面に配置（動画と同じobject-coverでアスペクト比を維持） */}
       <img
         src="https://pbs.twimg.com/media/HHdk07nbMAAW14w?format=jpg&name=4096x4096"

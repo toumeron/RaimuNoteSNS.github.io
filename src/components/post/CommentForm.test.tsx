@@ -1,12 +1,14 @@
+vi.mock("@/hooks/useFeed", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useFeed")>(), useCreateComment: () => ({ mutateAsync: state.send, isPending: state.pending })}));
+vi.mock("@/hooks/useAuth", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useAuth")>(), useAuth: () => ({ user: { id: 'viewer', displayName: 'Viewer', avatarUrl: '', username: 'viewer' } })}));
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { act, cleanup, fireEvent, render as baseRender, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({ send: vi.fn(), pending: false }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ user: { id: 'viewer', displayName: 'Viewer', avatarUrl: '', username: 'viewer' } }) }));
-vi.mock('@/hooks/useComments', () => ({ useCreateComment: () => ({ mutateAsync: state.send, isPending: state.pending }) }));
+
+
 vi.mock('@/components/feed/PostComposer', () => ({ PostComposer: ({ imageEditor }: { imageEditor: { src: string; onApply: (url: string) => void; onClose: () => void } }) => <div role="dialog"><span>{imageEditor.src}</span><button onClick={() => { imageEditor.onApply('blob:cropped'); imageEditor.onClose(); }}>編集を保存</button></div> }));
-import { CommentForm } from './CommentForm';
+import { CommentForm } from "@/components/post/CommentForm";
 const render = (ui: React.ReactNode, options?: Parameters<typeof baseRender>[1]) => {
   const client = new QueryClient({defaultOptions:{queries:{retry:false}}});
   const Wrapper = ({children}:{children:React.ReactNode}) => <QueryClientProvider client={client}><MemoryRouter>{children}</MemoryRouter></QueryClientProvider>;

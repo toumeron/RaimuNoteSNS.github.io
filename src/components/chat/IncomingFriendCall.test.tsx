@@ -1,8 +1,13 @@
+vi.mock("@/lib/callRecorder", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/lib/callRecorder")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/lib/callRecorder")>(), playIncomingRingtone: () => stop}))(importOriginal)};
+});
+
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { IncomingFriendCall } from "@/components/chat/CallSessionProvider";
 const stop = vi.hoisted(() => vi.fn());
-vi.mock('@/lib/incomingRingtone', () => ({ playIncomingRingtone: () => stop }));
+
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 it('answers the call and stops ringing when the owner dismisses the banner', async () => {
   const answer = vi.fn().mockResolvedValue(true);

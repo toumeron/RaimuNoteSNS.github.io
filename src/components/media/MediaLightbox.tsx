@@ -1,18 +1,19 @@
-import { displayUsername } from "@/lib/format";
-import { usePrivateMediaUrl } from "@/components/profile/ProfileMediaPreview";
-import { useVideoMutedPreference } from "@/lib/hlsPlayback";
+import { ContentLink } from "@/components/ui/button";
+import { displayUsername } from "@/lib/utils";
+import { usePrivateMediaUrl } from "@/components/ui/avatar";
+import { useVideoMutedPreference } from "@/components/video/PostVideoPlayer";
 import {resolvePrivateMediaUrl} from '@/lib/privateMediaFetch';
-import {getTwitterVideoPage,type TwitterVideoCursor} from '@/api/twitter-videos';
+import { getTwitterVideoPage, type TwitterVideoCursor } from "@/api/search-news";
 import {twitterReplyUrl} from '@/lib/fxTwitter';
-import { ProviderVerificationBadge } from "@/components/common/OfficialBadge";
-import {VideoLightboxPlayer} from './VideoLightboxPlayer';
+import { ProviderVerificationBadge } from "@/components/ui/avatar";
+import { VideoLightboxPlayer } from "@/components/video/PostVideoPlayer";
 import { videoSelections, videoSwipeDirection, mergeVideoQueue } from "@/lib/mediaThumbnail";
 import { PostPoll } from '@/components/feed/PostPoll';
-import {useCachedChatImage} from '@/lib/chatImageCache';
+import { useCachedChatImage } from "@/lib/aiFriends";
 import {forwardRef,type ImgHTMLAttributes} from 'react';
-import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
+import { PrivateAccountBadge } from "@/components/ui/avatar";
 import {getBlueskyPostUrl} from '@/lib/bluesky';
-import { OfflineBookmarkContext } from '@/components/stickers/OfflineBookmarkContext';
+import { OfflineBookmarkContext } from "@/components/stickers/Stickers";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { Link, useLocation } from 'react-router-dom';
@@ -21,19 +22,19 @@ import { ArrowLeft, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Load
 import { toast } from 'sonner';
 import { getPostById, getVideoFeed, type FeedCursor } from '@/api/posts';
 import { getExternalPost, isExternalPostId } from '@/api/external-posts';
-import { getReplyPost } from '@/api/reply-reposts';
+import { getReplyPost } from "@/api/external-posts";
 import { useAuth } from '@/hooks/useAuth';
 import { postKey } from '@/hooks/useFeed';
 import { PostCard } from '@/components/feed/PostCard';
-import { CommentForm } from '@/components/post/CommentForm';
+import { CommentForm } from "@/components/post/CommentForm";
 import { CommentList, CommentCard } from '@/components/post/CommentList';
-import { FollowButton } from '@/components/profile/FollowButton';
+import { FollowButton } from "@/components/profile/ProfileHeader";
 import { renderStickerText } from "@/components/stickers/Stickers";
 import { PostOverlayContext, usePostOverlay } from "@/components/layout/DesktopLayoutContext";
-import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import type { PostWithAuthor } from '@/types';
 import { MEDIA_VIEWER_EVENT, type MediaViewerSelection } from './openMediaViewer';
-import './media-lightbox.css';
+
 import { containSize, clampPan, focalPan, pinchZoom } from "@/lib/mediaThumbnail";
 
 const CachedLightboxImage=forwardRef<HTMLImageElement,ImgHTMLAttributes<HTMLImageElement>&{account?:string}>(({src,account,...props},ref)=>{const resolved=usePrivateMediaUrl(src);const cached=useCachedChatImage(resolved??'',account);return <img {...props} ref={ref} src={cached||undefined}/>});
@@ -418,7 +419,7 @@ export function MediaLightbox({ selection: initialSelection, onClose }: { select
       {!videoMode&&index < media.length - 1 && <button className="lime-media-next" aria-label="次の画像" onClick={() => move(1)}><ChevronRight /></button>}
       <footer ref={dock} className="lime-media-bottom" onClick={event => { if (event.target === event.currentTarget) close(); }}>
         {!videoMode&&media.length > 1 && <div className="lime-media-dots">{media.map((item, i) => <button key={item.src} aria-label={`画像 ${i + 1}`} aria-current={index === i} onClick={() => setIndex(i)} />)}</div>}
-        {post && <div className="lime-media-mobile-summary">{author}<p>{renderStickerText(post.content, text => text.split(/(https?:\/\/[^\s]+)/g).map((part, i) => /^https?:\/\//.test(part) ? <a key={i} href={part} target="_blank" rel="noopener noreferrer" className="text-primary">{part}</a> : part))}</p></div>}
+        {post && <div className="lime-media-mobile-summary">{author}<p>{renderStickerText(post.content, text => text.split(/(https?:\/\/[^\s]+)/g).map((part, i) => /^https?:\/\//.test(part) ? <ContentLink key={i} href={part} target="_blank" rel="noopener noreferrer" className="text-primary">{part}</ContentLink> : part))}</p></div>}
         {post && actions()}
 
         <div className="lime-media-mobile-reply">{post && !external && !offline && <div ><CommentForm postId={replyPostId!} parentCommentId={post.replyId ?? null} variant="mediaViewerMobile" replyTo={post} /></div>}</div>
@@ -428,7 +429,7 @@ export function MediaLightbox({ selection: initialSelection, onClose }: { select
       </footer>
     </section>
     {!!id&&!videoMode && <aside className="lime-media-detail" aria-hidden={!details || undefined} {...(!details ? { inert: '' } : {})}>
-      {post ? <><div className="lime-media-author-header">{author}{postControls('menu')}</div><p className="lime-media-content">{renderStickerText(post.content, text => text.split(/(https?:\/\/[^\s]+)/g).map((part, i) => /^https?:\/\//.test(part) ? <a key={i} href={part} target="_blank" rel="noopener noreferrer" className="text-primary">{part}</a> : part))}</p>{post.poll && <PostPoll post={post}/>}<p className="lime-media-date">{new Date(post.createdAt).toLocaleTimeString('ja-JP', { hour: 'numeric', minute: '2-digit', hour12: true })} · {new Date(post.createdAt).toLocaleDateString('ja-JP', {year:'numeric',month:'long',day:'numeric'})}{post.clientName && ` · ${post.clientName}`}</p>{actions()}{replies}</> : <p>{postQuery.isError ? 'ポストの取得に失敗しました' : '読み込み中…'}</p>}
+      {post ? <><div className="lime-media-author-header">{author}{postControls('menu')}</div><p className="lime-media-content">{renderStickerText(post.content, text => text.split(/(https?:\/\/[^\s]+)/g).map((part, i) => /^https?:\/\//.test(part) ? <ContentLink key={i} href={part} target="_blank" rel="noopener noreferrer" className="text-primary">{part}</ContentLink> : part))}</p>{post.poll && <PostPoll post={post}/>}<p className="lime-media-date">{new Date(post.createdAt).toLocaleTimeString('ja-JP', { hour: 'numeric', minute: '2-digit', hour12: true })} · {new Date(post.createdAt).toLocaleDateString('ja-JP', {year:'numeric',month:'long',day:'numeric'})}{post.clientName && ` · ${post.clientName}`}</p>{actions()}{replies}</> : <p>{postQuery.isError ? 'ポストの取得に失敗しました' : '読み込み中…'}</p>}
     </aside>}
   </div></PostOverlayContext.Provider>, document.body);
 }

@@ -1,26 +1,31 @@
-import { ComposerIcon } from "@/components/feed/ComposerIcon";
-import { OfflineBookmarkContext } from "@/components/stickers/OfflineBookmarkContext";
+import { ComposerIcon } from "@/components/feed/PostPoll";
 import { createPortal } from "react-dom";
-import { useIsMobile } from "@/hooks/use-mobile";
+import { useIsMobile } from "@/hooks/useViewportWidth";
 import { Button } from "@/components/ui/button";
-import { useContext, useEffect, useState, Fragment, type ReactNode } from "react";
+import { useContext, useEffect, useState, Fragment, type ReactNode, createContext } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Sticker, X, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { stickerUrl, type CustomSticker, splitStickers, stickersAreInline, draftEmojiName } from "@/lib/stickers";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/button";
+import { stickerUrl, type CustomSticker, splitStickers, stickersAreInline, draftEmojiName } from "@/lib/utils";
+import { type LinkPreview } from "@/lib/mediaThumbnail";
+import { type OfflineSpaceCard } from "@/lib/offlineBookmarks";
 
+// OfflineBookmarkContext
+const OfflineBookmarkContext=createContext<{bookmarkIds:string[];linkPreviews?:Record<string,LinkPreview|null>;emojis:CustomSticker[];spaces:Record<string,OfflineSpaceCard|null>;media:Map<string,string>}|null>(null);
+
+// Stickers
 function useStickers(enabled=true) {
   return useQuery({queryKey:['custom-stickers'],enabled,staleTime:60000,queryFn:async()=>{
     const {data,error}=await supabase.from('custom_emojis').select('id,name,public_id,format').order('name');
     if(error)throw error; return (data||[]) as CustomSticker[];
   }});
 }
-export function StickerImage({name,inline=false}:{name:string;inline?:boolean}) {
+function StickerImage({name,inline=false}:{name:string;inline?:boolean}) {
   const offline=useContext(OfflineBookmarkContext);const {data}=useStickers(!offline);const sticker=(offline?.emojis??data)?.find(s=>s.name===name);const src=sticker&&stickerUrl(sticker);
   return src?<img data-lime-sticker src={offline?.media.get(src)??src} alt={`${name}のスタンプ`} loading="lazy" data-lime-sticker-inline={inline} className={`inline-block max-w-full object-contain align-middle ${inline?'h-6 w-6':'my-1 h-36 w-36'}`}/>:<span className="text-sm text-muted-foreground">{name}のスタンプ</span>;
 }
-export function StickerPicker({onSelect,disabled=false,iconOnly=false,simple=false,className=''}:{onSelect:(name:string)=>void;disabled?:boolean;iconOnly?:boolean;simple?:boolean;className?:string}) {
+function StickerPicker({onSelect,disabled=false,iconOnly=false,simple=false,className=''}:{onSelect:(name:string)=>void;disabled?:boolean;iconOnly?:boolean;simple?:boolean;className?:string}) {
   const [open,setOpen]=useState(false),[search,setSearch]=useState('');
   const mobile=useIsMobile();
   const {data,isPending,isError,refetch}=useStickers(open);
@@ -50,20 +55,27 @@ export function StickerPicker({onSelect,disabled=false,iconOnly=false,simple=fal
   </div>,document.body)}</>;
   return <Popover open={open} onOpenChange={setOpen}><PopoverTrigger asChild>{trigger}</PopoverTrigger><PopoverContent data-lime-sticker-picker="desktop" side="top" align="end" className="z-[2147483100] w-96 max-w-[calc(100vw-24px)] p-3" onOpenAutoFocus={e=>e.preventDefault()} onEscapeKeyDown={event=>event.stopPropagation()}>{contents}</PopoverContent></Popover>;
 }
-export function StickerDraft({name,onRemove,inline=false}:{name:string|null;onRemove:()=>void;inline?:boolean}) {
+function StickerDraft({name,onRemove,inline=false}:{name:string|null;onRemove:()=>void;inline?:boolean}) {
   return name?<div data-lime-sticker-draft className={inline?'mt-2 flex w-fit items-center gap-1':'relative mt-2 w-fit'}><StickerImage name={name} inline={inline}/><button type="button" aria-label="スタンプを外す" onClick={onRemove} className={`${inline?'':'absolute right-0 top-0'} rounded-full bg-background p-1 text-muted-foreground shadow`}><X className="h-4 w-4"/></button></div>:null;
 }
 
-export function renderStickerText(text:string,renderText:(text:string)=>ReactNode):ReactNode {
+function renderStickerText(text:string,renderText:(text:string)=>ReactNode):ReactNode {
   const inline=stickersAreInline(text);
   return splitStickers(text).map((part,i)=><Fragment key={i}>{part.name?<StickerImage name={part.name} inline={inline || part.inline}/>:renderText(part.text)}</Fragment>);
 }
 
 // Each draft emoji occupies one native text character, so cursor movement,
 // selection, deletion and IME composition remain native textarea operations.
-export function DraftEmojiText({text,renderText=(value)=>value}:{text:string;renderText?:(value:string)=>ReactNode}) {
+function DraftEmojiText({text,renderText=(value)=>value}:{text:string;renderText?:(value:string)=>ReactNode}) {
   return text.split(/([\uE000-\uF8FF])/).map((part,index)=>{
     const name=draftEmojiName(part);
     return <Fragment key={index}>{name?<span data-lime-draft-emoji className="relative inline-block align-baseline"><span className="invisible">{part}</span><span className="pointer-events-none absolute inset-0 flex items-center justify-center [&_img]:!m-0 [&_img]:!h-[1em] [&_img]:!w-full"><StickerImage name={name} inline/></span></span>:renderText(part)}</Fragment>;
   });
 }
+
+export { StickerImage };
+export { StickerPicker };
+export { StickerDraft };
+export { renderStickerText };
+export { DraftEmojiText };
+export { OfflineBookmarkContext };

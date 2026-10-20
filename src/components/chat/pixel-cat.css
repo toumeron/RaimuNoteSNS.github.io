@@ -1,5 +1,0 @@
-.pixel-cat{display:block;width:100%;height:100%;color:hsl(var(--foreground));pointer-events:none;user-select:none;}
-.pixel-cat svg{display:block;width:100%;height:100%;fill:currentColor;overflow:hidden;}
-.pixel-cat-typing{display:inline-block;width:52px;height:26px;flex-shrink:0;pointer-events:none;margin-left:1px;vertical-align:text-bottom;}
-[data-pixel-cat-message]{position:relative;}
-.pixel-cat-perch{position:absolute;left:8px;top:-27px;width:64px;height:32px;z-index:2;pointer-events:none;user-select:none;}

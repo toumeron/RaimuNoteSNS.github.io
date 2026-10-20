@@ -37,7 +37,7 @@ test('post stamps render large and a sticker-only post can be selected, removed 
 });
 test('replies can send text plus a sticker and keep the text input usable',async({page})=>{
  await setup(page);
- await page.route('**/src/hooks/useComments.ts*',r=>r.fulfill({contentType:'application/javascript',body:`export const useComments=()=>({data:[],isLoading:false});export const useCreateComment=()=>({mutateAsync:async input=>{window.__replyPosted=input;},isPending:false});export const useToggleCommentLike=()=>({mutateAsync:async()=>{}});export const useDeleteComment=()=>({mutateAsync:async()=>{}});`}));
+ await page.route('**/src/hooks/useFeed.ts*',r=>r.fulfill({contentType:'application/javascript',body:`export const useComments=()=>({data:[],isLoading:false});export const useCreateComment=()=>({mutateAsync:async input=>{window.__replyPosted=input;},isPending:false});export const useToggleCommentLike=()=>({mutateAsync:async()=>{}});export const useDeleteComment=()=>({mutateAsync:async()=>{}});`}));
  await page.goto('./post/original');
  const form=page.locator('[data-lime-reply-composer]:visible').first();await expect(form).toBeVisible();
  await form.getByPlaceholder('返信をポスト').fill('ありがとう');

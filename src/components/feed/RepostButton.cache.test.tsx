@@ -1,14 +1,35 @@
+vi.mock("@/hooks/useFeed", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/hooks/useFeed")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/hooks/useFeed")>(), useToggleRepost:()=>({mutateAsync:vi.fn(),isPending:false})}))(importOriginal)};
+});
+vi.mock("@/components/feed/RepostButton", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/components/feed/RepostButton")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/components/feed/RepostButton")>(), useMobilePostMenu:()=>false, PostActionSheet:()=>null}))(importOriginal)};
+});
+vi.mock("@/api/external-posts", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/api/external-posts")>();
+ const overrides = [
+  await (()=>({isExternalPostId:()=>true,getExternalRepostState:state.read}))(),
+  await (async original=>({...await original<typeof import("@/api/external-posts")>(),isReplyPostId:()=>false,getReplyPost:vi.fn(),getReplyRepostState:vi.fn()}))(importOriginal)
+ ];
+ return Object.assign({}, actual, ...overrides.map(values => Object.fromEntries(Object.entries(values).filter(([key, value]) => value !== actual[key]))));
+});
+vi.mock("@/components/layout/AppLayout", async importOriginal => ({...await importOriginal<typeof import("@/components/layout/AppLayout")>(), usePostOverlay:()=>vi.fn()}));
+
+vi.mock("@/hooks/useAuth", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useAuth")>(), useAuth:()=>({user:{id:state.viewer}})}));
+
+
 import {act,cleanup,render,waitFor} from '@testing-library/react';
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
 import {afterEach,expect,it,vi} from 'vitest';
 import type {PostWithAuthor} from '@/types';
 const state=vi.hoisted(()=>({viewer:'viewer',read:vi.fn(async()=>({repostsCount:3,repostedByMe:false}))}));
-vi.mock('@/hooks/useAuth',()=>({useAuth:()=>({user:{id:state.viewer}})}));
-vi.mock('@/hooks/useFeed',()=>({useToggleRepost:()=>({mutateAsync:vi.fn(),isPending:false})}));
-vi.mock('@/components/post/PostActionSheet',()=>({useMobilePostMenu:()=>false,PostActionSheet:()=>null}));
-vi.mock('@/components/layout/DesktopLayoutContext',()=>({usePostOverlay:()=>vi.fn()}));
-vi.mock('@/api/external-posts',()=>({isExternalPostId:()=>true,getExternalRepostState:state.read}));
-vi.mock('@/api/reply-reposts',()=>({isReplyPostId:()=>false,getReplyPost:vi.fn(),getReplyRepostState:vi.fn()}));
+
+
+
+
+
+
 import {RepostButton} from './RepostButton';
 afterEach(()=>{cleanup();state.viewer='viewer';state.read.mockClear();});
 it('reuses fresh repost state after virtualized card remounts and separates accounts',async()=>{

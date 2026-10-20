@@ -274,7 +274,7 @@ test('native URL cards restore saved metadata and image after reloading',async({
  state.extraPosts.push({id:'preview-native',userId:'11111111-1111-1111-1111-111111111111',content:'保存するカード https://preview.example/cache',createdAt:'2026-10-01T00:00:00Z',imageUrls:[],visibility:'public',likesCount:0,commentsCount:0,repostsCount:0,author:{id:'11111111-1111-1111-1111-111111111111',username:'lime',displayName:'Lime Note',avatarUrl:''}});
  await page.route('https://preview.example/cover.svg',route=>route.fulfill({contentType:'image/svg+xml',headers:{'access-control-allow-origin':'*'},body:'<svg xmlns="http://www.w3.org/2000/svg" width="400" height="180"><rect width="400" height="180" fill="pink"/></svg>'}));
  await page.goto('post/preview-native');const card=page.locator('[data-link-preview]').first();await expect(card).toBeVisible();
- await expect.poll(()=>page.evaluate(async()=>{const {savedPreviewImage}=await import('/RaimuNoteSNS.github.io/src/lib/linkPreview.ts');return !!await savedPreviewImage('https://preview.example/cover.svg');})).toBe(true);
+ await expect.poll(()=>page.evaluate(async()=>{const {savedPreviewImage}=await import('/RaimuNoteSNS.github.io/src/lib/mediaThumbnail.ts');return !!await savedPreviewImage('https://preview.example/cover.svg');})).toBe(true);
  const requests:string[]=[];page.on('request',request=>{if(request.url().includes('/functions/v1/link-preview')||request.url()==='https://preview.example/cover.svg')requests.push(request.url());});
  await page.reload();await expect(card).toBeVisible();await expect(card.locator('img')).toHaveAttribute('src',/^blob:/);
  expect(requests).toEqual([]);
@@ -371,7 +371,7 @@ for (const theme of ['light','dark']) test(`mobile profile without a cover uses 
  test.skip((page.viewportSize()?.width??0)>=640,'Phone profile');
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error'&&m.text().includes('Warning:'))errors.push(m.text());});
  await setup(page,false);await page.addInitScript(theme=>localStorage.setItem('theme',theme),theme);
- await page.route('**/src/api/follows.ts*',route=>route.fulfill({contentType:'application/javascript',body:'export const getFollowStats=async()=>({following:22,followers:86,followedByMe:true});export const toggleFollow=async()=>({following:false});export const getFollowing=async()=>[];export const getFollowers=async()=>[];'}));
+ await page.route('**/src/api/users.ts*',route=>route.fulfill({contentType:'application/javascript',body:'export const getFollowStats=async()=>({following:22,followers:86,followedByMe:true});export const toggleFollow=async()=>({following:false});export const getFollowing=async()=>[];export const getFollowers=async()=>[];'}));
  await page.route('**/*.supabase.co/rest/v1/profiles*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({id:'22222222-2222-2222-2222-222222222222',username:'other',display_name:'User',avatar_url:'',cover_url:null,created_at:'2026-10-01T00:00:00Z'})}));
  await page.goto('u/other');
  const header=page.locator('header[data-lime-mobile-profile-header-hidden=true]');
@@ -455,4 +455,51 @@ for(const standalone of [false,true])for(const dark of [false,true])test(`profil
  await expect(page.locator('html')).toHaveCSS('background-image','none');await expect(page.locator('body')).toHaveCSS('background-image','none');
  await expect(page.locator('html')).not.toHaveCSS('background-color','rgba(0, 0, 0, 0)');
  expect(await page.evaluate(()=>document.documentElement.style.getPropertyValue('--lime-profile-edge-cover'))).toBe('');
+});
+
+for(const theme of ['light','dark'])test(`attachment frames reserve geometry before load and playback (${theme})`,async({page},info)=>{
+ const state=await setup(page,false);
+ const author={id:'11111111-1111-1111-1111-111111111111',username:'lime',displayName:'Lime Note',avatarUrl:'',createdAt:'2026-10-01T00:00:00Z'};
+ const base={userId:author.id,author,content:'表示枠の確認',createdAt:author.createdAt,visibility:'public',likesCount:0,commentsCount:0,repostsCount:0,likedByMe:false,repostedByMe:false};
+ const cases=[
+  {id:'geometry-photo',imageUrls:['https://media.example/portrait.svg'],imageDimensions:[{width:600,height:900}]},
+  {id:'geometry-native',imageUrls:['https://media.example/native--900x600.webp']},
+  {id:'geometry-unknown',imageUrls:['https://media.example/unknown.svg']},
+  {id:'geometry-grid',imageUrls:['https://media.example/a.svg','https://media.example/b.svg','https://media.example/c.svg']},
+  {id:'geometry-video',imageUrls:[],video:{width:1080,height:1920,duration:16}},
+  {id:'geometry-external',imageUrls:[],externalVideo:{playlist:'https://media.example/movie.mp4',width:0,height:0,duration:0,format:'mp4'}},
+ ];
+ await page.addInitScript(theme=>{localStorage.setItem('theme',theme);},theme);
+ const pending:any[]=[];let released=false;
+ const image={contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="600"><rect width="100" height="600" fill="#ec84a6"/></svg>'};
+ await page.route('https://media.example/**',route=>{if(released)return route.fulfill(image);pending.push(route);});
+ for(const item of cases){
+  released=false;state.extraPosts.push({...base,...item});
+  await page.goto('post/'+item.id,{waitUntil:'domcontentloaded'});
+  const card=page.locator('[data-lime-post-detail-card]').first();await expect(card).toBeVisible();
+  await page.evaluate(theme=>document.documentElement.classList.toggle('dark',theme==='dark'),theme);
+  const frame=card.locator('[data-lime-single-post-image],[data-lime-post-image-grid],.post-video-player').first();await expect(frame).toBeVisible();
+  const before=(await frame.boundingBox())!;expect(before.height).toBeGreaterThan(50);
+  expect(before.x+before.width).toBeLessThanOrEqual((page.viewportSize()?.width??0)+1);
+  if(item.imageUrls.length){await expect(frame.locator('img').first()).toHaveCSS('opacity','0');}
+  if(item.id==='geometry-photo'&&info.project.name!=='WebKit-iPhone')await page.screenshot({path:info.outputPath('reserved-'+theme+'.png')});
+  released=true;await Promise.all(pending.splice(0).map(route=>route.fulfill(image)));
+  if(item.imageUrls.length){await expect(frame.locator('img').first()).toHaveCSS('opacity','1');}
+  else await frame.locator('video').evaluate(media=>{Object.defineProperties(media,{videoWidth:{value:600},videoHeight:{value:100},duration:{value:32}});media.dispatchEvent(new Event('loadedmetadata'));media.dispatchEvent(new Event('play'));});
+  const after=(await frame.boundingBox())!;
+  expect(Math.abs(after.height-before.height),item.id+" height").toBeLessThan(1);if(item.id==='geometry-unknown')expect(after.width/after.height).toBeCloseTo(1/6,1);else expect(Math.abs(after.width-before.width),item.id+" width").toBeLessThan(1);
+ }
+});
+
+test('bookmarks retain the quoted parent and its author verification badge',async({page})=>{
+ const state=await setup(page,false);
+ const author={id:'x-user:100',username:'artist@twitter.com',displayName:'Artist',avatarUrl:'',providerVerification:{provider:'twitter',type:'individual'}};
+ const parent={id:'x:200',source:'x',userId:author.id,author,content:'引用元の本文',imageUrls:[],visibility:'public',createdAt:'2026-10-20',likesCount:0,commentsCount:0,repostsCount:0};
+ const post={...parent,id:'x:300',content:'引用した投稿の本文',isQuote:true,parentId:parent.id,parentPost:parent,snapshotVersion:2};
+ state.rows=[{id:'saved-quote',user_id:'11111111-1111-1111-1111-111111111111',external_id:post.id,external_snapshot:post,created_at:'2026-10-20T00:00:00Z'}];
+ await page.goto('bookmarks');
+ const card=page.locator('[data-lime-bookmarks-page] > [data-lime-post-card]').first();
+ await expect(card).toContainText('引用した投稿の本文');
+ await expect(card.locator('[data-lime-quoted-post]')).toContainText('引用元の本文');
+ await expect(card.locator('[data-lime-quoted-post]').getByAltText('twitter認証済み')).toBeVisible();
 });

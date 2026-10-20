@@ -1,7 +1,7 @@
 import { render, screen, act } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { useRef } from 'react';
-import { ProfileVirtualizedListItem } from './ProfileVirtualizedRow';
+import { ProfileVirtualizedListItem } from "@/components/ui/avatar";
 let inView = true;
 vi.mock('react-intersection-observer', () => ({ useInView: () => ({ ref: () => {}, inView }) }));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); inView = true; });

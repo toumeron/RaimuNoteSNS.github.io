@@ -1,24 +1,24 @@
-import { displayUsername } from "@/lib/format";
-import { PrivateMediaImage } from "@/components/profile/ProfileMediaPreview";
-import { composerMediaDrop, isVideoAttachment } from "@/components/feed/ComposerIcon";
-import {preparePostVideo,type PreparedVideo} from '@/lib/postVideo';
+import { displayUsername } from "@/lib/utils";
+import { PrivateMediaImage } from "@/components/ui/avatar";
+import { composerMediaDrop, isVideoAttachment } from "@/components/feed/PostPoll";
+import { preparePostVideo, type PreparedVideo } from "@/lib/mediaThumbnail";
 import {PostVideoPlayer} from '@/components/video/PostVideoPlayer';
 import { ScheduleControl, ScheduledPostNotice } from "@/components/feed/PostPoll";
 import { allowAccountWrite } from '@/lib/accountSuspension';
 import { useAutoTextarea } from "@/hooks/useViewportWidth";
-import {ComposerIcon} from '@/components/feed/ComposerIcon';
-import {PollIcon} from "@/components/feed/ComposerIcon";
+import { ComposerIcon } from "@/components/feed/PostPoll";
+import { PollIcon } from "@/components/feed/PostPoll";
 import { PollEditor, newPollDraft } from "@/components/feed/PostPoll";
-import {validatePollDraft,type PollDraft} from '@/lib/polls';
+import { validatePollDraft, type PollDraft } from "@/lib/utils";
 import {DraftEmojiText} from "@/components/stickers/Stickers";
 import { StickerPicker, StickerDraft } from '@/components/stickers/Stickers';
-import { appendSticker, insertDraftEmoji, draftEmojiCharacter } from '@/lib/stickers';
+import { appendSticker, insertDraftEmoji, draftEmojiCharacter } from "@/lib/utils";
 import { QuotedPost } from '@/components/feed/QuotedPost';
 import { memo, useCallback, useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type PointerEvent as ReactPointerEvent, type UIEvent as ReactUIEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Loader2, X, AtSign, Hash, Globe, Users, Crown } from 'lucide-react'; // Globe, Users, Crownを追加
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from '@/components/ui/button';
 import { Textarea } from "@/components/ui/button";
 import { useAuth } from '@/hooks/useAuth';
@@ -27,15 +27,10 @@ import { getPostById } from '@/api/posts';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import type { PostWithAuthor } from '@/types';
-import { formatRelative } from '@/lib/format';
+import { formatRelative } from "@/lib/utils";
 import { supabase } from '@/lib/supabase';
 // 公開範囲選択用のDropdown MenuをUIに合わせてインポート（既存のUIライブラリ想定）
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/button";
 
 const MAX_LEN = 500;
 const MAX_IMAGES = 4;
@@ -90,7 +85,7 @@ const getQuotedPostCached = async (postId: string, viewerId?: string) => {
 };
 
 interface PostComposerProps {
-  mapLocation?: import('@/lib/mapLocation').MapLocation;
+  mapLocation?: import("@/lib/mapLocation").MapLocation;
   homeInline?:boolean;
   imageEditor?: { src: string; onApply: (url: string) => void; onClose: () => void };
   initialQuotedPost?: PostWithAuthor | null;
@@ -187,7 +182,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
   const canPostMembersOnly = normalizedUsername === 'cat' || normalizedUsername === 'limenote';
 
   const { mutateAsync, isPending } = useCreatePost();
-  
+
   const [content, setContent] = useState(initialContent);
   const [scheduledAt,setScheduledAt]=useState<string|null>(null);
   const [poll,setPoll]=useState<PollDraft|null>(null);
@@ -264,7 +259,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
   const [cursorPosition, setCursorPosition] = useState(0);
   const [popupPos, setPopupPos] = useState({ top: 0, left: 0 }); // 汎用的な名に変更
   const [scrollTop, setScrollTop] = useState(0);
-  
+
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -1169,7 +1164,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
         return;
       }
     }
-    
+
     // ハッシュタグ判定 (追加)
     if (lastHashIdx !== -1 && (lastAtIdx === -1 || lastHashIdx > lastAtIdx)) {
       const query = val.slice(lastHashIdx + 1, pos);
@@ -1188,9 +1183,9 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
   const updatePopupPosition = (pos: number) => {
     if (textareaRef.current) {
       const coords = getCaretCoordinates(textareaRef.current, pos);
-      setPopupPos({ 
-        top: coords.top + coords.height, 
-        left: Math.min(coords.left, 150) 
+      setPopupPos({
+        top: coords.top + coords.height,
+        left: Math.min(coords.left, 150)
       });
     }
   };
@@ -1279,7 +1274,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
         ...(mapLocation ? {mapLocation} : {}),
         ...(poll?{poll}:{}),
         ...(scheduledAt?{scheduledAt}:{}),
-        content: trimmed, 
+        content: trimmed,
         imageUrls: previews,
         ...(video?{video}:{}),
         parentId: quotedPost?.id,
@@ -1487,7 +1482,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
           </Avatar>
         </Link>
         <div className="flex-1 min-w-0 space-y-3 relative" ref={containerRef}>
-          
+
           {scheduledAt&&<ScheduledPostNotice value={scheduledAt}/>}
           <div className="relative w-full overflow-hidden">
             {!content && (
@@ -1526,7 +1521,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
 
           {/* 候補ポップアップ */}
           {(mentionResults.length > 0 && mentionQuery !== null) && (
-            <div 
+            <div
               className={cn("absolute z-[2147483647] w-64 overflow-hidden rounded-xl border border-border/60 bg-popover shadow-xl backdrop-blur-md transition-all duration-150", timelineGlass && "bg-popover/85 backdrop-blur-xl")}
               style={{ top: popupPos.top - scrollTop, left: popupPos.left, zIndex: 2147483647 }}
             >
@@ -1557,7 +1552,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
           )}
 
           {hashtagResults.length > 0 && hashtagQuery !== null && (
-            <div 
+            <div
               className={cn("absolute z-[2147483647] w-64 overflow-hidden rounded-xl border border-border/60 bg-popover shadow-xl backdrop-blur-md transition-all duration-150", timelineGlass && "bg-popover/85 backdrop-blur-xl")}
               style={{ top: popupPos.top - scrollTop, left: popupPos.left, zIndex: 2147483647 }}
             >

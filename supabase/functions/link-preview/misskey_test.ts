@@ -1,4 +1,4 @@
-import { loadMisskey } from './load.ts';
+import { loadMisskey } from "./load.ts";
 Deno.test('forwards the boolean reply filter for a complete author feed', async () => {
  const original=globalThis.fetch;
  globalThis.fetch=async(_input,init)=>{const body=JSON.parse(String(init?.body));if(body.withReplies!==true||body.limit!==100)throw new Error('Reply filter lost');return Response.json([]);};

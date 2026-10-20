@@ -1,43 +1,44 @@
+import { completeSavedPosts } from "@/api/external-posts";
 import { SearchPostRow } from "@/components/search/SearchExploreContent";
-import { searchTwitterResults } from "@/lib/twitterSearch";
-import { ProviderVerificationBadge } from "@/components/common/OfficialBadge";
-import {StockMarketCard,StockSuggestion} from '@/components/search/StockMarketCard';
-import {matchMarketAsset,suggestMarketAssets,type MarketAsset} from '@/lib/marketData';
-import {hasAttachedPostVideo} from '@/lib/postPresentation';
-import { displayUsername } from "@/lib/format";
-import { PrivateMediaImage } from "@/components/profile/ProfileMediaPreview";
-import { searchProviderBatch } from "@/lib/twitterSearch";
-import {PostVideoThumbnail} from '@/components/video/PostVideoThumbnail';
-import {twitterSearchQuery} from '@/lib/twitterSearch';
+import { searchTwitterResults } from "@/api/search-news";
+import { ProviderVerificationBadge } from "@/components/ui/avatar";
+import { StockMarketCard, StockSuggestion } from "@/components/search/SearchExploreContent";
+import { matchMarketAsset, suggestMarketAssets, type MarketAsset } from "@/api/search-news";
+import { searchPageUrl, hasAttachedPostVideo } from "@/lib/utils";
+import { displayUsername } from "@/lib/utils";
+import { PrivateMediaImage } from "@/components/ui/avatar";
+import { searchProviderBatch } from "@/api/search-news";
+import { PostVideoThumbnail } from "@/components/video/PostVideoPlayer";
+import { twitterSearchQuery } from "@/api/search-news";
 import {normalizeTimelineBlueskyPost} from '@/lib/timelinePaging';
 import {searchX,searchXPage,xPostId} from '@/lib/fxTwitter';
-import {searchProfileUser} from '@/lib/accountSearch';
-import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
-import {searchMisskey,misskeyEnabled} from '@/lib/misskey';
+import { searchProfileUser } from "@/api/users";
+import { PrivateAccountBadge } from "@/components/ui/avatar";
+import {searchMisskey,searchMisskeyPostPage,misskeyEnabled} from '@/lib/misskey';
 import { openMediaViewer } from '@/components/media/openMediaViewer';
 import { useAuth } from '@/hooks/useAuth';
 import { getRecommendationPreferences } from '@/api/recommendations';
 import {useQuery} from '@tanstack/react-query';
 import type { RecommendationPreferences } from '@/lib/recommendations';
-import { useTrends } from '@/hooks/useTrends';
-import { useDesktopLayout } from '@/components/layout/DesktopLayoutContext';
+import { useTrends } from "@/hooks/useTopics";
+import { useDesktopLayout } from "@/components/layout/DesktopLayoutContext";
 import { SearchExploreContent } from '@/components/search/SearchExploreContent';
-import { SearchExploreTabs } from '@/components/search/SearchExploreTabs';
-import { SearchTabIndicator } from "@/components/search/SearchExploreTabs";
-import { useSearchExploreTab } from "@/hooks/useTrends";
-import { useSearchNews } from "@/hooks/useTrends";
+import { SearchExploreTabs } from "@/components/search/SearchExploreContent";
+import { SearchTabIndicator } from "@/components/search/SearchExploreContent";
+import { useSearchExploreTab } from "@/hooks/useTopics";
+import { useSearchNews } from "@/hooks/useTopics";
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Search, X, Clock, Loader2, Play, Settings,
   AlertTriangle, ChevronLeft, ChevronRight, Heart,
 } from 'lucide-react';
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/button";
+import { PostCardSkeleton } from "@/components/feed/PostPoll";
 import { PostCard } from '@/components/feed/PostCard';
-import UserCard from '@/components/search/UserCard';
+import { UserCard } from "@/components/search/SearchExploreContent";
 import { supabase } from '@/lib/supabase';
-import { searchBluesky, searchExternalUsers } from '@/lib/bluesky';
+import { fetchBlueskyTopicPosts, searchBluesky, searchExternalUsers } from '@/lib/bluesky';
 import type { User, PostWithAuthor } from '@/types';
 import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 
@@ -789,6 +790,8 @@ interface FeedState {
   items: PostWithAuthor[];
   remaining:PostWithAuthor[];
   localHasMore:boolean;
+  externalCursors?:Partial<Record<'bluesky'|'misskey',string|null>>;
+  externalDone?:Partial<Record<'bluesky'|'misskey',boolean>>;
   twitterCursor?:string|null;
   twitterDone?:boolean;
   twitterError?:string;
@@ -882,7 +885,7 @@ interface SearchResultsProps {
   onChangeQuery: (query: string) => void;
 }
 
-function SearchResults({
+export function SearchResults({
   searchQuery,
   activeTab,
   excludeBlueskyPosts,
@@ -999,7 +1002,7 @@ function SearchResults({
 
       let q: any = supabase
         .from('posts')
-        .select('id, content, image_urls, video, created_at, user_id, likes_count, reposts_count, visibility');
+        .select('id, content, image_urls, video, created_at, user_id, likes_count, reposts_count, visibility, is_quote, parent_id, quoted_external_post');
 
       const clauses: string[][] = [];
 
@@ -1091,6 +1094,7 @@ function SearchResults({
           likedByMe: myLikes.includes(row.id),
           repostedByMe: myReposts.includes(row.id),
           visibility: row.visibility,
+          isQuote:!!row.is_quote,parentId:row.parent_id,parentPost:row.quoted_external_post??null,
           author: {
             id: user?.id || row.user_id,
             username: user?.username || 'unknown',
@@ -1106,30 +1110,33 @@ function SearchResults({
       });
 
       return {
-        items: formatted.filter((post) => postMatchesSearch(post, p, { skipFrom: true })),
+        items: await completeSavedPosts(formatted.filter((post) => postMatchesSearch(post, p, { skipFrom: true }))),
         hasMore: rows.length === pageSize,
       };
     },
     [getVisibility, usersById, usersByUsername],
   );
 
-  // ---- Bluesky の投稿取得(1ページ目だけ) ------------------------------------
-  const fetchBlueskyPosts = useCallback(
-    async (p: ParsedSearch): Promise<PostWithAuthor[]> => {
-      if (p.source === 'lime') return [];
-      const text = getPostSearchText(p);
-      if (!text) return []; // 語句のない検索(演算子のみ)はLimeNoteだけを検索する
-
-      const normalize=(result:BlueskyResult)=>{
-        const posts=result.posts.map((post)=>({...post,repostsCount:0,repostedByMe:false,author:{...post.author,coverUrl:''}})) as PostWithAuthor[];
-        posts.forEach(post=>blueskyIdsRef.current.add(post.id));
-        return posts.filter(post=>post.source==='x'&&xPostId(text)===post.id || postMatchesSearch(post,p,{trustServerTerms:post.source!=='misskey'}));
-      };
-      const result=await getBluesky(text,true);
-      return normalize(result);
-    },
-    [excludeBlueskyPosts, getBluesky],
-  );
+  // Each provider advances independently, including pages with no matching media.
+  const fetchExternalPage=useCallback(async(p:ParsedSearch,previous:FeedState)=>{
+    const text=getPostSearchText(p);
+    const cursors={...previous.externalCursors},done={...previous.externalDone};
+    const posts:PostWithAuthor[]=[];
+    const results=await Promise.allSettled((['bluesky','misskey'] as const).map(async provider=>{
+      if(!text||p.source==='lime'||p.source==='x'||p.source!=='all'&&p.source!==provider||provider==='bluesky'&&excludeBlueskyPosts||provider==='misskey'&&!misskeyEnabled()){done[provider]=true;return;}
+      if(done[provider]||previous.remaining.filter(post=>post.source===provider).length>=PAGE_SIZE)return;
+      const cursor=cursors[provider]??null;
+      const result=provider==='bluesky'?await fetchBlueskyTopicPosts({query:text,cursor,language:null,since:null,limit:50,signal:searchControllerRef.current.signal}):await searchMisskeyPostPage(text,cursor,searchControllerRef.current.signal);
+      cursors[provider]=result.cursor;
+      done[provider]=!result.cursor||result.cursor===cursor;
+      for(const item of result.posts){
+        const post=normalizeTimelineBlueskyPost(item);blueskyIdsRef.current.add(post.id);
+        if(postMatchesSearch(post,p,{trustServerTerms:provider!=='misskey'}))posts.push(post);
+      }
+    }));
+    results.forEach((result,index)=>{if(result.status==='rejected'){const provider=(['bluesky','misskey'] as const)[index];if(searchControllerRef.current.signal.aborted||p.source===provider)throw result.reason;done[provider]=true;console.warn('External search failed',result.reason);}});
+    return {posts,cursors,done,hasMore:Object.values(done).some(value=>!value)};
+  },[excludeBlueskyPosts]);
 
   const loadFeed = useCallback(
     async (mode: FeedMode, page: number) => {
@@ -1150,11 +1157,14 @@ function SearchResults({
         const twitterRequest=(effective.source==='all'||effective.source==='x')&&twitterQuery&&(page===0||!previousTwitter.twitterDone)
           ? searchTwitterResults(twitterQuery,{cursor:page===0?null:previousTwitter.twitterCursor,feed:mode,signal:searchControllerRef.current.signal,target:twitterTarget,matches:post=>postMatchesSearch(post,effective,{trustServerTerms:true}),exclude:new Set(page===0?[]:[...previousTwitter.items,...previousTwitter.remaining].map(post=>post.id))})
           : Promise.resolve({posts:[],cursor:null,error:null as unknown});
-        const extraRequest=(page===0 ? fetchBlueskyPosts(effective):Promise.resolve([] as PostWithAuthor[])).catch(error=>{if(!searchControllerRef.current.signal.aborted)console.warn('External search failed',error);return [] as PostWithAuthor[];});
-        let currentPage = page;
-        let local = page===0 || feedsRef.current[mode].localHasMore ? await fetchLocalPosts(effective,currentPage,mode):{items:[] as PostWithAuthor[],hasMore:false};
+        const extraRequest=fetchExternalPage(effective,page===0?EMPTY_FEED:previousTwitter);
+        // Attach rejection handling while the local query is still pending.
+        void extraRequest.catch(()=>{});
+        const readLocal=page===0||previousTwitter.localHasMore&&previousTwitter.remaining.filter(post=>!post.source||post.source==='lime').length<PAGE_SIZE;
+        let currentPage=readLocal?page:previousTwitter.page;
+        let local=readLocal?await fetchLocalPosts(effective,currentPage,mode):{items:[] as PostWithAuthor[],hasMore:previousTwitter.localHasMore};
         let scanned = 0;
-        while (local.items.length === 0 && local.hasMore && scanned < MAX_EMPTY_PAGE_SCAN) {
+        while (readLocal && local.items.length === 0 && local.hasMore && scanned < MAX_EMPTY_PAGE_SCAN) {
           if (token !== tokenRef.current[mode]) return;
           currentPage += 1;
           scanned += 1;
@@ -1169,12 +1179,12 @@ function SearchResults({
         setFeeds(prev=>{
           const previous=prev[mode];
           const shown=new Set(page===0 ? []:previous.items.map(post=>post.id));
-          const candidates=sortPosts([...(page===0 ? []:previous.remaining),...local.items,...extra,...twitterPosts],mode).filter(post=>!shown.has(post.id));
+          const candidates=sortPosts([...(page===0 ? []:previous.remaining),...local.items,...extra.posts,...twitterPosts],mode).filter(post=>!shown.has(post.id));
           const {posts:batch,remaining}=searchProviderBatch(candidates,PAGE_SIZE,effective.source==='all');
           return {...prev,[mode]:{
             items:page===0 ? batch:[...previous.items,...batch],
-            remaining,localHasMore:local.hasMore,twitterCursor:twitter.cursor??(twitter.error?previous.twitterCursor:null),twitterDone:twitter.error?false:!twitter.cursor,twitterError:twitter.error?(twitter.error instanceof Error?twitter.error.message:'twitterの検索結果を取得できませんでした'):undefined,
-            page:currentPage,hasMore:local.hasMore || remaining.length>0 || !!twitter.cursor || !!twitter.error,
+            remaining,localHasMore:local.hasMore,externalCursors:extra.cursors,externalDone:extra.done,twitterCursor:twitter.cursor??(twitter.error?previous.twitterCursor:null),twitterDone:twitter.error?false:!twitter.cursor,twitterError:twitter.error?(twitter.error instanceof Error?twitter.error.message:'twitterの検索結果を取得できませんでした'):undefined,
+            page:currentPage,hasMore:local.hasMore || remaining.length>0 || extra.hasMore || !!twitter.cursor || !!twitter.error,
             loading:false,loaded:true,error:null,
           }};
         });
@@ -1187,7 +1197,7 @@ function SearchResults({
         }));
       }
     },
-    [parsed, mediaKind, fetchLocalPosts, fetchBlueskyPosts],
+    [parsed, mediaKind, fetchLocalPosts, fetchExternalPage],
   );
 
   // 検索語・Bluesky設定・再検索で全タブの結果をリセットする
@@ -1343,7 +1353,7 @@ function SearchResults({
   const isFirstLoading = !currentFeed || (!currentFeed.loaded && !currentFeed.error);
 
   const sentinel = (
-    <div ref={sentinelRef} className="flex h-20 items-center justify-center">
+    <div ref={sentinelRef} data-lime-search-next-page className="flex h-20 items-center justify-center">
       {currentFeed?.hasMore && currentFeed.loaded && <Loader2 className="h-6 w-6 animate-spin text-primary" />}
     </div>
   );
@@ -1453,12 +1463,9 @@ function SearchResults({
       return <EmptyHint title={`"${userText}" に一致するアカウントはありません`} desc="別のキーワードでお試しください。" />;
     }
     return (
-      <div className="flex flex-col gap-2 px-4">
-        <div className="pb-1 text-[12px] text-[rgb(83,100,113)] dark:text-gray-400">{filteredUsers.length} 件のアカウント</div>
+      <div className="flex flex-col" data-lime-search-accounts>
         {filteredUsers.map((user) => (
-          <div key={user.id} className="overflow-hidden rounded-xl transition-colors hover:bg-black/[0.01] dark:hover:bg-white/[0.02]">
-            <UserCard user={user} />
-          </div>
+          <UserCard key={user.id} user={user} result />
         ))}
       </div>
     );
@@ -1690,7 +1697,7 @@ function SearchPageContent() {
   }, []);
 
   // 検索を確定する。実際の取得は <SearchResults> が searchQuery を見て行う。
-  const commitSearch = useCallback((raw: string) => {
+  const applySearch = useCallback((raw: string) => {
     const q = raw.trim();
     if (!q) return;
 
@@ -1710,6 +1717,11 @@ function SearchPageContent() {
     inputRef.current?.blur();
   }, []);
 
+  const commitSearch = useCallback((raw:string) => {
+    const query=raw.trim();
+    if(query)navigate(searchPageUrl(query));
+  },[navigate]);
+
   // 検索トップ(検索前のメイン画面)へ戻す。
   // 検索語・入力欄・サジェスト・詳細検索パネルをすべて初期状態に戻し、
   // <SearchResults> を外して「ニュース/トレンド/おすすめユーザー」の画面を表示させる。
@@ -1728,22 +1740,19 @@ function SearchPageContent() {
 
   // BottomNav.tsx の検索ボタンをダブルタップ/ダブルクリックしたときに検索トップへ戻す。
   useEffect(() => {
-    window.addEventListener(SEARCH_HOME_REQUESTED_EVENT, resetToSearchHome);
-    return () => window.removeEventListener(SEARCH_HOME_REQUESTED_EVENT, resetToSearchHome);
-  }, [resetToSearchHome]);
+    const goHome=()=>navigate('/search');
+    window.addEventListener(SEARCH_HOME_REQUESTED_EVENT, goHome);
+    return () => window.removeEventListener(SEARCH_HOME_REQUESTED_EVENT, goHome);
+  }, [navigate]);
 
   // 条件チップの×で検索語が変わったとき。空になったら検索前の画面に戻す。
   const handleChangeQuery = useCallback((query: string) => {
     if (query.trim()) {
       commitSearch(query);
     } else {
-      setSearchQuery('');
-      setInputValue('');
-      // 修正: Header.tsx(モバイル)側の検索バーにも「検索語が空になった」ことを伝える
-      // (以前は通知がなく、Header側に古い検索語が残っていた)
-      window.dispatchEvent(new CustomEvent(SEARCH_QUERY_CHANGED_EVENT, { detail: { query: '' } }));
+      navigate('/search');
     }
-  }, [commitSearch]);
+  }, [commitSearch,navigate]);
 
   // サジェスト候補の計算はキー入力のたびに実行されるため、
   // 正規化済みの値はユーザー一覧が変わったときだけ作り直す。
@@ -1860,30 +1869,29 @@ function SearchPageContent() {
       // このstateオブジェクトは処理済みとして記録する。
       if (navigationState) appliedSearchStateRef.current = navigationState;
       resetToSearchHome();
+      navigate('/search',{replace:true});
       return;
     }
 
-    const stateQuery = navigationState?.searchQuery?.trim() || '';
-
-    // Header から /search へ遷移した検索は URL の ?q= ではなく、
-    // React Router の navigation state で受け取る。
-    if (stateQuery && navigationState !== appliedSearchStateRef.current) {
-      appliedSearchStateRef.current = navigationState;
-      commitSearch(stateQuery);
+    // URL is authoritative. Keep older navigation-state links working by moving them to the same URL form.
+    const queryParam = searchParams.get('q')?.trim();
+    if(queryParam){
+      const paramKey=`${location.key}\u0000${queryParam}`;
+      if(paramKey!==appliedSearchParamRef.current){
+        appliedSearchParamRef.current=paramKey;
+        applySearch(queryParam);
+      }
       return;
     }
-
-    // 既存リンク等で ?q= が渡された場合だけ後方互換として処理する。
-    // 修正: 以前は「前回と同じ ?q= 」だと無視していたため、検索ページ上で別の語を検索した後に
-    // 同じハッシュタグ(PostCard内のリンク等)を押しても検索されなかった。
-    // 遷移ごとに変わる location.key も組み合わせて判定する。
-    const queryParam = searchParams.get('q');
-    const paramKey = queryParam ? `${location.key}\u0000${queryParam}` : null;
-    if (queryParam && paramKey !== appliedSearchParamRef.current) {
-      appliedSearchParamRef.current = paramKey;
-      commitSearch(queryParam);
+    const stateQuery=navigationState?.searchQuery?.trim();
+    if(stateQuery&&navigationState!==appliedSearchStateRef.current){
+      appliedSearchStateRef.current=navigationState;
+      navigate(searchPageUrl(stateQuery),{replace:true});
+      return;
     }
-  }, [searchParams, location.state, location.key, commitSearch, resetToSearchHome]);
+    appliedSearchParamRef.current=null;
+    resetToSearchHome();
+  }, [searchParams, location.state, location.key, applySearch, navigate, resetToSearchHome]);
 
   // おすすめユーザー用
   // 公式かどうか・登録日時などでは並び替えず、毎回ランダムに3人選ぶ。

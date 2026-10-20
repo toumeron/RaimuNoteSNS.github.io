@@ -1,4 +1,13 @@
-import { cleanup, render } from '@testing-library/react';
+vi.mock("@/components/feed/RepostButton", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/components/feed/RepostButton")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/components/feed/RepostButton")>(), RepostButton: () => <button>リポスト</button>}))(importOriginal)};
+});
+vi.mock("@/components/video/PostVideoPlayer", async importOriginal => ({...await importOriginal<typeof import("@/components/video/PostVideoPlayer")>(), PostVideoPlayer:()=> <div data-attached-video/>}));
+
+
+vi.mock("@/hooks/useAuth", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useAuth")>(), useBlueskySession: () => null}));
+
+import { cleanup, render, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -22,11 +31,11 @@ vi.mock('@/lib/supabase', async () => {
   });
   return { supabase: client };
 });
-vi.mock('@/components/video/PostVideoPlayer',()=>({PostVideoPlayer:()=> <div data-attached-video/>}));
-vi.mock('@/components/YouTubeEmbed',()=>({YouTubeEmbed:()=> <div data-youtube-embed/>}));
+
+
 vi.mock('@/lib/currentUser', () => ({ getCurrentUserId: async () => 'viewer' }));
-vi.mock('@/hooks/useBlueskySession', () => ({ useBlueskySession: () => null }));
-vi.mock('./RepostButton', () => ({ RepostButton: () => <button>リポスト</button> }));
+
+
 import { PostCard } from './PostCard';
 import { supabase } from '@/lib/supabase';
 
@@ -76,8 +85,28 @@ it.each(['video','externalVideo'])('retains Youtube as a plain link when an atta
  const client=new QueryClient();
  const body=(post:PostWithAuthor)=><QueryClientProvider client={client}><MemoryRouter><PostCard post={post}/></MemoryRouter></QueryClientProvider>;
  const view=render(body(post));
- expect(view.container.querySelector('[data-attached-video]')).not.toBeNull();expect(view.container.querySelector('[data-youtube-embed]')).toBeNull();
+ expect(view.container.querySelector('[data-attached-video]')).not.toBeNull();expect(view.container.querySelector('iframe[src^="https://www.youtube.com/embed/abcdefghijk"]')).toBeNull();
  expect(view.container.querySelector('a[href="https://youtu.be/abcdefghijk"]')).not.toBeNull();
  view.rerender(body({...post,video:undefined,externalVideo:undefined}));
- expect(view.container.querySelector('[data-youtube-embed]')).not.toBeNull();
+ expect(view.container.querySelector('iframe[src^="https://www.youtube.com/embed/abcdefghijk"]')).not.toBeNull();
+});
+
+it('keeps social URLs intact through mention/hashtag rendering and links them inside LimeNote',()=>{
+ const post={id:'social-link-post',userId:'author',content:'https://misskey.io/@artist https://x.com/artist/status/123456#photo https://bsky.app/profile/artist.bsky.social/post/3abc',imageUrls:[],createdAt:'2026-10-19T00:00:00Z',likesCount:0,commentsCount:0,repostsCount:0,author:{id:'author',username:'author',displayName:'Author',avatarUrl:''}} as PostWithAuthor;
+ const view=render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><PostCard post={post}/></MemoryRouter></QueryClientProvider>);
+ const links=[...view.container.querySelectorAll('a')];
+ for(const [url,path]of [['https://misskey.io/@artist','/u/artist%40misskey.io'],['https://x.com/artist/status/123456#photo','/post/x%3A123456'],['https://bsky.app/profile/artist.bsky.social/post/3abc','/post/'+encodeURIComponent('bsky:at://artist.bsky.social/app.bsky.feed.post/3abc')]]){
+  const link=links.find(element=>element.textContent===url);expect(link).toHaveAttribute('href',path);expect(link).not.toHaveAttribute('target');
+ }
+});
+
+it('reserves the timeline image frame before decoding without resizing on load',()=>{
+ const post={id:'geometry-photo',userId:'author',content:'Photo',imageUrls:['https://images.example/portrait.png'],imageDimensions:[{width:600,height:900}],createdAt:'2026-10-20T00:00:00Z',likesCount:0,commentsCount:0,repostsCount:0,likedByMe:false,repostedByMe:false,author:{id:'author',username:'author',displayName:'Author',avatarUrl:''}} as PostWithAuthor;
+ const view=render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><MemoryRouter><PostCard post={post}/></MemoryRouter></QueryClientProvider>);
+ const frame=view.container.querySelector('[data-lime-single-post-image]') as HTMLElement;
+ const image=frame.querySelector('img')!;
+ expect(frame.style.aspectRatio).toBe('600/900');expect(image.style.opacity).toBe('0');
+ const initial=frame.style.cssText;
+ Object.defineProperties(image,{naturalWidth:{value:100},naturalHeight:{value:600}});fireEvent.load(image);
+ expect(frame.style.cssText).toBe(initial);expect(image.style.opacity).toBe('');
 });

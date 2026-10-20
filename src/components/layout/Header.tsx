@@ -1,42 +1,36 @@
-import { observeDocumentHeight } from "@/lib/observePostElements";
-import {StockSuggestion} from '@/components/search/StockMarketCard';
-import {suggestMarketAssets,type MarketAsset} from '@/lib/marketData';
-import { displayUsername } from "@/lib/format";
-import { ProviderVerificationBadge } from "@/components/common/OfficialBadge";
-import {MOBILE_DRAWER_EDGE_ZONE,isMobileDrawerBlocked} from '@/lib/mobileDrawerGesture';
+import { observeDocumentHeight } from "@/hooks/useViewportWidth";
+import { StockSuggestion } from "@/components/search/SearchExploreContent";
+import { suggestMarketAssets, type MarketAsset } from "@/api/search-news";
+import { searchPageUrl, displayUsername } from "@/lib/utils";
+import { ProviderVerificationBadge } from "@/components/ui/avatar";
+import { MOBILE_DRAWER_EDGE_ZONE, isMobileDrawerBlocked } from "@/lib/utils";
 import {ProfileListPicker} from '@/components/lists/ListDialogs';
-import { ListHeaderActions } from "@/components/search/SearchExploreTabs";
+import { ListHeaderActions } from "@/components/search/SearchExploreContent";
 import { TimelineTabBar } from '@/components/feed/TimelineTabBar';
 import { isFeedTabValue, type FeedTabValue, useTimelineTabs } from "@/components/feed/TimelineTabBar";
-import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
-import { useMobilePostMenu } from "@/components/post/PostActionSheet";
-import { FollowButton } from '@/components/profile/FollowButton';
-import { useFollowStats } from '@/hooks/useProfile';
-import { UnreadBadge } from "@/components/search/SearchExploreTabs";
-import { NewsHeaderActions } from "@/components/search/SearchExploreTabs";
-import { NotificationTabs } from "@/components/search/SearchExploreTabs";
-import { TopicTabs } from "@/components/search/SearchExploreTabs";
+import { PrivateAccountBadge } from "@/components/ui/avatar";
+import { useMobilePostMenu } from "@/components/feed/RepostButton";
+import { FollowButton } from "@/components/profile/ProfileHeader";
+import { useFollowStats } from "@/hooks/useFeed";
+import { UnreadBadge } from "@/components/search/SearchExploreContent";
+import { NewsHeaderActions } from "@/components/search/SearchExploreContent";
+import { NotificationTabs } from "@/components/search/SearchExploreContent";
+import { TopicTabs } from "@/components/search/SearchExploreContent";
 import { usePostOverlay } from "@/components/layout/DesktopLayoutContext";
-import { MobileAccountShortcuts } from './AccountSwitcher';
-import { SearchExploreTabs } from '@/components/search/SearchExploreTabs';
+import { MobileAccountShortcuts } from "@/components/layout/AppLayout";
+import { SearchExploreTabs } from "@/components/search/SearchExploreContent";
 import { useSpaces } from "@/components/spaces/SpaceProvider";
-import { DesktopAccountFooter } from "@/components/layout/DesktopSidebar";
+import { DesktopAccountFooter } from "@/components/layout/AppLayout";
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
-import { SETTINGS_GROUPS, SETTINGS_SECTIONS, settingsGroupForSection } from '@/lib/settingsSections';
-import { Logo } from './Logo';
+import { SETTINGS_GROUPS, SETTINGS_SECTIONS, settingsGroupForSection } from "@/components/ui/button";
+import { Logo } from "@/components/layout/AppLayout";
 import { Button } from '@/components/ui/button';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/button";
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -1070,7 +1064,7 @@ function useMobileDrawerMotion(
       const contentHeight = Math.max(root.scrollHeight, window.innerHeight + window.scrollY);
       clipWrapper.style.height = isRevealed || isClosing ? `${contentHeight}px` : '100%';
       clipWrapper.style.clipPath = isRevealed || isClosing ? `inset(${window.scrollY}px 0 ${Math.max(0, contentHeight - window.scrollY - window.innerHeight)}px round ${isRevealed ? 42 : 0}px 0 0 ${isRevealed ? 42 : 0}px)` : 'none';
-      clipWrapper.style.background = isRevealed || isClosing ? 'hsl(var(--background))' : ''; 
+      clipWrapper.style.background = isRevealed || isClosing ? 'hsl(var(--background))' : '';
       clipWrapper.style.boxShadow = 'none';
       document.documentElement.style.setProperty('--lime-mobile-drawer-radius', isRevealed ? '42px' : '0px');
     }
@@ -2142,43 +2136,54 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
     setMobileProfileInfo(null);
     if (!hideHeaderOnMobileProfile) return;
     let frame = 0;
+    let elements:{bar:HTMLElement|null;cover:Element|null;name:Element|null;summary:Element|null;background:HTMLElement|null}|undefined;
+    let previousTitle=-1,previousCover=-1,layoutDirty=true;
+    let geometry:{bottom:number;coverBottom?:number;nameBottom?:number;summaryBottom?:number}|undefined;
     const measure = () => {
       frame = 0;
-      const bar = document.querySelector('header[data-lime-mobile-profile-header-hidden="true"] [data-lime-header-row]');
-      const bottom = bar?.getBoundingClientRect().bottom ?? 56;
-      const cover = document.querySelector('.profile-header-cover-avatar-gap');
-      const name = document.querySelector('[data-lime-profile-name]');
-      const summary = document.querySelector('[data-lime-profile-header]');
-      const titleProgress = name ? Math.max(0, Math.min(1, (bottom - name.getBoundingClientRect().bottom) / 24)) : 0;
-      const coverProgress = cover ? Math.max(0, Math.min(1, (bottom - cover.getBoundingClientRect().bottom) / 32)) : 0;
-      if (bar instanceof HTMLElement) {
-        bar.style.setProperty('--lime-profile-title-progress', String(titleProgress));
-        bar.style.setProperty('--lime-profile-cover-progress', String(coverProgress));
+      if(!elements||!elements.bar?.isConnected||!elements.summary?.isConnected||(elements.name&&!elements.name.isConnected)||(elements.cover&&!elements.cover.isConnected)){
+        previousTitle=-1;previousCover=-1;layoutDirty=true;
+        const bar=document.querySelector<HTMLElement>('header[data-lime-mobile-profile-header-hidden="true"] [data-lime-header-row]');
+        elements={bar,cover:document.querySelector('.profile-header-cover-avatar-gap'),name:document.querySelector('[data-lime-profile-name]'),summary:document.querySelector('[data-lime-profile-header]'),background:bar?.querySelector<HTMLElement>('.lime-profile-bar-background')??null};
       }
-      const background = bar?.querySelector<HTMLElement>(".lime-profile-bar-background");
-      if (background) background.hidden = coverProgress === 0;
-      setProfileCoverHidden(!!cover && cover.getBoundingClientRect().bottom <= bottom);
-      setProfileTitleVisible(titleProgress === 1);
-      setProfileSummaryOffscreen(!!summary && summary.getBoundingClientRect().bottom <= bottom);
+      const {bar,cover,name,summary,background}=elements;
+      // Document positions are stable during scrolling. Measure only when layout changes.
+      if(layoutDirty||!geometry){
+        const y=window.scrollY;
+        const absolute=(element:Element|null)=>element?element.getBoundingClientRect().bottom+y:undefined;
+        geometry={bottom:bar?.getBoundingClientRect().bottom??56,coverBottom:absolute(cover),nameBottom:absolute(name),summaryBottom:absolute(summary)};
+        layoutDirty=false;
+      }
+      const {bottom}=geometry;
+      const relative=(value:number|undefined)=>value===undefined?undefined:value-window.scrollY;
+      const coverBottom=relative(geometry.coverBottom),nameBottom=relative(geometry.nameBottom),summaryBottom=relative(geometry.summaryBottom);
+      const titleProgress=nameBottom===undefined?0:Math.max(0,Math.min(1,(bottom-nameBottom)/24));
+      const coverProgress=coverBottom===undefined?0:Math.max(0,Math.min(1,(bottom-coverBottom)/32));
+      if(titleProgress!==previousTitle){bar?.style.setProperty('--lime-profile-title-progress',String(titleProgress));previousTitle=titleProgress;}
+      if(coverProgress!==previousCover){bar?.style.setProperty('--lime-profile-cover-progress',String(coverProgress));if(background)background.hidden=coverProgress===0;previousCover=coverProgress;}
+      setProfileCoverHidden(coverBottom!==undefined&&coverBottom<=bottom);
+      setProfileTitleVisible(titleProgress===1);
+      setProfileSummaryOffscreen(summaryBottom!==undefined&&summaryBottom<=bottom);
     };
     const scroll = () => { if (!frame) frame = requestAnimationFrame(measure); };
+    const layout=()=>{layoutDirty=true;scroll();};
     const info = (event: Event) => {
       const detail = (event as CustomEvent<{user: User; posts: number; following: boolean; pathname: string}>).detail;
       if (detail.pathname !== location.pathname) return;
-      setMobileProfileInfo(detail);scroll();
+      elements=undefined;previousTitle=-1;previousCover=-1;layoutDirty=true;setMobileProfileInfo(detail);scroll();
     };
     setProfileTitleVisible(false);
     setProfileCoverHidden(false);
     setProfileSummaryOffscreen(false);
     scroll();
-    const resize = new ResizeObserver(scroll);
+    const resize = new ResizeObserver(layout);
     resize.observe(document.body);
     window.addEventListener('lime-profile-header-info', info);
     window.dispatchEvent(new CustomEvent('lime-profile-header-request'));
-    window.addEventListener('pageshow', scroll);
-    window.addEventListener('resize', scroll);
+    window.addEventListener('pageshow', layout);
+    window.addEventListener('resize', layout);
     window.addEventListener('scroll', scroll, {passive: true, capture: true});
-    return () => {cancelAnimationFrame(frame);resize.disconnect();window.removeEventListener('pageshow', scroll);window.removeEventListener('resize', scroll);window.removeEventListener('lime-profile-header-info', info);window.removeEventListener('scroll', scroll, true);};
+    return () => {cancelAnimationFrame(frame);resize.disconnect();window.removeEventListener('pageshow', layout);window.removeEventListener('resize', layout);window.removeEventListener('lime-profile-header-info', info);window.removeEventListener('scroll', scroll, true);};
   }, [hideHeaderOnMobileProfile, location.pathname]);
   // ポスト詳細ページはモバイルで専用ヘッダー(戻る・タイトル・もっと見る)を
   // PostDetail.tsx側が表示するため、共通のHeaderはモバイルでのみ非表示にする。
@@ -2269,8 +2274,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   };
 
   // 検索を確定する共通処理。履歴への追加とページ遷移をまとめて行う。
-  // 検索文字列は SEARCH_QUERY_CHANGED_EVENT と React Router の navigation state
-  // で SearchPage.tsx に渡すため、URLの ?q= には依存しない。
+  // 検索文字列はURLに保存し、再読み込み・共有・戻る操作でも検索結果を復元する。
   // 検索コマンド(from: / "フレーズ" / OR / -除外 / since: など)を含む文字列も
   // そのまま渡し、解釈は SearchPage.tsx 側の parseSearchQuery が行う。
   const commitHeaderSearch = (raw: string) => {
@@ -2289,7 +2293,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
       return next;
     });
 
-    navigate('/search', { state: { searchQuery: query } });
+    navigate(searchPageUrl(query));
     headerSearchInputRef.current?.blur();
   };
 

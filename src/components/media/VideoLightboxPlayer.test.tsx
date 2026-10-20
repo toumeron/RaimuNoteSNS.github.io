@@ -1,8 +1,14 @@
+vi.mock("@/lib/mediaThumbnail", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/lib/mediaThumbnail")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/lib/mediaThumbnail")>(), resolvePostVideo:(...args:unknown[])=>mocks.resolve(...args)}))(importOriginal)};
+});
+
+
 import {cleanup,render,screen,waitFor,fireEvent} from '@testing-library/react';
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 const mocks=vi.hoisted(()=>({resolve:vi.fn()}));
-vi.mock('@/lib/postVideoStorage',()=>({resolvePostVideo:(...args:unknown[])=>mocks.resolve(...args)}));
-import {VideoLightboxPlayer} from './VideoLightboxPlayer';
+
+import { VideoLightboxPlayer } from "@/components/video/PostVideoPlayer";
 let running=false;
 const video={duration:16,width:1920,height:1080};
 const prefs={muted:true,onMutedChange:vi.fn(),rate:1,onRateChange:vi.fn(),onSource:vi.fn()};

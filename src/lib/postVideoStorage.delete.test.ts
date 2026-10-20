@@ -1,6 +1,6 @@
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 vi.mock('@/lib/supabase',()=>({supabase:{auth:{getSession:async()=>({data:{session:{access_token:'synthetic-test-token'}}})}}}));
-import {deleteVideoPost} from './postVideoStorage';
+import { deleteVideoPost } from "@/lib/mediaThumbnail";
 beforeEach(()=>{vi.stubEnv('VITE_VIDEO_WORKER_URL','https://video.example');});
 afterEach(()=>{vi.unstubAllEnvs();vi.unstubAllGlobals();});
 it('requests authenticated server-side video and post deletion',async()=>{

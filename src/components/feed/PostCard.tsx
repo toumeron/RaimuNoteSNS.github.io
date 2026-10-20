@@ -1,62 +1,255 @@
-import { useMinuteTick } from "@/hooks/useViewportWidth";
-import { useTimelinePortalTheme } from "@/hooks/useViewportWidth";
-import {useViewportWidth} from '@/hooks/useViewportWidth';
-import { displayUsername } from "@/lib/format";
-import {canShowPostLinkPreview,hasAttachedPostVideo} from '@/lib/postPresentation';
-import {PostSourceLabel} from '@/components/post/PostSourceLabel';
-import {isDeferredPrivateMedia} from '@/lib/privateMediaFetch';
-import { PrivateMediaImage } from "@/components/profile/ProfileMediaPreview";
-import { ExternalPostDetails } from "@/components/feed/QuotedPost";
-import { ProviderVerificationBadge } from "@/components/common/OfficialBadge";
-import {PostVideoPlayer} from '@/components/video/PostVideoPlayer';
-import {PostPoll} from './PostPoll';
+import { initialImageFrame, initialMediaSize } from "@/lib/mediaThumbnail";
+import { ContentLink } from "@/components/ui/button";
+import { useMinuteTick, useTimelinePortalTheme, useViewportWidth, usePageVisible } from "@/hooks/useViewportWidth";
+import { displayUsername, canShowPostLinkPreview, hasAttachedPostVideo, randomUUID, splitMentionText, mentionProfileHandle, isIosPwa, hasStickers, spaceLinkIn, formatRelative } from "@/lib/utils";
+import { PostSourceLabel, ExternalPostDetails, LinkPreviewCard, useLinkPreview, QuotedPost, PostImages } from "@/components/feed/QuotedPost";
+import { isDeferredPrivateMedia } from "@/lib/privateMediaFetch";
+import { PrivateMediaImage, ProviderVerificationBadge, PrivateAccountBadge, Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { PostVideoPlayer } from "@/components/video/PostVideoPlayer";
+import { PostPoll, RepostIcon } from "@/components/feed/PostPoll";
 import { ExternalReplyCard } from "@/components/post/CommentList";
-import { randomUUID } from '@/lib/randomUUID';
-import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
-import { mobilePostMenuOS } from "@/components/post/PostActionSheet";
-import { toast } from 'sonner';
-import {ExternalLikeButton} from '@/components/post/ExternalLikeButton';
-import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
-import {isIosPwa} from '@/lib/utils';
-import { openMediaViewer } from '@/components/media/openMediaViewer';
-import { HighlightPostMenuButton } from "@/components/post/BookmarkButton";
-import { PinPostMenuButton } from "@/components/post/BookmarkButton";
-import {LinkPreviewCard,useLinkPreview} from '@/components/post/LinkPreviewCard';
-import {OfflineBookmarkContext} from '@/components/stickers/OfflineBookmarkContext';
-import { renderStickerText } from "@/components/stickers/Stickers";
-import { hasStickers } from '@/lib/stickers';
-import { SpacePostCard } from '@/components/spaces/SpacePostCard';
-import { spaceLinkIn } from "@/lib/postPresentation";
-import '@/components/post/post-actions.css';
-import { BookmarkButton } from '@/components/post/BookmarkButton';
-import { RepostButton } from '@/components/feed/RepostButton';
-import { QuotedPost } from '@/components/feed/QuotedPost';
-import { RepostIcon } from "@/components/feed/ComposerIcon";
-import { useDesktopLayout } from '@/components/layout/DesktopLayoutContext';
-import { lazy, Suspense, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { Link, useNavigate } from 'react-router-dom';
-import { Download, EyeOff, MessageCircle, MoreHorizontal, Trash2, CalendarDays, ChartBarBig, X, Globe, Lock, Sparkles, Plus, Link as LinkIcon, Upload, Send, Heart, Users, Pin, Pencil } from 'lucide-react';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { LikeButton } from '@/components/post/LikeButton';
-import { PostImages } from './PostImages';
-import { formatRelative } from '@/lib/format';
-import type { PostWithAuthor } from '@/types';
-import { deletePost } from '@/api/posts';
-import { getCurrentUserId } from '@/lib/currentUser';
-import { YouTubeEmbed } from '@/components/YouTubeEmbed';
-import { SpotifyEmbed } from '@/components/SpotifyEmbed';
-import { supabase } from '@/lib/supabase';
-import dayjs from 'dayjs';
-import { useMembershipStatus } from '@/hooks/useMembership';
+import { mobilePostMenuOS, ExternalLikeButton, HighlightPostMenuButton, PinPostMenuButton, BookmarkButton, RepostButton } from "@/components/feed/RepostButton";
+import { toast } from "sonner";
+import { openMediaViewer } from "@/components/media/openMediaViewer";
+import { OfflineBookmarkContext, renderStickerText } from "@/components/stickers/Stickers";
+import { SpacePostCard } from "@/components/spaces/SpaceProvider";
+import { useDesktopLayout } from "@/components/layout/DesktopLayoutContext";
+import { lazy, Suspense, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { Download, EyeOff, MessageCircle, MoreHorizontal, Trash2, CalendarDays, ChartBarBig, X, Globe, Lock, Sparkles, Plus, Link as LinkIcon, Upload, Send, Heart, Users, Pin, Pencil } from "lucide-react";
+import { LikeButton } from "@/components/post/LikeButton";
+import { type PostWithAuthor } from "@/types/index";
+import { deletePost } from "@/api/posts";
+import { getCurrentUserId } from "@/lib/currentUser";
+import { supabase } from "@/lib/supabase";
+import dayjs from "dayjs";
+import { useMembershipStatus, useBlueskySession } from "@/hooks/useAuth";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/button";
+import { FollowButton } from "@/components/profile/ProfileHeader";
+import { useFollowStats } from "@/hooks/useFeed";
+import { getBlueskyUriFromPostId } from "@/lib/bluesky";
 
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/popover";
-import { FollowButton } from '../profile/FollowButton';
-import { useFollowStats } from '@/hooks/useProfile';
-import { useBlueskySession } from '@/hooks/useBlueskySession';
-import { getBlueskyUriFromPostId } from '@/lib/bluesky';
+// YouTubeEmbed
+// YouTubeEmbed
+interface YouTubeEmbedProps {
+  videoId: string;
+}
 
-const PostLocationEditor = lazy(() => import('@/components/maps/PostLocationEditor'));
+declare global {
+  interface Window {
+    __limeBackgroundMediaActiveKey?: string | null;
+  }
+}
+
+const LIME_BACKGROUND_MEDIA_PLAY_EVENT = 'lime-background-media-play';
+const LIME_BACKGROUND_MEDIA_STOP_EVENT = 'lime-background-media-stop';
+
+const getYouTubeEmbedUrl = (videoId: string) => {
+  const params = new URLSearchParams({
+    playsinline: '1',
+    rel: '0',
+    enablejsapi: '1',
+    autoplay: '0',
+  });
+
+  if (typeof window !== 'undefined') {
+    params.set('origin', window.location.origin);
+  }
+
+  return `https://www.youtube.com/embed/${encodeURIComponent(videoId)}?${params.toString()}`;
+};
+
+const parseYouTubeMessage = (data: unknown): any | null => {
+  if (!data) return null;
+
+  if (typeof data === 'string') {
+    try {
+      return JSON.parse(data);
+    } catch {
+      return null;
+    }
+  }
+
+  if (typeof data === 'object') {
+    return data;
+  }
+
+  return null;
+};
+
+const sendYouTubeListeningMessage = (iframe: HTMLIFrameElement | null, id: string) => {
+  if (!iframe?.contentWindow) return;
+
+  try {
+    iframe.contentWindow.postMessage(
+      JSON.stringify({ event: 'listening', id }),
+      'https://www.youtube.com'
+    );
+  } catch {
+    // noop
+  }
+};
+
+const YouTubeEmbed = ({ videoId }: YouTubeEmbedProps) => {
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const mediaKey = useMemo(() => `youtube:${videoId}`, [videoId]);
+  const embedUrl = useMemo(() => getYouTubeEmbedUrl(videoId), [videoId]);
+
+  const notifyPlaying = () => {
+    if (typeof window === 'undefined') return;
+
+    window.dispatchEvent(new CustomEvent(LIME_BACKGROUND_MEDIA_PLAY_EVENT, {
+      detail: {
+        key: mediaKey,
+        kind: 'youtube',
+        title: 'YouTube video player',
+        element: iframeRef.current,
+      },
+    }));
+  };
+
+  const notifyStopped = () => {
+    if (typeof window === 'undefined') return;
+
+    window.dispatchEvent(new CustomEvent(LIME_BACKGROUND_MEDIA_STOP_EVENT, {
+      detail: { key: mediaKey },
+    }));
+  };
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      const iframeWindow = iframeRef.current?.contentWindow;
+      if (!iframeWindow || event.source !== iframeWindow) return;
+
+      const message = parseYouTubeMessage(event.data);
+      if (!message) return;
+
+      const state = message?.info?.playerState ?? message?.info;
+
+      if (state === 1) {
+        notifyPlaying();
+        return;
+      }
+
+      if (state === 0 || state === 2) {
+        notifyStopped();
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+
+    return () => {
+      window.removeEventListener('message', handleMessage);
+    };
+  }, [mediaKey]);
+
+  const handleIframeLoad = () => {
+    sendYouTubeListeningMessage(iframeRef.current, mediaKey);
+    window.setTimeout(() => sendYouTubeListeningMessage(iframeRef.current, mediaKey), 500);
+    window.setTimeout(() => sendYouTubeListeningMessage(iframeRef.current, mediaKey), 1500);
+  };
+
+  return (
+    <div className="my-3 aspect-video w-full overflow-hidden rounded-xl border border-border bg-black shadow-sm">
+      <iframe
+        ref={iframeRef}
+        width="100%"
+        height="100%"
+        src={embedUrl}
+        loading="lazy"
+        title="YouTube video player"
+        frameBorder="0"
+        allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+        allowFullScreen
+        referrerPolicy="strict-origin-when-cross-origin"
+        className="block h-full w-full"
+        onLoad={handleIframeLoad}
+      />
+    </div>
+  );
+};
+
+// SpotifyEmbed
+interface SpotifyEmbedProps {
+  url: string;
+}
+
+declare global {
+  interface Window {
+    __limeBackgroundMediaActiveKey?: string | null;
+  }
+}
+
+const SpotifyEmbedLIME_BACKGROUND_MEDIA_PLAY_EVENT = 'lime-background-media-play';
+
+const getSpotifyEmbedUrl = (url: string) => {
+  return url.replace(
+    /open\.spotify\.com\/(?:(?!track|album|playlist)[\w-]+\/)?/,
+    'open.spotify.com/embed/'
+  );
+};
+
+function SpotifyEmbed({ url }: SpotifyEmbedProps) {
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const embedUrl = useMemo(() => getSpotifyEmbedUrl(url), [url]);
+  const mediaKey = useMemo(() => `spotify:${embedUrl}`, [embedUrl]);
+
+  const notifyPlaying = () => {
+    if (typeof window === 'undefined') return;
+
+    window.dispatchEvent(new CustomEvent(SpotifyEmbedLIME_BACKGROUND_MEDIA_PLAY_EVENT, {
+      detail: {
+        key: mediaKey,
+        kind: 'spotify',
+        title: 'Spotify Player',
+        element: iframeRef.current,
+      },
+    }));
+  };
+
+  useEffect(() => {
+    const handleWindowBlur = () => {
+      window.setTimeout(() => {
+        if (document.activeElement === iframeRef.current) {
+          notifyPlaying();
+        }
+      }, 0);
+    };
+
+    window.addEventListener('blur', handleWindowBlur);
+
+    return () => {
+      window.removeEventListener('blur', handleWindowBlur);
+    };
+  }, [mediaKey]);
+
+  return (
+    <div className="mt-3 w-full overflow-hidden rounded-xl leading-[0] shadow-sm bg-[#282828]">
+      <iframe
+        ref={iframeRef}
+        src={embedUrl}
+        className="rounded-xl border-0 h-[80px] md:h-[152px]"
+        style={{
+          border: 0,
+          width: '100%',
+          minWidth: '100%',
+          maxWidth: '100%',
+          display: 'block',
+          margin: 0,
+          padding: 0,
+        }}
+        allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+        loading="lazy"
+        title="Spotify Player"
+        onFocus={notifyPlaying}
+      />
+    </div>
+  );
+}
+
+// PostCard
+const PostLocationEditor = lazy(() => import("@/components/maps/LimeMap").then(module => ({default: module.PostLocationEditor})));
 
 // --- 公開範囲 ---
 // public    = 全体公開
@@ -350,7 +543,7 @@ const preloadImageNaturalSize = (url: string, priority: 'high' | 'low' = 'low') 
   return promise;
 };
 
-export const preloadPostCardAssets = (
+const preloadPostCardAssets = (
   post: PostWithAuthor,
   options?: { priority?: 'high' | 'low' }
 ) => {
@@ -494,7 +687,7 @@ const fetchReactionsForPost = async (postId: string, force = false): Promise<Rea
   return request;
 };
 
-export const preloadPostCardData = async (posts: PostWithAuthor[]) => {
+const preloadPostCardData = async (posts: PostWithAuthor[]) => {
   const warmupPosts = posts.slice(0, 12);
   if (!warmupPosts.length) return;
 
@@ -549,7 +742,9 @@ const DEFAULT_EMOJIS = ['👍', '❤️', '😆', '🤔', '😮', '🎉', '💢'
 
 const SINGLE_IMAGE_DISPLAY_STYLE: React.CSSProperties = {
   width: '100%',
-  height: 'auto',
+  height: '100%',
+  position: 'absolute',
+  inset: 0,
   objectFit: 'contain',
 };
 
@@ -917,9 +1112,10 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
   // 「新規マウント時に一瞬だけPC版が見えてしまう」二段階レンダーを防げる。
   const desktopLayout = useDesktopLayout();
   const isMobile = useViewportWidth(640);
+  const pageVisible = usePageVisible();
   const useMobilePresentation = isMobile || desktopLayout;
   const timelinePortalTheme=useTimelinePortalTheme(timelineGlass);
-  const [singleImageNaturalSize, setSingleImageNaturalSize] = useState<{ width: number; height: number } | null>(null);
+  const singleImageGeometry = useRef<{url:string|null;size:{width:number;height:number}}>();
   const [isCardActive, setIsCardActive] = useState(false);
 
   const cardRootRef = useRef<HTMLElement>(null);
@@ -1077,7 +1273,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
   }, [post.id]);
 
   useEffect(() => {
-    const shouldKeepLiveWork = !!mediaPresentation || isCardActive || showMenu || showPicker || showShareMenu || showLimeDropPanel;
+    const shouldKeepLiveWork = pageVisible && (!!mediaPresentation || isCardActive || showMenu || showPicker || showShareMenu || showLimeDropPanel);
     if (!shouldKeepLiveWork) return;
     if (isBlueskyPost) return;
 
@@ -1108,7 +1304,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
       cancelled = true;
       supabase.removeChannel(channels);
     };
-  }, [mediaPresentation, isBlueskyPost, isCardActive, showMenu, showPicker, showShareMenu, showLimeDropPanel, post.id]);
+  }, [mediaPresentation, isBlueskyPost, isCardActive, showMenu, showPicker, showShareMenu, showLimeDropPanel, post.id, pageVisible]);
 
   useMinuteTick(!!mediaPresentation || isCardActive || showMenu || showPicker || showShareMenu || showLimeDropPanel);
 
@@ -1467,79 +1663,14 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
     };
   }, [post.content, post.imageUrls, isBlueskyPost,linkPreview.preview?.image,post.video,post.externalVideo]);
 
-  useEffect(() => {
-    const cached = singleImageUrl ? getCachedNaturalSize(singleImageUrl) : null;
-    setSingleImageNaturalSize(cached);
+  // Snapshot geometry once per attachment. A late image load cannot move the timeline.
+  if(singleImageGeometry.current?.url!==singleImageUrl){
+    const index=post.imageUrls.indexOf(singleImageUrl??'');
+    singleImageGeometry.current={url:singleImageUrl,size:initialMediaSize(post.imageDimensions?.[index]??(singleImageUrl?getCachedNaturalSize(singleImageUrl):null),singleImageUrl??undefined)};
+  }
+  const singleImageNaturalSize=singleImageGeometry.current!.size;
 
-    if (!singleImageUrl || cached) return;
-
-    let cancelled = false;
-    void preloadImageNaturalSize(singleImageUrl, 'high').then((size) => {
-      if (cancelled || !size) return;
-
-      setSingleImageNaturalSize((current) => {
-        if (current && current.width === size.width && current.height === size.height) return current;
-        return size;
-      });
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [singleImageUrl]);
-
-  const singleImageFrameStyle = useMemo<React.CSSProperties>(() => {
-    if (!singleImageNaturalSize) {
-      return {
-        width: '100%',
-        maxWidth: '100%',
-      };
-    }
-
-    const naturalWidth = Math.max(1, singleImageNaturalSize.width);
-    const naturalHeight = Math.max(1, singleImageNaturalSize.height);
-    const ratio = naturalWidth / naturalHeight;
-
-    const maxTimelineImageHeight = useMobilePresentation ? 300 : 480;
-    const minimumReadableWidth = useMobilePresentation ? 88 : 110;
-    const heightLimitedWidth = Math.max(
-      minimumReadableWidth,
-      Math.round(maxTimelineImageHeight * ratio)
-    );
-    const shouldLimitByHeight = ratio < (useMobilePresentation ? 1.64 : 1.72);
-    const shouldAvoidUpscale = naturalWidth <= (useMobilePresentation ? 360 : 520);
-    const shouldNarrowUltraWide = ratio >= 2.35;
-
-    if (shouldLimitByHeight) {
-      const width = shouldAvoidUpscale
-        ? Math.min(naturalWidth, heightLimitedWidth)
-        : heightLimitedWidth;
-
-      return {
-        width: `min(100%, ${Math.max(minimumReadableWidth, width)}px)`,
-        maxWidth: '100%',
-      };
-    }
-
-    if (shouldAvoidUpscale) {
-      return {
-        width: `${naturalWidth}px`,
-        maxWidth: '100%',
-      };
-    }
-
-    if (shouldNarrowUltraWide) {
-      return {
-        width: useMobilePresentation ? '100%' : 'min(100%, 560px)',
-        maxWidth: '100%',
-      };
-    }
-
-    return {
-      width: '100%',
-      maxWidth: '100%',
-    };
-  }, [singleImageNaturalSize, useMobilePresentation]);
+  const singleImageFrameStyle = initialImageFrame(singleImageNaturalSize,useMobilePresentation);
 
   const renderContentWithLinks = (text: string) => {
     if (!text) return null;
@@ -1549,7 +1680,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
     return parts.map((part, index) => {
       if (part.match(urlRegex)) {
         return (
-          <a
+          <ContentLink
             key={`link-${index}`}
             href={part}
             target="_blank"
@@ -1558,7 +1689,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
             onClick={(e) => e.stopPropagation()}
           >
             {embedded ? (() => { const label = part.replace(/^https?:\/\//, ''); return label.length > 32 ? `${label.slice(0, 29)}…` : label; })() : part}
-          </a>
+          </ContentLink>
         );
       }
       return part;
@@ -1571,6 +1702,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
     const parts = splitMentionText(text);
 
     return parts.map((part, index) => {
+      if (/^https?:\/\//.test(part)) return renderContentWithLinks(part);
       if (part.startsWith('@')) {
         const username = mentionProfileHandle(part,post.author);
         return (
@@ -2090,7 +2222,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
     : 'bg-white dark:bg-[#1e222b]';
 
   const postMenu = (<>                {!embedded && <div className="relative shrink-0">
-                  
+
                   <button
                     ref={moreButtonRef}
                     aria-label="ポストのメニュー"
@@ -2119,7 +2251,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                   >
                     <MoreHorizontal className="h-5 w-5" />
                   </button>
-                  
+
 
                   {showMenu && typeof document !== 'undefined' && createPortal(
                     <>
@@ -2273,9 +2405,9 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
             {!embedded && <div data-lime-post-actions className={useMobilePresentation ? "mt-2 flex items-center gap-1 text-muted-foreground relative h-8" : "mt-3 flex items-center gap-1 text-muted-foreground relative h-9"}>
               <div onClick={(e) => e.stopPropagation()} className="flex items-center h-full">
                 {isBlueskyPost ? (
-                  <ExternalLikeButton post={post} onChange={onMediaLikeChange}/>
+                  <ExternalLikeButton post={post} active={!!mediaPresentation || isCardActive} onChange={onMediaLikeChange}/>
                 ) : (
-                  <LikeButton initialLikedKnown={typeof post.likedByMe === 'boolean'} syncState={!!onMediaLikeChange} onChange={onMediaLikeChange}
+                  <LikeButton live={!!mediaPresentation || isCardActive} initialLikedKnown={typeof post.likedByMe === 'boolean'} syncState={!!onMediaLikeChange} onChange={onMediaLikeChange}
                     postId={post.id}
                     preferencePost={post}
                     liked={post.likedByMe}
@@ -2283,7 +2415,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                   />
                 )}
               </div>
-              {(!isMembersOnlyPost || canViewMembersOnlyPost) && <RepostButton post={post} mobilePresentation={useMobilePresentation} />}
+              {(!isMembersOnlyPost || canViewMembersOnlyPost) && <RepostButton post={post} active={!!mediaPresentation || isCardActive} mobilePresentation={useMobilePresentation} />}
               {isBlueskyPost ? (
                 <button
                   type="button"
@@ -2812,13 +2944,16 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                 <div data-lime-post-images={allImageUrls.length>0||undefined} className="mt-3 flex max-w-full justify-start" onClick={(e) => e.stopPropagation()}>
                   <button
                     type="button"
-                    className="block max-w-full cursor-zoom-in overflow-hidden rounded-2xl border border-border/50 bg-black/[0.025] text-left shadow-none dark:bg-white/[0.035]"
+                    className="relative block max-w-full cursor-zoom-in overflow-hidden rounded-2xl border border-border/60 bg-background text-left shadow-none"
+                    key={singleImageUrl}
                     data-lime-single-post-image
-                    style={singleImageFrameStyle}
+                    data-lime-media-fallback={singleImageNaturalSize.width===16&&singleImageNaturalSize.height===9||undefined}
+                    style={{...singleImageFrameStyle,aspectRatio:`${singleImageNaturalSize.width}/${singleImageNaturalSize.height}`}}
                     onClick={(e) => handleImageClick(e, singleImageUrl)}
                     aria-label="画像を拡大表示"
                   >
                     <PrivateMediaImage
+                      data-lime-media-loading-frame
                       referrerPolicy={post.source==='x'?'no-referrer':undefined} src={singleImageUrl}
                       alt={post.imageAltTexts?.[0]||"投稿画像"}
                       className="block select-none"
@@ -2834,14 +2969,10 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                             height: img.naturalHeight,
                           };
                           setCachedNaturalSize(singleImageUrl, nextNaturalSize);
-                          setSingleImageNaturalSize(nextNaturalSize);
+
                         }
                       }}
-                      onError={() => {
-                        setFailedUrls((prev) => (
-                          prev.includes(singleImageUrl) ? prev : [...prev, singleImageUrl]
-                        ));
-                      }}
+                      onError={event => { event.currentTarget.style.opacity='0'; }}
                     />
                   </button>
                 </div>
@@ -2987,8 +3118,14 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
   );
 }
 
-export const PostCard = memo(function PostCard(props: Parameters<typeof PostCardComponent>[0]) {
+const PostCard = memo(function PostCard(props: Parameters<typeof PostCardComponent>[0]) {
   if (props.post.externalReplyToId && !props.mediaPresentation) return <ExternalReplyCard post={props.post} thread={props.thread} embedded={props.embedded} repostedByLabel={props.repostedByLabel??props.post.externalRepostedBy?.displayName} />;
   return <PostCardComponent {...props} />;
 });
 PostCard.displayName = 'PostCard';
+
+export { preloadPostCardAssets };
+export { preloadPostCardData };
+export { PostCard };
+export { YouTubeEmbed };
+export { SpotifyEmbed };

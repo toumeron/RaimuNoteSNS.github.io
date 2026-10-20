@@ -1,3 +1,5 @@
+vi.mock("@/components/layout/AppLayout", async importOriginal => ({...await importOriginal<typeof import("@/components/layout/AppLayout")>(), Logo: () => <span>LimeNote</span>}));
+
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -7,7 +9,7 @@ vi.mock('@/lib/supabase', () => ({ supabase: {
   auth: { signUp: mocks.signUp, signInWithPassword: mocks.signIn },
   from: () => ({ upsert: mocks.upsert }),
 } }));
-vi.mock('@/components/layout/Logo', () => ({ Logo: () => <span>LimeNote</span> }));
+
 vi.mock('sonner', () => ({ toast: { success: mocks.success, error: mocks.error } }));
 import AuthPage from './Auth';
 

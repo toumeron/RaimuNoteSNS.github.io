@@ -1,4 +1,4 @@
-import {FRIEND_IMAGE_INSTRUCTION,chooseFriendImageQuery,findFriendPhoto,appendFriendPhoto,readFriendPhoto} from '../_shared/friendImages.ts';
+import { FRIEND_IMAGE_INSTRUCTION, chooseFriendImageQuery, findFriendPhoto, appendFriendPhoto, readFriendPhoto } from "./../_shared/chatContext.ts";
 import { invitedGroupFriends } from "./../_shared/chatContext.ts";
 import { GROUP_FRIEND_PARTICIPATION_INSTRUCTION, friendDeclinedReply, waitForFriendReply } from "./../_shared/chatContext.ts";
 import { FRIEND_REACTION_INSTRUCTION, parseFriendResponse } from "./../_shared/chatContext.ts";

@@ -1,6 +1,6 @@
 import { act, cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ReplyChain } from './ReplyChain';
+import { ReplyChain } from "@/components/post/CommentList";
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 describe('avatar connectors', () => {
   it('connects avatar bottoms to the next avatar tops across variable card heights', () => {

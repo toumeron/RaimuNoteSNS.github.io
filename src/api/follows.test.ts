@@ -1,13 +1,13 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 const fixture=vi.hoisted(()=>({currentId:'viewer' as string|null,calls:[] as string[]}));
 vi.mock('@/lib/currentUser',()=>({getCurrentUserId:async()=>fixture.currentId}));
-vi.mock('@/lib/supabase',()=>({supabase:{from:(table:string)=>{
+vi.mock('@/lib/supabase',()=>({supabase:{rpc:async()=>({data:{followed:fixture.currentId!==null,requested:false,canView:true},error:null}),from:(table:string)=>{
  fixture.calls.push(table);let counting=false;
  const query={select:(_columns:string,options?:{count?:string})=>{counting=!!options?.count;return query;},eq:()=>query,maybeSingle:()=>query,then:(resolve:(value:unknown)=>void)=>Promise.resolve({data:counting?null:{follower_id:'viewer'},count:counting?5:null,error:null}).then(resolve)};
  return query;
 }}}));
-vi.mock('./accountPrivacy',()=>({getAccountFollowState:async()=>({followed:fixture.currentId!==null,requested:false,canView:true}),toggleAccountFollow:vi.fn()}));
-import {getFollowStats} from './follows';
+
+import { getFollowStats } from "@/api/users";
 beforeEach(()=>{fixture.currentId='viewer';fixture.calls=[];});
 it.each(['misskey-user:local-id','did:plc:actor'])('does not query Lime follows for external profile %s',async id=>{
  expect(await getFollowStats(id)).toEqual({followers:0,following:0,followedByMe:false});

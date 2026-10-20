@@ -1,6 +1,6 @@
 import rows from './data/mapPlaces.json' with {type:'json'};
 import stations from './data/mapStations.json' with {type:'json'};
-import {mapBoundsContain,type MapBounds,type MapLocation} from '../../../src/lib/mapLocation.ts';
+import { mapBoundsContain, type MapBounds, type MapLocation } from "./../../../src/lib/mapLocation.ts";
 type Place={name:string;point:MapLocation;population:number;country:string;aliases:string[];station?:boolean};
 const places:Place[]=rows.map(([name,lat,lon,population,country,aliases])=>({name:String(name),point:{latitude:Number(lat),longitude:Number(lon)},population:Number(population),country:String(country),aliases:aliases as string[]}));
 places.push(...stations.map(([name,latitude,longitude,aliases])=>({name:String(name),point:{latitude:Number(latitude),longitude:Number(longitude)},population:0,country:'JP',aliases:aliases as string[],station:true})));

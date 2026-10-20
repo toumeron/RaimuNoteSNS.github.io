@@ -1,10 +1,11 @@
+vi.mock("@/lib/recommendationVisualInference", async importOriginal => ({...await importOriginal<typeof import("@/lib/recommendationVisualInference")>(), enrichRecommendationVisuals:(...args:unknown[])=>mocks.analyze(...args), releaseRecommendationVisualWorker:mocks.release}));
 import {act,cleanup,renderHook,waitFor} from '@testing-library/react';
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
 import {afterEach,expect,it,vi} from 'vitest';
 import type {PostWithAuthor} from '@/types';
 const mocks=vi.hoisted(()=>({analyze:vi.fn(),release:vi.fn()}));
-vi.mock('@/lib/recommendationVisualInference',()=>({enrichRecommendationVisuals:(...args:unknown[])=>mocks.analyze(...args),releaseRecommendationVisualWorker:mocks.release}));
-import {useRecommendationImages} from './useRecommendationImages';
+
+import { useRecommendationImages } from "@/hooks/useRecommendedFeed";
 const post=(id:string)=>({id,userId:id,content:'#ファンアート',imageUrls:['https://images.example/'+id+'.jpg'],recommendationTopics:['digital-illustration'],languages:['ja'],source:'x',createdAt:new Date().toISOString(),likesCount:1,commentsCount:0,repostsCount:0,author:{id,username:'artist@twitter.com',bio:'イラストレーター'}}) as PostWithAuthor;
 afterEach(()=>{cleanup();vi.unstubAllGlobals();vi.clearAllMocks();});
 it('does not hold first paint, checks liked and candidate pixels in one bounded job, and removes a conflicting pet image',async()=>{

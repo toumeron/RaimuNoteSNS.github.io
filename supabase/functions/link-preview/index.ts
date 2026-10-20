@@ -1,10 +1,10 @@
-import {loadTwitterSearch} from './twitterSearch.ts';
-import {loadBlueskySearch} from './bluesky.ts';
-import {loadGeoMapPins,geoMapJobs,loadGeoMapDetail} from './geoMaps.ts';
+import { loadTwitterSearch } from "./twitterSearch.ts";
+import { loadBlueskySearch } from "./bluesky.ts";
+import { loadGeoMapPins, geoMapJobs, loadGeoMapDetail } from "./maps.ts";
 import { quota, boundedBody } from '../_shared/security.ts';
 import {createClient} from 'https://esm.sh/@supabase/supabase-js@2';
-import {loadPreview,loadImage,loadMisskey} from './load.ts';
-import {metadata,publicUrl} from './metadata.ts';
+import { loadPreview, loadImage, loadMisskey } from "./load.ts";
+import { metadata, publicUrl } from "./metadata.ts";
 const baseHeaders={'Access-Control-Allow-Methods':'POST, OPTIONS','Access-Control-Allow-Headers':'authorization, x-client-info, apikey, content-type','Content-Type':'application/json'};
 const cache=new Map<string,{expires:number;preview:ReturnType<typeof metadata>}>();
 Deno.serve(async request=>{

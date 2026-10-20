@@ -1,3 +1,27 @@
+vi.mock("@/hooks/useRecommendedFeed", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/hooks/useRecommendedFeed")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/hooks/useRecommendedFeed")>(), useRecommendationImpressions:()=>{}}))(importOriginal)};
+});
+vi.mock("@/api/external-posts", async importOriginal => ({...await importOriginal<typeof import("@/api/external-posts")>(), enrichExternalLike:mocks.saveLike}));
+vi.mock("@/hooks/useAuth", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useAuth")>(), useAuth:()=>({user:{id:'pixel-viewer'},loading:false})}));
+
+
+vi.mock("@/api/recommendations", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/api/recommendations")>();
+ const overrides = [
+  await (async original=>({...await original<typeof import("@/api/recommendations")>(),enrichRecommendationFeedback:mocks.saveNegative,dismissRecommendation:mocks.saveNegative}))(importOriginal),
+  await (async original=>{
+ const real=await original<typeof import('@/api/recommendations')>();
+ const prefs=()=>({authors:{favorite:10},terms:{},followedTopics:['digital-illustration'] as any,likedSamples:[positive],feedback:[{id:negative.id,userId:negative.userId,imageUrls:negative.imageUrls,createdAt:'2026-05-01T00:00:00Z'}]});
+ return {...real,getRecommendationPreferences:vi.fn(async()=>prefs()),getRecommendationPage:vi.fn(async()=>({posts:[candidate],preferences:prefs(),next:undefined,pendingAnalysis:false,automaticPaused:false,requestKey:1}))};
+})(importOriginal)
+ ];
+ return Object.assign({}, actual, ...overrides.map(values => Object.fromEntries(Object.entries(values).filter(([key, value]) => value !== actual[key]))));
+});
+vi.mock("@/lib/recommendationVisualInference", async importOriginal => ({...await importOriginal<typeof import("@/lib/recommendationVisualInference")>(), releaseRecommendationVisualWorker:vi.fn(), enrichRecommendationVisuals:async(posts:PostWithAuthor[],_topics:any,_signal:any,checked:any)=>{
+ mocks.enrich(posts);
+ return posts.map(post=>{const vector=Array(512).fill(0);vector[post.id===positive.id?0:1]=1;const result={...post,recommendationVisual:{version:1,classifierVersion:3,kind:post.id===positive.id?'moe':'male-character',topics:post.id===positive.id?['digital-illustration']:['art'],confidence:.9,similarity:.3,vector},recommendationVisualStatus:'checked'};checked(result);return result;});
+}}));
 import measuredVisuals from '@/lib/fixtures/recommendationVisual.json';
 import {act,cleanup,renderHook,waitFor} from '@testing-library/react';
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
@@ -9,20 +33,13 @@ const positive=work('bsky:positive','favorite');
 const negative=work('bsky:negative','unwanted');
 const candidate=work('bsky:candidate','unfamiliar');
 vi.mock('@/api/recommendation-twitter',()=>({getRecommendationTwitterPage:(...args:unknown[])=>mocks.twitter(...args)}));
-vi.mock('./useAuth',()=>({useAuth:()=>({user:{id:'pixel-viewer'},loading:false})}));
-vi.mock('./useRecommendationImpressions',()=>({useRecommendationImpressions:()=>{}}));
+
+
 vi.mock('@/lib/bluesky',()=>({getConfiguredExternalHandles:()=>[],fetchBlueskyPost:async()=>null}));
-vi.mock('@/api/external-likes',()=>({enrichExternalLike:mocks.saveLike}));
-vi.mock('@/api/recommendation-feedback',async original=>({...await original<typeof import('@/api/recommendation-feedback')>(),enrichRecommendationFeedback:mocks.saveNegative,dismissRecommendation:mocks.saveNegative}));
-vi.mock('@/api/recommendations',async original=>{
- const real=await original<typeof import('@/api/recommendations')>();
- const prefs=()=>({authors:{favorite:10},terms:{},followedTopics:['digital-illustration'] as any,likedSamples:[positive],feedback:[{id:negative.id,userId:negative.userId,imageUrls:negative.imageUrls,createdAt:'2026-05-01T00:00:00Z'}]});
- return {...real,getRecommendationPreferences:vi.fn(async()=>prefs()),getRecommendationPage:vi.fn(async()=>({posts:[candidate],preferences:prefs(),next:undefined,pendingAnalysis:false,automaticPaused:false,requestKey:1}))};
-});
-vi.mock('@/lib/recommendationVisualInference',()=>({releaseRecommendationVisualWorker:vi.fn(),enrichRecommendationVisuals:async(posts:PostWithAuthor[],_topics:any,_signal:any,checked:any)=>{
- mocks.enrich(posts);
- return posts.map(post=>{const vector=Array(512).fill(0);vector[post.id===positive.id?0:1]=1;const result={...post,recommendationVisual:{version:1,classifierVersion:3,kind:post.id===positive.id?'moe':'male-character',topics:post.id===positive.id?['digital-illustration']:['art'],confidence:.9,similarity:.3,vector},recommendationVisualStatus:'checked'};checked(result);return result;});
-}}));
+
+
+
+
 import {useRecommendedFeed} from './useRecommendedFeed';
 afterEach(()=>{cleanup();localStorage.clear();sessionStorage.clear();vi.clearAllMocks();mocks.twitter.mockReset().mockResolvedValue({posts:[],next:undefined});});
 it('loads saved preference evidence even when Worker-based pixel analysis is unavailable',async()=>{
@@ -216,7 +233,7 @@ it('drops work already shown when a warmed or resumed continuation returns it ag
 it('continues past two filtered pages without another gesture and stops an empty cursor stream',async()=>{
  vi.mocked((await import('@/api/recommendations')).getRecommendationPreferences).mockResolvedValueOnce({authors:{},terms:{}});
  const api=await import('@/api/recommendations');
- const {useTimelineContinuation}=await import("@/hooks/useRecommendationImages");
+ const {useTimelineContinuation}=await import("@/hooks/useRecommendedFeed");
  let reads=0;
  vi.mocked(api.getRecommendationPage).mockImplementation(async()=>{
   const key=++reads,cursor=api.createRecommendationCursor([]);cursor.pageKey=key;cursor.lime.page=key;cursor.preferences={authors:{},terms:{}};
@@ -239,7 +256,7 @@ it('continues past two filtered pages without another gesture and stops an empty
 
 it('does not silently stop after three healthy empty continuation pages',async()=>{
  vi.mocked((await import('@/api/recommendations')).getRecommendationPreferences).mockResolvedValueOnce({authors:{},terms:{}});
- const api=await import('@/api/recommendations');const {useTimelineContinuation}=await import("@/hooks/useRecommendationImages");let reads=0;
+ const api=await import('@/api/recommendations');const {useTimelineContinuation}=await import("@/hooks/useRecommendedFeed");let reads=0;
  vi.mocked(api.getRecommendationPage).mockImplementation(async()=>{
   const key=++reads,cursor=api.createRecommendationCursor([]);cursor.pageKey=key;cursor.lime.page=key;cursor.preferences={authors:{},terms:{}};
   return {posts:key===5?Array.from({length:6},(_,i)=>work(`after-four-empty-${i}`,'creator')):[],next:key<5?cursor:undefined,preferences:cursor.preferences,pendingAnalysis:false,automaticPaused:false,requestKey:key};
@@ -281,7 +298,7 @@ it('prepares 20 accepted posts before opening recommended and displays them with
 });
 
 it('restores only an unconsumed accepted 20-card reserve after reload without network or model work',async()=>{
- const {saveRecommendationReserve,readRecommendationReserve}=await import("@/lib/topicRecommendations");const api=await import('@/api/recommendations');
+ const {saveRecommendationReserve,readRecommendationReserve}=await import("@/lib/recommendations");const api=await import('@/api/recommendations');
  const posts=Array.from({length:20},(_,i)=>work('reload-'+i,'reload-creator-'+i));
  saveRecommendationReserve(JSON.stringify(['pixel-viewer',[]]),{posts,preferences:{authors:{},terms:{},visualOnly:true,allowUnverifiedMedia:false},next:undefined,pendingAnalysis:false,automaticPaused:false,requestKey:901,twitterError:null,visualError:null});
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});const started=performance.now();

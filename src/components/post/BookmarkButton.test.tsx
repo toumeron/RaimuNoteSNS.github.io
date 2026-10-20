@@ -1,10 +1,16 @@
+vi.mock("@/api/users", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/api/users")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/api/users")>(), getBookmarkIds:async()=>[], setBookmark:state.write}))(importOriginal)};
+});
+
+vi.mock("@/hooks/useAuth", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useAuth")>(), useAuth:()=>({user:{id:state.userId}})}));
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const state=vi.hoisted(()=>({write:vi.fn(),userId:'viewer'}));
-vi.mock('@/hooks/useAuth',()=>({useAuth:()=>({user:{id:state.userId}})}));
-vi.mock('@/api/bookmarks',()=>({getBookmarkIds:async()=>[],setBookmark:state.write}));
-import { BookmarkButton } from './BookmarkButton';
+
+
+import { BookmarkButton } from "@/components/feed/RepostButton";
 beforeEach(()=>{state.userId='viewer';state.write.mockReset().mockResolvedValue(undefined);});afterEach(cleanup);
 function mount(){const client=new QueryClient({defaultOptions:{queries:{retry:false}}});client.setQueryData(['bookmarks','ids','viewer'],[]);render(<QueryClientProvider client={client}><BookmarkButton post={{id:'original'}} /><BookmarkButton post={{id:'original'}} /></QueryClientProvider>);return client;}
 it('shares state across every instance and prevents another click while saving',async()=>{

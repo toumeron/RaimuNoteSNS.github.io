@@ -231,7 +231,7 @@ test('offline generations survive simultaneous saves and failed replacements',as
 test('public own lists appear in discovery with full-column dividers and header',async({page},info)=>{
  await setup(page,false);
  const rows=[{id:'22222222-2222-2222-2222-222222222222',name:'公開の自分のリスト',is_private:false},{id:'33333333-3333-3333-3333-333333333333',name:'非公開の自分のリスト',is_private:true}].map(row=>({...row,owner_id:user.id,description:'',members:[],owner:{username:user.username,display_name:user.displayName,avatar_url:''}}));
- await page.route('**/src/api/lists.ts*',route=>route.fulfill({contentType:'application/javascript',body:`const rows=${JSON.stringify(rows)};export const getLists=async()=>rows,getListCatalog=async()=>rows,getList=async id=>rows.find(row=>row.id===id),listsKey=id=>['user-lists',id],setSavedList=async()=>{},deleteList=async()=>{},searchLists=async()=>rows,saveList=async()=>rows[0],setListMember=async()=>{},searchListUsers=async()=>[],discardListCover=async()=>{};`}));
+ await page.route('**/src/api/users.ts*',route=>route.fulfill({contentType:'application/javascript',body:`const rows=${JSON.stringify(rows)};export const getLists=async()=>rows,getListCatalog=async()=>rows,getList=async id=>rows.find(row=>row.id===id),listsKey=id=>['user-lists',id],setSavedList=async()=>{},deleteList=async()=>{},searchLists=async()=>rows,saveList=async()=>rows[0],setListMember=async()=>{},searchListUsers=async()=>[],discardListCover=async()=>{};`}));
  await page.goto('lists');
  const discovery=page.getByRole('heading',{name:'新しいリストを見つける',exact:true}).locator('..');
  await expect(discovery.getByText('公開の自分のリスト',{exact:true})).toBeVisible();

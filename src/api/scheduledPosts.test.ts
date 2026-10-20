@@ -1,7 +1,13 @@
+vi.mock("@/lib/mediaThumbnail", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/lib/mediaThumbnail")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/lib/mediaThumbnail")>(), uploadPostMedia:mocks.upload}))(importOriginal)};
+});
+
+
 import {beforeEach,expect,it,vi} from 'vitest';
 const mocks=vi.hoisted(()=>({rpc:vi.fn(),from:vi.fn(),upload:vi.fn()}));
 vi.mock('@/lib/currentUser',()=>({getCurrentUserId:async()=> 'viewer'}));
-vi.mock('@/lib/uploadPostMedia',()=>({uploadPostMedia:mocks.upload}));
+
 vi.mock('@/lib/supabase',()=>({supabase:{rpc:mocks.rpc,from:mocks.from}}));
 import {createPost} from './posts';
 beforeEach(()=>{vi.clearAllMocks();mocks.rpc.mockResolvedValue({data:null,error:null});mocks.upload.mockImplementation(async(_images,owner,id)=>[`storage://post-media/${owner}/${id}/photo.png`]);mocks.from.mockReturnValue({select:()=>({eq:()=>({single:async()=>({data:{is_private:false},error:null})})})});});

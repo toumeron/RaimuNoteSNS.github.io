@@ -1,57 +1,112 @@
-import { displayUsername } from "@/lib/format";
-import {nextTwitterReplyCursor} from '@/lib/twitterReplyPaging';
-import {canShowPostLinkPreview,hasAttachedPostVideo} from '@/lib/postPresentation';
-import {PostSourceLabel} from '@/components/post/PostSourceLabel';
-import { PrivateMediaImage } from "@/components/profile/ProfileMediaPreview";
-import {xConversationPage,twitterReplyUrl} from '@/lib/fxTwitter';
-import { ExternalPostDetails } from "@/components/feed/QuotedPost";
-import { ProviderVerificationBadge } from "@/components/common/OfficialBadge";
-import {PostVideoPlayer} from '@/components/video/PostVideoPlayer';
-import { PostPoll } from '@/components/feed/PostPoll';
-import { ExternalReplyDetail } from "@/components/post/ExternalReplyList";
-import { randomUUID } from '@/lib/randomUUID';
-import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
-import { mobilePostMenuOS } from "@/components/post/PostActionSheet";
-import {ExternalLikeButton} from '@/components/post/ExternalLikeButton';
-import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
-import { openMediaViewer } from '@/components/media/openMediaViewer';
-import {useLayoutEffect} from 'react';
-import { HighlightPostMenuButton } from "@/components/post/BookmarkButton";
-import { PinPostMenuButton } from "@/components/post/BookmarkButton";
-import {LinkPreviewCard,useLinkPreview} from '@/components/post/LinkPreviewCard';
+import { initialImageFrame, initialMediaSize } from "@/lib/mediaThumbnail";
+import { displayUsername, randomUUID, splitMentionText, mentionProfileHandle, hasStickers, formatDate, formatRelative, getYouTubeId } from "@/lib/utils";
+import { nextTwitterReplyCursor, canShowPostLinkPreview, hasAttachedPostVideo, spaceLinkIn, getCommentAncestors } from "@/lib/utils";
+import { PostSourceLabel, ExternalPostDetails, LinkPreviewCard, useLinkPreview, QuotedPost, PostImages } from "@/components/feed/QuotedPost";
+import { PrivateMediaImage } from "@/components/ui/avatar";
+import { xConversationPage, twitterReplyUrl } from "@/lib/fxTwitter";
+import { ProviderVerificationBadge, PrivateAccountBadge, Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { PostVideoPlayer } from "@/components/video/PostVideoPlayer";
+import { PostPoll, PostCardSkeleton } from "@/components/feed/PostPoll";
+import { ExternalReplyDetail, ExternalReplyList } from "@/components/post/ExternalReplyList";
+import { mobilePostMenuOS, ExternalLikeButton, HighlightPostMenuButton, PinPostMenuButton, RepostButton, BookmarkButton } from "@/components/feed/RepostButton";
+import { openMediaViewer } from "@/components/media/openMediaViewer";
+import { useLayoutEffect, useState, useEffect, useRef, type CSSProperties } from "react";
 import { renderStickerText } from "@/components/stickers/Stickers";
-import { hasStickers } from '@/lib/stickers';
-import { SpacePostCard } from '@/components/spaces/SpacePostCard';
-import { spaceLinkIn } from "@/lib/postPresentation";
-import '@/components/post/post-actions.css';
-import { RepostButton } from '@/components/feed/RepostButton';
-import { QuotedPost } from '@/components/feed/QuotedPost';
-import { useDesktopLayout } from '@/components/layout/DesktopLayoutContext';
-import { useState, useEffect, useRef, type CSSProperties } from 'react';
-import { createPortal } from 'react-dom';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ReplyDetail } from './ReplyDetail';
-import { ArrowLeft, MessageCircle, X, Plus, Link as LinkIcon, Upload, Send, Heart, Globe, MoreHorizontal, Trash2, ChartBarBig, Lock, Users } from 'lucide-react'; // Plus, MoreHorizontal等を追加
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
-import { LikeButton } from '@/components/post/LikeButton';
-import { CommentList } from '@/components/post/CommentList';
-import { ExternalReplyList } from '@/components/post/ExternalReplyList';
-import { CommentForm } from '@/components/post/CommentForm';
-import { PostImages } from '@/components/feed/PostImages';
-import { usePost } from '@/hooks/useFeed';
-import { BookmarkButton } from '@/components/post/BookmarkButton';
-import { fetchBlueskyPostThread, getBlueskyUriFromPostId } from '@/lib/bluesky';
-import { useBlueskySession } from '@/hooks/useBlueskySession';
-import { useQuery,useInfiniteQuery } from '@tanstack/react-query';
-import { formatDate, formatRelative } from '@/lib/format';
-import { getYouTubeId } from '@/lib/utils';
-import { YouTubeEmbed } from '@/components/YouTubeEmbed';
-import { supabase } from '@/lib/supabase';
-import { getCurrentUserId } from '@/lib/currentUser';
-import { deletePost } from '@/api/posts';
-import type { PostWithAuthor } from '@/types';
+import { SpacePostCard } from "@/components/spaces/SpaceProvider";
 
+import { useDesktopLayout } from "@/components/layout/DesktopLayoutContext";
+import { createPortal } from "react-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { ArrowLeft, MessageCircle, X, Plus, Link as LinkIcon, Upload, Send, Globe, MoreHorizontal, Trash2, ChartBarBig, Lock, Users, Loader2, Share2 } from "lucide-react";
+import { LikeButton } from "@/components/post/LikeButton";
+import { CommentList, CommentCard } from "@/components/post/CommentList";
+import { CommentForm } from "@/components/post/CommentForm";
+import { usePost } from "@/hooks/useFeed";
+import { fetchBlueskyPostThread, getBlueskyUriFromPostId } from "@/lib/bluesky";
+import { useBlueskySession, useAuth } from "@/hooks/useAuth";
+import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
+import { YouTubeEmbed } from "@/components/feed/PostCard";
+import { supabase } from "@/lib/supabase";
+import { getCurrentUserId } from "@/lib/currentUser";
+import { deletePost, getPostLikers, getPostQuotes, getPostReposters } from "@/api/posts";
+import { type PostWithAuthor, type User } from "@/types/index";
+import { useComments } from "@/hooks/useFeed";
+import { PostCard } from "@/components/feed/PostCard";
+import { ReplyChain } from "@/components/post/CommentList";
+import { getExternalPostActivity, hasExternalActivity, type ActivityCursor, getCommentLikers } from "@/api/comments";
+import { Skeleton, Button } from "@/components/ui/button";
+import { FollowButton } from "@/components/profile/ProfileHeader";
+
+import { PostComposer } from "@/components/feed/PostComposer";
+
+// ReplyDetail
+function ReplyDetail({ commentId, post, mobileFlat }: { commentId: string; post: PostWithAuthor; mobileFlat: boolean }) {
+  const { user } = useAuth();
+  const desktopLayout = useDesktopLayout();
+  const comments = useComments(post.id);
+  const chain = getCommentAncestors(comments.data ?? [], commentId);
+  const selected = useRef<HTMLDivElement>(null);
+  const scrolled = useRef(false);
+  const ready = !!chain;
+  useLayoutEffect(() => {
+    if (!ready || scrolled.current || !selected.current) return;
+    scrolled.current = true;
+    const host = selected.current.closest('[data-lime-reply-chain]') ?? selected.current;
+    let anchoring = true;
+    const align = () => { if (anchoring) selected.current?.scrollIntoView({ block: 'center', behavior: 'auto' }); };
+    const resize = new ResizeObserver(align);
+    resize.observe(host);
+    // Keep the target visible while ancestor media obtains its natural size.
+    // Stop as soon as the user interacts, so browsing is never pulled back.
+    const stop = () => { anchoring = false; resize.disconnect(); };
+    const interactions = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
+    interactions.forEach(event => window.addEventListener(event, stop, { passive: true }));
+    host.addEventListener('load', align, true);
+    align();
+    return () => {
+      stop();
+      host.removeEventListener('load', align, true);
+      interactions.forEach(event => window.removeEventListener(event, stop));
+    };
+  }, [ready]);
+
+  if (comments.isLoading) return <PostCardSkeleton />;
+  if (!chain) return <p className="p-6 text-center text-muted-foreground">返信を読み込めませんでした。削除されたか、表示する権限がありません。</p>;
+
+  return (
+    <div>
+      <style>{`
+        [data-lime-reply-chain] [data-lime-thread-item]:not([data-lime-embedded]) {
+          padding: 12px 0 !important;
+          margin: 0 !important;
+          border: 0 !important;
+          border-radius: 0 !important;
+          box-shadow: none !important;
+          max-width: none !important;
+        }
+        [data-lime-reply-chain] [data-lime-reply-detail] {
+          padding-bottom: 0 !important;
+        }
+      `}</style>
+      <div style={{ '--reply-frame-padding': mobileFlat ? '16px' : '24px' } as CSSProperties} className={mobileFlat ? 'post-detail-mobile-article' : 'rounded-3xl border border-border/60 bg-card p-6 shadow-soft'}>
+      <ReplyChain>
+        <PostCard post={post} thread />
+        {chain.map((comment, index) => (
+          <div key={comment.id} ref={index === chain.length - 1 ? selected : undefined} data-lime-selected-reply={index === chain.length - 1 || undefined}>
+            <CommentCard comment={{ ...comment, likesCount: Number(comment.likes_count ?? 0), likedByMe: !!comment.likedByMe }} currentUserId={user?.id ?? null} mobileFlat={mobileFlat} thread detail={index === chain.length - 1} />
+          </div>
+        ))}
+      </ReplyChain>
+      </div>
+      {(!mobileFlat || desktopLayout) && <CommentForm key={commentId} postId={post.id} parentCommentId={commentId} variant={desktopLayout ? 'desktopReply' : 'default'} />}
+      <div className={mobileFlat ? 'post-detail-mobile-comments-shell' : ''}>
+        <CommentList postId={post.id} parentCommentId={commentId} mobileFlat={mobileFlat} threadAuthorId={post.author?.id} />
+      </div>
+    </div>
+  );
+}
+
+// PostDetail
 // --- 公開範囲 ---
 // public    = 全体公開
 // following = 限定公開（フォロー中のユーザー向け）
@@ -78,7 +133,7 @@ interface ReactionGroup {
   emoji: string;
   count: number;
   user_ids: string[];
-  users: ReactionUser[]; 
+  users: ReactionUser[];
 }
 
 interface LimeDropTarget {
@@ -192,8 +247,7 @@ const useMobilePostDetailHeaderVisibility = (enabled: boolean) => {
   return isHidden;
 };
 
-
-export default function PostDetail() {
+function PostDetail() {
   const [params] = useSearchParams();
   const replyId = params.get('reply');
   return <RootPostDetail replyId={replyId} />;
@@ -244,11 +298,11 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
   // --- 「もっと見る」（3点）メニュー用ステート ---
   const [showMenu, setShowMenu] = useState(false);
   const [moreMenuPosition, setMoreMenuPosition] = useState<{ top: number; right: number } | null>(null);
-  
+
   // スマホ・PC判定用
   const desktopLayout = useDesktopLayout();
   const [isMobile, setIsMobile] = useState(false);
-  const [singleImageNaturalSize, setSingleImageNaturalSize] = useState<{ width: number; height: number } | null>(null);
+  const singleImageGeometry=useRef<{url:string|null;size:{width:number;height:number}}>();
 
   // --- 画像再現エフェクト用のステート ---
   const [activeRings, setActiveRings] = useState<ReplicatedRing[]>([]);
@@ -293,7 +347,6 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
 
   // 画像拡大時だけスクロールを固定する。
   // 既存の overflow を退避して、モーダルを閉じた後に元の状態へ戻す。
-
 
   // --- 「もっと見る」メニューの外側クリック・スクロール/リサイズで閉じる処理（PostCardと同様） ---
   useEffect(() => {
@@ -474,13 +527,13 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
         }
 
         const groups: { [key: string]: { userIds: string[], users: ReactionUser[] } } = {};
-        
+
         reactionData.forEach((row: any) => {
           if (!groups[row.emoji]) {
             groups[row.emoji] = { userIds: [], users: [] };
           }
           groups[row.emoji].userIds.push(row.user_id);
-          
+
           const profile = profileMap[row.user_id];
           if (profile) {
             groups[row.emoji].users.push({
@@ -528,7 +581,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
     const centerY = rect.top + rect.height / 2;
 
     targetElement.classList.remove('misskey-elastic-active');
-    void targetElement.offsetWidth; 
+    void targetElement.offsetWidth;
     targetElement.classList.add('misskey-elastic-active');
 
     const batchId = Math.random().toString(36).substring(2, 9);
@@ -542,7 +595,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
     };
 
     const colors = ['#d4f022', '#e6007e', '#22f0d8', '#d4f022', '#e6007e'];
-    const dotCount = 16; 
+    const dotCount = 16;
     const newDots: ReplicatedDot[] = [];
 
     for (let i = 0; i < dotCount; i++) {
@@ -556,8 +609,8 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
         angle: angle,
         distance: maxDistance,
         color: colors[Math.floor(Math.random() * colors.length)],
-        size: Math.random() * 5 + 5, 
-        delay: Math.random() * 40 
+        size: Math.random() * 5 + 5,
+        delay: Math.random() * 40
       });
     }
 
@@ -641,14 +694,14 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
   const handleTouchStart = (emoji: string) => {
     longPressTimer = setTimeout(() => {
       setActivePopupEmoji(emoji);
-    }, 500); 
+    }, 500);
   };
 
   const handleTouchEnd = () => {
     clearTimeout(longPressTimer);
   };
 
-  const filteredCustomEmojis = customEmojis.filter(emoji => 
+  const filteredCustomEmojis = customEmojis.filter(emoji =>
     emoji.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
@@ -696,10 +749,10 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
   const renderContentWithLinks = (text: string): React.ReactNode => {
     if (hasStickers(text)) return renderStickerText(text, renderContentWithLinks);
     if (!text) return null;
-    
+
     // @username と #hashtag 形式にマッチさせる正規表現
     const parts = splitMentionText(text,true);
-    
+
     return parts.map((part, index) => {
       // メンション処理
       if (part.startsWith('@')) {
@@ -756,68 +809,12 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
     : [];
   const singleImageUrl = allImageUrls.length === 1 ? allImageUrls[0] : null;
 
-  useEffect(() => {
-    setSingleImageNaturalSize(null);
-  }, [singleImageUrl]);
-
-  const getSingleImageFrameStyle = (): CSSProperties => {
-    if (!singleImageNaturalSize) {
-      return {
-        width: '100%',
-        maxWidth: '100%',
-      };
-    }
-
-    const naturalWidth = Math.max(1, singleImageNaturalSize.width);
-    const naturalHeight = Math.max(1, singleImageNaturalSize.height);
-    const ratio = naturalWidth / naturalHeight;
-
-    const maxTimelineImageHeight = useMobilePresentation ? 300 : 480;
-    const minimumReadableWidth = useMobilePresentation ? 88 : 110;
-    const heightLimitedWidth = Math.max(
-      minimumReadableWidth,
-      Math.round(maxTimelineImageHeight * ratio)
-    );
-    const shouldLimitByHeight = ratio < (useMobilePresentation ? 1.64 : 1.72);
-    const shouldAvoidUpscale = naturalWidth <= (useMobilePresentation ? 360 : 520);
-    const shouldNarrowUltraWide = ratio >= 2.35;
-
-    if (shouldLimitByHeight) {
-      const width = shouldAvoidUpscale
-        ? Math.min(naturalWidth, heightLimitedWidth)
-        : heightLimitedWidth;
-
-      return {
-        width: `min(100%, ${Math.max(minimumReadableWidth, width)}px)`,
-        maxWidth: '100%',
-      };
-    }
-
-    if (shouldAvoidUpscale) {
-      return {
-        width: `${naturalWidth}px`,
-        maxWidth: '100%',
-      };
-    }
-
-    if (shouldNarrowUltraWide) {
-      return {
-        width: useMobilePresentation ? '100%' : 'min(100%, 560px)',
-        maxWidth: '100%',
-      };
-    }
-
-    return {
-      width: '100%',
-      maxWidth: '100%',
-    };
-  };
-
-  const getSingleImageDisplayStyle = (): CSSProperties => ({
-    width: '100%',
-    height: 'auto',
-    objectFit: 'contain',
-  });
+  if(singleImageGeometry.current?.url!==singleImageUrl){
+    const index=data?.imageUrls.indexOf(singleImageUrl??'')??-1;
+    singleImageGeometry.current={url:singleImageUrl,size:initialMediaSize(data?.imageDimensions?.[index],singleImageUrl??undefined)};
+  }
+  const getSingleImageFrameStyle=()=>initialImageFrame(singleImageGeometry.current!.size,useMobilePresentation);
+  const getSingleImageDisplayStyle=():CSSProperties=>({position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'contain'});
 
   // 本文の加工（YouTube URLと画像URLを除去）
   const displayContent = (data && (youtubeId || extractedImageUrls.length > 0))
@@ -830,7 +827,6 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
   const useMobileThreadLayout = useMobilePresentation;
   const isMobilePostDetailHeaderHidden =
     useMobilePostDetailHeaderVisibility(isMobile);
-
 
   // --- 「もっと見る」メニュー用の判定（PostCardと同様のロジック） ---
   const isMyPost = !isBlueskyPost && !!data && currentUserId === (data as PostWithAuthor).userId;
@@ -1434,7 +1430,6 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
 
         }
 
-
       `}</style>
 
       {/* --- モバイル専用ヘッダー（戻る・タイトル・もっと見る）。ポスト詳細のモバイル版のみ表示。 --- */}
@@ -1482,7 +1477,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                 width: `${r.width}px`,
                 height: `${r.height}px`,
                 borderRadius: '9999px',
-                border: '4px solid #d4f022', 
+                border: '4px solid #d4f022',
                 backgroundColor: 'transparent',
                 transformOrigin: 'center center',
                 animation: 'misskeyRingExpand 460ms cubic-bezier(0.1, 0.8, 0.3, 1) forwards'
@@ -1536,7 +1531,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
       )}
 
       {isLoading && <PostCardSkeleton />}
-      
+
       {isError && (
         <div className="rounded-3xl border border-destructive/40 bg-destructive/5 p-6 text-center">
           <p className="text-sm text-destructive">投稿の読み込みに失敗しました。</p>
@@ -1575,7 +1570,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                   {data.author.isPrivate && <PrivateAccountBadge/>}<ProviderVerificationBadge verification={data.author.providerVerification} className="h-4 w-4 shrink-0 transform translate-y-[0.5px]"/>{data.author.isOfficial && (
                     <PrivateMediaImage
                       src={`${import.meta.env.BASE_URL}verified.png`}
-                      alt="Official" 
+                      alt="Official"
                       className="h-4 w-4 shrink-0 transform translate-y-[0.5px]"
                       loading="eager"
                     />
@@ -1724,36 +1719,24 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
             <div className="mt-3 flex max-w-full justify-start" onClick={(e) => e.stopPropagation()}>
               <button
                 type="button"
-                className="block max-w-full cursor-zoom-in overflow-hidden rounded-2xl border border-border/50 bg-black/[0.025] text-left shadow-none dark:bg-white/[0.035]"
+                key={singleImageUrl} data-lime-single-post-image data-lime-media-fallback={singleImageGeometry.current?.size.width===16&&singleImageGeometry.current?.size.height===9||undefined} className="relative block max-w-full cursor-zoom-in overflow-hidden rounded-2xl border border-border/60 bg-background text-left shadow-none"
                 style={getSingleImageFrameStyle()}
                 onClick={(e) => handleImageClick(e, singleImageUrl)}
                 aria-label="画像を拡大表示"
               >
                 <PrivateMediaImage
+                  data-lime-media-loading-frame
                   referrerPolicy={data.source==='x'?'no-referrer':undefined} src={singleImageUrl}
                   alt={data.imageAltTexts?.[0]||"投稿画像"}
                   className="block select-none"
                   style={getSingleImageDisplayStyle()}
                   draggable={false}
-                  onLoad={(e) => {
-                    const img = e.currentTarget;
-                    if (img.naturalWidth && img.naturalHeight) {
-                      setSingleImageNaturalSize({
-                        width: img.naturalWidth,
-                        height: img.naturalHeight,
-                      });
-                    }
-                  }}
-                  onError={() => {
-                    if (!failedUrls.includes(singleImageUrl)) {
-                      setFailedUrls((prev) => [...prev, singleImageUrl]);
-                    }
-                  }}
+                  onError={event=>{event.currentTarget.style.opacity='0';}}
                 />
               </button>
             </div>
           ) : (
-            <div 
+            <div
               className="cursor-zoom-in"
               onClick={(e) => {
                 const target = e.target as HTMLElement;
@@ -1762,8 +1745,8 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                 }
               }}
             >
-              <PostImages 
-                urls={allImageUrls} 
+              <PostImages
+                urls={allImageUrls}
                 onImageError={(url) => {
                   if (!failedUrls.includes(url)) {
                     setFailedUrls(prev => [...prev, url]);
@@ -1799,8 +1782,8 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                 const isPopupOpen = activePopupEmoji === g.emoji;
 
                 return (
-                  <div 
-                    key={g.emoji} 
+                  <div
+                    key={g.emoji}
                     className="relative inline-block"
                     onMouseEnter={() => setActivePopupEmoji(g.emoji)}
                     onMouseLeave={() => setActivePopupEmoji(null)}
@@ -1822,7 +1805,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                     {/* --- リアクションユーザーポップアップ --- */}
                     {isPopupOpen && g.users.length > 0 && (
                       <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-[260px] bg-white dark:bg-[#252932] border border-black/[0.08] dark:border-white/5 rounded-2xl shadow-2xl z-[60] flex p-3 pointer-events-none">
-                        
+
                         <div className="w-[64px] h-[64px] shrink-0 flex items-center justify-center border-r border-black/[0.08] dark:border-white/10 pr-2.5 mr-2.5">
                           {renderEmojiElement(g.emoji, "h-12 w-12 object-contain")}
                         </div>
@@ -1860,9 +1843,9 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
               {isBlueskyPost ? (
                 <ExternalLikeButton post={data as PostWithAuthor}/>
               ) : (
-                <LikeButton 
-                  postId={data.id} 
-                  liked={data.likedByMe} 
+                <LikeButton
+                  postId={data.id}
+                  liked={data.likedByMe}
                   count={data.likesCount}
                 />
               )}
@@ -2007,7 +1990,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                       {/* =========================================================================
                          【PC専用ポップアップ：バー全体をスクロール対応化・縦幅 h-[280px]】
                          ========================================================================= */}
-                      <div 
+                      <div
                       className="absolute bottom-full left-0 mb-2 w-[260px] h-[280px] rounded-[20px] border border-border/80 bg-white dark:bg-[#1e222b] shadow-2xl z-[9999] p-2.5 animate-zoom-in-pc overflow-y-auto overflow-x-hidden"
                       onWheel={(e) => e.stopPropagation()}
                     >
@@ -2295,3 +2278,164 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
     </>
   );
 }
+
+// PostActivity
+const tabs=[{id:'quotes',label:'引用'},{id:'reposts',label:'リポスト'},{id:'likes',label:'いいね'}] as const;
+function PostActivity(){
+ const {postId=''}=useParams<{postId:string}>();const [params,setParams]=useSearchParams();const replyId=params.get('reply');
+ const external=hasExternalActivity(postId),twitter=postId.startsWith('x:');
+ const visibleTabs=twitter?[]:tabs;
+ const requestedTab=params.get('tab')==='reposts'?'reposts':params.get('tab')==='likes'||(!params.get('tab')&&replyId)?'likes':'quotes';
+ const tab=twitter?'reposts':requestedTab;
+ const sort=params.get('sort')==='latest'?'latest':'top';const {user:me}=useAuth();
+ const [users,setUsers]=useState<User[]>([]);const [quotes,setQuotes]=useState<PostWithAuthor[]>([]);
+ const [loading,setLoading]=useState(true);const [failed,setFailed]=useState(false);const [pages,setPages]=useState(1);const [hasMore,setHasMore]=useState(false);
+ const nextPage=useRef<HTMLDivElement>(null);
+ const activityCursor=useRef<ActivityCursor>();
+ useEffect(()=>{activityCursor.current=undefined;setHasMore(false);setPages(1);setLoading(true);setUsers([]);setQuotes([]);},[postId,replyId,tab,sort]);
+ useEffect(()=>{
+  let cancelled=false;let revision=0;const controller=new AbortController();setLoading(true);setFailed(false);if(pages===1){setUsers([]);setQuotes([]);}
+  const refresh=async()=>{
+   const request=++revision;
+   try{
+    if(external){
+     const result=await getExternalPostActivity(postId,tab,sort,pages===1?undefined:activityCursor.current,controller.signal);
+     if(!cancelled&&request===revision){activityCursor.current=result.next;setQuotes(previous=>[...new Map((pages===1?result.posts:[...previous,...result.posts]).map(post=>[post.id,post])).values()]);setUsers(previous=>[...new Map((pages===1?result.users:[...previous,...result.users]).map(user=>[user.id,user])).values()]);setHasMore(!!result.next&&(result.posts.length>0||result.users.length>0));}
+    }else if(tab==='quotes'){
+     const result=await getPostQuotes(postId,replyId,sort,pages-1);
+     if(!cancelled&&request===revision){setQuotes(previous=>pages===1?result:[...previous,...result]);setHasMore(result.length===20);}
+    }else if(tab==='reposts'){
+     const result=await getPostReposters(postId,replyId,pages-1);
+     if(!cancelled&&request===revision){setUsers(previous=>pages===1?result:[...previous,...result]);setHasMore(result.length===50);}
+    }else{
+     const result=await(replyId?getCommentLikers(replyId):getPostLikers(postId));
+     if(!cancelled&&request===revision){setUsers(result);setHasMore(false);}
+    }
+    if(!cancelled&&request===revision)setFailed(false);
+   }catch{if(!cancelled&&request===revision)setFailed(true);}
+   finally{if(!cancelled&&request===revision)setLoading(false);}
+  };
+  void refresh();
+  const channel=!external&&replyId&&tab==='likes'?supabase.channel(`reply-activity-${replyId}-${randomUUID()}`)
+   .on('postgres_changes',{event:'INSERT',schema:'public',table:'comment_likes',filter:`comment_id=eq.${replyId}`},refresh)
+   .on('postgres_changes',{event:'DELETE',schema:'public',table:'comment_likes'},refresh).subscribe(status=>{if(status==='SUBSCRIBED')void refresh();}):null;
+  return()=>{cancelled=true;controller.abort();if(channel)void supabase.removeChannel(channel);};
+ },[postId,replyId,tab,sort,pages]);
+ useEffect(()=>{
+  const sentinel=nextPage.current;if(!sentinel||!hasMore||loading||failed)return;
+  let requested=false;
+  const observer=new IntersectionObserver(entries=>{if(!requested&&entries.some(entry=>entry.isIntersecting)){requested=true;observer.disconnect();setHasMore(false);setPages(value=>value+1);}},{rootMargin:'240px'});
+  observer.observe(sentinel);return()=>observer.disconnect();
+ },[hasMore,loading,failed]);
+ const empty=tab==='quotes'?'まだ引用はありません':tab==='reposts'?'まだリポストはありません':'まだいいねはありません';
+ return <div className="post-activity-page" data-lime-post-activity>
+  {visibleTabs.length>0&&<div role="tablist" aria-label="ポストアクティビティ" className="post-activity-tabs">
+   {visibleTabs.map(({id,label})=><button key={id} type="button" role="tab" id={`activity-tab-${id}`} aria-selected={tab===id} aria-controls="activity-list" onClick={()=>{setPages(1);setParams(previous=>{const next=new URLSearchParams(previous);next.set('tab',id);return next;});}}><span>{label}</span></button>)}
+   <span aria-hidden="true" className="post-activity-tab-indicator" style={{width:`${100/visibleTabs.length}%`,transform:`translateX(${visibleTabs.findIndex(item=>item.id===tab)*100}%)`}}/>
+  </div>}
+  <div key={`${postId}:${replyId}:${tab}:${sort}:${loading&&!quotes.length&&!users.length?'pending':'ready'}`} className="post-activity-panel" id="activity-list" role={twitter?'region':'tabpanel'} aria-label={twitter?'リポスト一覧':undefined} aria-labelledby={twitter?undefined:`activity-tab-${tab}`} aria-busy={loading}>
+   {failed?<p role="alert" className="px-4 py-12 text-center text-sm text-muted-foreground">アクティビティの読み込みに失敗しました。</p>:loading&&!quotes.length&&!users.length?<div role="status" aria-label="読み込み中">
+    {tab==='quotes'?Array.from({length:3},(_,index)=><PostCardSkeleton key={index}/>):Array.from({length:3},(_,index)=><div key={index} className="post-activity-user" aria-hidden="true"><Skeleton className="h-11 w-11 shrink-0 rounded-full"/><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-3"><div className="space-y-2"><Skeleton className="h-4 w-28 rounded-full"/><Skeleton className="h-3 w-20 rounded-full"/></div><Skeleton className="h-10 w-24 shrink-0 rounded-full"/></div><Skeleton className="mt-3 h-3 w-4/5 rounded-full"/></div></div>)}
+   </div>:tab==='quotes'&&quotes.length?quotes.map(post=><PostCard key={post.id} post={post}/>):users.length?users.map(user=><div key={user.id} className="post-activity-user">
+    <Link to={`/u/${encodeURIComponent(user.username)}`} className="shrink-0"><Avatar className="h-11 w-11 border-0"><AvatarImage src={user.avatarUrl} alt={user.displayName}/><AvatarFallback>{user.displayName.slice(0,1)}</AvatarFallback></Avatar></Link>
+    <div className="min-w-0 flex-1">
+     <div className="flex items-start justify-between gap-3">
+      <Link to={`/u/${encodeURIComponent(user.username)}`} className="min-w-0"><div className="flex min-w-0 items-center gap-1 font-bold"><span className="truncate">{user.displayName}</span>{user.isPrivate&&<PrivateAccountBadge/>}<ProviderVerificationBadge verification={user.providerVerification} className="h-4 w-4 shrink-0"/>{user.isOfficial&&<img src={`${import.meta.env.BASE_URL}verified.png`} alt="Official" className="h-4 w-4 shrink-0"/>}</div><div className="truncate text-sm text-muted-foreground">@{displayUsername(user.username)}</div></Link>
+      {me?.id!==user.id&&<div className="shrink-0"><FollowButton userId={user.id} externalProfile={external?user:undefined}/></div>}
+     </div>
+     {user.bio&&<p className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed">{user.bio.split(/(https?:\/\/[^\s]+)/g).flatMap(part=>part.startsWith('http')?[part]:splitMentionText(part)).map((part,index)=>part.startsWith('@')?<Link key={index} className="text-primary" to={`/u/${encodeURIComponent(mentionProfileHandle(part,user))}`}>{part}</Link>:/^https?:\/\//.test(part)?<a key={index} href={part} target="_blank" rel="noopener noreferrer" className="text-primary">{part}</a>:<span key={index}>{part}</span>)}</p>}
+    </div>
+   </div>):<p className="px-4 py-12 text-center text-sm text-muted-foreground">{empty}</p>}
+   {loading&&(quotes.length>0||users.length>0)&&<div role="status" className="flex justify-center py-10"><div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin"/><span className="text-sm font-medium">読み込み中...</span></div></div>}
+   <div ref={nextPage} aria-hidden="true" className="h-px"/>
+  </div>
+ </div>;
+}
+
+// Share
+/**
+ * PWAのWeb Share Targetからのデータを受け取る専用ページ
+ * vite.config.ts で設定した action: "/RaimuNoteSNS.github.io/share" に対応
+ */
+function Share() {
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const [initialContent, setInitialContent] = useState('');
+  const [isReady, setIsReady] = useState(false);
+
+  useEffect(() => {
+    // 共有メニューから送られてくるパラメータを取得
+    const title = searchParams.get('title') || '';
+    const text = searchParams.get('text') || '';
+    const url = searchParams.get('url') || '';
+
+    // これらを組み合わせて投稿の初期テキストを作成
+    // 例: 「タイトル」本文 URL
+    const parts = [];
+    if (title) parts.push(title);
+    if (text) parts.push(text);
+    if (url) parts.push(url);
+
+    const combined = parts.join('\n');
+    setInitialContent(combined);
+    setIsReady(true);
+  }, [searchParams]);
+
+  const handleSuccess = () => {
+    // 投稿が完了したらタイムラインへ遷移
+    navigate('/', { replace: true });
+  };
+
+  if (!isReady) return null;
+
+  return (
+    <div className="container max-w-2xl py-6 space-y-6">
+      {/* ヘッダー部分 */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => navigate('/')}
+            className="rounded-full hover:bg-muted"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </Button>
+          <div>
+            <h1 className="text-xl font-black flex items-center gap-2">
+              <Share2 className="h-5 w-5 text-accent" />
+              シェアしてポスト
+            </h1>
+            <p className="text-xs text-muted-foreground">
+              外部アプリから共有された内容を編集して投稿できます
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+        {/* 既存のPostComposerを呼び出し */}
+        {/* initialContentをPropsとして受け取れるようにPostComposer.tsxの修正が必要です */}
+        <PostComposer
+          initialContent={initialContent}
+          onSuccess={handleSuccess}
+        />
+      </div>
+
+      <div className="text-center">
+        <Button
+          variant="link"
+          className="text-muted-foreground text-sm"
+          onClick={() => navigate('/')}
+        >
+          キャンセルしてタイムラインに戻る
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+export { PostDetail as default };
+export { ReplyDetail };
+export { PostActivity };
+export { Share };

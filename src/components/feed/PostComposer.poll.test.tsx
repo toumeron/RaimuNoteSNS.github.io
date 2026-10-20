@@ -1,14 +1,30 @@
+vi.mock("@/lib/mediaThumbnail", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/lib/mediaThumbnail")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/lib/mediaThumbnail")>(), preparePostVideo:(...args:unknown[])=>mocks.prepare(...args)}))(importOriginal)};
+});
+vi.mock("@/hooks/useFeed", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/hooks/useFeed")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/hooks/useFeed")>(), useCreatePost:()=>({mutateAsync:mocks.submit,isPending:false})}))(importOriginal)};
+});
+vi.mock("@/components/layout/AppLayout", async importOriginal => ({...await importOriginal<typeof import("@/components/layout/AppLayout")>(), AppLayout:()=>null}));
+
+vi.mock("@/components/video/PostVideoPlayer", async importOriginal => ({...await importOriginal<typeof import("@/components/video/PostVideoPlayer")>(), PostVideoPlayer:()=> <div aria-label="動画プレビュー"/>}));
+
+
+
+vi.mock("@/hooks/useAuth", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useAuth")>(), AuthProvider:()=>null, useAuth:()=>({user:{id:'viewer',username:'viewer',displayName:'Viewer'}})}));
+
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
 import {render,screen,fireEvent,waitFor,cleanup} from '@testing-library/react';
 import {MemoryRouter} from 'react-router-dom';
 import {beforeEach,afterEach,it,expect,vi} from 'vitest';
 const mocks=vi.hoisted(()=>({submit:vi.fn(),prepare:vi.fn()}));
-vi.mock('@/lib/postVideo',()=>({preparePostVideo:(...args:unknown[])=>mocks.prepare(...args)}));
-vi.mock('@/components/video/PostVideoPlayer',()=>({PostVideoPlayer:()=> <div aria-label="動画プレビュー"/>}));
-vi.mock('@/hooks/useAuth',()=>({AuthProvider:()=>null,useAuth:()=>({user:{id:'viewer',username:'viewer',displayName:'Viewer'}})}));
-vi.mock('@/hooks/useFeed',()=>({useCreatePost:()=>({mutateAsync:mocks.submit,isPending:false})}));
+
+
+
+
 vi.mock('@/pages/Feed',()=>({default:()=>null}));
-vi.mock('@/components/layout/AppLayout',()=>({AppLayout:()=>null}));
+
 import {PostComposer} from './PostComposer';
 import {PostComposer as OverlayComposer} from '@/App';
 beforeEach(()=>{vi.clearAllMocks();mocks.submit.mockResolvedValue({});});afterEach(cleanup);

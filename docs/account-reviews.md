@@ -12,9 +12,9 @@
 
 ## 検証
 
-- `node scripts/account-reviews-db-test.mjs`: 管理者のみの有効化、投稿者フラグ不要、入力制限、集計、編集、いいね重複防止、権限、無効化、削除。
+- `node scripts/verify-database.mjs account-reviews`: 管理者のみの有効化、投稿者フラグ不要、入力制限、集計、編集、いいね重複防止、権限、無効化、削除。
 - `npx vitest run src/components/post/LikeButton.test.tsx`: 通常のいいね動作およびレビュー保存成功・失敗の表示。
-- `npx playwright test -c tests/profile-highlights/reviews.config.ts --workers=1`: デスクトップ、320px、390px、iPhone WebKitでタブの条件表示、横並び、文字の可視範囲、投稿・編集・いいね、画像入力なし、保存失敗時の下書き維持。
+- `LIME_BROWSER_SUITE=profile-highlights:reviews npx playwright test --config playwright.config.ts --workers=1`: デスクトップ、320px、390px、iPhone WebKitでタブの条件表示、横並び、文字の可視範囲、投稿・編集・いいね、画像入力なし、保存失敗時の下書き維持。
 
 ブラウザーテストはAPIフィクスチャを使用し、本番データを書き換えずに実行する。
 

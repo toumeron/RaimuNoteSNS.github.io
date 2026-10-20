@@ -1,4 +1,4 @@
-import {FRIEND_REPLY_INSTRUCTION} from '../_shared/friendImages.ts';
+import { FRIEND_REPLY_INSTRUCTION } from "./../_shared/chatContext.ts";
 import { parseFriendResponse } from "./../_shared/chatContext.ts";
 import { requestModelWithFailover } from "./../_shared/chatContext.ts";
 import {boundedChatContext} from '../_shared/chatContext.ts';

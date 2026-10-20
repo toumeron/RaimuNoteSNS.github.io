@@ -1,6 +1,7 @@
+vi.mock("@/api/recommendations", async importOriginal => ({...await importOriginal<typeof import("@/api/recommendations")>(), ...await importOriginal<typeof import('./recommendations')>(), getRecommendationPage:(...args:unknown[])=>mocks.native(...args), getRecommendationPreferences:(...args:unknown[])=>mocks.prefs(...args)}));
 import {beforeEach,expect,it,vi} from 'vitest';
 const mocks=vi.hoisted(()=>({native:vi.fn(),twitter:vi.fn(),prefs:vi.fn()}));
-vi.mock('./recommendations',async original=>({...await original<typeof import('./recommendations')>(),getRecommendationPage:(...args:unknown[])=>mocks.native(...args),getRecommendationPreferences:(...args:unknown[])=>mocks.prefs(...args)}));
+
 vi.mock('./recommendation-twitter',()=>({getRecommendationTwitterPage:(...args:unknown[])=>mocks.twitter(...args)}));
 import {getBalancedRecommendationPage} from './balanced-recommendations';
 import {createRecommendationCursor} from './recommendations';

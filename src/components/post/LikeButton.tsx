@@ -1,4 +1,4 @@
-import { randomUUID } from '@/lib/randomUUID';
+import { randomUUID } from "@/lib/utils";
 import type { PostWithAuthor } from '@/types';
 import { recordRecommendationLike } from '@/lib/recommendations';
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
@@ -7,8 +7,8 @@ import { cn } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 import { getCurrentUserId } from '@/lib/currentUser';
 import { useQueryClient } from '@tanstack/react-query';
-import { useIsPWA } from "@/hooks/use-mobile";
-import { updateLikeCountCache } from '@/lib/likeCountCache';
+import { useIsPWA, usePageVisible } from "@/hooks/useViewportWidth";
+import { updateLikeCountCache } from "@/lib/utils";
 import {
   fetchBlueskyPostViewerState,
   likeBlueskyPost,
@@ -295,6 +295,7 @@ export function LikeButton({
   onChange,
   syncState = false,
   initialLikedKnown = false,
+  live: liveRequested = true,
   persistLike,
 }: {
   postId: string;
@@ -307,9 +308,12 @@ export function LikeButton({
   onChange?: (state: { liked: boolean; count: number }) => void;
   syncState?: boolean;
   initialLikedKnown?: boolean;
+  live?: boolean;
   persistLike?: (liked: boolean) => Promise<{ liked: boolean; count: number }>;
 }) {
   const queryClient = useQueryClient();
+  const pageVisible = usePageVisible();
+  const live = liveRequested && pageVisible;
   const [savingCustomLike, setSavingCustomLike] = useState(false);
   const customLikePendingRef = useRef(false);
 
@@ -371,7 +375,7 @@ export function LikeButton({
   // props の liked が false のまま来るケースに備えて、表示初期化時だけDB上の実状態を反映する。
   // (Lime内部投稿のみ。Bluesky投稿は別のeffectで初期状態を取得する)
   useEffect(() => {
-    if (isBluesky || persistLike) return;
+    if (!live || isBluesky || persistLike) return;
     if (initialLikedKnown) {
       if (type === 'post') void getCurrentUserId().then(userId => {
         if (userId) recordRecommendationLike(preferencePost ?? {id: postId, content: ''} as PostWithAuthor, liked, userId);
@@ -411,12 +415,12 @@ export function LikeButton({
     return () => {
       cancelled = true;
     };
-  }, [postId, type, isBluesky, persistLike, initialLikedKnown]);
+  }, [postId, type, isBluesky, persistLike, initialLikedKnown, live]);
 
   // Bluesky投稿用: 自分のBlueskyアカウントとして現在のいいね状態(と、
   // いいね作成に必要なcid)を取得する。
   useEffect(() => {
-    if (!bluesky) return;
+    if (!live || !bluesky) return;
 
     let cancelled = false;
 
@@ -441,7 +445,7 @@ export function LikeButton({
     return () => {
       cancelled = true;
     };
-  }, [bluesky?.postUri]);
+  }, [bluesky?.postUri, live]);
 
   const animateCount = useCallback((fromCount: number, toCount: number) => {
     if (countTimerRef.current !== null) {
@@ -514,7 +518,7 @@ export function LikeButton({
       blueskyCidRef.current = null;
     }
 
-    if (!isBluesky && hasLiveCountRef.current && safeCount !== stateRef.current.count) {
+    if (live && !isBluesky && hasLiveCountRef.current && safeCount !== stateRef.current.count) {
       void syncLatestCount();
     }
 
@@ -539,12 +543,12 @@ export function LikeButton({
       stateRef.current.count = safeCount;
       animateCount(currentCount, safeCount);
     }
-  }, [animateCount, postId, type, liked, count, isBluesky, syncLatestCount, syncState, persistLike]);
+  }, [animateCount, postId, type, liked, count, isBluesky, syncLatestCount, syncState, persistLike, live]);
 
   // リアルタイム反映(Supabase Realtime)。Bluesky投稿はLimeのテーブルに
   // 行が存在しないため、この購読自体を行わない。
   useEffect(() => {
-    if (isBluesky || persistLike) return;
+    if (!live || isBluesky || persistLike) return;
 
     const config = TABLE_CONFIG[type];
     const channelSuffix = `${type}-${postId}-${channelIdRef.current}-${randomUUID()}`;
@@ -615,7 +619,7 @@ export function LikeButton({
       void supabase.removeChannel(likeRowsChannel);
       void supabase.removeChannel(countColumnChannel);
     };
-  }, [applyLatestCount, postId, syncLatestCount, type, isBluesky, persistLike]);
+  }, [applyLatestCount, postId, syncLatestCount, type, isBluesky, persistLike, live]);
 
   const handleBlueskyLikeToggle = useCallback(async (willBeLiked: boolean, wasLiked: boolean, wasCount: number, nextCount: number) => {
     if (!bluesky) return;

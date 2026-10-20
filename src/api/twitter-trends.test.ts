@@ -1,7 +1,7 @@
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 vi.mock('@/lib/fxTwitter',()=>({searchXPage:vi.fn()}));
 import {searchXPage} from '@/lib/fxTwitter';
-import {createTwitterTrendCursor,getTwitterTrendPage} from './twitter-trends';
+import { createTwitterTrendCursor, getTwitterTrendPage } from "@/api/search-news";
 const search=vi.mocked(searchXPage);
 const cursor=()=>({...createTwitterTrendCursor({followed:['digital-illustration'],dismissed:[]}),fallbackPositions:[]});
 const post=(id:string,likesCount:number,extra={})=>({id,userId:id,source:'x',content:'',imageUrls:[],likesCount,createdAt:'2026-10-17T00:00:00Z',author:{id,username:id},...extra}) as any;

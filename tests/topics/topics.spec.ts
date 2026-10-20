@@ -1,7 +1,9 @@
 import {test,expect,type Page} from '@playwright/test';
-import {TOPICS} from '../../src/lib/topics';
 import {readFileSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
+// Keep the Node runner independent of browser-only application imports.
+const topicLiteral=readFileSync(new URL('../../src/lib/topics.ts',import.meta.url),'utf8').match(/const TOPICS = \[([\s\S]*?)\] as const/)![1];
+const TOPICS=[...topicLiteral.matchAll(/\{id:'([^']+)'/g)].map(match=>({id:match[1]}));
 const visualPrototypes=JSON.parse(readFileSync(new URL('../../src/lib/recommendationVisualPrototypes.json',import.meta.url),'utf8'));
 const user={id:'11111111-1111-1111-1111-111111111111',username:'lime',displayName:'Lime Note',avatarUrl:'',createdAt:'2026-10-01T00:00:00Z'};
 async function setup(page:Page) {
@@ -13,7 +15,7 @@ async function setup(page:Page) {
   const row=visualPrototypes.prototypes.find(row=>row.topics.includes(state.followed[0] as never))??visualPrototypes.prototypes[0];
   return route.fulfill({headers:{'access-control-allow-origin':'*'},contentType:'application/javascript',body:`self.onmessage=({data})=>{if(data.cancel===undefined)self.postMessage({id:data.id,vector:${JSON.stringify(row.vector)}});};`});
  });
- await page.route('**/src/hooks/useAuth.tsx*',route=>route.fulfill({headers:{'access-control-allow-origin':'*'},contentType:'application/javascript',body:`import {setExternalAccountOwner,initialiseExternalAccounts} from '/RaimuNoteSNS.github.io/src/lib/externalAccounts.ts';setExternalAccountOwner('${user.id}');void initialiseExternalAccounts().catch(()=>{});export const useAuth=()=>({user:${JSON.stringify(user)},loading:false,session:null,logout:async()=>{},accounts:[${JSON.stringify({...user,needsLogin:false})}],switching:false,switchAccount:async()=>{},forgetAccount:()=>{}});export const AuthProvider=({children})=>children;`}));
+ await page.route('**/src/hooks/useAuth.tsx*',route=>{const url=new URL(route.request().url());if(url.searchParams.has('fixture-actual'))return route.continue();return route.fulfill({headers:{'access-control-allow-origin':'*'},contentType:'application/javascript',body:`export * from '${url.pathname}?fixture-actual';import {setExternalAccountOwner,initialiseExternalAccounts} from '/RaimuNoteSNS.github.io/src/lib/externalAccounts.ts';setExternalAccountOwner('${user.id}');void initialiseExternalAccounts().catch(()=>{});export const useAuth=()=>({user:${JSON.stringify(user)},loading:false,session:null,logout:async()=>{},accounts:[${JSON.stringify({...user,needsLogin:false})}],switching:false,switchAccount:async()=>{},forgetAccount:()=>{}});export const AuthProvider=({children})=>children;`});});
  await page.route('**/src/lib/currentUser.ts*',route=>route.fulfill({headers:{'access-control-allow-origin':'*'},contentType:'application/javascript',body:`export const getCurrentUserId=async()=> '${user.id}';`}));
  await page.route('**/*.supabase.co/**',route=>{
   const req=route.request(),url=new URL(req.url());
@@ -27,7 +29,17 @@ async function setup(page:Page) {
   if(url.pathname.endsWith('/rpc/import_external_account_users'))return route.fulfill({headers:{'access-control-allow-origin':'*'},status:204,body:''});
   if(url.pathname.endsWith('/rpc/set_external_follow')){const {provider,handle,enabled,profile}=req.postDataJSON();const key=provider+':'+handle;if(enabled)state.externalFollows.set(key,{follower_id:user.id,followee_id:null,external_provider:provider,external_handle:handle,external_profile:profile,profile:null});else state.externalFollows.delete(key);return route.fulfill({headers:{'access-control-allow-origin':'*'},status:204,body:''});}
   if(url.pathname.endsWith('/external_account_users'))return route.fulfill({headers:{'access-control-allow-origin':'*'},contentType:'application/json',body:JSON.stringify([...state.externalFollows.values()].map(row=>({provider:row.external_provider,handle:row.external_handle})))});
-  if(url.pathname.endsWith('/follows'))return route.fulfill({headers:{'access-control-allow-origin':'*','content-range':`0-0/${state.externalFollows.size}`},contentType:'application/json',body:req.method()==='HEAD'?'':JSON.stringify([...state.externalFollows.values()])});
+  if(url.pathname.endsWith('/follows')&&req.method()==='POST'){
+   if(state.fail)return route.fulfill({status:500,contentType:'application/json',body:'{"message":"save failed"}'});
+   const added=[];for(const row of req.postDataJSON()){const key=row.external_provider+':'+row.external_handle;if(!state.externalFollows.has(key)){state.externalFollows.set(key,row);added.push({external_handle:row.external_handle});}}
+   return route.fulfill({contentType:'application/json',body:JSON.stringify(added)});
+  }
+  if(url.pathname.endsWith('/follows')){
+   const imported=url.searchParams.get('external_profile->followImport->>kind')==='eq.public-follow-import';
+   const rows=[...state.externalFollows.values()].filter(row=>!imported||row.external_profile?.followImport?.kind==='public-follow-import');
+   if(req.method()==='DELETE'){for(const row of rows)state.externalFollows.delete(row.external_provider+':'+row.external_handle);return route.fulfill({status:204,headers:{'access-control-allow-origin':'*','access-control-expose-headers':'content-range','content-range':`*/${rows.length}`},body:''});}
+   return route.fulfill({headers:{'access-control-allow-origin':'*','access-control-expose-headers':'content-range','content-range':`0-${Math.max(0,rows.length-1)}/${rows.length}`},contentType:'application/json',body:req.method()==='HEAD'?'':JSON.stringify(rows)});
+  }
   if(url.pathname.endsWith('/rpc/set_external_like')){
    const {snapshot,enabled,mirrored}=req.postDataJSON();if(enabled)state.externalLikes.set(snapshot.id,{post_snapshot:snapshot,external_post_id:snapshot.id,user_id:user.id,created_at:new Date().toISOString(),external_mirrored:!!mirrored});else state.externalLikes.delete(snapshot.id);
    return route.fulfill({headers:{'access-control-allow-origin':'*'},contentType:'application/json',body:JSON.stringify({liked:enabled,count:enabled?1:0,unmirroredCount:enabled&&!mirrored?1:0})});
@@ -135,7 +147,7 @@ test('Bluesky login survives reload and account initialization without restoring
  });
  await page.reload();
  await page.evaluate(async()=>{const accounts=await import('/RaimuNoteSNS.github.io/src/lib/savedAccounts.ts');accounts.activateAccountIntegrations(undefined,'browser-owner');});
- await expect(page.getByText('@current.bsky.social',{exact:true})).toBeVisible();
+ await expect(page.getByRole('button',{name:'Blueskyにログイン',exact:true})).toHaveCount(0);
  expect(await page.evaluate(()=>JSON.parse(localStorage.getItem('lime_bluesky_session')!).handle)).toBe('current.bsky.social');
 });
 test('concurrent Bluesky actions share session refresh in the browser',async({page})=>{
@@ -453,4 +465,52 @@ test('profile editor opens over the profile, validates and saves only profile fi
  await expect(page.getByRole('heading',{name:'編集後',exact:true})).toBeVisible();
  expect(saved).toEqual({display_name:'編集後',bio:'自己紹介',location:'大阪'});
  expect(errors).toEqual([]);
+});
+
+for(const selected of ['bluesky','twitter','both'])test(`public follow import accepts ${selected} IDs and keeps imported follows after reload`,async({page},info)=>{
+ const state=await setup(page);
+ await page.route('**/public.api.bsky.app/**',route=>{const url=new URL(route.request().url());
+  if(url.pathname.endsWith('getProfile'))return route.fulfill({contentType:'application/json',body:JSON.stringify({did:'did:plc:owner',handle:'owner.bsky.social',displayName:'Owner',followsCount:2})});
+  if(url.pathname.endsWith('getFollows'))return route.fulfill({contentType:'application/json',body:JSON.stringify(url.searchParams.has('cursor')?{follows:[],cursor:'terminal-empty'}:{follows:[{did:'did:plc:artist',handle:'artist.bsky.social',displayName:'Artist'}],cursor:'next-page'})});
+  return route.fulfill({contentType:'application/json',body:'{"feed":[],"posts":[],"actors":[]}'});
+ });
+ await page.route('**/api.fxtwitter.com/2/**',route=>{const path=new URL(route.request().url()).pathname;
+  return route.fulfill({contentType:'application/json',body:JSON.stringify(path.endsWith('/following')?{code:200,results:[{id:'456',screen_name:'friend',name:'Friend'}],cursor:{bottom:null}}:{code:200,user:{id:'123',screen_name:'owner',name:'Owner',protected:false,following:1}})});
+ });
+ await page.goto('settings?section=external');const form=page.locator('[data-lime-follow-import]');await expect(form).toBeVisible();
+ if(selected!=='twitter')await form.getByLabel('BlueskyのID',{exact:true}).fill('owner.bsky.social');
+ if(selected!=='bluesky')await form.getByLabel('TwitterのID',{exact:true}).fill('@owner');
+ await form.getByRole('button',{name:'フォローを引き継ぐ',exact:true}).click();
+ if(selected!=='twitter')await expect(form.getByText('Bluesky：1件追加しました',{exact:true})).toBeVisible();
+ if(selected!=='bluesky')await expect(form.getByText('Twitter：1件追加しました',{exact:true})).toBeVisible();
+ expect(state.externalFollows.size).toBe(selected==='both'?2:1);
+ await page.screenshot({path:info.outputPath('follow-import-'+selected+'.png')});
+ await expect(form.getByRole('button',{name:'フォローを引き継ぐ',exact:true})).toBeEnabled();await expect(form.getByText('引き継ぎ中…',{exact:true})).toHaveCount(0);
+ const divider=await form.locator('[data-lime-follow-import-divider]').boundingBox(),container=await form.evaluate(el=>{const box=el.parentElement!.getBoundingClientRect();return{x:box.x,width:box.width};});expect(Math.abs(divider!.x-container.x)).toBeLessThan(1);expect(Math.abs(divider!.width-container.width)).toBeLessThan(1);
+ await expect(page.getByRole('button',{name:'追加',exact:true})).toHaveCount(0);await expect(page.getByRole('button',{name:'Blueskyにログイン',exact:true})).toHaveCount(0);
+ await page.reload();expect(state.externalFollows.size).toBe(selected==='both'?2:1);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});
+
+test('import-only deletion appears beside import after completion and preserves manual follows',async({page},info)=>{
+ const state=await setup(page);
+ state.externalFollows.set('x:manual',{follower_id:user.id,external_provider:'x',external_handle:'manual',external_profile:{id:'x-user:99',username:'manual@twitter.com'}});
+ await page.route('**/public.api.bsky.app/**',route=>{const url=new URL(route.request().url());return route.fulfill({contentType:'application/json',body:JSON.stringify(url.pathname.endsWith('getProfile')?{did:'did:plc:owner',handle:'owner.bsky.social',displayName:'Owner',followsCount:1}:url.pathname.endsWith('getFollows')?{follows:[{did:'did:plc:artist',handle:'artist.bsky.social',displayName:'Artist'}]}:{feed:[],posts:[],actors:[]})});});
+ await page.goto('settings?section=external');const form=page.locator('[data-lime-follow-import]');const remove=form.getByRole('button',{name:'引き継いだフォローを削除',exact:true});
+ await expect(remove).toHaveCount(0);await form.getByLabel('BlueskyのID',{exact:true}).fill('owner.bsky.social');await form.getByRole('button',{name:'フォローを引き継ぐ',exact:true}).click();await expect(form.getByText('Bluesky：1件追加しました',{exact:true})).toBeVisible();await expect(remove).toBeEnabled();
+ const a=await form.getByRole('button',{name:'フォローを引き継ぐ',exact:true}).boundingBox(),b=await remove.boundingBox();expect(Math.abs(a!.y-b!.y)).toBeLessThan(1);expect(b!.x).toBeGreaterThan(a!.x);
+ await page.screenshot({path:info.outputPath('follow-import-actions.png')});
+ expect(state.externalFollows.get('bluesky:artist.bsky.social').external_profile.followImport.kind).toBe('public-follow-import');
+ await remove.click();await expect(form.getByText('引き継ぎ：1件のフォローを削除しました',{exact:true})).toBeVisible();await expect(remove).toHaveCount(0);expect([...state.externalFollows.keys()]).toEqual(['x:manual']);await expect(form.getByRole('button',{name:'フォローを引き継ぐ',exact:true})).toBeEnabled();
+});
+
+test('follow import failures stay silent and release the controls',async({page})=>{
+ await setup(page);
+ await page.route('**/api.fxtwitter.com/2/**',route=>route.fulfill({status:404,contentType:'application/json',body:'{"code":404,"message":"source unavailable"}'}));
+ await page.goto('settings?section=external');const form=page.locator('[data-lime-follow-import]'),submit=form.getByRole('button',{name:'フォローを引き継ぐ',exact:true});
+ for(const input of ['https://example.com/invalid','@owner']){
+  await form.getByLabel('TwitterのID',{exact:true}).fill(input);await submit.click();
+  await expect(submit).toBeEnabled();await expect(form.getByRole('status')).toHaveCount(0);await expect(form.getByRole('alert')).toHaveCount(0);
+  await expect(form).not.toContainText(/エラー|取得できません|引き継げません|source unavailable/);
+ }
 });

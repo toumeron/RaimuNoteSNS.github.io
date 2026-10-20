@@ -1,9 +1,10 @@
+vi.mock("@/api/search-news", async importOriginal => ({...await importOriginal<typeof import("@/api/search-news")>(), getLatestSearchNews:load}));
 import {cleanup,renderHook,waitFor} from '@testing-library/react';
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
 import {afterEach,expect,it,vi} from 'vitest';
 const load=vi.hoisted(()=>vi.fn());
-vi.mock('@/api/search-news',()=>({getLatestSearchNews:load}));
-import { useSearchNews } from "@/hooks/useTrends";
+
+import { useSearchNews } from "@/hooks/useTopics";
 afterEach(()=>{cleanup();vi.clearAllMocks();});
 const result={items:[{id:'article'}],sources:{article:{authors:[{id:'author',avatarUrl:'avatar.jpg'}],postsCount:1}}};
 it('keeps article and avatars together on remount without reloading originals',async()=>{

@@ -1,6 +1,6 @@
 import {supabase} from '@/lib/supabase';
 import {EMPTY_ANIME_HISTORY,type AnimeHistoryState,type AnimeImportItem,type AnimeWork,type AnimeEpisode} from '../../supabase/functions/_shared/animeHistory';
-export {ANIME_SOURCES,animeHttps,parseAnimeImport,normalizeAnimeTitle,fetchAnimeArtwork,fetchAnimeStreamingLinks,preferredAnimeStreamingUrl} from '../../supabase/functions/_shared/animeHistory';
+export {ANIME_SOURCES,animeHttps,animeArtworkUrl,parseAnimeImport,importWorkTitle,normalizeAnimeTitle,fetchAnimeArtwork,fetchAnimeYouTubeId,animeYouTubeUrl} from '../../supabase/functions/_shared/animeHistory';
 export type {AnimeHistoryEntry,AnimeHistoryState,AnimeImportItem,AnimeWork,AnimeEpisode} from '../../supabase/functions/_shared/animeHistory';
 export type AnimeImportResolution={item:AnimeImportItem;work:AnimeWork|null;episode:AnimeEpisode|null;candidates:AnimeWork[];ambiguous:boolean};
 export const animeHistoryKey=(owner:string)=>['anime-history',owner] as const;

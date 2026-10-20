@@ -1,10 +1,23 @@
+vi.mock("@/lib/utils", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/lib/utils")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/lib/utils")>(), getClientName: () => 'LimeNote'}))(importOriginal)};
+});
+vi.mock("@/lib/mediaThumbnail", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/lib/mediaThumbnail")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/lib/mediaThumbnail")>(), uploadPostMedia: async (urls: string[]) => urls}))(importOriginal)};
+});
+
+
+
+
+
 import { beforeEach, describe, it, expect, vi } from 'vitest';
 const state = vi.hoisted(() => ({ calls: [] as {
         table: string;
         filters: Record<string, unknown>;
     }[], rpc: vi.fn(), rows: [] as any[] }));
-vi.mock('@/lib/uploadPostMedia', () => ({ uploadPostMedia: async (urls: string[]) => urls }));
-vi.mock('@/lib/clientName', () => ({ getClientName: () => 'LimeNote' }));
+
+
 vi.mock('@/lib/currentUser', () => ({ getCurrentUserId: async () => 'viewer' }));
 vi.mock('@/lib/supabase', () => ({ supabase: { rpc: state.rpc, from: (table: string) => {
             const call = { table, filters: {} as Record<string, unknown> };
@@ -16,7 +29,7 @@ vi.mock('@/lib/supabase', () => ({ supabase: { rpc: state.rpc, from: (table: str
             return builder;
         } } }));
 import { getMapPosts, setPostMapLocation, createPost } from './posts';
-import { normaliseMapLocation } from '@/lib/mapLocation';
+import { normaliseMapLocation } from "@/lib/mapLocation";
 beforeEach(() => { state.calls = []; state.rows = [{ id: 'post', user_id: 'author', content: '画像だけでも場所を表示', created_at: '2026-10-09T00:00:00Z', map_latitude: 35, map_longitude: 139, visibility: 'public', profiles: { id: 'author', username: 'author', display_name: '作者' } }]; state.rpc.mockReset().mockResolvedValue({ error: null }); });
 describe('LimeMaps API', () => {
     it('fetches only public posts inside the viewport with a bounded page and cancellation', async () => {

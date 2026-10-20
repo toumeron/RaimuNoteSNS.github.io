@@ -1,10 +1,10 @@
 import {createRecommendationCursor,getRecommendationPage,getRecommendationPreferences,type RecommendationCursor} from './recommendations';
 import {getRecommendationTwitterPage} from './recommendation-twitter';
 import {rankRecommendations} from '@/lib/recommendations';
-import {recommendationIdentity,recommendationFingerprint} from '@/lib/recommendationSignals';
-import { uniqueRecommendationPosts } from "@/lib/topicRecommendations";
+import { recommendationIdentity, recommendationFingerprint } from "@/lib/recommendations";
+import { uniqueRecommendationPosts } from "@/lib/recommendations";
 import {applyCachedRecommendationVisuals} from '@/lib/recommendationVisual';
-import {readRecommendationCatalog,applyCatalogRecommendationVisuals} from '@/lib/recommendationCatalog';
+import { readRecommendationCatalog, applyCatalogRecommendationVisuals } from "@/lib/recommendations";
 import type {PostWithAuthor} from '@/types';
 let fallbackRequestKey=1_000_000_000;
 const isTwitter=(post:PostWithAuthor)=>post.source==='x'||post.id.startsWith('x:');

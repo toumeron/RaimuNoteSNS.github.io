@@ -1,7 +1,8 @@
+vi.mock("@/lib/spaceMusic", async importOriginal => ({...await importOriginal<typeof import("@/lib/spaceMusic")>(), createSpaceMusic: music.load}));
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const music = vi.hoisted(() => ({ load: vi.fn() }));
-vi.mock('./spaceMusic', () => ({ createSpaceMusic: music.load }));
-import { SpaceWaitingAudio } from './spaceWaitingAudio';
+
+import { SpaceWaitingAudio } from "@/lib/callRecorder";
 
 describe('space waiting audio', () => {
   let play: ReturnType<typeof vi.spyOn>;

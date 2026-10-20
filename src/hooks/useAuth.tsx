@@ -1,15 +1,19 @@
-import { setAccountSuspended, SUSPENSION_EVENT } from '@/lib/accountSuspension';
-import { setExternalAccountOwner, initialiseExternalAccounts, refreshExternalAccounts } from '@/lib/externalAccounts';
-import { accountAboutKey, syncAccountConnection } from '@/api/account-about';
-import { getPrivateBotPrompt } from "@/lib/privateProfile";
-import { clearPrivateMedia } from '@/lib/privateMediaFetch';
-import {isInstalledPwa} from '@/lib/utils';
-import { useQueryClient } from '@tanstack/react-query';
-import { Fragment, createContext, useContext, useEffect, useRef, useState } from 'react';
-import { supabase } from '@/lib/supabase';
-import { activateAccountIntegrations, getSavedAccountTokens, markSavedAccountNeedsLogin, readSavedAccounts, removeSavedAccount, saveAccountSession, SAVED_ACCOUNTS_EVENT, SAVED_ACCOUNTS_KEY, type SavedAccount } from '@/lib/savedAccounts';
-import type { Session, User as SupabaseUser } from '@supabase/supabase-js';
+import { setAccountSuspended, SUSPENSION_EVENT, getPrivateBotPrompt } from "@/lib/accountSuspension";
+import { setExternalAccountOwner, initialiseExternalAccounts, refreshExternalAccounts } from "@/lib/externalAccounts";
+import { accountAboutKey, syncAccountConnection } from "@/api/users";
+import { clearPrivateMedia } from "@/lib/privateMediaFetch";
+import { isInstalledPwa } from "@/lib/utils";
+import { useQueryClient, useMutation, useQuery } from "@tanstack/react-query";
+import { Fragment, createContext, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { supabase } from "@/lib/supabase";
+import { activateAccountIntegrations, getSavedAccountTokens, markSavedAccountNeedsLogin, readSavedAccounts, removeSavedAccount, saveAccountSession, SAVED_ACCOUNTS_EVENT, SAVED_ACCOUNTS_KEY, type SavedAccount } from "@/lib/savedAccounts";
+import { type Session, type User as SupabaseUser } from "@supabase/supabase-js";
+import { isXId } from "@/lib/fxTwitter";
+import { isMisskeyId } from "@/lib/misskey";
+import { BSKY_SESSION_STORAGE_KEY, getStoredBlueskySession, type BlueskySession } from "@/lib/bluesky";
+import { noBrowserSubscription, sharedBrowserStore } from "@/hooks/useViewportWidth";
 
+// useAuth
 // ユーザー情報の型定義（Supabaseの基本情報にプロフィール情報を統合）
 type CustomUser = SupabaseUser & {
   isSuspended?: boolean;
@@ -46,7 +50,7 @@ const AuthContext = createContext<AuthContextType>({
   accounts: [], switching: false, switchAccount: async () => {}, forgetAccount: () => {},
 });
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
+function AuthProvider({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient();
   const [user, setUser] = useState<CustomUser | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -311,4 +315,96 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 }
 
 // コンテキストを利用するためのカスタムフック
-export const useAuth = () => useContext(AuthContext);
+const useAuth = () => useContext(AuthContext);
+
+// useBlueskySession
+const store=sharedBrowserStore(()=>getStoredBlueskySession(),update=>{
+ const sync=()=>update(getStoredBlueskySession());
+ const changed=(event:Event)=>{
+  const detail=(event as CustomEvent<{session?:BlueskySession|null}>).detail;
+  update(detail&&'session' in detail?detail.session??null:getStoredBlueskySession());
+ };
+ const storage=(event:StorageEvent)=>{if(event.key===BSKY_SESSION_STORAGE_KEY||event.key===null)sync();};
+ window.addEventListener('lime-bluesky-session-changed',changed);
+ window.addEventListener('lime-misskey-changed',sync);
+ window.addEventListener('storage',storage);
+ return()=>{window.removeEventListener('lime-bluesky-session-changed',changed);window.removeEventListener('lime-misskey-changed',sync);window.removeEventListener('storage',storage);};
+},(a,b)=>a===b||JSON.stringify(a)===JSON.stringify(b));
+const noSession=()=>null;
+/** Share login/logout/token refresh events. Twitter and Misskey never subscribe. */
+function useBlueskySession(targetId?:string):BlueskySession|null{
+ const enabled=!isMisskeyId(targetId)&&!isXId(targetId);
+ return useSyncExternalStore(enabled?store.subscribe:noBrowserSubscription,enabled?store.getSnapshot:noSession,noSession);
+}
+
+// useMembership
+const membershipKey = (creatorId: string, memberId?: string) =>
+  ['membership', creatorId, memberId] as const;
+
+/** 自分が creatorId のメンバーになっているかどうかを取得 */
+function useMembershipStatus(creatorId: string | undefined) {
+  const { user } = useAuth();
+
+  return useQuery({
+    queryKey: membershipKey(creatorId ?? '', user?.id),
+    queryFn: async () => {
+      if (!creatorId || !user) return false;
+      const { data, error } = await supabase
+        .from('memberships')
+        .select('id')
+        .eq('creator_id', creatorId)
+        .eq('member_id', user.id)
+        .maybeSingle();
+      if (error) throw error;
+      return Boolean(data);
+    },
+    enabled: Boolean(creatorId && user),
+  });
+}
+
+/** メンバーに加入する（決済なし・即時登録） */
+function useJoinMembership(creatorId: string) {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async () => {
+      if (!user) throw new Error('ログインが必要です');
+      const { error } = await supabase
+        .from('memberships')
+        .insert({ creator_id: creatorId, member_id: user.id });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: membershipKey(creatorId, user?.id) });
+    },
+  });
+}
+
+/** メンバーを解除する */
+function useLeaveMembership(creatorId: string) {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async () => {
+      if (!user) throw new Error('ログインが必要です');
+      const { error } = await supabase
+        .from('memberships')
+        .delete()
+        .eq('creator_id', creatorId)
+        .eq('member_id', user.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: membershipKey(creatorId, user?.id) });
+    },
+  });
+}
+
+export { AuthProvider };
+export { useAuth };
+export { useBlueskySession };
+export { useMembershipStatus };
+export { useJoinMembership };
+export { useLeaveMembership };

@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, FileText, ShieldAlert, Scale, ShieldCheck, Eye, HelpCircle, Landmark } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Logo } from '@/components/layout/Logo';
+import { Logo } from "@/components/layout/AppLayout";
 
 export default function TermsPage() {
   const navigate = useNavigate();
@@ -9,7 +9,7 @@ export default function TermsPage() {
   return (
     <div className="relative flex min-h-screen flex-col items-center justify-start overflow-y-auto p-4 bg-white dark:bg-zinc-950 text-foreground transition-colors duration-200 sm:p-8">
       <div className="w-full max-w-3xl">
-        
+
         {/* ヘッダーエリア */}
         <div className="mb-8 flex flex-col items-center justify-between gap-4 border-b border-border/60 dark:border-zinc-800 pb-6 pt-4 sm:flex-row sm:pt-0">
           <div className="flex items-center gap-3">
@@ -20,7 +20,7 @@ export default function TermsPage() {
 
         {/* 規約本文カード */}
         <div className="rounded-3xl border border-border/60 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-6 shadow-card-soft sm:p-10 transition-colors duration-200">
-          
+
           <div className="mb-8 flex items-center gap-3 text-primary">
             <FileText className="h-6 w-6" />
             <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">LimeNote 利用規約</h1>
@@ -31,7 +31,7 @@ export default function TermsPage() {
           </p>
 
           <div className="space-y-8">
-            
+
             {/* 第1条 */}
             <section className="space-y-3">
               <div className="flex items-center gap-2 text-zinc-800 dark:text-zinc-200 font-bold">

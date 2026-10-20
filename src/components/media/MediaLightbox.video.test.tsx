@@ -1,18 +1,37 @@
+vi.mock("@/components/feed/PostCard", async importOriginal => ({...await importOriginal<typeof import("@/components/feed/PostCard")>(), PostCard:({post,mediaPresentation}:{post:PostWithAuthor;mediaPresentation:string})=><div data-testid={`post-${mediaPresentation}`}>{post.id}:{post.likesCount}</div>}));
+vi.mock("@/hooks/useFeed", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/hooks/useFeed")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/hooks/useFeed")>(), postKey:(id:string)=>['post',id]}))(importOriginal)};
+});
+vi.mock("@/components/post/CommentForm",()=>({CommentForm:()=>null}));
+vi.mock("@/components/post/CommentList", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/components/post/CommentList")>();
+ const overrides = [
+  await (()=>({CommentList:()=>null,CommentCard:()=>null}))(),
+  await (()=>({CommentForm:()=>null}))()
+ ];
+ return Object.assign({}, actual, ...overrides.map(values => Object.fromEntries(Object.entries(values).filter(([key, value]) => value !== actual[key]))));
+});
+vi.mock("@/components/profile/ProfileHeader", async importOriginal => ({...await importOriginal<typeof import("@/components/profile/ProfileHeader")>(), FollowButton:()=>null}));
+vi.mock("@/api/search-news", async importOriginal => ({...await importOriginal<typeof import("@/api/search-news")>(), getTwitterVideoPage:(...args:unknown[])=>mocks.twitter(...args)}));
+
+vi.mock("@/components/video/PostVideoPlayer", async importOriginal => ({...await importOriginal<typeof import("@/components/video/PostVideoPlayer")>(), VideoLightboxPlayer:({selection,onTap,muted,onMutedChange}:{selection:{postId:string};onTap:(toggle:()=>void)=>void;muted:boolean;onMutedChange:(value:boolean)=>void})=><><div data-testid="active-video" data-muted={String(muted)} onClick={()=>onTap(()=>{})}>{selection.postId}</div><button onClick={()=>onMutedChange(!muted)}>テスト音声切替</button></>}));
+vi.mock("@/hooks/useAuth", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useAuth")>(), useAuth:()=>({user:{id:'viewer'}})}));
 import {cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 import {MemoryRouter} from 'react-router-dom';
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
 import type {PostWithAuthor} from '@/types';
 const mocks=vi.hoisted(()=>({feed:vi.fn(),post:vi.fn(),twitter:vi.fn()}));
-vi.mock('@/api/twitter-videos',()=>({getTwitterVideoPage:(...args:unknown[])=>mocks.twitter(...args)}));
+
 vi.mock('@/api/posts',()=>({getVideoFeed:(...args:unknown[])=>mocks.feed(...args),getPostById:(...args:unknown[])=>mocks.post(...args)}));
-vi.mock('@/hooks/useAuth',()=>({useAuth:()=>({user:{id:'viewer'}})}));
-vi.mock('@/hooks/useFeed',()=>({postKey:(id:string)=>['post',id]}));
-vi.mock('@/components/feed/PostCard',()=>({PostCard:({post,mediaPresentation}:{post:PostWithAuthor;mediaPresentation:string})=><div data-testid={`post-${mediaPresentation}`}>{post.id}:{post.likesCount}</div>}));
-vi.mock('@/components/post/CommentList',()=>({CommentList:()=>null,CommentCard:()=>null}));
-vi.mock('@/components/post/CommentForm',()=>({CommentForm:()=>null}));
-vi.mock('@/components/profile/FollowButton',()=>({FollowButton:()=>null}));
-vi.mock('./VideoLightboxPlayer',()=>({VideoLightboxPlayer:({selection,onTap,muted,onMutedChange}:{selection:{postId:string};onTap:(toggle:()=>void)=>void;muted:boolean;onMutedChange:(value:boolean)=>void})=><><div data-testid="active-video" data-muted={String(muted)} onClick={()=>onTap(()=>{})}>{selection.postId}</div><button onClick={()=>onMutedChange(!muted)}>テスト音声切替</button></>}));
+
+
+
+
+
+
+
 import {MediaLightbox} from './MediaLightbox';
 const post=(id:string)=>({id,userId:'author',content:id,createdAt:'2026-10-15T10:00:00Z',video:{key:id,duration:16,width:1920,height:1080,size:100,mimeType:'video/mp4'},likesCount:5,commentsCount:1,repostsCount:0,likedByMe:false,repostedByMe:false,imageUrls:[],author:{id:'author',username:'author',displayName:'投稿者',avatarUrl:'',bio:'',coverUrl:'',createdAt:''}}) as PostWithAuthor;
 beforeEach(()=>{

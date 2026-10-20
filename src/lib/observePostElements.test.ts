@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { observePostElements, observeDocumentHeight } from "@/lib/observePostElements";
+import { observePostElements, observeDocumentHeight } from "@/hooks/useViewportWidth";
 
 describe("observePostElements", () => {
 afterEach(()=>{document.body.replaceChildren();vi.restoreAllMocks();});

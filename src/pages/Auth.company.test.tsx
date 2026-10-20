@@ -1,12 +1,24 @@
+vi.mock("@/components/layout/AppLayout", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/components/layout/AppLayout")>();
+ const overrides = [
+  await (() => ({ SavedAccountList: () => null }))(),
+  await (() => ({ Logo: () => <span>LimeNote</span> }))()
+ ];
+ return Object.assign({}, actual, ...overrides.map(values => Object.fromEntries(Object.entries(values).filter(([key, value]) => value !== actual[key]))));
+});
+
+vi.mock("@/lib/accountSuspension", async importOriginal => ({...await importOriginal<typeof import("@/lib/accountSuspension")>(), ...await importOriginal<object>(), returnToCompany: mocks.return}));
+vi.mock("@/hooks/useAuth", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useAuth")>(), useAuth: () => ({ user: mocks.user, loading: mocks.loading, accounts: [] })}));
+
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ return: vi.fn(), signIn: vi.fn(), getUser: vi.fn(), user: null as null | { id: string }, loading: false }));
-vi.mock('@/lib/companyLoginReturn', async original => ({ ...await original<object>(), returnToCompany: mocks.return }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ user: mocks.user, loading: mocks.loading, accounts: [] }) }));
+
+
 vi.mock('@/lib/supabase', () => ({ supabase: { auth: { signInWithPassword: mocks.signIn, getUser: mocks.getUser } } }));
-vi.mock('@/components/layout/Logo', () => ({ Logo: () => <span>LimeNote</span> }));
-vi.mock('@/components/layout/AccountSwitcher', () => ({ SavedAccountList: () => null }));
+
+
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 import AuthPage from './Auth';
 beforeEach(() => {

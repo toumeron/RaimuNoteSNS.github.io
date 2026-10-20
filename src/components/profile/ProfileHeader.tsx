@@ -1,38 +1,249 @@
-import { displayUsername } from "@/lib/format";
-import { ProviderVerificationBadge } from "@/components/common/OfficialBadge";
-import { twitterAvatarUrl } from "@/components/ui/avatar";
-import {ProfileListPicker} from '@/components/lists/ListDialogs';
-import {canDirectMessage,openDirectConversation} from '@/api/directMessages';
-import { getKnownFollowers } from '@/api/follows';
-import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
-import {cloudExternalHandles,initialiseExternalAccounts,setExternalAccountOwner} from '@/lib/externalAccounts';
-import { ReviewStars } from "@/components/reviews/AccountReviewsTab";
-import { accountReviewsKey, getAccountReviews } from "@/api/users";
-import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
-import { ArrowLeft, CalendarDays, MapPin, Link2, MoreHorizontal, MessageCircle, Radio, Search, Share2, X } from 'lucide-react';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { FollowButton } from './FollowButton';
-import { useQuery } from '@tanstack/react-query';
-import { getProfileActivityCount } from "@/api/users";
-import { useFollowStats } from '@/hooks/useProfile';
-import { useAuth } from '@/hooks/useAuth';
-import { useJoinMembership, useLeaveMembership, useMembershipStatus } from '@/hooks/useMembership';
-import { usePostNotificationSubscription } from '@/hooks/usePostNotifications';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
-import dayjs from 'dayjs';
-import { lazy, Suspense, useEffect, useState } from 'react';
-import { Dialog } from '@/components/ui/dialog';
+import { ContentLink } from "@/components/ui/button";
+import { displayUsername, splitMentionText, mentionProfileHandle, cn } from "@/lib/utils";
+import { ProviderVerificationBadge, twitterAvatarUrl, PrivateAccountBadge, Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, Dialog } from "@/components/ui/button";
+import { ProfileListPicker, ReviewStars } from "@/components/lists/ListDialogs";
+import { canDirectMessage, openDirectConversation } from "@/api/users";
+import { getKnownFollowers, accountReviewsKey, getAccountReviews, getProfileActivityCount } from "@/api/users";
+import { cloudExternalHandles, initialiseExternalAccounts, setExternalAccountOwner, setExternalAccountAdded } from "@/lib/externalAccounts";
+import { ArrowLeft, CalendarDays, MapPin, Link2, MoreHorizontal, MessageCircle, Radio, Search, Share2, X, Loader2 } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useFollowStats, useToggleFollow } from "@/hooks/useFeed";
+import { useAuth, useJoinMembership, useLeaveMembership, useMembershipStatus, useBlueskySession } from "@/hooks/useAuth";
+import { usePostNotificationSubscription } from "@/hooks/useOSNotification";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import dayjs from "dayjs";
+import { lazy, Suspense, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import { toast } from "sonner";
+import { type User } from "@/types/index";
+import { isBlueskyProfileId, fetchBlueskyActorViewerState, followBlueskyUser, unfollowBlueskyUser } from "@/lib/bluesky";
+
+// FollowButton
+const followButtonClassName = (followed: boolean) =>
+  cn(
+    'group inline-flex h-10 items-center justify-center',
+    'rounded-full px-5',
+    'whitespace-nowrap',
+    'border',
+    'text-sm font-bold leading-none',
+    'shadow-none',
+    'transition-all duration-150',
+    'hover:shadow-none',
+    'focus-visible:ring-2 focus-visible:ring-black/20',
+    'dark:focus-visible:ring-white/20',
+    'disabled:pointer-events-none',
+    'disabled:opacity-60',
+
+    followed
+      ? [
+          // フォロー中
+          'relative',
+          'overflow-hidden',
+
+          // ライトモード通常時
+          'border-[#d9d9d9]',
+          'bg-transparent',
+          'text-[#111111]',
+
+          // ライトモードホバー時
+          'hover:bg-transparent',
+          'hover:border-[#ff2d3f]',
+          'hover:text-[#ff2d3f]',
+
+          // 明るめの赤い半透明フィルター
+          'after:pointer-events-none',
+          'after:absolute',
+          'after:inset-0',
+          'after:rounded-full',
+          'after:bg-[#ff4d5a]/15',
+          'after:opacity-0',
+          'after:transition-opacity',
+          'after:duration-150',
+          'hover:after:opacity-100',
+
+          // ダークモード通常時
+          'dark:border-[#555555]',
+          'dark:bg-transparent',
+          'dark:text-white',
+
+          // ダークモードホバー時
+          'dark:hover:bg-transparent',
+          'dark:hover:border-[#ff2d3f]',
+          'dark:hover:text-[#ff2d3f]',
+
+          // ダークモードは少し暗めの赤フィルター
+          'dark:after:bg-[#7f1d1d]/30',
+
+          // フィルターより文字を前面に表示
+          '[&>*]:relative',
+          '[&>*]:z-10',
+
+          // 押下時
+          'active:brightness-90',
+        ]
+      : [
+          // フォロー
+          // ライトモード
+          'border-[#111111]',
+          'bg-[#111111]',
+          'text-white',
+          'hover:border-[#222222]',
+          'hover:bg-[#222222]',
+          'hover:text-white',
+
+          // ダークモード
+          'dark:border-white',
+          'dark:bg-white',
+          'dark:text-[#111111]',
+          'dark:hover:border-[#dddddd]',
+          'dark:hover:bg-[#dddddd]',
+          'dark:hover:text-[#111111]',
+
+          // 押下時
+          'active:brightness-90',
+        ],
+  );
+
+function FollowButtonLabel({
+  isPending,
+  followed,
+  requested = false,
+}: {
+  isPending: boolean;
+  followed: boolean;
+  requested?: boolean;
+}) {
+  if (isPending) {
+    return <Loader2 className="relative z-10 h-4 w-4 animate-spin" />;
+  }
+  if (requested) return <span className="relative z-10">リクエスト済み</span>;
+  if (followed) {
+    return (
+      <>
+        <span className="relative z-10 group-hover:hidden">フォロー中</span>
+        <span className="relative z-10 hidden group-hover:inline">フォロー解除</span>
+      </>
+    );
+  }
+  return <span className="relative z-10">フォロー</span>;
+}
+
+/**
+ * Bluesky投稿・プロフィール用のフォローボタン。
+ * 自分のBlueskyアカウントでログインしている場合のみ表示・動作する
+ * (呼び出し元でも session の有無をチェックして空欄を避けることを推奨するが、
+ * 念のためこのコンポーネント自身も未ログイン時はnullを返す)。
+ */
+function BlueskyFollowButton({ did }: { did: string }) {
+  const session = useBlueskySession(did);
+  const [followUri, setFollowUri] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isPending, setIsPending] = useState(false);
+  const followed = Boolean(followUri);
+
+  useEffect(() => {
+    if (!session) {
+      setFollowUri(null);
+      setIsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setFollowUri(null);
+    setIsLoading(true);
+
+    fetchBlueskyActorViewerState(did)
+      .then((state) => {
+        if (!cancelled) setFollowUri(state.followUri);
+      })
+      .catch(error=>{if(!cancelled) console.warn('External follow state unavailable',error);})
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [did, session?.did]);
+
+  if (!session) return null;
+
+  const handleClick = async () => {
+    if (isPending || isLoading) return;
+    setIsPending(true);
+
+    try {
+      if (followed && followUri) {
+        await unfollowBlueskyUser(followUri);
+        setFollowUri(null);
+      } else {
+        const uri = await followBlueskyUser(did);
+        setFollowUri(uri);
+      }
+    } catch (error) {
+      console.error('Bluesky Follow Toggle Error:', error);
+    } finally {
+      setIsPending(false);
+    }
+  };
+
+  return (
+    <Button
+      type="button"
+      onClick={handleClick}
+      disabled={isPending || isLoading}
+      aria-busy={isPending || isLoading}
+      className={followButtonClassName(followed)}
+    >
+      <FollowButtonLabel isPending={isPending || isLoading} followed={followed} />
+    </Button>
+  );
+}
+
+/** Lime内部ユーザー同士の通常のフォローボタン */
+function LimeFollowButton({ userId }: { userId: string }) {
+  const { data, isLoading } = useFollowStats(userId);
+  const { mutate, isPending } = useToggleFollow(userId);
+  const followed = data?.followedByMe ?? false;
+  // フォロー状態の初回取得が終わるまでは followedByMe が不明なため、
+  // 「フォロー」を一瞬表示してしまわないよう、スピナー表示にして操作も無効にする。
+  const isStatusLoading = isLoading && data === undefined;
+  const isBusy = isPending || isStatusLoading;
+
+  return (
+    <Button
+      type="button"
+      onClick={() => mutate()}
+      disabled={isBusy}
+      aria-busy={isBusy}
+      title={data?.requestedByMe ? 'フォローリクエストを取り消す' : undefined}
+      // 読み込み中は黒い「フォロー」ボタンではなく、枠線のみの中立的な見た目にする
+      className={followButtonClassName(followed || isStatusLoading)}
+    >
+      <FollowButtonLabel isPending={isBusy} followed={followed} requested={data?.requestedByMe} />
+    </Button>
+  );
+}
+
+function ExternalLimeFollowButton({profile}:{profile:User}){
+ const {user}=useAuth();
+ useEffect(()=>{if(!user)return;setExternalAccountOwner(user.id);void initialiseExternalAccounts().catch(()=>{});},[user?.id]);
+ const provider=profile.id.startsWith('x-user:')?'x':profile.id.startsWith('misskey-user:')?'misskey':'bluesky';
+ const handle=profile.username.replace(/^@+/,'').replace(/@(?:x|twitter)\.com$/i,'').toLowerCase();
+ const [followed,setFollowed]=useState(()=>cloudExternalHandles(provider)?.includes(handle)??false);
+ const [busy,setBusy]=useState(false);const qc=useQueryClient();
+ useEffect(()=>{const update=()=>setFollowed(cloudExternalHandles(provider)?.includes(handle)??false);update();window.addEventListener('lime-bluesky-handles-changed',update);window.addEventListener('lime-misskey-changed',update);return()=>{window.removeEventListener('lime-bluesky-handles-changed',update);window.removeEventListener('lime-misskey-changed',update);};},[provider,handle]);
+ return <Button type="button" className={followButtonClassName(followed)} disabled={busy} aria-busy={busy} onClick={async()=>{if(busy)return;setBusy(true);try{await setExternalAccountAdded(provider,handle,!followed,{id:profile.id,username:profile.username,displayName:profile.displayName,avatarUrl:profile.avatarUrl,bio:profile.bio,providerVerification:profile.providerVerification});await qc.invalidateQueries({queryKey:['follow-stats']});await qc.invalidateQueries({queryKey:['feed','following']});await qc.invalidateQueries({queryKey:['follow-list']});}catch{toast.error('フォロー操作に失敗しました');}finally{setBusy(false);}}}><FollowButtonLabel followed={followed} isPending={busy}/></Button>;
+}
+function FollowButton({ userId,externalProfile }: { userId: string;externalProfile?:User }) {
+ if(externalProfile&&isBlueskyProfileId(userId))return <ExternalLimeFollowButton profile={externalProfile}/>;
+ if (isBlueskyProfileId(userId))return <BlueskyFollowButton did={userId} />;
+ return <LimeFollowButton userId={userId} />;
+}
+
+// ProfileHeader
 const ProfileEditor = lazy(() => import('./ProfileEditor'));
-import { createPortal } from 'react-dom';
-import { toast } from 'sonner';
-import type { User } from '@/types';
 
 // --- 通知ボタン用アイコン（X/Twitter の「ポストの通知」アイコンと同じ24x24パス） ---
 // currentColor なのでライト/ダーク両テーマで text-foreground に追従。背景は透明。
@@ -87,7 +298,7 @@ function isGithubPagesProfilePath(pathname: string) {
   }
   return isProfilePath(pathname) || isProfilePath(browserPathname);
 }
-export function ProfileHeader({
+function ProfileHeader({
   user,
   blueskyStats,
   isBlueskyProfile = false,
@@ -287,7 +498,7 @@ export function ProfileHeader({
     return parts.map((part, index) => {
       if (part.match(urlRegex)) {
         return (
-          <a
+          <ContentLink
             key={`link-${index}`}
             href={part}
             target="_blank"
@@ -296,7 +507,7 @@ export function ProfileHeader({
             onClick={(e) => e.stopPropagation()}
           >
             {part}
-          </a>
+          </ContentLink>
         );
       }
       return part;
@@ -308,6 +519,7 @@ export function ProfileHeader({
     // @username 形式にマッチさせる正規表現
     const parts = splitMentionText(text);
     return parts.map((part, index) => {
+      if (/^https?:\/\//.test(part)) return renderContentWithLinks(part);
       if (part.startsWith('@')) {
         const username = mentionProfileHandle(part,user);
         return (
@@ -796,3 +1008,6 @@ export function ProfileHeader({
     </>
   );
 }
+
+export { ProfileHeader };
+export { FollowButton };

@@ -1,73 +1,45 @@
-import {PostSourceLabelVisibility} from '@/components/post/PostSourceLabel';
-import {PostVideoPlayer} from '@/components/video/PostVideoPlayer';
-import { displayUsername } from "@/lib/format";
-import {canShowPostLinkPreview,hasAttachedPostVideo} from '@/lib/postPresentation';
-import { uniqueProfileMediaPosts } from '@/lib/profileReplyThreads';
-import { PrivateMediaImage } from "@/components/profile/ProfileMediaPreview";
-import { ProviderVerificationBadge } from "@/components/common/OfficialBadge";
-import { twitterAvatarUrl } from "@/components/ui/avatar";
-import {ProfileMediaPreview} from '@/components/profile/ProfileMediaPreview';
-import { PostPoll } from '@/components/feed/PostPoll';
-import { SuspensionNotice } from '@/components/account/AccountSuspension';
-import { collectProfilePages } from "@/lib/profileReplyThreads";
-import type { PostWithAuthor, User } from '@/types';
-import { PostTabMenu, type PostTabFilter, type PostTabSort } from '@/components/profile/PostTabMenu';
-import { selectProfilePosts } from "@/lib/profileReplyThreads";
-import { ExternalLikeButton } from '@/components/post/ExternalLikeButton';
-import { externalProfileReplyThread } from "@/lib/profileReplyThreads";
-import {useFollowStats} from '@/hooks/useProfile';
-import {PrivateAccountBadge} from "@/components/common/OfficialBadge";
-import { accountReviewsKey } from "@/api/users";
-import { AccountReviewsTab } from '@/components/reviews/AccountReviewsTab';
-import { useProfileHighlights } from '@/hooks/useProfileHighlights';
-import {splitMentionText,mentionProfileHandle} from '@/lib/utils';
-import { ProfileVirtualizedListItem } from '@/components/profile/ProfileVirtualizedRow';
-import { openMediaViewer } from '@/components/media/openMediaViewer';
-import {getPostById, getProfilePosts, getProfilePopularityPosts} from '@/api/posts';
-import {getProfilePin,profilePinKey} from "@/api/profile-highlights";
-import {PostLinkPreview} from '@/components/post/LinkPreviewCard';
+import { PostSourceLabelVisibility, PostLinkPreview, PostImages } from "@/components/feed/QuotedPost";
+import { PostVideoPlayer } from "@/components/video/PostVideoPlayer";
+import { displayUsername, splitMentionText, mentionProfileHandle, hasStickers, formatRelative, getYouTubeId } from "@/lib/utils";
+import { canShowPostLinkPreview, hasAttachedPostVideo, uniqueProfileMediaPosts, collectProfilePages, selectProfilePosts, externalProfileReplyThread, profilePostIdentity, spaceLinkIn, buildProfileReplyThreads } from "@/lib/utils";
+import { PrivateMediaImage, ProfileMediaPreview, PostTabMenu, type PostTabFilter, type PostTabSort, ProfileVirtualizedListItem } from "@/components/ui/avatar";
+import { ProviderVerificationBadge, twitterAvatarUrl, PrivateAccountBadge, Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { PostPoll, PostCardSkeleton } from "@/components/feed/PostPoll";
+import { SuspensionNotice } from "@/components/layout/AppLayout";
+import { type User } from "@/types/index";
+import { ExternalLikeButton, BookmarkButton, RepostButton } from "@/components/feed/RepostButton";
+import { useFollowStats, useProfile, useUserLikesInfinite, useUserMediaInfinite, useUserReactionsInfinite } from "@/hooks/useFeed";
+import { accountReviewsKey, accountAboutKey, countryName, getAccountAbout } from "@/api/users";
+import { AccountReviewsTab } from "@/components/lists/ListDialogs";
+import { useProfileHighlights } from "@/hooks/useTopics";
+import { openMediaViewer } from "@/components/media/openMediaViewer";
+import { getPostById, getProfilePosts, getProfilePopularityPosts } from "@/api/posts";
+import { getProfilePin, profilePinKey } from "@/api/comments";
 import { renderStickerText } from "@/components/stickers/Stickers";
-import { hasStickers } from '@/lib/stickers';
-import { profilePostIdentity } from "@/lib/profileReplyThreads";
-import { SpacePostCard } from '@/components/spaces/SpacePostCard';
-import { spaceLinkIn } from "@/lib/postPresentation";
-import { BookmarkButton } from '@/components/post/BookmarkButton';
-import { ReplyShare } from '@/components/post/ReplyShare';
-import { useAuth } from '@/hooks/useAuth';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { buildProfileReplyThreads } from '@/lib/profileReplyThreads';
-import { Link, useParams, useNavigate } from 'react-router-dom';
-import { createPortal } from 'react-dom';
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
-import { useInView } from 'react-intersection-observer';
-import { ChevronDown, Loader2, MoreHorizontal, ChartBarBig, Image as ImageIcon, X, MessageCircle, Plus, Upload, Link as LinkIcon, Send, Heart } from 'lucide-react';
-import { ProfileHeader } from '@/components/profile/ProfileHeader';
-import { PostCard } from '@/components/feed/PostCard';
-import { RepostButton } from '@/components/feed/RepostButton';
+import { SpacePostCard } from "@/components/spaces/SpaceProvider";
+import { ReplyShare } from "@/components/post/CommentList";
+import { useAuth } from "@/hooks/useAuth";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/button";
+import { Link, useParams, useNavigate } from "react-router-dom";
+import { createPortal } from "react-dom";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
+import { useInView } from "react-intersection-observer";
+import { ChevronDown, Loader2, MoreHorizontal, ChartBarBig, Image as ImageIcon, X, MessageCircle, Plus, Upload, Link as LinkIcon, Send, AtSign, CalendarDays, Globe2, MapPin } from "lucide-react";
+import { ProfileHeader } from "@/components/profile/ProfileHeader";
+import { PostCard } from "@/components/feed/PostCard";
 import { RepostedReplyCard } from "@/components/post/CommentList";
-import { replyToPost } from '@/api/reply-reposts';
-import { PostCardSkeleton } from '@/components/feed/PostCardSkeleton';
-import { Skeleton } from "@/components/ui/button";
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { LikeButton } from '@/components/post/LikeButton';
-import { Commentlikebutton } from '@/components/post/Commentlikebutton';
-import { PostImages } from '@/components/feed/PostImages';
-import { YouTubeEmbed } from '@/components/YouTubeEmbed';
-import { SpotifyEmbed } from '@/components/SpotifyEmbed';
-import { formatRelative } from '@/lib/format';
-import { getYouTubeId } from '@/lib/utils';
-import { getCurrentUserId } from '@/lib/currentUser';
-import { supabase } from '@/lib/supabase';
-import { fetchBlueskyAuthorFeed, fetchBlueskyProfile } from '@/lib/bluesky';
-import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  useProfile,
-  useUserLikesInfinite,
-  useUserMediaInfinite,
-  useUserReactionsInfinite,
-} from '@/hooks/useProfile';
+import { replyToPost } from "@/api/external-posts";
+import { Skeleton, Tabs, TabsList, TabsTrigger } from "@/components/ui/button";
+import { LikeButton } from "@/components/post/LikeButton";
+import { Commentlikebutton } from "@/components/feed/RepostButton";
+import { YouTubeEmbed, SpotifyEmbed } from "@/components/feed/PostCard";
+import { getCurrentUserId } from "@/lib/currentUser";
+import { supabase } from "@/lib/supabase";
+import { fetchBlueskyAuthorFeed, fetchBlueskyProfile } from "@/lib/bluesky";
+import { useQuery, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import dayjs from "dayjs";
 
+// Profile
 type ProfileTabValue = 'posts' | 'likes' | 'media' | 'reactions' | 'highlights' | 'reviews';
 
 const profileTabs: Array<{ value: ProfileTabValue; label: string }> = [
@@ -2204,7 +2176,6 @@ const ProfileShareButton = memo(function ProfileShareButton({
   );
 });
 
-
 const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
   targetType,
   targetId,
@@ -2296,7 +2267,7 @@ const ProfileThreadActionRow = memo(function ProfileThreadActionRow({
   );
 });
 
-export const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
+const ProfileReplyThreadCard = memo(function ProfileReplyThreadCard({
   thread,
   onImageClick,
   onImageError,
@@ -2543,7 +2514,7 @@ const PROFILE_PAGE_STYLES = `
             [data-lime-profile-pull-indicator] svg { color: white; }
             .lime-profile-refresh-spinner { position: relative; width: 18px; height: 18px; animation: lime-profile-spinner 850ms linear infinite; will-change: transform; }
             .lime-profile-refresh-spinner i { position: absolute; left: 8px; top: 7px; height: 5px; width: 2px; border-radius: 2px; background: white; transform-origin: 1px 2px; }
-            
+
             @keyframes lime-profile-spinner { to { transform: rotate(360deg); } }
           }
 
@@ -2855,7 +2826,7 @@ async function fetchNativeProfileReplies(user: User, limit?: number, signal?: Ab
 
 const selectExternalProfileFeed=(data:{pages:Awaited<ReturnType<typeof fetchBlueskyAuthorFeed>>[]})=>({posts:data.pages.flatMap(page=>page.posts),cursor:data.pages.at(-1)?.cursor??null});
 
-export default function Profile() {
+function Profile() {
   const queryClient = useQueryClient();
   const { user: viewer } = useAuth();
   const { username = '' } = useParams();
@@ -2887,7 +2858,6 @@ export default function Profile() {
   useLayoutEffect(() => {
     setIsViewportReady(true);
   }, []);
-
 
   const { data: limeUser, isLoading: isLimeUserLoading, isError: isLimeUserError } = useProfile(username);
   // Lime に存在しないユーザーだけ Bluesky の公開 API で補完するため、
@@ -3137,12 +3107,9 @@ export default function Profile() {
     rowHeightCacheRef.current = new Map();
   }, [user?.id]);
 
-
   // モーダル表示時にスクロールを固定
 
-
   // 画像拡大表示中は Escape キーで閉じられるようにする
-
 
   // normalizeAuthor / normalizePost / uniquePostsById / groupReactionPosts は
   // props や state に依存しない純粋関数のため、ファイル先頭のモジュール
@@ -3553,3 +3520,44 @@ export default function Profile() {
     </PostSourceLabelVisibility.Provider>
   );
 }
+
+// AccountAboutPage
+function AccountAboutPage() {
+  const { username = '' } = useParams();
+  const { data: user, isLoading } = useProfile(username);
+  const [showCountryInfo, setShowCountryInfo] = useState(false);
+  const about = useQuery({
+    queryKey: accountAboutKey(user?.id ?? ''),
+    queryFn: () => getAccountAbout(user!.id), enabled: !!user?.id, retry: 1,
+  });
+  const month = (date: string) => dayjs(date).isValid() ? dayjs(date).format('YYYY年M月') : '不明';
+  return (
+    <section className="min-h-screen bg-background text-foreground" data-lime-account-about>
+      {isLoading ? <p className="p-6 text-muted-foreground">読み込み中…</p> : !user ?
+        <p className="p-6 text-muted-foreground">アカウントが見つかりません</p> : <>
+          <div className="flex flex-col items-center pb-10 pt-10">
+            <Avatar className="h-20 w-20"><AvatarImage src={user.avatarUrl} alt="" /><AvatarFallback>{(user.displayName || user.username).slice(0, 1)}</AvatarFallback></Avatar>
+            <div className="mt-3 flex max-w-full items-center justify-center gap-1 px-4">
+              <h2 className="min-w-0 break-all text-center text-xl font-bold">{user.displayName || user.username}</h2>
+              {user.isPrivate && <PrivateAccountBadge/>}<ProviderVerificationBadge verification={user.providerVerification} className="h-5 w-5 shrink-0"/>{user.isOfficial && <img src={`${import.meta.env.BASE_URL}verified.png`} alt="Official" className="h-[1.25em] w-[1.25em] shrink-0 translate-y-[1px]" loading="eager" />}
+            </div>
+            <p className="mt-1 text-base text-muted-foreground break-all px-4">@{displayUsername(user.username)}</p>
+          </div>
+          <dl className="space-y-10 px-5 pb-12 sm:px-6">
+            <div className="flex items-center gap-5"><CalendarDays className="h-6 w-6 shrink-0" aria-hidden="true" /><div><dt className="text-base">登録日</dt><dd className="mt-1 text-base text-muted-foreground">{month(user.createdAt)}</dd></div></div>
+            <div>
+              <div className="flex items-center gap-5"><MapPin className="h-6 w-6 shrink-0" aria-hidden="true" /><div className="flex-1"><dt className="text-base">アカウントの所在地</dt><dd className="mt-1 text-base text-muted-foreground">{countryName(about.data?.country_code ?? null)}</dd></div>
+              </div>
+             </div>
+            <div className="flex items-center gap-5"><AtSign className="h-6 w-6 shrink-0" aria-hidden="true" /><div><dt className="text-base">ユーザー名の変更{about.data ? `${about.data.username_change_count}回` : ''}</dt>{about.data?.last_username_change_at ? <dd className="mt-1 text-base text-muted-foreground">前回の変更: {month(about.data.last_username_change_at)}</dd> : !about.data && <dd className="mt-1 text-base text-muted-foreground">未取得</dd>}</div></div>
+            <div className="flex items-center gap-5"><Globe2 className="h-6 w-6 shrink-0" aria-hidden="true" /><div><dt className="text-base">接続元</dt><dd className="mt-1 text-base text-muted-foreground">{about.data?.connection_source ?? '未取得'}</dd></div></div>
+          </dl>
+          {about.isError && <p role="alert" className="px-5 pb-6 text-sm text-muted-foreground">アカウント情報を取得できませんでした。<button type="button" className="ml-2 underline" onClick={() => void about.refetch()}>再試行</button></p>}
+        </>}
+    </section>
+  );
+}
+
+export { Profile as default };
+export { ProfileReplyThreadCard };
+export { AccountAboutPage };

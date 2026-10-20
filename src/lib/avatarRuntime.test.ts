@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { AnimationClip, BoxGeometry, Group, Mesh, MeshStandardMaterial, Texture } from "three";
 import { disposeAvatarObject, normalizeAvatarObject, selectIdleClip } from "@/lib/avatarRuntime";
 import { animateAvatarLight, avatarBackgroundLightness, measureAvatarLuminance, nextAvatarExposure, classifyAvatarMorph } from "@/lib/avatarModels";
-import { DEFAULT_COMPANION, readCompanion, updateCompanion, companionKey } from "@/lib/companionPreferences";
+import { DEFAULT_COMPANION, readCompanion, updateCompanion, companionKey } from "@/lib/aiFriends";
 
 describe("avatarRuntime", () => {
 describe("avatarRuntime", () => {

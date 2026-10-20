@@ -38,7 +38,7 @@ Misskeyは固定の `misskey.io` に接続する。他サーバーのユーザ�
 
 通知履歴は作成から30日間表示する。RLSで期限切れを表示・未読件数から除外する。新規通知INSERT時に、期限切れの履歴を期限用インデックスで削除する。定期削除はないため、新規通知がない期間には期限切れレコードが物理的に残るが、画面や未読件数には含まれない。
 
-既読保存後はDBの実際の未読件数を取得し、アプリと端末のバッジを更新する。通知クリックでも該当通知を既読にする。アプリ内一時通知は5秒、端末通知は30秒で閉じる処理を行う。ブラウザーがService Workerを停止した場合には端末通知のタイマーを保証できないため、次のPush受信や既読連絡でも期限切れ通知を閉じる。
+既読保存後はDBの実際の未読件数を取得し、アプリと端末のバッジを更新する。通知ページへ移動すると、未取得の過去ページ分や選択タブ外の種類も含め、そのアカウントの未読を一括で既読にする。共有表示では共有対象のログイン済みアカウントごとに保存済み認証で実行し、各アカウントの一覧キャッシュと未読件数を更新する。共有先の未読件数取得は、そのアカウントの認証で行い、現在のアカウントの端末バッジを上書きしない。メンションタブから開いた場合も全種類を既読にする。保存に失敗した通知は未読のまま保持する。通知クリックでも該当通知を既読にする。アプリ内一時通知は5秒、端末通知は30秒で閉じる処理を行う。ブラウザーがService Workerを停止した場合には端末通知のタイマーを保証できないため、次のPush受信や既読連絡でも期限切れ通知を閉じる。
 
 DBのPush送信トリガーは1つに整理した。専用の秘密情報をVaultとEdge Functionで共有する。外部購読テーブルにはサーバー用のSELECTと `last_checked_at` のUPDATE権限だけを追加した。
 
@@ -64,11 +64,22 @@ DBのPush送信トリガーは1つに整理した。専用の秘密情報をVaul
 
 ## 検証
 
-- `node scripts/notifications-db-test.mjs`
+- `node scripts/verify-database.mjs notifications`
 - `node --test server/*.test.mjs`
 - `npx vitest run src/api/notifications.test.ts src/lib/externalNotificationSources.test.ts src/lib/notificationDelivery.test.ts src/lib/registerPwa.test.ts`
 - `deno test --allow-env supabase/functions/check-external-notifications/handler_test.ts`
-- `npx playwright test -c tests/profile-highlights/playwright.config.ts --workers=1`
+- `LIME_BROWSER_SUITE=profile-highlights npx playwright test --config playwright.config.ts --workers=1`
 - `npx tsc --noEmit -p tsconfig.app.json` と `npm run build`
 
 ブラウザーテストは開発サーバーとAPI応答のフィクスチャを使う。外部SNSから実端末までのPush配信は、このテストの対象に含まれない。
+
+
+## TLの新着案内
+
+ホームの既存 `feed-new-posts` 購読で受け取ったポストを表示した際、通常のテーマカラー（標準はピンク）の丸型のバーに最大3人の投稿者アバターと「さんがポストしました」を表示する。同じ投稿・自分の投稿・通常の返信は通知対象にしない。引用ポストは既存TLの対象条件を引き継ぐ。最新とフォロー中の通知を別々に保持し、フォロー中は自分とフォロー対象の表示条件を引き継ぐ。
+
+案内はTLを先頭から80px以上スクロールしているときだけ表示する。先頭で届いた投稿には案内を出さず、先頭へ戻ったときもそのタブの案内を消す。表示時は短いフェードとスライド・拡大のアニメーションを付け、動きを減らすOS設定ではアニメーションを止める。スクロール中は取得済みの新着を一時保持し、一覧の先頭への挿入で閲覧位置が動くのを防ぐ。案内を押すか先頭へ戻ると新着を一覧へ反映し、そのタブの案内を消す。ヘッダーから先頭へ移動した場合も消す。アカウント切替時は案内を破棄する。通知表示のための定期取得・追加購読・新しいテーブルは設けない。外部SNSへ新たに問い合わせる処理も追加しない。
+
+既存Headerの下端とTL列の中央に追従し、ダイアログより下に表示する。モバイルHeaderの表示・非表示アニメーション中も位置を更新し、Headerの裏に隠れないようにする。モバイル（639px以下）のバーは高さ34px・文字12px・アバター23pxに縮小し、PCのサイズは維持する。ライト／ダーク、320px・390px・1280pxの各表示と、重複・自分・返信の除外、タブ別の保持、閲覧位置の維持、モバイルHeaderのスライド後の表示・タップ、クリックでの移動を `node scripts/verify-layout.mjs timeline-notice` で検証できる。
+
+通知の既読更新には `notifications_owner_read_update` の許可ポリシーが必要。既存の `security_owner_update` は制限ポリシーのため、それだけではUPDATEを許可しない。更新可能な列は既存の `is_read` だけを維持する。

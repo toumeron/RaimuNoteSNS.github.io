@@ -1,11 +1,12 @@
 import {beforeEach, expect, it, vi} from 'vitest';
 const storage=vi.hoisted(()=>({upload:vi.fn(),remove:vi.fn()}));
 vi.mock('./supabase',()=>({supabase:{storage:{from:()=>storage}}}));
-import {uploadPostMedia} from './uploadPostMedia';
-beforeEach(()=>{storage.upload.mockReset().mockResolvedValue({error:null});storage.remove.mockReset().mockResolvedValue({error:null});vi.stubGlobal('fetch',vi.fn().mockResolvedValue({ok:true,blob:async()=>new Blob(['image'],{type:'image/png'})}));});
+import { uploadPostMedia } from "@/lib/mediaThumbnail";
+beforeEach(()=>{vi.stubGlobal('createImageBitmap',vi.fn().mockResolvedValue({width:1200,height:800,close:vi.fn()}));storage.upload.mockReset().mockResolvedValue({error:null});storage.remove.mockReset().mockResolvedValue({error:null});vi.stubGlobal('fetch',vi.fn().mockResolvedValue({ok:true,blob:async()=>new Blob(['image'],{type:'image/png'})}));});
 it('uploads restricted images to private storage with owner and resource paths',async()=>{
  const refs=await uploadPostMedia(['blob:device'],'owner','post',true);
  expect(refs[0]).toMatch(/^storage:\/\/post-media\/owner\/post\/.*\.png$/);
+ expect(refs[0]).toContain('--1200x800.png');
  expect(storage.upload.mock.calls[0][2]).toMatchObject({upsert:false,cacheControl:'0'});
 });
 it('rejects public URLs in a restricted attachment batch before any upload',async()=>{

@@ -1,4 +1,12 @@
-vi.mock('@/lib/externalAccounts', () => ({ setExternalAccountOwner: vi.fn(), initialiseExternalAccounts: vi.fn().mockResolvedValue(undefined), refreshExternalAccounts: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("@/api/users", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/api/users")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/api/users")>(), accountAboutKey: (id: string) => ['account-about', id], syncAccountConnection: connectionSync}))(importOriginal)};
+});
+
+vi.mock("@/lib/externalAccounts", async importOriginal => ({...await importOriginal<typeof import("@/lib/externalAccounts")>(), setExternalAccountOwner: vi.fn(), initialiseExternalAccounts: vi.fn().mockResolvedValue(undefined), refreshExternalAccounts: vi.fn().mockResolvedValue(undefined)}));
+
+vi.mock("@/lib/accountSuspension", async importOriginal => ({...await importOriginal<typeof import("@/lib/accountSuspension")>(), getPrivateBotPrompt: mock.privatePrompt}));
+
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -6,12 +14,12 @@ import type { Session } from '@supabase/supabase-js';
 import { getSavedAccountTokens, readSavedAccounts, saveAccountSession } from '@/lib/savedAccounts';
 
 const connectionSync = vi.hoisted(() => vi.fn());
-vi.mock('@/api/account-about', () => ({ accountAboutKey: (id: string) => ['account-about', id], syncAccountConnection: connectionSync }));
+
 const mock = vi.hoisted(() => ({ callback: null as null | ((event: string, session: Session | null) => void), from: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn(), setSession: vi.fn(), signOut: vi.fn(), privatePrompt: vi.fn() }));
 vi.mock('@/lib/supabase', () => ({ supabase: {
   auth: { onAuthStateChange: mock.subscribe, signOut: mock.signOut, setSession: mock.setSession }, from: mock.from,
 } }));
-vi.mock("@/lib/privateProfile", () => ({getPrivateBotPrompt: mock.privatePrompt}));
+
 import { AuthProvider, useAuth } from './useAuth';
 import { setExternalAccountOwner, initialiseExternalAccounts } from '@/lib/externalAccounts';
 let currentAuth: ReturnType<typeof useAuth>;

@@ -1,7 +1,7 @@
 import {useEffect, useRef, useState} from 'react';
 import type {VRM} from '@pixiv/three-vrm';
 import type * as THREE from 'three';
-import {LipSync, type Vowel, type Emotion} from '@/lib/avatarLipSync';
+import { LipSync, type Vowel, type Emotion } from "@/lib/avatarRuntime";
 import { classifyAvatarMorph } from "@/lib/avatarModels";
 import { measureAvatarLuminance, nextAvatarExposure, avatarBackgroundLightness, animateAvatarLight } from "@/lib/avatarModels";
 import {MODEL_FORMAT_LABEL,inferModelFormat, unzipModelArchive, pickArchiveModel, createArchiveResolver, zipMime, type ModelSource, type ZipEntry} from '@/lib/avatarModels';
@@ -52,8 +52,8 @@ export function triggerGesture(bus: AvatarBus, name: GestureName) {
 
 type MMDResultLike = {
   mesh: THREE.SkinnedMesh;
-  pmx?: import("@/lib/mmdAvatar").MmdRuntime["pmx"];
-  ikSolver?: import("@/lib/mmdAvatar").MmdRuntime["ikSolver"];
+  pmx?: import("@/lib/avatarRuntime").MmdRuntime["pmx"];
+  ikSolver?: import("@/lib/avatarRuntime").MmdRuntime["ikSolver"];
   /** @moeru/three-mmd の MMD ランタイム更新。IK / grants / optional physics を適用する。 */
   update?: (deltaTime: number) => void;
   beforeUpdate?: () => void;
@@ -72,7 +72,7 @@ type MMDLoaderLike = new (manager?: THREE.LoadingManager) => {
 type StageLibs = {
   THREE: typeof import("three");
   runtime: typeof import("@/lib/avatarRuntime");
-  mmdAvatar: typeof import("@/lib/mmdAvatar");
+  mmdAvatar: typeof import("@/lib/avatarRuntime");
   VRMLoaderPlugin: typeof import("@pixiv/three-vrm").VRMLoaderPlugin;
   VRMUtils: typeof import("@pixiv/three-vrm").VRMUtils;
   GLTFLoader: typeof import("three/examples/jsm/loaders/GLTFLoader.js").GLTFLoader;
@@ -1029,7 +1029,7 @@ export function VrmStage(props: VrmStageProps) {
       import("three/examples/jsm/loaders/DRACOLoader.js"),
       import("three/examples/jsm/libs/meshopt_decoder.module.js"),
       import("@/lib/avatarRuntime"),
-      import("@/lib/mmdAvatar"),
+      import("@/lib/avatarRuntime"),
     ])
       .then(([THREE, vrm, gltf, mmd, fbx, obj, mtl, draco, meshopt, runtime, mmdAvatar]) => {
         if (cancelled) return;
@@ -1053,4 +1053,3 @@ export function VrmStage(props: VrmStageProps) {
   if (!libs) return <div className="absolute inset-0" />;
   return <VrmStageCore {...props} libs={libs} />;
 }
-

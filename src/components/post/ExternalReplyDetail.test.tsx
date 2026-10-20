@@ -1,9 +1,18 @@
+vi.mock("@/components/feed/PostCard", async importOriginal => ({...await importOriginal<typeof import("@/components/feed/PostCard")>(), PostCard: ({ post, embedded }: any) => <div data-testid="parent" data-embedded={String(!!embedded)}>{post.content}</div>}));
+vi.mock("@/components/post/CommentList", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/components/post/CommentList")>();
+ const overrides = [
+  await (() => ({ ExternalReplyCard: ({ post, detail }: any) => <div data-lime-reply-detail={detail}>{post.content}</div> }))(),
+  await (() => ({ ReplyChain: ({ children }: any) => <div data-lime-reply-chain>{children}</div> }))()
+ ];
+ return Object.assign({}, actual, ...overrides.map(values => Object.fromEntries(Object.entries(values).filter(([key, value]) => value !== actual[key]))));
+});
 import { fireEvent, render } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { PostWithAuthor } from '@/types';
-vi.mock('@/components/feed/PostCard', () => ({ PostCard: ({ post, embedded }: any) => <div data-testid="parent" data-embedded={String(!!embedded)}>{post.content}</div> }));
-vi.mock("@/components/post/CommentList", () => ({ ExternalReplyCard: ({ post, detail }: any) => <div data-lime-reply-detail={detail}>{post.content}</div> }));
-vi.mock('./ReplyChain', () => ({ ReplyChain: ({ children }: any) => <div data-lime-reply-chain>{children}</div> }));
+
+
+
 import { ExternalReplyDetail } from "@/components/post/ExternalReplyList";
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 it('shows the parent with its actions and anchors the selected reply until user interaction', () => {

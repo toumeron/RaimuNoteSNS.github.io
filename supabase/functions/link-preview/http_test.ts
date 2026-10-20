@@ -1,6 +1,6 @@
-import {decodeHttp} from './http.ts';
-import {loadPreview,allowedImage,loadImage,loadMisskey} from './load.ts';
-import {metadata} from './metadata.ts';
+import { decodeHttp } from "./http.ts";
+import { loadPreview, allowedImage, loadImage, loadMisskey } from "./load.ts";
+import { metadata } from "./metadata.ts";
 function assert(condition:unknown,message='Assertion failed'){if(!condition)throw new Error(message);}
 Deno.test('HTTP response parser supports chunked UTF-8 metadata and redirects',()=>{
   const body='<meta property="og:title" content="日記"><meta property="og:image" content="/cover.jpg">';

@@ -1,5 +1,5 @@
 import {authenticate,boundedBody,quota} from '../_shared/security.ts';
-import {findFriendPhoto} from '../_shared/friendImages.ts';
+import { findFriendPhoto } from "./../_shared/chatContext.ts";
 const headers={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization,apikey,content-type,x-client-info','Access-Control-Allow-Methods':'POST,OPTIONS'};
 export async function handleFriendImages(req:Request):Promise<Response>{
  if(req.method==='OPTIONS')return new Response(null,{headers});

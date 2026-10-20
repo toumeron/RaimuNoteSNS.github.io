@@ -1,3 +1,4 @@
+vi.mock("@/hooks/useAuth", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useAuth")>(), useAuth:()=>({user:{id:db.viewer},loading:false})}));
 import { act, renderHook, waitFor, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,7 +15,7 @@ const db = vi.hoisted(() => ({
   initialBlue: null as Promise<{ posts: PostWithAuthor[]; cursor: string | null }> | null,
   limeCalls: vi.fn(), blueCalls: vi.fn(), followingCalls: vi.fn(),
 }));
-vi.mock('./useAuth',()=>({useAuth:()=>({user:{id:db.viewer},loading:false})}));
+
 vi.mock('@/api/posts', () => ({
   getFeed: async (page: number, limit: number, before?: { createdAt: string; id: string }) => {
     db.limeCalls(page);
@@ -37,7 +38,7 @@ vi.mock('@/lib/bluesky', () => ({
     return { posts: db.blue.slice(start, end), cursor: end < db.blue.length ? String(end) : null };
   },
 }));
-import { useTimelineFeed } from './useTimelineFeed';
+import { useTimelineFeed } from "@/hooks/useFeed";
 const post = (id: string, minute: number): PostWithAuthor => ({
   id, userId: 'author', content: id, createdAt: new Date(Date.UTC(2026, 9, 2, 0, minute)).toISOString(),
   imageUrls: [], likesCount: 4, commentsCount: 0, repostsCount: 0, likedByMe: false, repostedByMe: false,

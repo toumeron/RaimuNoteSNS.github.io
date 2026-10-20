@@ -1,11 +1,17 @@
+vi.mock("@/lib/callRecorder", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/lib/callRecorder")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/lib/callRecorder")>(), requestMicrophonePermission: vi.fn(), microphoneErrorMessage: () => 'permission denied'}))(importOriginal)};
+});
+
+
 import { useEffect } from 'react';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CallSessionProvider, useCallSession } from './CallSessionProvider';
-import { requestMicrophonePermission } from '@/lib/microphone';
+import { requestMicrophonePermission } from "@/lib/callRecorder";
 
-vi.mock('@/lib/microphone', () => ({ requestMicrophonePermission: vi.fn(), microphoneErrorMessage: () => 'permission denied' }));
+
 vi.mock('sonner', () => ({ toast: { error: vi.fn() } }));
 const unmount = vi.fn();
 function Call({ close }: { close: () => void }) {

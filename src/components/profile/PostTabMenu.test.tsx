@@ -1,9 +1,12 @@
-import {useState} from 'react';
-import {selectProfilePosts} from '@/lib/profileReplyThreads';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, expect, it, vi } from 'vitest';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { PostTabMenu, postTabMenuOffsets } from './PostTabMenu';
+import { useState } from "react";
+import { selectProfilePosts } from "@/lib/utils";
+import { cleanup, fireEvent, render, screen, act } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/button";
+import { PostTabMenu, postTabMenuOffsets } from "@/components/ui/avatar";
+import { PostSourceLabel, PostSourceLabelVisibility, AnimatedCount } from "@/components/feed/QuotedPost";
+
+describe("PostTabMenu", () => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 it('anchors the menu at the label height rather than above or below the whole tab', () => {
  const button={left:300,bottom:660};
@@ -94,4 +97,46 @@ it.each(['desktop','mobile'])('filters rendered twitter profile entries when sel
  expect(screen.getAllByRole('listitem').map(row=>row.textContent).sort()).toEqual(['x:601','x:602']);
  fireEvent.click(screen.getByRole('button',{name:'次のページ'}));
  expect(screen.getAllByRole('listitem').map(row=>row.textContent).sort()).toEqual(['x:601','x:602','x:606']);
+});
+});
+
+describe("PostSourceLabel", () => {
+describe("PostSourceLabel", () => {
+afterEach(cleanup);
+it('hides every external source inside the profile scope and preserves labels elsewhere',()=>{
+ const posts=[{id:'x:1',source:'x'},{id:'bsky:1',source:'bluesky'},{id:'misskey:1',source:'misskey'}];
+ const view=render(<><PostSourceLabelVisibility.Provider value={false}><section data-testid="profile">{posts.map(post=><PostSourceLabel key={post.id} post={post}/>)}</section></PostSourceLabelVisibility.Provider><section data-testid="timeline">{posts.map(post=><PostSourceLabel key={post.id} post={post}/>)}</section></>);
+ expect(view.getByTestId('profile').querySelectorAll('[data-lime-post-provider]')).toHaveLength(0);
+ expect(view.getByTestId('timeline').querySelectorAll('[data-lime-post-provider]')).toHaveLength(3);
+});
+});
+
+describe("AnimatedCount", () => {
+afterEach(()=>{cleanup();vi.useRealTimers();});
+it('slides counts upwards on increases and downwards on decreases, then removes old values',()=>{
+  vi.useFakeTimers();
+  const view=render(<AnimatedCount count={2}/>);
+  view.rerender(<AnimatedCount count={3}/>);
+  expect(view.container.querySelector('.repost-count')).toHaveClass('is-up');
+  expect(view.container.querySelector('.repost-count-old')).toHaveTextContent('2');
+  expect(view.container.querySelector('.repost-count-new')).toHaveTextContent('3');
+  act(()=>vi.advanceTimersByTime(320));
+  expect(view.container.textContent).toBe('3');
+  view.rerender(<AnimatedCount count={2}/>);
+  expect(view.container.querySelector('.repost-count')).toHaveClass('is-down');
+  act(()=>vi.advanceTimersByTime(320));
+  expect(view.container.textContent).toBe('2');
+});
+it('restarts the transition for rapid changes and retains the latest count',()=>{
+  vi.useFakeTimers();
+  const view=render(<AnimatedCount count={0}/>);
+  view.rerender(<AnimatedCount count={1}/>);
+  act(()=>vi.advanceTimersByTime(200));
+  view.rerender(<AnimatedCount count={0}/>);
+  act(()=>vi.advanceTimersByTime(120));
+  expect(view.container.querySelector('.repost-count')).toHaveClass('is-down');
+  act(()=>vi.advanceTimersByTime(200));
+  expect(view.container.textContent).toBe('');
+});
+});
 });

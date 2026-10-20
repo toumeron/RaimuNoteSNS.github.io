@@ -1,6 +1,6 @@
-import type { PostVideo } from '@/lib/postVideo';
+import type { PostVideo } from "@/lib/mediaThumbnail";
 import type { ContextType } from 'react';
-import type { OfflineBookmarkContext } from '@/components/stickers/OfflineBookmarkContext';
+import type { OfflineBookmarkContext } from "@/components/stickers/Stickers";
 import type { PostWithAuthor } from '@/types';
 
 export type ViewerMedia = { src: string; type?: 'image' | 'youtube' | 'video'; youtubeId?: string };

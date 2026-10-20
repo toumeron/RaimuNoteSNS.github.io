@@ -12,6 +12,14 @@ export function animeHttps(value:unknown):string {
  if(typeof value!=='string'||value.length>2000)return '';
  try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password?u.href:'';}catch{return '';}
 }
+/** Only catalog image namespaces are rendered; expired official domains can serve parking ads with HTTP 200. */
+export function animeArtworkUrl(value:unknown):string {
+ const safe=animeHttps(value);if(!safe)return '';
+ const {hostname,pathname}=new URL(safe);
+ if(/^s\d*\.anilist\.co$/.test(hostname)&&pathname.startsWith('/file/anilistcdn/media/anime/'))return safe;
+ if(hostname==='cdn.myanimelist.net'&&pathname.startsWith('/images/anime/'))return safe;
+ return '';
+}
 export function animeService(url:string):AnimeImportItem['source']|null {
  let u:URL;try{u=new URL(url);}catch{return null;}
  if(u.protocol!=='https:'||u.username||u.password)return null;
@@ -46,7 +54,7 @@ export function animeEntry(work:AnimeWork,episode:AnimeEpisode|null,options:{sou
 }
 function workFromApi(value:any):AnimeWork|null {
  if(!Number.isSafeInteger(value?.id)||value.id<=0||typeof value.title!=='string'||!value.title.trim())return null;
- return {id:value.id,title:value.title.slice(0,300),aliases:[value.title,value.title_kana,value.title_en,value.title_short1,value.title_short2,value.twitter_hashtag?`#${value.twitter_hashtag}`:null].filter((v):v is string=>typeof v==='string'&&v.length>1).slice(0,8),image:animeHttps(value.images?.facebook?.og_image_url)||animeHttps(value.images?.recommended_url),copyright:String(value.images?.copyright??'').slice(0,300),season:String(value.season_name_text??'').slice(0,80),episodesCount:Number(value.episodes_count)||0};
+ return {id:value.id,title:value.title.slice(0,300),aliases:[value.title,value.title_kana,value.title_en,value.title_short1,value.title_short2,value.twitter_hashtag?`#${value.twitter_hashtag}`:null].filter((v):v is string=>typeof v==='string'&&v.length>1).slice(0,8),image:animeArtworkUrl(value.images?.facebook?.og_image_url)||animeArtworkUrl(value.images?.recommended_url),copyright:String(value.images?.copyright??'').slice(0,300),season:String(value.season_name_text??'').slice(0,80),episodesCount:Number(value.episodes_count)||0};
 }
 export function animeTitleQueries(content:string):string[] {
  const result:string[]=[];
@@ -78,7 +86,30 @@ export function mentionedAnime(content:string,works:AnimeWork[]):AnimeWork[] {
  return [...new Map(selected.filter(hit=>!hits.some(other=>other.work.id!==hit.work.id&&other.start===hit.start&&other.end===hit.end)).map(hit=>[hit.work.id,hit.work])).values()].slice(0,5);
 }
 export function importWorkTitle(row:Pick<AnimeImportItem,'title'>):string {
- return row.title.normalize('NFKC').replace(/\s*(?:第\s*\d+\s*[話回]|#\s*\d+|Episode\s+\d+|エピソード\s*\d+).*$/iu,'').replace(/\s*【[^】]*】\s*$/u,'').trim();
+ // Annict's substring search distinguishes 「！」 from "!". Preserve the source spelling.
+ return row.title.normalize('NFC').replace(/^\s*(?:TV\s*アニメ|テレビアニメ|アニメ版|\[アニメ\])\s*/iu,'')
+  .replace(/\s*(?:第\s*[0-9０-９]+\s*[話回]|[#＃]\s*[0-9０-９]+|Episode\s*[0-9０-９]+|エピソード\s*[0-9０-９]+).*$/iu,'')
+  .replace(/\s*[（(【](?:字幕版|吹替版|日本語字幕版|日本語吹替版|見放題|無料配信|HD|最速先行配信)[）)】]\s*$/iu,'').trim();
+}
+function importTitleSignature(title:string):string {
+ return importWorkTitle({title}).normalize('NFKC').toLowerCase()
+  .replace(/(?:第\s*)?(\d+)\s*期|(?:シーズン|season)\s*(\d+)|(\d+)(?:st|nd|rd|th)\s*season/giu,(_,a,b,c)=>Number(a??b??c)===1?'':`第${Number(a??b??c)}期`)
+  .replace(/\s+/g,'').trim();
+}
+export function matchImportedAnimeWork(title:string,works:AnimeWork[]):AnimeWork|null {
+ const wanted=importTitleSignature(title);if(!wanted)return null;
+ const folded=normalizeAnimeTitle(wanted);
+ const ranked=[...new Map(works.map(work=>[work.id,work])).values()].map(work=>{
+  const aliases=[work.title,...work.aliases.filter(alias=>!alias.startsWith('#'))].map(importTitleSignature);
+  const score=aliases.includes(wanted)?100:aliases.some(alias=>normalizeAnimeTitle(alias)===folded)?90:0;
+  return {work,score};
+ }).filter(row=>row.score>0).sort((a,b)=>b.score-a.score);
+ return ranked.length&&ranked[0].score>(ranked[1]?.score??0)?ranked[0].work:null;
+}
+export function animeImportSearchQueries(item:Pick<AnimeImportItem,'title'>):string[] {
+ const title=importWorkTitle(item),season=title.replace(/\s*(?:(?:第\s*)?[0-9０-９]+\s*期|(?:シーズン|season)\s*[0-9０-９]+|[0-9０-９]+(?:st|nd|rd|th)\s*season)\s*$/iu,'').trim();
+ const fragments=title.split(/[\p{P}\p{S}]/u).map(s=>s.trim()).filter(s=>s.length>=3).sort((a,b)=>b.length-a.length);
+ return [...new Set([title,title.replace(/[!！?？。．.]+$/u,'').trim(),season,...fragments])].filter(s=>s.length>=2).slice(0,4);
 }
 export function exactAnimeWork(title:string,works:AnimeWork[]):AnimeWork|null {
  const wanted=normalizeAnimeTitle(title);const exact=works.filter(work=>work.aliases.filter(s=>!s.startsWith('#')).some(alias=>normalizeAnimeTitle(alias)===wanted));
@@ -100,6 +131,20 @@ export class AnnictCatalog {
   const data=await response.json();if(this.cache.size>=256)this.cache.delete(this.cache.keys().next().value!);this.cache.set(key,{until:Date.now()+30*60*1000,value:data});return data;
  }
  async search(query:string):Promise<AnimeWork[]>{const data=await this.read('works',{filter_title:query.slice(0,100),per_page:30,sort_watchers_count:'desc'});return (Array.isArray(data.works)?data.works:[]).map(workFromApi).filter(Boolean);}
+ async resolveImport(item:AnimeImportItem):Promise<{work:AnimeWork|null;episode:AnimeEpisode|null;candidates:AnimeWork[];ambiguous:boolean}>{
+  const title=importWorkTitle(item),works=new Map<number,AnimeWork>();
+  let match:AnimeWork|null=null;
+  for(const query of animeImportSearchQueries(item)){
+   for(const work of await this.search(query))works.set(work.id,work);
+   match=matchImportedAnimeWork(title,[...works.values()]);if(match)break;
+  }
+  if(!match&&title.length>=2){
+   for(const work of await this.suggest(title))works.set(work.id,work);
+   match=matchImportedAnimeWork(title,[...works.values()]);
+  }
+  const episode=match?await this.episodeForText(match.id,item.episodeText||item.title):null;
+  return {work:match,episode,candidates:[...works.values()].slice(0,10),ambiguous:!match};
+ }
  /** Expand public suggestions without changing strict matching used by imports/posts. */
  async suggest(query:string):Promise<AnimeWork[]>{
   query=query.trim().slice(0,100);
@@ -173,50 +218,54 @@ export class AnnictCatalog {
  }
 }
 
-/** Public artwork lookup; never forwards Annict credentials or selects a merely similar sequel. */
+type CatalogMedia={title?:{native?:string;romaji?:string;english?:string};synonyms?:string[];seasonYear?:number;bannerImage?:string;coverImage?:{extraLarge?:string;large?:string};siteUrl?:string;trailer?:{id?:string;site?:string}};
+const mediaCache=new Map<string,{until:number;pending:Promise<CatalogMedia|null>}>();
+let mediaQueue:Promise<unknown>=Promise.resolve(),nextMediaRead=0,mediaUnavailableUntil=0;
+/** Artwork and YouTube links share one bounded, on-demand catalog request. */
+async function lookupAnimeMedia(work:AnimeWork,transport:typeof fetch):Promise<CatalogMedia|null>{
+ const cachedTransport=transport===fetch,key=JSON.stringify([work.id,work.title,work.season]);
+ const cached=cachedTransport?mediaCache.get(key):null;if(cached&&cached.until>Date.now())return cached.pending;
+ const read=async():Promise<CatalogMedia|null>=>{
+  try{
+   if(cachedTransport&&mediaUnavailableUntil>Date.now())return null;
+   if(cachedTransport){const delay=nextMediaRead-Date.now();if(delay>0)await new Promise(resolve=>setTimeout(resolve,delay));nextMediaRead=Date.now()+1000;}
+   const query='query($search:String!){Page(page:1,perPage:5){media(search:$search,type:ANIME){title{native romaji english} synonyms seasonYear bannerImage coverImage{extraLarge large} siteUrl trailer{id site}}}}';
+   const response=await transport('https://graphql.anilist.co',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({query,variables:{search:work.title}}),redirect:'error',signal:AbortSignal.timeout(5000)});
+   if(!response.ok){if(cachedTransport&&response.status===429)mediaUnavailableUntil=Date.now()+Math.min(60000,Math.max(1000,Number(response.headers.get('retry-after'))*1000||60000));await response.body?.cancel();return null;}
+   const data=await response.json(),names=new Set([work.title,...work.aliases.filter(name=>!name.startsWith('#'))].map(normalizeAnimeTitle)),year=Number(work.season.match(/(\d{4})年/)?.[1])||null;
+   const matching=(Array.isArray(data.data?.Page?.media)?data.data.Page.media:[]).filter((row:CatalogMedia)=>(!year||!row.seasonYear||year===row.seasonYear)&&[row.title?.native,row.title?.romaji,row.title?.english,...(row.synonyms??[])].some(name=>typeof name==='string'&&names.has(normalizeAnimeTitle(name))));
+   return matching.length===1?matching[0]:null;
+  }catch{return null;}
+ };
+ const pending=cachedTransport?mediaQueue.then(read):read();
+ if(cachedTransport){
+  mediaQueue=pending.then(()=>{},()=>{});if(mediaCache.size>=256)mediaCache.delete(mediaCache.keys().next().value!);
+  const value={until:Date.now()+30*60000,pending};mediaCache.set(key,value);void pending.then(media=>{if(!media)value.until=Date.now()+60000;});
+ }
+ return pending;
+}
+/** Public artwork lookup; no official-site HTML or images are fetched. */
 export async function fetchAnimeArtwork(work:AnimeWork,transport:typeof fetch=fetch):Promise<Pick<AnimeWork,'imageFallbacks'|'imageCredits'>> {
  const names=new Set(work.aliases.filter(name=>!name.startsWith('#')).map(normalizeAnimeTitle));names.add(normalizeAnimeTitle(work.title));
  const year=Number(work.season.match(/(\d{4})年/)?.[1])||null;
  const imageFallbacks:string[]=[],imageCredits:{name:string;url:string}[]=[];
- try{
-  const query='query($search:String!){Page(page:1,perPage:5){media(search:$search,type:ANIME){title{native romaji english} synonyms seasonYear bannerImage coverImage{extraLarge large} siteUrl}}}';
-  const response=await transport('https://graphql.anilist.co',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({query,variables:{search:work.title}}),redirect:'error',signal:AbortSignal.timeout(5000)});
-  if(response.ok){const data=await response.json();const exact=(data.data?.Page?.media??[]).filter((media:any)=>(!year||!media.seasonYear||media.seasonYear===year)&&[media.title?.native,media.title?.romaji,media.title?.english,...(media.synonyms??[])].some((name:unknown)=>typeof name==='string'&&names.has(normalizeAnimeTitle(name))));
-   if(exact.length===1){const media=exact[0];for(const value of [media.bannerImage,media.coverImage?.extraLarge,media.coverImage?.large]){const image=animeHttps(value);if(image)imageFallbacks.push(image);}if(imageFallbacks.length)imageCredits.push({name:'AniList',url:animeHttps(media.siteUrl)||'https://anilist.co'});}
-  }else await response.body?.cancel();
- }catch{/* Independent providers fail separately; a missing image never prevents viewing history. */}
+ const media=await lookupAnimeMedia(work,transport);
+ if(media){for(const value of [media.bannerImage,media.coverImage?.extraLarge,media.coverImage?.large]){const image=animeArtworkUrl(value);if(image)imageFallbacks.push(image);}if(imageFallbacks.length)imageCredits.push({name:'AniList',url:animeHttps(media.siteUrl)||'https://anilist.co'});}
  if(!imageFallbacks.length)try{
   const url=new URL('https://api.jikan.moe/v4/anime');url.searchParams.set('q',work.title);url.searchParams.set('limit','8');
   const response=await transport(url,{redirect:'error',signal:AbortSignal.timeout(5000)});
   if(response.ok){const data=await response.json();const exact=(data.data??[]).filter((media:any)=>(!year||!media.year||media.year===year)&&[media.title,media.title_japanese,media.title_english,...(media.titles??[]).map((title:any)=>title.title)].some((name:unknown)=>typeof name==='string'&&names.has(normalizeAnimeTitle(name))));
-   if(exact.length===1){const media=exact[0];for(const value of [media.images?.webp?.large_image_url,media.images?.jpg?.large_image_url]){const image=animeHttps(value);if(image)imageFallbacks.push(image);}if(imageFallbacks.length)imageCredits.push({name:'MyAnimeList / Jikan',url:animeHttps(media.url)||'https://myanimelist.net'});}
+   if(exact.length===1){const media=exact[0];for(const value of [media.images?.webp?.large_image_url,media.images?.jpg?.large_image_url]){const image=animeArtworkUrl(value);if(image)imageFallbacks.push(image);}if(imageFallbacks.length)imageCredits.push({name:'MyAnimeList / Jikan',url:animeHttps(media.url)||'https://myanimelist.net'});}
   }else await response.body?.cancel();
  }catch{/* Keep the original metadata when all public artwork providers are unavailable. */}
  return {imageFallbacks:[...new Set(imageFallbacks)],imageCredits};
 }
 
-/** Only known streaming hosts can become navigation targets; metadata never supplies arbitrary links. */
-export function animeStreamingPriority(value:unknown):number|null {
- const safe=animeHttps(value);if(!safe)return null;const {hostname}=new URL(safe);
- if(['amazon.co.jp','www.amazon.co.jp','primevideo.com','www.primevideo.com'].includes(hostname))return 0;
- if(hostname==='abema.tv')return 1;
- if(['animestore.docomo.ne.jp','anime.dmkt-sp.jp'].includes(hostname))return 2;
- if(['ch.nicovideo.jp','www.nicovideo.jp','nicovideo.jp'].includes(hostname))return 3;
- if(['netflix.com','www.netflix.com'].includes(hostname))return 4;
- return null;
+/** A video ID comes only from an exactly matched catalog record; never fetch official sites. */
+export function animeYouTubeUrl(work:AnimeWork,videoId?:string|null):string {
+ return videoId&&/^[A-Za-z0-9_-]{11}$/.test(videoId)?`https://www.youtube.com/watch?v=${videoId}`:`https://www.youtube.com/results?search_query=${encodeURIComponent(`${work.title}`)}`;
 }
-export function preferredAnimeStreamingUrl(work:AnimeWork,entries:AnimeHistoryEntry[],links:string[]=[]):string {
- const candidates=[...entries.map(entry=>entry.sourceUrl),...links].map(url=>({url:animeHttps(url),priority:animeStreamingPriority(url)})).filter(row=>row.url&&row.priority!==null);
- candidates.sort((a,b)=>a.priority!-b.priority!);
- return candidates[0]?.url??`https://www.amazon.co.jp/s?i=instant-video&k=${encodeURIComponent(work.title)}`;
-}
-export async function fetchAnimeStreamingLinks(work:AnimeWork,transport:typeof fetch=fetch):Promise<string[]> {
- try{
-  const response=await transport('https://graphql.anilist.co',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({query:'query($search:String!){Page(page:1,perPage:5){media(search:$search,type:ANIME){title{native romaji english} synonyms seasonYear externalLinks{url type}}}}',variables:{search:work.title}}),redirect:'error',signal:AbortSignal.timeout(5000)});
-  if(!response.ok){await response.body?.cancel();return [];}
-  const data=await response.json(),names=new Set([work.title,...work.aliases.filter(name=>!name.startsWith('#'))].map(normalizeAnimeTitle)),year=Number(work.season.match(/(\d{4})年/)?.[1])||null;
-  const matching=(data.data?.Page?.media??[]).filter((row:any)=>(!year||!row.seasonYear||year===row.seasonYear)&&[row.title?.native,row.title?.romaji,row.title?.english,...(row.synonyms??[])].some((name:unknown)=>typeof name==='string'&&names.has(normalizeAnimeTitle(name))));
-  if(matching.length!==1)return [];
-  return [...new Set<string>((matching[0].externalLinks??[]).filter((link:any)=>link.type==='STREAMING'&&animeStreamingPriority(link.url)!==null).map((link:any)=>animeHttps(link.url)))];
- }catch{return [];}
+export async function fetchAnimeYouTubeId(work:AnimeWork,transport:typeof fetch=fetch):Promise<string|null> {
+ const media=await lookupAnimeMedia(work,transport),trailer=media?.trailer;
+ return trailer?.site==='youtube'&&typeof trailer.id==='string'&&/^[A-Za-z0-9_-]{11}$/.test(trailer.id)?trailer.id:null;
 }

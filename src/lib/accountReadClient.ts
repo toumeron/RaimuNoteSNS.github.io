@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { getSavedAccountTokens, saveAccountSession } from "@/lib/savedAccounts";
-import { createPrivateMediaFetch } from "@/lib/privateMediaFetch";
+import { createPrivateMediaFetch, createSupabaseReadFetch } from "@/lib/privateMediaFetch";
 
 export type AccountReadContext = { client: SupabaseClient; userId: string; signal?: AbortSignal };
 const pending = new Map<string, Promise<SupabaseClient>>();
@@ -17,7 +17,7 @@ export async function getAccountReadClient(userId: string): Promise<SupabaseClie
     const tokens = getSavedAccountTokens(userId);
     if (!tokens) throw new Error('アカウントに再度ログインしてください');
     const client = createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY, {
-      global: { fetch: createPrivateMediaFetch(import.meta.env.VITE_SUPABASE_URL) },
+      global: { fetch: createPrivateMediaFetch(import.meta.env.VITE_SUPABASE_URL, createSupabaseReadFetch(import.meta.env.VITE_SUPABASE_URL)) },
       auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: `lime-account-read-${userId}` },
     });
     const { data, error } = await client.auth.setSession(tokens);

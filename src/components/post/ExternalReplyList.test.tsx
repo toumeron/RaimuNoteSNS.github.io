@@ -1,16 +1,41 @@
+vi.mock("@/components/feed/RepostButton", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/components/feed/RepostButton")>();
+ const overrides = [
+  await (async importOriginal => {
+ const actual = await importOriginal<typeof import("@/components/feed/RepostButton")>();
+ const overrides = [
+  await (() => ({ ExternalLikeButton: ({ post }: any) => <button aria-label="いいね" data-target={post.id}>♡ {post.likesCount}</button> }))(),
+  await (() => ({ RepostButton: () => null, BookmarkButton: () => null }))()
+ ];
+ return Object.assign({}, actual, ...overrides.map(values => Object.fromEntries(Object.entries(values).filter(([key, value]) => value !== actual[key]))));
+})(importOriginal),
+  await (() => ({ Commentlikebutton: () => { throw new Error('External reply must not use native comment likes'); } }))()
+ ];
+ return Object.assign({}, actual, ...overrides.map(values => Object.fromEntries(Object.entries(values).filter(([key, value]) => value !== actual[key]))));
+});
+vi.mock("@/hooks/useAuth", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useAuth")>(), useAuth: () => ({ user: { id: 'viewer' } })}));
+
+vi.mock("@/components/feed/QuotedPost", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/components/feed/QuotedPost")>();
+ const overrides = [
+  await (() => ({ useLinkPreview: () => ({ preview: null, text: (value: string) => value }), LinkPreviewCard: () => null }))(),
+  await (() => ({ PostImages: ({ urls }: any) => <div>{urls.map((url: string) => <img key={url} src={url} alt="返信の画像" />)}</div> }))()
+ ];
+ return Object.assign({}, actual, ...overrides.map(values => Object.fromEntries(Object.entries(values).filter(([key, value]) => value !== actual[key]))));
+});
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 const mocks = vi.hoisted(() => ({ from: vi.fn(), channel: vi.fn() }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ user: { id: 'viewer' } }) }));
+
 vi.mock('@/lib/supabase', () => ({ supabase: mocks }));
-vi.mock('./ExternalLikeButton', () => ({ ExternalLikeButton: ({ post }: any) => <button aria-label="いいね" data-target={post.id}>♡ {post.likesCount}</button> }));
-vi.mock('./Commentlikebutton', () => ({ Commentlikebutton: () => { throw new Error('External reply must not use native comment likes'); } }));
-vi.mock('@/components/feed/RepostButton', () => ({ RepostButton: () => null }));
-vi.mock('./ReplyShare', () => ({ ReplyShare: () => <button>返信を共有</button> }));
-vi.mock('./LinkPreviewCard', () => ({ useLinkPreview: () => ({ preview: null, text: (value: string) => value }), LinkPreviewCard: () => null }));
-vi.mock('@/components/feed/PostImages', () => ({ PostImages: ({ urls }: any) => <div>{urls.map((url: string) => <img key={url} src={url} alt="返信の画像" />)}</div> }));
-import { ExternalReplyList } from './ExternalReplyList';
+
+
+
+
+
+
+import { ExternalReplyList } from "@/components/post/ExternalReplyList";
 const author = { id: 'bsky-user:person', username: 'person.bsky.social', displayName: '返信者', avatarUrl: '', coverUrl: '', bio: '', createdAt: '2026-10-01', isOfficial: false };
 const parent: any = { id: 'bsky:at://did:plc:parent/app.bsky.feed.post/root', author: { ...author, username: 'parent.bsky.social' } };
 function Path() { return <output aria-label="path">{useLocation().pathname}</output>; }

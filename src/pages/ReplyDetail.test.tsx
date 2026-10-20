@@ -1,3 +1,28 @@
+vi.mock("@/components/feed/PostCard", async importOriginal => ({...await importOriginal<typeof import("@/components/feed/PostCard")>(), PostCard: () => <div>original post</div>}));
+vi.mock("@/hooks/useFeed", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/hooks/useFeed")>();
+ const overrides = [
+  await (async importOriginal => ({...await importOriginal<typeof import("@/hooks/useFeed")>(), usePost: () => ({ data: state.accessible ? { id: 'root' } : undefined, isLoading: false })}))(importOriginal),
+  await (() => ({ useComments: () => ({ data: state.comments, isLoading: false }) }))()
+ ];
+ return Object.assign({}, actual, ...overrides.map(values => Object.fromEntries(Object.entries(values).filter(([key, value]) => value !== actual[key]))));
+});
+vi.mock("@/components/post/CommentForm",()=>({CommentForm:({parentCommentId,postId}:any)=><div>reply to {parentCommentId} in {postId}</div>}));
+vi.mock("@/components/layout/DesktopLayoutContext", async importOriginal => ({...await importOriginal<typeof import("@/components/layout/AppLayout")>(), useDesktopLayout: () => true}));
+vi.mock("@/components/post/CommentList", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/components/post/CommentList")>();
+ const overrides = [
+  await (() => ({
+  CommentCard: ({ comment, detail }: { comment: { content: string }; detail: boolean }) => <div data-testid={detail ? "detail" : "ancestor"}>{comment.content}</div>,
+  CommentList: ({ parentCommentId }: { parentCommentId: string }) => <div>children of {parentCommentId}</div>,
+}))(),
+  await (() => ({ CommentForm: ({ parentCommentId, postId }: { parentCommentId: string; postId: string }) => <div>reply to {parentCommentId} in {postId}</div> }))(),
+  await (() => ({ ReplyChain: ({ children }: { children: React.ReactNode }) => <div data-lime-reply-chain>{children}</div> }))()
+ ];
+ return Object.assign({}, actual, ...overrides.map(values => Object.fromEntries(Object.entries(values).filter(([key, value]) => value !== actual[key]))));
+});
+
+vi.mock("@/hooks/useAuth", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useAuth")>(), useAuth: () => ({ user: { id: 'viewer' } })}));
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -7,18 +32,15 @@ const state = vi.hoisted(() => ({
   accessible: true,
   resizes: [] as (() => void)[],
 }));
-vi.mock('@/hooks/useComments', () => ({ useComments: () => ({ data: state.comments, isLoading: false }) }));
-vi.mock('@/hooks/useFeed', () => ({ usePost: () => ({ data: state.accessible ? { id: 'root' } : undefined, isLoading: false }) }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ user: { id: 'viewer' } }) }));
-vi.mock('@/components/layout/DesktopLayoutContext', () => ({ useDesktopLayout: () => true }));
-vi.mock('@/components/feed/PostCard', () => ({ PostCard: () => <div>original post</div> }));
-vi.mock('@/components/post/CommentList', () => ({
-  CommentCard: ({ comment, detail }: { comment: { content: string }; detail: boolean }) => <div data-testid={detail ? "detail" : "ancestor"}>{comment.content}</div>,
-  CommentList: ({ parentCommentId }: { parentCommentId: string }) => <div>children of {parentCommentId}</div>,
-}));
-vi.mock('@/components/post/CommentForm', () => ({ CommentForm: ({ parentCommentId, postId }: { parentCommentId: string; postId: string }) => <div>reply to {parentCommentId} in {postId}</div> }));
-vi.mock('@/components/post/ReplyChain', () => ({ ReplyChain: ({ children }: { children: React.ReactNode }) => <div data-lime-reply-chain>{children}</div> }));
-import { ReplyDetail } from './ReplyDetail';
+
+
+
+
+
+
+
+
+import { ReplyDetail } from "@/pages/PostDetail";
 beforeEach(() => {
   state.accessible = true;
   Element.prototype.scrollIntoView = vi.fn();

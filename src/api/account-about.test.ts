@@ -4,7 +4,7 @@ vi.mock('@/lib/supabase', () => ({ supabase: {
   from: (table:string) => { state.table=table; const q = { select: (columns:string) => {state.columns=columns;return q;}, eq: () => q, maybeSingle: async () => ({ data: state.row, error: null }) }; return q; },
   rpc: state.rpc,
 } }));
-import { countryName, detectCountry, syncAccountConnection, getAccountAbout } from './account-about';
+import { countryName, detectCountry, syncAccountConnection, getAccountAbout } from "@/api/users";
 const fetchMock = vi.fn();
 beforeEach(() => {
   vi.stubEnv('VITE_ACCOUNT_COUNTRY_LOOKUP_ENABLED', 'true');

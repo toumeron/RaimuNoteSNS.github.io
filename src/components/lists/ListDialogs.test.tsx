@@ -1,12 +1,21 @@
+vi.mock("@/api/users", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/api/users")>();
+ return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/api/users")>(), saveList:mocks.save, setListMember:mocks.member, searchListUsers:mocks.search, discardListCover:vi.fn()}))(importOriginal)};
+});
+vi.mock("@/hooks/useTopics", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useTopics")>(), useLists:()=>({data:[list],isLoading:false,isError:false}), useInvalidateLists:()=>mocks.invalidate}));
+
+vi.mock("@/hooks/useAuth", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useAuth")>(), useAuth:()=>({user:{id:'owner'}})}));
+
+
 import {MemoryRouter} from 'react-router-dom';
 import {render,screen,fireEvent,waitFor,cleanup} from '@testing-library/react';
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
 import {afterEach,beforeEach,it,expect,vi} from 'vitest';
 const mocks=vi.hoisted(()=>({save:vi.fn(),member:vi.fn(),search:vi.fn(),invalidate:vi.fn()}));
 const list={id:'list',owner_id:'owner',name:'いつもの',description:'',is_private:true,members:[{id:'alice',username:'alice',displayName:'Alice'}],owner:{username:'owner',display_name:'Owner',avatar_url:''}};
-vi.mock('@/hooks/useAuth',()=>({useAuth:()=>({user:{id:'owner'}})}));
-vi.mock('@/hooks/useLists',()=>({useLists:()=>({data:[list],isLoading:false,isError:false}),useInvalidateLists:()=>mocks.invalidate}));
-vi.mock('@/api/lists',()=>({saveList:mocks.save,setListMember:mocks.member,searchListUsers:mocks.search,discardListCover:vi.fn()}));
+
+
+
 import {ListEditor,ListMembers,ProfileListPicker,ListMemberRow} from './ListDialogs';
 function mount(ui:React.ReactNode){return render(<MemoryRouter><QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}>{ui}</QueryClientProvider></MemoryRouter>);}
 beforeEach(()=>{vi.clearAllMocks();mocks.save.mockResolvedValue(list);mocks.member.mockResolvedValue(undefined);mocks.invalidate.mockResolvedValue(undefined);});afterEach(cleanup);

@@ -1,16 +1,19 @@
+vi.mock("@/api/external-posts", async importOriginal => ({...await importOriginal<typeof import("@/api/external-posts")>(), isExternalPostId: (id: string) => id.startsWith('bsky:at://')}));
+
 import { beforeEach, expect, it, vi } from 'vitest';
-const state = vi.hoisted(() => ({ viewer: 'viewer', rows: [] as any[], error: null as any, writes: [] as any[], lookup: vi.fn() }));
+vi.mock("@/lib/bluesky",async original=>({...await original<typeof import("@/lib/bluesky")>(),fetchBlueskyPost:(...args:any[])=>state.externalLookup(...args)}));
+const state = vi.hoisted(() => ({ viewer: 'viewer', rows: [] as any[], error: null as any, writes: [] as any[], externalLookup:vi.fn(), lookup: vi.fn() }));
 vi.mock('@/lib/currentUser', () => ({ getCurrentUserId: async () => state.viewer }));
 vi.mock('./posts', () => ({ getPostById: state.lookup }));
-vi.mock('./external-posts', () => ({ isExternalPostId: (id: string) => id.startsWith('bsky:at://') }));
+
 vi.mock('@/lib/supabase', () => ({ supabase: { from: () => {
   let action = 'select', payload: unknown, start = 0, end = Infinity;
   const filters: unknown[] = [];
   const query = { select: () => query, order: () => query, eq: (key: string, value: string) => { filters.push([key, value]); return query; }, range: (a: number, b: number) => { start = a; end = b; return query; }, insert: (value: unknown) => { action = 'insert'; payload = value; return query; }, delete: () => { action = 'delete'; return query; }, then: (resolve: any) => { if (action !== 'select') state.writes.push({action,payload,filters}); return Promise.resolve({data: action === 'select' ? state.rows.slice(start,end+1) : null,error:state.error}).then(resolve); } };
   return query;
 } } }));
-import { getBookmarkIds, getBookmarkPage, setBookmark } from './bookmarks';
-beforeEach(() => { state.viewer = 'viewer'; state.rows = []; state.error = null; state.writes = []; state.lookup.mockReset().mockImplementation(async (id: string) => ({id,content:'current content'})); });
+import { getBookmarkIds, getBookmarkPage, setBookmark } from "@/api/users";
+beforeEach(() => { state.externalLookup.mockReset().mockResolvedValue(null); state.viewer = 'viewer'; state.rows = []; state.error = null; state.writes = []; state.lookup.mockReset().mockImplementation(async (id: string) => ({id,content:'current content'})); });
 it('saves native posts and replies by reference without retaining restricted content', async () => {
   await setBookmark({id:'native',content:'restricted content',visibility:'following'},true,'viewer');
   await setBookmark({id:'reply:child',content:'reply content'},true,'viewer');
@@ -70,4 +73,26 @@ it('records confirmed bookmark changes, including removals, without learning fai
   state.error=new Error('denied');await expect(setBookmark({id:'native'},true,'viewer')).rejects.toThrow();
   expect(listener).toHaveBeenCalledTimes(2);
  }finally{window.removeEventListener('lime:recommendation-engagement',listener);}
+});
+
+it('retains public quoted posts and media geometry in new bookmarks',async()=>{
+ const parent:any={id:'bsky:at://did/public-parent',visibility:'public',content:'quoted parent',imageUrls:[],author:{id:'parent',token:'private'}};
+ const target:any={id:'bsky:at://did/public-quote',visibility:'public',content:'quote',imageUrls:['https://image.test/a'],imageDimensions:[{width:600,height:900}],author:{id:'author'},isQuote:true,parentId:parent.id,parentPost:parent};
+ await setBookmark(target,true,'viewer');const saved=state.writes[0].payload.external_snapshot;
+ expect(saved.parentPost.content).toBe('quoted parent');expect(saved.parentPost.author.token).toBeUndefined();expect(saved.imageDimensions).toEqual([{width:600,height:900}]);
+});
+it('repairs previously saved external quotes from public source metadata without changing saved rows',async()=>{
+ const id='bsky:at://did/legacy-quote';
+ state.rows=[{id:'bookmark',external_id:id,external_snapshot:{id,visibility:'public',content:'quote',isQuote:true,parentPost:null}}];
+ state.externalLookup.mockResolvedValue({id,visibility:'public',imageUrls:[],content:'quote',author:{id:'author'},isQuote:true,parentPost:{id:'bsky:at://did/parent',content:'parent',visibility:'public',author:{id:'parent'}}});
+ const page=await getBookmarkPage('viewer');expect(page.posts[0].parentPost?.content).toBe('parent');expect(state.writes).toEqual([]);
+});
+
+it('retains the selected account read context when completing a native quote',async()=>{
+ const q:any={select:()=>q,eq:()=>q,order:()=>q,range:async()=>({data:[{id:'saved',post_id:'native-quote'}],error:null})};
+ const context:any={client:{from:()=>q},userId:'other'};
+ state.lookup.mockResolvedValueOnce({id:'native-quote',isQuote:true,parentId:'parent',parentPost:null,visibility:'public',imageUrls:[]}).mockResolvedValueOnce({id:'native-quote',isQuote:true,parentPost:{id:'parent',content:'authorized parent'},visibility:'public',imageUrls:[]});
+ const result=await getBookmarkPage('other',0,20,context);
+ expect(state.lookup.mock.calls).toEqual([['native-quote',context],['native-quote',context]]);
+ expect(result.posts[0].parentPost?.content).toBe('authorized parent');
 });

@@ -1,15 +1,14 @@
-import {isDeferredPrivateMedia,resolvePrivateMediaUrl} from './privateMediaFetch';
-import { randomUUID } from '@/lib/randomUUID';
-import { boundedResponseBlob, ResponseTooLarge } from "@/lib/devFunctionFetch";
-import {supabase} from './supabase';
-import type {LinkPreview} from './linkPreview';
-import type {LiveSpace} from "@/components/spaces/SpaceProvider";
-import type {PostWithAuthor} from '@/types';
-import type {CustomSticker} from './stickers';
+import { isDeferredPrivateMedia, resolvePrivateMediaUrl, boundedResponseBlob, ResponseTooLarge } from "@/lib/privateMediaFetch";
+import { randomUUID, type CustomSticker } from "@/lib/utils";
+import { supabase } from "@/lib/supabase";
+import { type LinkPreview } from "@/lib/mediaThumbnail";
+import { type LiveSpace } from "@/components/spaces/SpaceProvider";
+import { type PostWithAuthor } from "@/types/index";
 
+// offlineBookmarks
 export {isInstalledPwa} from './utils';
-export type OfflineSpaceCard = LiveSpace & {is_active:boolean};
-export type OfflineBookmarks = {userId:string; savedAt:string; posts:PostWithAuthor[]; emojis:CustomSticker[]; linkPreviews?:Record<string,LinkPreview|null>; spaces?:Record<string,OfflineSpaceCard|null>; assets:{url:string;bytes:ArrayBuffer;type:string}[]};
+type OfflineSpaceCard = LiveSpace & {is_active:boolean};
+type OfflineBookmarks = {userId:string; savedAt:string; posts:PostWithAuthor[]; emojis:CustomSticker[]; linkPreviews?:Record<string,LinkPreview|null>; spaces?:Record<string,OfflineSpaceCard|null>; assets:{url:string;bytes:ArrayBuffer;type:string}[]};
 const DATABASE='lime-offline-bookmarks-v1';
 function database():Promise<IDBDatabase> {
   return new Promise((resolve,reject)=>{
@@ -21,7 +20,7 @@ function database():Promise<IDBDatabase> {
   });
 }
 type StoredSnapshot=OfflineBookmarks & {generation?:string;assetUrls?:string[]};
-export async function readOfflineBookmarks(userId:string,includeAssets=true):Promise<OfflineBookmarks|null> {
+async function readOfflineBookmarks(userId:string,includeAssets=true):Promise<OfflineBookmarks|null> {
  const db=await database();
  try{
   // Read the snapshot and its generation in one transaction so a concurrent
@@ -43,7 +42,7 @@ export async function readOfflineBookmarks(userId:string,includeAssets=true):Pro
   });
  }finally{db.close();}
 }
-export async function deleteOfflineBookmarks(userId:string){
+async function deleteOfflineBookmarks(userId:string){
  const db=await database();try{await new Promise<void>((resolve,reject)=>{
   const tx=db.transaction(['accounts','assets'],'readwrite');tx.objectStore('accounts').delete(userId);
   const request=tx.objectStore('assets').openCursor(IDBKeyRange.bound([userId],[userId,'\uffff']));
@@ -51,7 +50,7 @@ export async function deleteOfflineBookmarks(userId:string){
   tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);
  });}finally{db.close();}
 }
-export async function writeOfflineBookmarks(value:OfflineBookmarks){
+async function writeOfflineBookmarks(value:OfflineBookmarks){
  const db=await database(),generation=randomUUID();
  try{
   // Individual asset records and the snapshot commit atomically. A failed save
@@ -71,7 +70,7 @@ export async function writeOfflineBookmarks(value:OfflineBookmarks){
  }finally{db.close();}
 }
 
-export function bookmarkAssetUrls(posts:PostWithAuthor[]):string[] {
+function bookmarkAssetUrls(posts:PostWithAuthor[]):string[] {
   const urls=new Set<string>();
   const visit=(value:unknown,key='')=>{
     if(typeof value==='string' && /image|avatar|cover|thumb/i.test(key) && (/^https?:\/\//.test(value)||isDeferredPrivateMedia(value)))urls.add(value);
@@ -100,7 +99,7 @@ async function downloadImage(url:string,signal:AbortSignal){
   return {bytes:await data.arrayBuffer(),type};
  }
 }
-export async function downloadBookmarkAssets(urls:string[],onProgress:(done:number,total:number)=>void):Promise<OfflineBookmarks['assets']> {
+async function downloadBookmarkAssets(urls:string[],onProgress:(done:number,total:number)=>void):Promise<OfflineBookmarks['assets']> {
   const assets:OfflineBookmarks['assets']=[];
   let done=0,totalBytes=0;
   if(urls.length>2000)throw new Error('画像が多すぎます。保存対象を減らしてください');
@@ -116,7 +115,7 @@ export async function downloadBookmarkAssets(urls:string[],onProgress:(done:numb
   }));
   return assets;
 }
-export function openOfflineBookmarks(value:OfflineBookmarks) {
+function openOfflineBookmarks(value:OfflineBookmarks) {
   const media=new Map(value.assets.map(asset=>[asset.url,URL.createObjectURL(new Blob([asset.bytes],{type:asset.type}))]));
   const replace=(input:unknown):unknown=>{
     if(typeof input==='string')return media.get(input)??input;
@@ -126,3 +125,25 @@ export function openOfflineBookmarks(value:OfflineBookmarks) {
   };
   return {userId:value.userId,bookmarkIds:value.posts.map(post=>post.id),posts:replace(value.posts) as PostWithAuthor[],spaces:replace(value.spaces??{}) as Record<string,OfflineSpaceCard|null>,linkPreviews:replace(value.linkPreviews??{}) as Record<string,LinkPreview|null>,emojis:value.emojis,media,release:()=>media.forEach(url=>URL.revokeObjectURL(url))};
 }
+
+// chatImageStore
+type ImageRecord={account:string;bytes:ArrayBuffer;type:string;savedAt:number};
+const key=(account:string,url:string)=>JSON.stringify([account,url]);
+async function chatImageStoreDatabase(){return await new Promise<IDBDatabase>((resolve,reject)=>{const r=indexedDB.open('lime-chat-images',1);r.onupgradeneeded=()=>r.result.createObjectStore('images').createIndex('age',['account','savedAt']);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)});}
+async function readChatImage(account:string,url:string):Promise<Blob|undefined>{
+ const db=await chatImageStoreDatabase();return await new Promise((resolve,reject)=>{const tx=db.transaction('images','readonly'),r=tx.objectStore('images').get(key(account,url));let record:ImageRecord|undefined;r.onsuccess=()=>{record=r.result};tx.oncomplete=()=>{db.close();resolve(record?new Blob([record.bytes],{type:record.type}):undefined)};tx.onabort=()=>{db.close();reject(tx.error)}});
+}
+async function writeChatImage(account:string,url:string,blob:Blob){
+ const record:ImageRecord={account,bytes:await blob.arrayBuffer(),type:blob.type,savedAt:Date.now()};const db=await chatImageStoreDatabase();return await new Promise<void>((resolve,reject)=>{const tx=db.transaction('images','readwrite'),s=tx.objectStore('images');s.put(record,key(account,url));const keys=s.index('age').getAllKeys(IDBKeyRange.bound([account,0],[account,Number.MAX_SAFE_INTEGER]));keys.onsuccess=()=>{for(const k of keys.result.slice(0,Math.max(0,keys.result.length-64)))s.delete(k)};tx.oncomplete=()=>{db.close();resolve()};tx.onabort=()=>{db.close();reject(tx.error)}});
+}
+
+export { readOfflineBookmarks };
+export { deleteOfflineBookmarks };
+export { writeOfflineBookmarks };
+export { bookmarkAssetUrls };
+export { downloadBookmarkAssets };
+export { openOfflineBookmarks };
+export type { OfflineSpaceCard };
+export type { OfflineBookmarks };
+export { readChatImage };
+export { writeChatImage };

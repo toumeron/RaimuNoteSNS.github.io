@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { clearPrivateMedia, createPrivateMediaFetch, MEDIA_PREFIX, resolvePrivateMediaUrl, isDeferredPrivateMedia } from "@/lib/privateMediaFetch";
-import { boundedResponseBlob, ResponseTooLarge, createDevFunctionFetch } from "@/lib/devFunctionFetch";
+import { afterEach, beforeEach, expect, it, vi, describe } from "vitest";
+import { clearPrivateMedia, createSupabaseReadFetch, createPrivateMediaFetch, MEDIA_PREFIX, privateMediaReference, resolvePrivateMediaUrl, isDeferredPrivateMedia, boundedResponseBlob, ResponseTooLarge, createDevFunctionFetch } from "@/lib/privateMediaFetch";
+import { randomUUID } from "@/lib/utils";
 
+describe("privateMediaFetch", () => {
 describe("privateMediaFetch", () => {
 const path='11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/33333333-3333-4333-8333-333333333333.png';
 const ref=MEDIA_PREFIX+path;
@@ -128,4 +129,121 @@ it('does not proxy storage, database, other functions or other hosts', async () 
     expect(transport).toHaveBeenLastCalledWith(url, undefined);
   }
 });
+});
+});
+
+describe("randomUUID", () => {
+afterEach(() => vi.unstubAllGlobals());
+const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+describe('UUID compatibility', () => {
+  it('uses the native method when available', () => {
+    const native = vi.fn(() => 'native-uuid');
+    vi.stubGlobal('crypto', { randomUUID: native });
+    expect(randomUUID()).toBe('native-uuid');
+    expect(native).toHaveBeenCalledOnce();
+  });
+  it('uses random bytes when LAN HTTP omits randomUUID', () => {
+    let sequence = 0;
+    const getRandomValues = vi.fn((bytes: Uint8Array) => {
+      bytes.fill(++sequence);
+      return bytes;
+    });
+    vi.stubGlobal('crypto', { getRandomValues });
+    const first = randomUUID();
+    const second = randomUUID();
+    expect(first).toMatch(uuidV4);
+    expect(second).toMatch(uuidV4);
+    expect(second).not.toBe(first);
+    expect(getRandomValues).toHaveBeenCalledTimes(2);
+  });
+  it('does not crash if crypto is unavailable', () => {
+    vi.stubGlobal('crypto', undefined);
+    expect(randomUUID()).toMatch(uuidV4);
+  });
+});
+});
+
+describe('Supabase usage without stale or shared private responses', () => {
+ const db='https://example.supabase.co';
+ it('shares overlapping reads, gives each reader a consumable body, and reads fresh data afterwards', async () => {
+  let finish!:(response:Response)=>void;
+  const transport=vi.fn().mockImplementationOnce(()=>new Promise<Response>(resolve=>{finish=resolve;})).mockImplementation(async()=>Response.json({version:2}));
+  const fetcher=createSupabaseReadFetch(db,transport);
+  const one=fetcher(db+'/rest/v1/posts'),two=fetcher(db+'/rest/v1/posts');
+  await Promise.resolve();expect(transport).toHaveBeenCalledTimes(1);
+  finish(Response.json({version:1}));
+  expect(await (await one).json()).toEqual({version:1});expect(await (await two).json()).toEqual({version:1});
+  expect(await (await fetcher(db+'/rest/v1/posts')).json()).toEqual({version:2});expect(transport).toHaveBeenCalledTimes(2);
+ });
+ it('isolates credentials, ranges and HEAD/GET, and leaves other origins untouched', async () => {
+  const transport=vi.fn().mockImplementation(async()=>Response.json([])),fetcher=createSupabaseReadFetch(db,transport);
+  const reads=[fetcher(db+'/rest/v1/posts',{headers:{authorization:'Bearer a'}}),fetcher(db+'/rest/v1/posts',{headers:{authorization:'Bearer b'}}),fetcher(db+'/rest/v1/posts',{headers:{authorization:'Bearer a',range:'0-19'}}),fetcher(db+'/rest/v1/posts',{method:'HEAD',headers:{authorization:'Bearer a'}}),fetcher('https://other.example/rest/v1/posts')];
+  await Promise.all(reads);expect(transport).toHaveBeenCalledTimes(5);
+ });
+ it('keeps another consumer alive when only one reader is cancelled', async () => {
+  let finish!:(response:Response)=>void;
+  const transport=vi.fn().mockImplementation(()=>new Promise<Response>(resolve=>{finish=resolve;})),fetcher=createSupabaseReadFetch(db,transport);
+  const first=new AbortController(),second=new AbortController();
+  const one=fetcher(db+'/rest/v1/posts',{signal:first.signal}),two=fetcher(db+'/rest/v1/posts',{signal:second.signal});
+  const cancelled=expect(one).rejects.toMatchObject({name:'AbortError'});
+  await Promise.resolve();first.abort();await cancelled;
+  expect(transport.mock.calls[0][1].signal.aborted).toBe(false);
+  finish(Response.json({ok:true}));expect(await (await two).json()).toEqual({ok:true});
+ });
+ it('cancels the underlying read when its last consumer leaves, and permits a replacement read', async () => {
+  const transport=vi.fn().mockImplementation((_input,init)=>new Promise<Response>((_resolve,reject)=>init.signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError'))))),fetcher=createSupabaseReadFetch(db,transport);
+  const controller=new AbortController(),one=fetcher(db+'/rest/v1/posts',{signal:controller.signal});
+  const rejected=expect(one).rejects.toMatchObject({name:'AbortError'});
+  await Promise.resolve();controller.abort();await rejected;expect(transport.mock.calls[0][1].signal.aborted).toBe(true);
+  transport.mockImplementationOnce(async()=>Response.json([]));await fetcher(db+'/rest/v1/posts');expect(transport).toHaveBeenCalledTimes(2);
+ });
+ it('does not share reads across an account reset or either side of a write', async () => {
+  const pending:((response:Response)=>void)[]=[],transport=vi.fn().mockImplementation((_input,init)=>init.method==='POST'?Promise.resolve(Response.json({})):new Promise<Response>(resolve=>pending.push(resolve))),fetcher=createSupabaseReadFetch(db,transport);
+  const one=fetcher(db+'/rest/v1/posts');await Promise.resolve();
+  const write=fetcher(db+'/rest/v1/posts',{method:'POST',body:'{}'});
+  const during=fetcher(db+'/rest/v1/posts');await Promise.resolve();await write;
+  const after=fetcher(db+'/rest/v1/posts');await Promise.resolve();clearPrivateMedia();
+  const account=fetcher(db+'/rest/v1/posts');await Promise.resolve();expect(transport).toHaveBeenCalledTimes(5);
+  pending.forEach(resolve=>resolve(Response.json([])));await Promise.all([one,during,after,account]);
+ });
+ it('keeps error responses and failed reads retryable rather than caching them', async () => {
+  const transport=vi.fn().mockRejectedValueOnce(new TypeError('offline')).mockImplementationOnce(async()=>Response.json({error:'denied'},{status:403})).mockImplementationOnce(async()=>Response.json([])),fetcher=createSupabaseReadFetch(db,transport);
+  await expect(fetcher(db+'/rest/v1/posts')).rejects.toThrow('offline');expect((await fetcher(db+'/rest/v1/posts')).status).toBe(403);expect((await fetcher(db+'/rest/v1/posts')).status).toBe(200);expect(transport).toHaveBeenCalledTimes(3);
+ });
+ it('revalidates an immutable cached image with HEAD and still honours subsequent RLS denial', async () => {
+  clearPrivateMedia();URL.createObjectURL=vi.fn(()=> 'blob:quota-test');URL.revokeObjectURL=vi.fn();
+  const path='11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/33333333-3333-4333-8333-333333333333.png',ref=MEDIA_PREFIX+path;
+  const transport=vi.fn().mockResolvedValueOnce(Response.json({image_urls:[ref]})).mockResolvedValueOnce(new Response('image',{headers:{'content-type':'image/png'}})).mockResolvedValueOnce(Response.json({image_urls:[ref]})).mockResolvedValueOnce(new Response(null,{headers:{'content-type':'image/png'}})).mockResolvedValueOnce(Response.json({image_urls:[ref]})).mockResolvedValueOnce(new Response(null,{status:403}));
+  try {
+   const fetcher=createPrivateMediaFetch(db,transport);
+   expect(await (await fetcher(db+'/rest/v1/posts')).json()).toEqual({image_urls:['blob:quota-test']});
+   expect(await (await fetcher(db+'/rest/v1/posts')).json()).toEqual({image_urls:['blob:quota-test']});
+   expect(transport.mock.calls[1][1].method).toBe('GET');expect(transport.mock.calls[3][1].method).toBe('HEAD');expect(URL.createObjectURL).toHaveBeenCalledOnce();
+   expect(await (await fetcher(db+'/rest/v1/posts')).json()).toEqual({image_urls:[]});expect(transport.mock.calls[5][1].method).toBe('HEAD');
+  } finally {clearPrivateMedia();}
+ });
+});
+
+it('retains per-reader cancellation while a shared JSON body is still streaming',async()=>{
+ const db='https://example.supabase.co';let source!:ReadableStreamDefaultController<Uint8Array>;
+ const bytes=new TextEncoder();
+ const transport=vi.fn().mockImplementation(async()=>new Response(new ReadableStream<Uint8Array>({start(controller){source=controller;controller.enqueue(bytes.encode('{"value":'));}}),{headers:{'content-type':'application/json'}}));
+ const fetcher=createSupabaseReadFetch(db,transport),first=new AbortController();
+ const [one,two]=await Promise.all([fetcher(db+'/rest/v1/posts',{signal:first.signal}),fetcher(db+'/rest/v1/posts')]);
+ const stopped=expect(one.json()).rejects.toMatchObject({name:'AbortError'}),survivor=two.json();
+ first.abort();await stopped;source.enqueue(bytes.encode('1}'));source.close();
+ expect(await survivor).toEqual({value:1});expect(transport).toHaveBeenCalledTimes(1);
+});
+
+it('retains dimensioned attachment references before a deferred download',async()=>{
+ const path='11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/33333333-3333-4333-8333-333333333333--1200x800.png';
+ const ref=MEDIA_PREFIX+path;
+ const transport=vi.fn().mockResolvedValueOnce(Response.json({image_urls:[ref]})).mockResolvedValueOnce(new Response('png',{headers:{'content-type':'image/png'}}));
+ URL.createObjectURL=vi.fn(()=> 'blob:dimensioned');
+ const response=await createPrivateMediaFetch('https://example.supabase.co',transport,true)('https://example.supabase.co/rest/v1/posts');
+ const {image_urls:[token]}=await response.json();
+ expect(privateMediaReference(token)).toBe(ref);expect(transport).toHaveBeenCalledTimes(1);
+ expect(await resolvePrivateMediaUrl(token)).toBe('blob:dimensioned');
+ expect(transport.mock.calls[1][0]).toContain('--1200x800.png');clearPrivateMedia();
 });
