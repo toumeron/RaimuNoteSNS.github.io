@@ -109,7 +109,7 @@ export function AvatarDecorationOverlay({decoration}: {decoration: AvatarDecorat
     className="pointer-events-none absolute z-10 max-w-none select-none object-contain"
     style={{left:`${item.left + decoration.x}%`,top:`${item.top + decoration.y}%`,width:`${item.width}%`,height:`${item.height}%`,transform:`rotate(${decoration.angle}deg) scaleX(${decoration.flip ? -1 : 1})`}}/>;
 }
-if (typeof window !== 'undefined') {
+if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   const refreshSanta = () => {
     if (document.visibilityState === 'hidden') return;
     for (const [key, entry] of santaEntries) if (entry.listeners.size && Date.now() - entry.time > 1000) queueSantaAvatar(key);

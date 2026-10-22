@@ -33,3 +33,17 @@ it('initializes the real post APIs when a provider reads posts before reply expo
  `;
  expect(()=>execFileSync(process.execPath,['--experimental-vm-modules','--input-type=module','-e',script],{encoding:'utf8',stdio:'pipe'})).not.toThrow();
 });
+
+it('loads catalog providers with its minimal window shim and no document',()=>{
+ const script=String.raw`
+ import {createServer} from 'vite';
+ const storage=new Map();
+ globalThis.localStorage={getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)};
+ globalThis.window={location:{origin:'http://localhost:8080',href:'http://localhost:8080'},localStorage,addEventListener(){},removeEventListener(){}};
+ const server=await createServer({server:{middlewareMode:true,hmr:false,ws:false},appType:'custom',define:{'import.meta.env.VITE_SUPABASE_URL':JSON.stringify('https://catalog.invalid'),'import.meta.env.VITE_SUPABASE_ANON_KEY':JSON.stringify('public-catalog-no-authentication')}});
+ try {
+  for(const module of ['/src/lib/bluesky.ts','/src/lib/fxTwitter.ts','/src/lib/utils.ts','/src/lib/recommendationVisual.ts']) await server.ssrLoadModule(module);
+ } finally {await server.close();}
+ `;
+ expect(()=>execFileSync(process.execPath,['--input-type=module','-e',script],{encoding:'utf8',stdio:'pipe',timeout:30000})).not.toThrow();
+},35000);
