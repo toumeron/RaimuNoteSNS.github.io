@@ -1,6 +1,9 @@
 import {beforeEach,expect,it,vi} from 'vitest';
 const fixture=vi.hoisted(()=>({session:{} as object|null,invoke:vi.fn()}));
-vi.mock('./supabase',()=>({supabase:{auth:{getSession:async()=>({data:{session:fixture.session}})},functions:{invoke:fixture.invoke}}}));
+vi.mock("./supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("./supabase")>(),
+  supabase:{auth:{getSession:async()=>({data:{session:fixture.session}})},functions:{invoke:fixture.invoke}}
+}));
 import {misskeyRequest,misskeyProfile,fetchMisskeyTopicPosts} from './misskey';
 beforeEach(()=>{fixture.session={};fixture.invoke.mockReset();vi.unstubAllGlobals();vi.stubGlobal('fetch',vi.fn().mockRejectedValue(new TypeError('CORS unavailable')));});
 it('includes replies in an author profile scan',async()=>{

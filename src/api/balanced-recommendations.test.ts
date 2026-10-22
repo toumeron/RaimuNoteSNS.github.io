@@ -2,7 +2,10 @@ vi.mock("@/api/recommendations", async importOriginal => ({...await importOrigin
 import {beforeEach,expect,it,vi} from 'vitest';
 const mocks=vi.hoisted(()=>({native:vi.fn(),twitter:vi.fn(),prefs:vi.fn()}));
 
-vi.mock('./recommendation-twitter',()=>({getRecommendationTwitterPage:(...args:unknown[])=>mocks.twitter(...args)}));
+vi.mock("@/api/search-news", async importOriginal => ({
+  ...await importOriginal<typeof import("@/api/search-news")>(),
+  getRecommendationTwitterPage:(...args:unknown[])=>mocks.twitter(...args)
+}));
 import {getBalancedRecommendationPage} from './balanced-recommendations';
 import {createRecommendationCursor} from './recommendations';
 const prefs={authors:{},terms:{},followedTopics:['science'] as any};

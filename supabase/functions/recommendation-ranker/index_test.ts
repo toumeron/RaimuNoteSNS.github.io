@@ -1,5 +1,5 @@
 import {handleRecommendationRanker} from './index.ts';
-import {FEATURE_NAMES} from '../_shared/recommendationModel.ts';
+import {FEATURE_NAMES} from "../_shared/chatContext.ts";
 function assert(value:unknown,message='Assertion failed'):asserts value {if(!value)throw new Error(message);}
 const model={version:1,featureNames:FEATURE_NAMES,trainedAt:new Date().toISOString(),metrics:{baselineNdcg:.3,modelNdcg:.5,validationGroups:6},trees:[{split_feature:0,threshold:.5,default_left:true,decision_type:'<=',left_child:{leaf_value:-1},right_child:{leaf_value:1}}]};
 Deno.test('rank endpoint checks JWT; training checks dedicated secret; export contains only numerical observations',async()=>{

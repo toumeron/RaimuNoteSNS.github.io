@@ -1,6 +1,6 @@
 vi.mock("@/components/feed/PostCard", async importOriginal => ({...await importOriginal<typeof import("@/components/feed/PostCard")>(), PostCard:()=>null}));
-vi.mock("@/api/comments", async importOriginal => {
- const actual = await importOriginal<typeof import("@/api/comments")>();
+vi.mock("@/api/external-posts", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/api/external-posts")>();
  const overrides = [
   await (()=>({hasExternalActivity:(id:string)=>id.startsWith('bsky:')||id.startsWith('x:'),getExternalPostActivity:state.external}))(),
   await (() => ({ getCommentLikers: state.replies }))()
@@ -19,10 +19,13 @@ const state = vi.hoisted(() => ({ external:vi.fn(),posts: vi.fn(), replies: vi.f
 vi.mock('@/api/posts', () => ({ getPostLikers: state.posts, getPostQuotes: vi.fn().mockResolvedValue([]), getPostReposters: vi.fn().mockResolvedValue([]) }));
 
 
-vi.mock('@/lib/supabase', () => ({ supabase: {
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase: {
   channel: () => { const channel = { on: (_event: string, _filter: unknown, callback: () => void) => { state.callbacks.push(callback); return channel; }, subscribe: () => channel }; return channel; },
   removeChannel: state.removed,
-} }));
+}
+}));
 
 
 import { PostActivity } from "@/pages/PostDetail";

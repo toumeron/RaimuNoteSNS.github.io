@@ -1,6 +1,9 @@
 import {Blob as NodeBlob} from 'node:buffer';
 import {describe,it,expect,vi} from 'vitest';
-vi.mock('./supabase',()=>({supabase:{auth:{getSession:async()=>({data:{session:{user:{id:'owner'},access_token:'session'}}})}}}));
+vi.mock("./supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("./supabase")>(),
+  supabase:{auth:{getSession:async()=>({data:{session:{user:{id:'owner'},access_token:'session'}}})}}
+}));
 import {accountZip,archiveAssetUrls,exportLocalPreferences,offlineArchiveHtml,redactExport,createAccountExport} from './accountExport';
 
 describe('private offline account export',()=>{

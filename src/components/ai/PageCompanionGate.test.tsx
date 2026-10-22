@@ -3,7 +3,7 @@ import {afterEach,expect,it,vi} from 'vitest';
 const fixture=vi.hoisted(()=>({enabled:false,loaded:0}));
 vi.mock('@/lib/aiFriends',()=>({useCompanion:()=>({enabled:fixture.enabled})}));
 vi.mock('./PageCompanion',()=>{fixture.loaded++;return{PageCompanion:({userId}:any)=><span>Companion {userId}</span>};});
-import {PageCompanion} from './PageCompanionGate';
+import {PageCompanion} from "@/components/layout/AppLayout";
 afterEach(cleanup);
 it('loads companion UI only after it is enabled',async()=>{
  const view=render(<PageCompanion userId="viewer"/>);expect(fixture.loaded).toBe(0);

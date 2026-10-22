@@ -1,5 +1,5 @@
-vi.mock("@/lib/registerPwa", async importOriginal => {
- const actual = await importOriginal<typeof import("@/lib/registerPwa")>();
+vi.mock("@/App", async importOriginal => {
+ const actual = await importOriginal<typeof import("@/App")>();
  const overrides = [
   await (()=>({refreshNotificationBadge:vi.fn().mockResolvedValue(undefined)}))(),
   await (()=>({dismissNotificationToasts:vi.fn()}))()
@@ -8,10 +8,13 @@ vi.mock("@/lib/registerPwa", async importOriginal => {
 });
 import {beforeEach,expect,it,vi} from 'vitest';
 const state=vi.hoisted(()=>({rows:[] as Record<string,unknown>[],actors:[] as Record<string,unknown>[],actorQueries:[] as string[][]}));
-vi.mock('@/lib/supabase',()=>({supabase:{from:(table:string)=>{
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase:{from:(table:string)=>{
  const query={select:()=>query,eq:()=>query,order:()=>query,range:async()=>({data:state.rows,error:null}),in:async(_:string,ids:string[])=>{state.actorQueries.push(ids);return {data:state.actors,error:null};}};
  return query;
-}}}));
+}}
+}));
 
 
 import { getNotifications, markNotificationsRead, markAllNotificationsRead } from "@/api/users";
@@ -39,7 +42,7 @@ it('marks only the receiving account through its own authenticated client',async
  expect(write).toHaveBeenCalledTimes(1);
 });
 it('preserves a failed read and does not refresh its badge as if it succeeded',async()=>{
- const refresh=(await import('@/lib/registerPwa')).refreshNotificationBadge;vi.mocked(refresh).mockClear();
+ const refresh=(await import("@/App")).refreshNotificationBadge;vi.mocked(refresh).mockClear();
  const context={client:{from:()=>({update:()=>({eq:()=>({in:async()=>({error:new Error('offline')})})})})}as never,userId:'saved'};
  await expect(markNotificationsRead('saved',['seen'],context)).rejects.toThrow('offline');expect(refresh).not.toHaveBeenCalled();
 });

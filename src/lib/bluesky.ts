@@ -1,17 +1,17 @@
 import {xProfile as resolveAliasXProfile} from './fxTwitter';
-import {searchAccountAliasHandles} from './accountAliases';
-import {searchSavedAccounts} from './savedAccountSearch';
-import {normalizeAccountText} from './accountSearchRanking';
-import {TransientCache} from './transientCache';
+import {searchAccountAliasHandles} from "@/lib/utils";
+import {searchSavedAccounts} from "@/lib/externalAccounts";
+import {normalizeAccountText} from "@/lib/utils";
+import {TransientCache} from "@/lib/utils";
 import { relayBlueskySearch } from "@/api/search-news";
-import { isAccountReadOnly } from '@/lib/accountSuspension';
+import { isAccountReadOnly } from "@/lib/supabase";
 import { extractPostMapLocation } from "@/lib/mapLocation";
 import { cloudExternalHandles, saveExternalProviderHandles } from './externalAccounts';
 import {externalFetch, accountSearchScore} from './utils';
 import {isXActor,isXId,xFeed,xProfile,xThread,xConversationPage,xFollowList,configuredXHandles,searchX} from './fxTwitter';
 import { searchMisskey, configuredMisskeyHandles, isMisskeyActor, isMisskeyId, misskeyFeed, misskeyProfile, misskeyThread, misskeyFollowList, misskeyRequest, mapMisskeyNote, type MisskeyNote, misskeyEnabled, misskeyViewer, likeMisskey, unlikeMisskey, misskeyFollowState, followMisskey, unfollowMisskey } from './misskey';
 import { singlePreviewUrl, previewUrlMatches, type LinkPreview } from "@/lib/mediaThumbnail";
-import {TOPICS,matchingTopics,type TopicId} from './topics';
+import {TOPICS,matchingTopics,type TopicId} from "@/lib/recommendations";
 import { ACTIVE_ACCOUNT_KEY } from './savedAccounts';
 // 初期状態ではBlueskyアカウントを1件も登録しない。
 // BSKY_AUTHOR_HANDLE は既存コードとの互換性のためだけに残し、既定の登録先には使用しない。

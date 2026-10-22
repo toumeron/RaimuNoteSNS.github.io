@@ -3,6 +3,7 @@ import { ArrowLeft, FileText, ShieldAlert, Scale, ShieldCheck, Eye, HelpCircle, 
 import { Button } from '@/components/ui/button';
 import { Logo } from "@/components/layout/AppLayout";
 
+
 export default function TermsPage() {
   const navigate = useNavigate();
 

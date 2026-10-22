@@ -1,4 +1,4 @@
-import { LIST_MEMBER_LIMIT } from "@/lib/accountSuspension";
+import { LIST_MEMBER_LIMIT } from "@/lib/supabase";
 import { displayUsername } from "@/lib/utils";
 import { ProviderVerificationBadge, Avatar, AvatarImage, AvatarFallback, PrivateAccountBadge } from "@/components/ui/avatar";
 import { Link } from "react-router-dom";

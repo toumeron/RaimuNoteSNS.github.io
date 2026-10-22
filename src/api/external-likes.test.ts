@@ -1,7 +1,10 @@
 import {beforeEach,describe,expect,it,vi} from 'vitest';
 const rpc=vi.hoisted(()=>vi.fn());
 vi.mock('@/lib/currentUser',()=>({getCurrentUserId:async()=> 'viewer'}));
-vi.mock('@/lib/supabase',()=>({supabase:{rpc}}));
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase:{rpc}
+}));
 import { externalLikeSnapshot, getExternalLikeState, setExternalLike } from "@/api/external-posts";
 const post:any={id:'bsky:at://did:plc:artist/app.bsky.feed.post/abc',userId:'bsky:did:plc:artist',visibility:'public',content:'',imageUrls:['https://example.com/art.jpg'],createdAt:'2026-10-09',likesCount:3,author:{id:'artist',username:'artist',isOfficial:true,token:'secret'},token:'secret'};
 beforeEach(()=>rpc.mockReset());

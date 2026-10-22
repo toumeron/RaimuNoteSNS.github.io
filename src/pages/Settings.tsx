@@ -1,10 +1,13 @@
+import { cn } from "@/lib/utils";
+import type { AvatarDecoration } from "@/types/index";
 import { useSharedDisplay, setSharedDisplay } from "@/lib/externalAccounts";
-import { ACCENT_COLORS, useAccentColor, setAccentColor } from "@/components/ui/button";
+import { ACCENT_COLORS, useAccentColor, setAccentColor, useSnowEffect, setSnowEffect } from "@/components/ui/button";
 import { AccountPrivacySettings } from "@/components/profile/ProfileEditor";
 import { NotificationSettings } from "@/components/profile/ProfileEditor";
 import { importedFollowCount, removeImportedFollows, importPublicFollows, setExternalAccountOwner } from '@/lib/externalAccounts';
+import { AVATAR_DECORATIONS, useAvatarDecoration, setAvatarDecorationSnapshot, parseAvatarDecoration } from "@/components/ui/avatar";
 import { uploadProfileMedia } from "@/lib/mediaThumbnail";
-import { getPrivateBotPrompt } from "@/lib/accountSuspension";
+import { getPrivateBotPrompt } from "@/lib/supabase";
 import {createAccountExport,checkExportAbort} from '@/lib/accountExport';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/button";
 import {useQuery, useQueryClient} from '@tanstack/react-query';
@@ -92,6 +95,7 @@ export default function Settings() {
   const { theme, setTheme } = useTheme();
   const sharedDisplay = useSharedDisplay();
   const accentColor=useAccentColor();
+  const snowEnabled = useSnowEffect();
   const navigate = useNavigate();
   const desktop = useDesktopLayout();
   const [settingsParams, setSettingsParams] = useSearchParams();
@@ -813,7 +817,7 @@ export default function Settings() {
 
         <fieldset className="mt-5">
           <legend className="text-sm font-bold">色</legend>
-          <div role="radiogroup" aria-label="テーマの色" className="mt-4 grid grid-cols-6 gap-2">
+          <div role="radiogroup" aria-label="テーマの色" className="mt-4 grid grid-cols-4 gap-2 sm:grid-cols-7">
             {ACCENT_COLORS.map(color=><label key={color.id} title={color.label} className="flex cursor-pointer flex-col items-center gap-2 text-xs">
               <input type="radio" name="accent-color" className="peer sr-only" value={color.id} checked={accentColor===color.id} onChange={()=>setAccentColor(color.id)}/>
               <span className="flex h-9 w-9 items-center justify-center rounded-full peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-background sm:h-12 sm:w-12" style={{backgroundColor:color.color,color:color.id==='yellow'?'#171717':'white'}}>{accentColor===color.id&&<Check className="h-6 w-6" aria-hidden="true"/>}</span>
@@ -902,6 +906,10 @@ export default function Settings() {
             )}
             エフェクトを更新
           </Button>
+          <Button type="button" variant={snowEnabled ? 'outline' : 'default'} aria-pressed={snowEnabled} onClick={() => setSnowEffect(!snowEnabled)}>
+            {snowEnabled ? '解除' : '雪'}
+          </Button>
+          {user && <AvatarDecorationSettings key={user.id} user={user} onSave={decoration => mutateAsync({avatarDecoration: decoration})}/>}
         </div>
       </div>
 
@@ -1125,4 +1133,61 @@ export function ExternalFollowImport({userId,disabled=false,onBusyChange}:{userI
   {progress&&<p role="status" className="text-sm text-muted-foreground">{progress}</p>}
   {results.map(result=><p key={result.provider} role="status" className="text-sm text-muted-foreground">{result.provider}：{result.message}</p>)}
  </form>;
+}
+
+
+export function AvatarDecorationSettings({user,onSave}: {user: Pick<User,'id'|'avatarUrl'|'displayName'>; onSave: (value: AvatarDecoration | null) => Promise<unknown>}) {
+  const saved = useAvatarDecoration(user.id, user.avatarUrl || '');
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [draft, setDraft] = useState<AvatarDecoration | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const preview = (decoration: AvatarDecoration | null, size = 'h-20 w-20 sm:h-24 sm:w-24') => <Avatar decoration={decoration} className={size}>
+    <AvatarImage src={user.avatarUrl} alt={user.displayName} className="object-cover"/>
+    <AvatarFallback>{user.displayName.slice(0,1)}</AvatarFallback>
+  </Avatar>;
+  const save = async (decoration: AvatarDecoration | null) => {
+    if (busy) return;
+    setBusy(true); setError('');
+    try {
+      await onSave(decoration);
+      setAvatarDecorationSnapshot(user.id, decoration);
+      setEditorOpen(false);
+    } catch { setError('デコレーションを保存できませんでした。もう一度お試しください。'); }
+    finally { setBusy(false); }
+  };
+  return <div className="pt-4">
+    <div className="mb-4 flex items-center justify-between gap-3">
+      <h3 className="text-sm font-semibold">デコレーション</h3>
+      {saved && <Button type="button" variant="ghost" disabled={busy} onClick={() => void save(null)}>解除</Button>}
+    </div>
+    <div className="grid grid-cols-2 gap-3 sm:gap-4" aria-label="デコレーション一覧">
+      {AVATAR_DECORATIONS.map(item => <button type="button" key={item.type} aria-label={item.label} aria-pressed={saved?.type === item.type} disabled={busy}
+        onClick={() => {setError('');setDraft(saved?.type === item.type ? {...saved} : parseAvatarDecoration(item.type));setEditorOpen(true);}}
+        className={cn('flex min-h-[170px] flex-col items-center gap-10 rounded-2xl border-2 bg-background px-3 pb-8 pt-5 transition-colors hover:border-primary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60 sm:min-h-[210px] sm:gap-12 sm:pb-10 sm:pt-6',saved?.type === item.type ? 'border-primary' : 'border-border')}>
+        <span aria-hidden="true" className="text-xl">{item.symbol}</span>
+        {preview(saved?.type === item.type ? saved : parseAvatarDecoration(item.type))}
+      </button>)}
+    </div>
+    {error && !editorOpen && <p role="alert" className="mt-3 text-sm text-destructive">{error}</p>}
+    <Dialog open={editorOpen} onOpenChange={setEditorOpen}>
+      <DialogContent className="avatar-decoration-editor max-h-[90dvh] w-[calc(100vw-24px)] max-w-[480px] overflow-y-auto rounded-3xl p-0">
+        <DialogHeader className="avatar-decoration-heading px-6 py-5 text-left"><DialogTitle><span className="sr-only">デコレーションの編集</span></DialogTitle><DialogDescription className="sr-only">角度・位置・反転を調整して付けます</DialogDescription></DialogHeader>
+        {draft && <>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <div className="flex justify-center px-6 pb-6 pt-10">{preview(draft,'h-24 w-24 sm:h-28 sm:w-28')}</div>
+          <div className="space-y-4 px-6 pb-6">
+            {([{key:'angle',label:'角度',min:-180,max:180},{key:'x',label:'X 位置',min:-100,max:100},{key:'y',label:'Y 位置',min:-100,max:100}] as const).map(control => <label key={control.key} className="block space-y-2 text-sm font-medium">
+              <span>{control.label}</span>
+              <span className="flex min-h-12 items-center rounded-xl border border-border px-4"><input type="range" aria-label={control.label} min={control.min} max={control.max} step="1" value={draft[control.key]} className="w-full accent-primary" onChange={event => setDraft({...draft,[control.key]:Number(event.target.value)})}/></span>
+            </label>)}
+            <label className="flex cursor-pointer items-center gap-3 text-sm font-medium"><input type="checkbox" role="switch" aria-label="反転" checked={draft.flip} onChange={event => setDraft({...draft,flip:event.target.checked})} className="peer sr-only"/><span aria-hidden="true" className="relative h-6 w-11 rounded-full bg-muted transition-colors after:absolute after:left-1 after:top-1 after:h-4 after:w-4 after:rounded-full after:bg-muted-foreground after:transition-transform peer-checked:bg-primary/40 peer-checked:after:translate-x-5 peer-checked:after:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-ring"/>反転</label>
+            {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+          </div>
+          </div>
+          <div className="avatar-decoration-footer flex shrink-0 justify-center border-t border-border px-6 py-4"><Button type="button" disabled={busy} onClick={() => void save(draft)} className="min-w-32 rounded-full">{busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Check className="mr-2 h-4 w-4"/>}付ける</Button></div>
+        </>}
+      </DialogContent>
+    </Dialog>
+  </div>;
 }

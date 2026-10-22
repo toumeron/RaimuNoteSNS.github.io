@@ -20,13 +20,16 @@ vi.mock('@/lib/currentUser', () => ({ getCurrentUserId: async () => 'author' }))
 
 
 
-vi.mock('@/lib/supabase', () => ({ supabase: {
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase: {
   from: () => {
     const query = { select: () => query, eq: () => query, in: () => query, order: () => query, then: (resolve: (value: unknown) => void) => Promise.resolve({ data: [], error: null }).then(resolve) }; return query;
   },
   channel: () => { const channel = { on: () => channel, subscribe: () => channel }; return channel; },
   removeChannel: vi.fn(),
-} }));
+}
+}));
 import { CommentCard } from './CommentList';
 const comment = { id: 'reply-id', postId: 'original', userId: 'author', content: '返信本文をクリック', createdAt: '2026-10-02T00:00:00Z', likesCount: 1, likedByMe: false, imageUrls: ['https://example.com/image.png'], author: { id: 'author', username: 'author', displayName: 'Author', avatarUrl: '', createdAt: '' } };
 function Location() { const location = useLocation(); return <output data-testid="location">{location.pathname}{location.search}</output>; }

@@ -3,10 +3,13 @@ import {MemoryRouter} from 'react-router-dom';
 import {afterEach,expect,it,vi} from 'vitest';
 const fixture=vi.hoisted(()=>({viewer:'viewer',loaded:0}));
 vi.mock('@/hooks/useAuth',()=>({useAuth:()=>({user:{id:fixture.viewer}})}));
-vi.mock('@/components/stickers/Stickers',async()=>({OfflineBookmarkContext:(await import('react')).createContext(null)}));
+vi.mock("@/components/feed/QuotedPost", async importOriginal => ({
+  ...await importOriginal<typeof import("@/components/feed/QuotedPost")>(),
+  OfflineBookmarkContext:(await import('react')).createContext(null)
+}));
 vi.mock('./MediaLightbox',()=>{fixture.loaded++;return{MediaLightbox:({selection,onClose}:any)=><section role="dialog"><span>{selection.url}</span><button onClick={onClose}>閉じる</button></section>};});
-import {MediaLightboxRoot} from './MediaLightboxRoot';
-import {openMediaViewer} from './openMediaViewer';
+import {MediaLightboxRoot} from "@/App";
+import {openMediaViewer} from "@/lib/mediaThumbnail";
 afterEach(cleanup);
 it('keeps the first open event while lazily loading the viewer and closes on account changes',async()=>{
  const ui=()=> <MemoryRouter><MediaLightboxRoot/></MemoryRouter>;

@@ -13,7 +13,10 @@ vi.mock("@/components/post/CommentList", async importOriginal => {
  return Object.assign({}, actual, ...overrides.map(values => Object.fromEntries(Object.entries(values).filter(([key, value]) => value !== actual[key]))));
 });
 vi.mock("@/components/profile/ProfileHeader", async importOriginal => ({...await importOriginal<typeof import("@/components/profile/ProfileHeader")>(), FollowButton:()=>null}));
-vi.mock("@/api/video-recommendations",()=>({getVideoRecommendationPage:(...args:unknown[])=>mocks.feed(...args)}));
+vi.mock("@/api/recommendations", async importOriginal => ({
+  ...await importOriginal<typeof import("@/api/recommendations")>(),
+  getVideoRecommendationPage:(...args:unknown[])=>mocks.feed(...args)
+}));
 
 vi.mock("@/components/video/PostVideoPlayer", async importOriginal => ({...await importOriginal<typeof import("@/components/video/PostVideoPlayer")>(), VideoLightboxPlayer:({selection,onTap,muted,onMutedChange,suspended}:{selection:{postId:string};onTap:(toggle:()=>void)=>void;muted:boolean;onMutedChange:(value:boolean)=>void;suspended?:boolean})=><><div data-testid={suspended?'preloaded-video':'active-video'} data-muted={String(muted)} onClick={()=>onTap(()=>{})}>{selection.postId}</div>{!suspended&&<button onClick={()=>onMutedChange(!muted)}>テスト音声切替</button>}</>}));
 vi.mock("@/hooks/useAuth", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useAuth")>(), useAuth:()=>({user:{id:'viewer'}})}));

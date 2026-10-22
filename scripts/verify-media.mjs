@@ -251,7 +251,7 @@ await page.screenshot({path:'/private/tmp/lime-video-mobile-zoom.png'});
 await dialog.locator('.lime-media-stage').dblclick({position:{x:195,y:300}});await expect(dialog).not.toHaveClass(/lime-media-zoomed/);
 await swipe(0,-110);await expect(dialog.getByText('投稿者A',{exact:true})).toBeVisible();
 await dialog.getByRole('button',{name:'動画を閉じる'}).click();await expect(dialog).toHaveCount(0);assert.equal(await page.evaluate(()=>document.body.style.overflow),'');
-await page.evaluate(async()=>{const {openMediaViewer}=await import('/RaimuNoteSNS.github.io/src/components/media/openMediaViewer.ts');const url=URL.createObjectURL(window.prepared.poster);openMediaViewer({url,post:window.fixtureFirstPost});});
+await page.evaluate(async()=>{const {openMediaViewer}=await import('/RaimuNoteSNS.github.io/src/lib/mediaThumbnail.ts');const url=URL.createObjectURL(window.prepared.poster);openMediaViewer({url,post:window.fixtureFirstPost});});
 const imageDialog=page.getByRole('dialog',{name:'メディアを拡大表示'});await expect(imageDialog).toBeVisible();assert.deepEqual(await actionStyle(),videoActionStyle,'Image and video actions must use the same background and blur');await imageDialog.getByRole('button',{name:'画像を閉じる'}).click();await expect(imageDialog).toHaveCount(0);
 await page.setViewportSize({width:900,height:620});await page.evaluate(()=>window.showMediaGrid());
 await expect(page.getByText('0:45',{exact:true})).toBeVisible();await expect(page.getByText('1:23',{exact:true})).toBeVisible();

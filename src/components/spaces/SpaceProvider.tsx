@@ -13,7 +13,7 @@ import * as Popover from "@radix-ui/react-popover";
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Switch } from "@/components/ui/button";
-import { OfflineBookmarkContext } from "@/components/stickers/Stickers";
+import { OfflineBookmarkContext } from "@/components/feed/QuotedPost";
 import { spaceLinkIn } from "@/lib/utils";
 import { supabase } from "@/lib/supabase";
 import { useParams } from "react-router-dom";

@@ -1,7 +1,12 @@
-vi.mock("@/lib/accountSuspension", async importOriginal => ({...await importOriginal<typeof import("@/lib/accountSuspension")>(), getPrivateBotPrompt:state.privatePrompt}));
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  getPrivateBotPrompt:state.privatePrompt,
+  supabase:{from:()=>{const query={select:(columns:string)=>{state.selection=columns;return query;},eq:()=>query,single:async()=>({data:{...state.row,...state.patch},error:null}),maybeSingle:async()=>({data:{...state.row,...state.patch},error:null}),update:(patch:Record<string,unknown>)=>{state.patch=patch;return query;}};return query;}}
+}));
 import { beforeEach, expect, it, vi } from 'vitest';
 const state=vi.hoisted(()=>({patch:{} as Record<string,unknown>,selection:'',privatePrompt:vi.fn(),row:{id:'author',username:'author',display_name:'Author',bio:'',location:'ホットプレート'}}));
-vi.mock('@/lib/supabase',()=>({supabase:{from:()=>{const query={select:(columns:string)=>{state.selection=columns;return query;},eq:()=>query,single:async()=>({data:{...state.row,...state.patch},error:null}),maybeSingle:async()=>({data:{...state.row,...state.patch},error:null}),update:(patch:Record<string,unknown>)=>{state.patch=patch;return query;}};return query;}}}));
+
 
 import {getUserByUsername,updateProfile} from './users';
 beforeEach(()=>{state.patch={};state.selection='';state.privatePrompt.mockReset().mockResolvedValue('');});

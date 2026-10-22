@@ -1,7 +1,7 @@
 import { randomUUID } from "@/lib/utils";
 import { useSyncExternalStore, useCallback, useEffect, useState } from "react";
-import { notifySuspendedAction } from "@/lib/accountSuspension";
-import { readChatImage, writeChatImage } from "@/lib/offlineBookmarks";
+import { notifySuspendedAction } from "@/lib/supabase";
+import { readChatImage, writeChatImage } from "@/lib/mediaThumbnail";
 import { boundedResponseBlob } from "@/lib/privateMediaFetch";
 
 // aiFriends

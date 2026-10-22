@@ -4,14 +4,14 @@ import { composerMediaDrop, isVideoAttachment } from "@/components/feed/PostPoll
 import { preparePostVideo, type PreparedVideo } from "@/lib/mediaThumbnail";
 import {PostVideoPlayer} from '@/components/video/PostVideoPlayer';
 import { ScheduleControl, ScheduledPostNotice } from "@/components/feed/PostPoll";
-import { allowAccountWrite } from '@/lib/accountSuspension';
+import { allowAccountWrite } from "@/lib/supabase";
 import { useAutoTextarea } from "@/hooks/useViewportWidth";
 import { ComposerIcon } from "@/components/feed/PostPoll";
 import { PollIcon } from "@/components/feed/PostPoll";
 import { PollEditor, newPollDraft } from "@/components/feed/PostPoll";
 import { validatePollDraft, type PollDraft } from "@/lib/utils";
-import {DraftEmojiText} from "@/components/stickers/Stickers";
-import { StickerPicker, StickerDraft } from '@/components/stickers/Stickers';
+import {DraftEmojiText} from "@/components/feed/QuotedPost";
+import { StickerPicker, StickerDraft } from "@/components/feed/QuotedPost";
 import { appendSticker, insertDraftEmoji, draftEmojiCharacter } from "@/lib/utils";
 import { QuotedPost } from '@/components/feed/QuotedPost';
 import { memo, useCallback, useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type PointerEvent as ReactPointerEvent, type UIEvent as ReactUIEvent } from 'react';

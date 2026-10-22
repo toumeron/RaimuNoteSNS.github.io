@@ -2,7 +2,9 @@ import { beforeEach, expect, it, vi } from 'vitest';
 const db = vi.hoisted(() => ({ existing: false, error: false, writes: [] as { table: string; action: string; payload?: any }[] }));
 vi.mock('@/lib/currentUser', () => ({ getCurrentUserId: async () => 'viewer' }));
 vi.mock('@/lib/bluesky', () => ({ fetchBlueskyPost: async (id: string) => ({id, content:'External original', imageUrls:['https://example.com/image.png'],visibility:'public',source:'bluesky',author:{id:'did:plc:author',username:'author.bsky.social',displayName:'Author'},createdAt:'2026-10-03T00:00:00Z'}) }));
-vi.mock('@/lib/supabase', () => ({ supabase: { from(table: string) {
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase: { from(table: string) {
   let action='select', counting=false, payload: any;
   const builder = {
     select: (_: string, options?: {count?: string}) => {counting=!!options?.count;return builder;},
@@ -14,7 +16,8 @@ vi.mock('@/lib/supabase', () => ({ supabase: { from(table: string) {
         count:counting ? (table==='external_reposts'?2:1) : null,error:db.error?new Error('denied'):null}).then(resolve);
     },
   };return builder;
-} } }));
+} }
+}));
 import { getExternalPost, toggleExternalRepost } from './external-posts';
 const id='bsky:at://did:plc:author/app.bsky.feed.post/original';
 beforeEach(()=>{db.existing=false;db.error=false;db.writes=[];});

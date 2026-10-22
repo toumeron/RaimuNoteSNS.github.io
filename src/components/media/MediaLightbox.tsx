@@ -2,8 +2,8 @@ import { ContentLink } from "@/components/ui/button";
 import { displayUsername } from "@/lib/utils";
 import { usePrivateMediaUrl } from "@/components/ui/avatar";
 import { useVideoMutedPreference } from "@/components/video/PostVideoPlayer";
-import {resolvePrivateMediaUrl} from '@/lib/privateMediaFetch';
-import { getVideoRecommendationPage, type VideoRecommendationCursor } from "@/api/video-recommendations";
+import {resolvePrivateMediaUrl,retainPrivateMediaUrl} from '@/lib/privateMediaFetch';
+import { getVideoRecommendationPage, type VideoRecommendationCursor } from "@/api/recommendations";
 import {twitterReplyUrl} from '@/lib/fxTwitter';
 import { ProviderVerificationBadge } from "@/components/ui/avatar";
 import { VideoLightboxPlayer } from "@/components/video/PostVideoPlayer";
@@ -13,7 +13,7 @@ import { useCachedChatImage } from "@/lib/aiFriends";
 import {forwardRef,type ImgHTMLAttributes} from 'react';
 import { PrivateAccountBadge } from "@/components/ui/avatar";
 import {getBlueskyPostUrl} from '@/lib/bluesky';
-import { OfflineBookmarkContext } from "@/components/stickers/Stickers";
+import { OfflineBookmarkContext } from "@/components/feed/QuotedPost";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { Link } from 'react-router-dom';
@@ -29,17 +29,17 @@ import { PostCard } from '@/components/feed/PostCard';
 import { CommentForm } from "@/components/post/CommentForm";
 import { CommentList, CommentCard } from '@/components/post/CommentList';
 import { FollowButton } from "@/components/profile/ProfileHeader";
-import { renderStickerText } from "@/components/stickers/Stickers";
+import { renderStickerText } from "@/components/feed/QuotedPost";
 import { PostOverlayContext, usePostOverlay } from "@/components/layout/DesktopLayoutContext";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import type { PostWithAuthor } from '@/types';
-import { type MediaViewerSelection } from './openMediaViewer';
+import { type MediaViewerSelection } from "@/lib/mediaThumbnail";
 
 import { containSize, clampPan, focalPan, pinchZoom } from "@/lib/mediaThumbnail";
 
 const CachedLightboxImage=forwardRef<HTMLImageElement,ImgHTMLAttributes<HTMLImageElement>&{account?:string}>(({src,account,...props},ref)=>{const resolved=usePrivateMediaUrl(src);const cached=useCachedChatImage(resolved??'',account);return <img {...props} ref={ref} src={cached||undefined}/>});
 
-export {MediaLightboxRoot} from './MediaLightboxRoot';
+export {MediaLightboxRoot} from "@/App";
 
 export function MediaLightbox({ selection: initialSelection, onClose }: { selection: MediaViewerSelection; onClose: () => void }) {
   const [selection,setSelection]=useState(initialSelection);
@@ -164,6 +164,41 @@ export function MediaLightbox({ selection: initialSelection, onClose }: { select
     measure(); const observer = new ResizeObserver(measure); observer.observe(element);
     return () => observer.disconnect();
   }, []);
+  useEffect(() => {
+    const element = dock.current;
+    if (!element) return;
+    const selector = ':is([data-lime-post-actions],[data-lime-comment-actions])>:nth-child(-n+4):not(:last-child),:is([data-lime-post-actions],[data-lime-comment-actions])>div:last-child>*';
+    const observed = new Set<Element>();
+    let frame = 0, disposed = false;
+    const measure = () => {
+      frame = 0;
+      if (disposed) return;
+      if (!window.matchMedia('(min-width:768px)').matches) {
+        observed.forEach(node => observer?.unobserve(node)); observed.clear(); return;
+      }
+      const next = new Set<Element>();
+      element.querySelectorAll<HTMLElement>(selector).forEach(action => {
+        next.add(action);
+        const bounds = action.getBoundingClientRect();
+        const content = [...action.querySelectorAll<HTMLElement | SVGElement>('svg:not(.twitter-like-effects),.tabular-nums')];
+        content.forEach(node => next.add(node));
+        const rects = content.map(node => node.getBoundingClientRect()).filter(rect => rect.width > 0 && rect.height > 0);
+        if (!rects.length || !bounds.width) return;
+        const left = Math.min(...rects.map(rect => rect.left)), right = Math.max(...rects.map(rect => rect.right));
+        action.style.setProperty('--lime-media-action-width', `${Math.max(40, right - left + 20)}px`);
+        action.style.setProperty('--lime-media-action-left', `${(left + right) / 2 - bounds.left}px`);
+      });
+      for (const node of observed) if (!next.has(node)) { observer?.unobserve(node); observed.delete(node); }
+      for (const node of next) if (!observed.has(node)) { observed.add(node); observer?.observe(node); }
+    };
+    const schedule = () => { if (!disposed && !frame) frame = requestAnimationFrame(measure); };
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(schedule);
+    const mutations = new MutationObserver(schedule);
+    mutations.observe(element, { childList: true, subtree: true, characterData: true });
+    window.addEventListener('resize', schedule);
+    measure();
+    return () => { disposed = true; if (frame) cancelAnimationFrame(frame); observer?.disconnect(); mutations.disconnect(); window.removeEventListener('resize', schedule); };
+  }, []);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef({ x: 0, y: 0, panX: 0, panY: 0, distance: 0, scale: 1, moved: false, pinched: false, focal: { x: 0, y: 0 }, imageHit: false });
   const move = useCallback((delta: number) => {
@@ -224,27 +259,78 @@ export function MediaLightbox({ selection: initialSelection, onClose }: { select
     const { rect, size } = geometry(), current = transform.current;
     return Math.abs(x - rect.left - rect.width / 2 - current.pan.x) <= size.width * current.zoom / 2 && Math.abs(y - rect.top - rect.height / 2 - current.pan.y) <= size.height * current.zoom / 2;
   };
-  // Own the gesture only while this viewer is mounted. Safari's page zoom must
-  // not run alongside the image pinch, and wheel listeners must be non-passive.
+  // Trackpad pinch differs by engine: wheel+Ctrl in Chromium, GestureEvent
+  // in Safari. Touch pointers already own mobile pinch, so do not apply it twice.
   useEffect(() => {
     const element = stage.current;
     if (!element) return;
-    const prevent = (event: Event) => { if (!(event.target instanceof Element && event.target.closest('video,iframe'))) event.preventDefault(); };
-    const wheel = (event: WheelEvent) => {
-      if (!event.ctrlKey && !event.metaKey) return;
-      event.preventDefault();
-      const rect = element.getBoundingClientRect(), previous = transform.current;
-      const next = Math.min(12, Math.max(1, previous.zoom * Math.exp(-event.deltaY / 200)));
-      const focal = { x: event.clientX - rect.left - rect.width / 2, y: event.clientY - rect.top - rect.height / 2 };
-      const size = geometry().size;
-      const nextPan = clampPan(focalPan(previous.pan, previous.zoom, next, focal), size, rect, next);
-      transform.current = { zoom: next, pan: nextPan }; setZoom(next); setPan(nextPan);
+    type NativeGesture = Event & { scale?: number; clientX?: number; clientY?: number };
+    let native: { zoom: number; pan: { x: number; y: number }; focal: { x: number; y: number } } | null = null;
+    let lastPoint: { x: number; y: number } | null = null;
+    let swipe = { distance: 0, at: 0, locked: false };
+    const excluded = (event: Event) => event.target instanceof Element && !!event.target.closest('iframe,button,input,select,textarea,a');
+    const focal = (event: { clientX?: number; clientY?: number }) => {
+      const rect = element.getBoundingClientRect();
+      const point = typeof event.clientX === 'number' && typeof event.clientY === 'number' && (event.clientX !== 0 || event.clientY !== 0) ? { x: event.clientX, y: event.clientY } : lastPoint ?? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      return { x: point.x - rect.left - rect.width / 2, y: point.y - rect.top - rect.height / 2 };
     };
-    const gestures = ['gesturestart', 'gesturechange', 'gestureend', 'touchmove'];
-    gestures.forEach(name => element.addEventListener(name, prevent, { passive: false }));
+    const commit = (next: number, nextPan: { x: number; y: number }) => {
+      const { rect, size } = geometry();
+      const bounded = clampPan(nextPan, size, rect, next);
+      transform.current = { zoom: next, pan: bounded }; setZoom(next); setPan(bounded);
+    };
+    const hover = (event: PointerEvent) => { if (event.pointerType === 'mouse') lastPoint = { x: event.clientX, y: event.clientY }; };
+    const wheel = (event: WheelEvent) => {
+      if (excluded(event)) return;
+      const previous = transform.current, rect = element.getBoundingClientRect();
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? rect.height : 1;
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault();
+        if (native || pointers.current.size > 1 || videoPointers.current.size > 1) return;
+        swipe = { distance: 0, at: 0, locked: false };
+        const next = Math.min(12, Math.max(1, previous.zoom * Math.exp(-event.deltaY * unit / 200)));
+        commit(next, focalPan(previous.pan, previous.zoom, next, focal(event)));
+      } else if (previous.zoom > 1) {
+        event.preventDefault();
+        commit(previous.zoom, { x: previous.pan.x - event.deltaX * unit, y: previous.pan.y - event.deltaY * unit });
+      } else if (!videoMode && Math.abs(event.deltaX) > Math.abs(event.deltaY) * 1.2) {
+        event.preventDefault();
+        const now = Date.now();
+        if (now - swipe.at > 180) swipe = { distance: 0, at: now, locked: false };
+        swipe.at = now;
+        if (swipe.locked) return;
+        swipe.distance += event.deltaX * unit;
+        if (Math.abs(swipe.distance) >= 80) { swipe.locked = true; move(swipe.distance > 0 ? 1 : -1); }
+      }
+    };
+    const gestureStart = (event: NativeGesture) => {
+      if (excluded(event)) return;
+      event.preventDefault(); clearTimeout(tapTimer.current);
+      if (pointers.current.size || videoPointers.current.size) return;
+      const previous = transform.current;
+      native = { zoom: previous.zoom, pan: { ...previous.pan }, focal: focal(event) };
+    };
+    const gestureChange = (event: NativeGesture) => {
+      if (excluded(event)) return;
+      event.preventDefault();
+      if (pointers.current.size || videoPointers.current.size) { native = null; return; }
+      if (!native || typeof event.scale !== 'number' || !Number.isFinite(event.scale) || event.scale <= 0) return;
+      const next = Math.min(12, Math.max(1, native.zoom * event.scale));
+      commit(next, focalPan(native.pan, native.zoom, next, native.focal));
+    };
+    const gestureEnd = (event: Event) => { if (!excluded(event)) event.preventDefault(); native = null; };
+    const preventTouch = (event: Event) => { if (!(event.target instanceof Element && event.target.closest('video,iframe'))) event.preventDefault(); };
+    element.addEventListener('gesturestart', gestureStart, { passive: false });
+    element.addEventListener('gesturechange', gestureChange, { passive: false });
+    element.addEventListener('gestureend', gestureEnd, { passive: false });
+    element.addEventListener('touchmove', preventTouch, { passive: false });
     element.addEventListener('wheel', wheel, { passive: false });
-    return () => { gestures.forEach(name => element.removeEventListener(name, prevent)); element.removeEventListener('wheel', wheel); };
-  }, []);
+    element.addEventListener('pointermove', hover);
+    return () => {
+      element.removeEventListener('gesturestart', gestureStart); element.removeEventListener('gesturechange', gestureChange); element.removeEventListener('gestureend', gestureEnd);
+      element.removeEventListener('touchmove', preventTouch); element.removeEventListener('wheel', wheel); element.removeEventListener('pointermove', hover);
+    };
+  }, [move, videoMode]);
   const replyPostId = post?.replyPostId ?? post?.id;
   const external = !!post && isExternalPostId(post.id);
   const requestReply = () => {
@@ -258,6 +344,8 @@ export function MediaLightbox({ selection: initialSelection, onClose }: { select
     try {
       const source=videoMode?videoSource.current:current.src;if(!source){toast.error('動画の読み込みが完了してからお試しください');return;}
       const resolved=await resolvePrivateMediaUrl(source);if(!resolved)throw new Error('download');
+      const release=retainPrivateMediaUrl(resolved);
+      try{
       const response = await fetch(resolved);
       if (!response.ok) throw new Error('download');
       const blob = await response.blob();
@@ -265,6 +353,7 @@ export function MediaLightbox({ selection: initialSelection, onClose }: { select
       const link = document.createElement('a');
       link.href = url; link.download = `LimeNote-${index + 1}.${blob.type.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg'}`;
       document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      }finally{release();}
     } catch {if(videoMode)toast.error('動画を保存できませんでした');else{toast.error('保存できませんでした。画像を新しいタブで開きます'); window.open(current.src, '_blank', 'noopener,noreferrer');} }
   };
   const postControls = (presentation: 'actions' | 'menu') => post && (post.replyId ?
@@ -277,7 +366,7 @@ export function MediaLightbox({ selection: initialSelection, onClose }: { select
     {user && user.id !== post.userId && <div className="lime-media-follow"><FollowButton userId={post.author.id} /></div>}
   </div> : null;
   const replies = post && !external && !offline && replyPostId ? <><div ref={replyRef}><CommentForm postId={replyPostId} parentCommentId={post.replyId ?? null} variant="mediaViewer" replyTo={post} /></div><CommentList postId={replyPostId} parentCommentId={post.replyId ?? null} mobileFlat /></> : null;
-  return createPortal(<PostOverlayContext.Provider value={quotedPost => { onClose(); openPostOverlay(quotedPost); }}><div ref={root} className={`lime-media-lightbox ${videoMode?'lime-video-mode':''} ${closing ? 'lime-media-closing' : ''} ${zoom > 1 ? 'lime-media-zoomed' : ''} ${controls ? '' : 'lime-media-controls-hidden'} ${details ? '' : 'lime-media-details-hidden'}`} role="dialog" aria-modal="true" aria-busy={videoMode?videoAdvancing:undefined} aria-label={videoMode?'動画を拡大表示':'メディアを拡大表示'}
+  return createPortal(<PostOverlayContext.Provider value={quotedPost => { onClose(); openPostOverlay(quotedPost); }}><div ref={root} className={`lime-media-lightbox ${videoMode?'lime-video-mode':(!current?.type||current.type==='image')?'lime-image-mode':''} ${closing ? 'lime-media-closing' : ''} ${zoom > 1 ? 'lime-media-zoomed' : ''} ${controls ? '' : 'lime-media-controls-hidden'} ${details ? '' : 'lime-media-details-hidden'}`} role="dialog" aria-modal="true" aria-busy={videoMode?videoAdvancing:undefined} aria-label={videoMode?'動画を拡大表示':'メディアを拡大表示'}
     onPointerDownCapture={event=>{
       if(!videoMode||event.button!==0)return;
       const control=(event.target as Element).closest('button,input,select,a,textarea');

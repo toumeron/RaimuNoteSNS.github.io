@@ -1,10 +1,10 @@
 import { createRoot, type Root } from 'react-dom/client';
 import { ThemeProvider } from 'next-themes';
 import { MemoryRouter, Link, Route, Routes } from 'react-router-dom';
-import { CallSessionProvider } from '../../src/components/chat/CallSessionProvider';
+import { CallSessionProvider } from "@/components/layout/AppLayout";
 import ChatPage from '../../src/pages/ChatPage';
 import '../../src/index.css';
-import { IncomingFriendCall } from "@/components/chat/CallSessionProvider";
+import { IncomingFriendCall } from "@/components/layout/AppLayout";
 import { FriendProfile } from '../../src/components/chat/FriendProfile';
 import { findAssistant } from '../../src/lib/aiFriends';
 import { defaultAvatarUrl } from '../../src/lib/aiFriends';

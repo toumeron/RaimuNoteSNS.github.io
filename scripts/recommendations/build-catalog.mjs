@@ -16,7 +16,7 @@ const server=await createServer({server:{middlewareMode:true},appType:'custom',d
 try{
  const bsky=await server.ssrLoadModule('/src/lib/bluesky.ts');
  const {mapXPost}=await server.ssrLoadModule('/src/lib/fxTwitter.ts');
- const {normalizeTimelineBlueskyPost}=await server.ssrLoadModule('/src/lib/timelinePaging.ts');
+ const {normalizeTimelineBlueskyPost}=await server.ssrLoadModule('/src/lib/utils.ts');
  const {classifyRecommendationVisual}=await server.ssrLoadModule('/src/lib/recommendationVisual.ts');
  const prototypes=JSON.parse(await readFile('src/lib/recommendationVisualPrototypes.json','utf8'));
  env.cacheDir=process.env.RECOMMENDATION_MODEL_CACHE||'/private/tmp/lime-clip-cache';

@@ -1,6 +1,9 @@
 import {afterEach,expect,it,vi} from 'vitest';
 const invoke=vi.hoisted(()=>vi.fn());
-vi.mock('./supabase',()=>({supabase:{functions:{invoke}}}));
+vi.mock("./supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("./supabase")>(),
+  supabase:{functions:{invoke}}
+}));
 import { prepareRecommendationImage, recommendationThumbnailUrl } from "@/lib/recommendationVisualInference";
 const image='https://cdn.bsky.app/img/feed_fullsize/plain/did:plc:creator/bafkreipicture@jpeg';
 afterEach(()=>{vi.restoreAllMocks();invoke.mockReset();});

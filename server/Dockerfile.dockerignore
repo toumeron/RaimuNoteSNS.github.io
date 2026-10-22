@@ -4,7 +4,6 @@
 !server/package-lock.json
 !server/external-notifications.mjs
 !server/external-notification-listener.mjs
-!server/external-notification-events.mjs
 !supabase/
 !supabase/functions/
 !supabase/functions/check-external-notifications/

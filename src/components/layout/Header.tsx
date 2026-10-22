@@ -1,72 +1,28 @@
-import {useSearchFollowing} from '@/hooks/useSearchFollowing';
-import {useSearchTermSuggestions} from '@/hooks/useSearchTermSuggestions';
-import {MobileSearchRecents} from '@/components/search/MobileSearchRecents';
-import {recentSearchAccounts,rememberSearchAccount,clearRecentSearchAccounts,RECENT_SEARCH_ACCOUNTS_EVENT} from '@/lib/recentSearchAccounts';
-import {rankAccountSearch} from '@/lib/accountSearchRanking';
+import { useSearchFollowing, useSearchTermSuggestions, useFollowStats } from "@/hooks/useFeed";
+import { recentSearchAccounts, rememberSearchAccount, clearRecentSearchAccounts, RECENT_SEARCH_ACCOUNTS_EVENT, rankAccountSearch, searchPageUrl, displayUsername, MOBILE_DRAWER_EDGE_ZONE, isMobileDrawerBlocked, cn } from "@/lib/utils";
 import { observeDocumentHeight } from "@/hooks/useViewportWidth";
-import { StockSuggestion } from "@/components/search/SearchExploreContent";
+import { StockSuggestion, ListHeaderActions, UnreadBadge, NewsHeaderActions, NotificationTabs, TopicTabs, SearchExploreTabs } from "@/components/search/SearchExploreContent";
 import { suggestMarketAssets, type MarketAsset } from "@/api/search-news";
-import { searchPageUrl, displayUsername } from "@/lib/utils";
-import { ProviderVerificationBadge } from "@/components/ui/avatar";
-import { MOBILE_DRAWER_EDGE_ZONE, isMobileDrawerBlocked } from "@/lib/utils";
-import {ProfileListPicker} from '@/components/lists/ListDialogs';
-import { ListHeaderActions } from "@/components/search/SearchExploreContent";
-import { TimelineTabBar } from '@/components/feed/TimelineTabBar';
-import { isFeedTabValue, type FeedTabValue, useTimelineTabs } from "@/components/feed/TimelineTabBar";
-import { PrivateAccountBadge } from "@/components/ui/avatar";
+import { ProviderVerificationBadge, PrivateAccountBadge, Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ProfileListPicker } from "@/components/lists/ListDialogs";
+import { TimelineTabBar, isFeedTabValue, type FeedTabValue, useTimelineTabs } from "@/components/feed/TimelineTabBar";
 import { useMobilePostMenu } from "@/components/feed/RepostButton";
 import { FollowButton } from "@/components/profile/ProfileHeader";
-import { useFollowStats } from "@/hooks/useFeed";
-import { UnreadBadge } from "@/components/search/SearchExploreContent";
-import { NewsHeaderActions } from "@/components/search/SearchExploreContent";
-import { NotificationTabs } from "@/components/search/SearchExploreContent";
-import { TopicTabs } from "@/components/search/SearchExploreContent";
+import { MobileAccountShortcuts, DesktopAccountFooter, Logo } from "@/components/layout/AppLayout";
 import { usePostOverlay } from "@/components/layout/DesktopLayoutContext";
-import { MobileAccountShortcuts } from "@/components/layout/AppLayout";
-import { SearchExploreTabs } from "@/components/search/SearchExploreContent";
 import { useSpaces } from "@/components/spaces/SpaceProvider";
-import { DesktopAccountFooter } from "@/components/layout/AppLayout";
-import type { ReactNode } from 'react';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { createPortal, flushSync } from 'react-dom';
-import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
-import { SETTINGS_GROUPS, SETTINGS_SECTIONS, settingsGroupForSection } from "@/components/ui/button";
-import { Logo } from "@/components/layout/AppLayout";
-import { Button } from '@/components/ui/button';
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/button";
-import { useAuth } from '@/hooks/useAuth';
-import { cn } from '@/lib/utils';
-import { toast } from 'sonner';
-import { supabase } from '@/lib/supabase';
-import { searchExternalUsers } from '@/lib/bluesky';
-import type { User } from '@/types';
-import {
-  ArrowLeft,
-  ArrowUpDown,
-  Check,
-  MoreHorizontal,
-  LogOut,
-  Settings as SettingsIcon,
-  User as UserIcon,
-  Search,
-  Bell,
-  MessageSquare,
-  Images,
-  CircleEllipsis,
-  Bookmark,
-  UserRound,
-  X,
-  Clock,
-  Home,
-  PenSquare,
-  Mic,
-  Hash,
-  MapPin,
-  List,
-} from 'lucide-react';
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal, flushSync } from "react-dom";
+import { Link, useNavigate, useLocation, useSearchParams } from "react-router-dom";
+import { SETTINGS_GROUPS, SETTINGS_SECTIONS, settingsGroupForSection, Button, Tabs, TabsList, TabsTrigger, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/button";
+import { useAuth } from "@/hooks/useAuth";
+import { toast } from "sonner";
+import { supabase } from "@/lib/supabase";
+import { searchExternalUsers } from "@/lib/bluesky";
+import { type User } from "@/types/index";
+import { ArrowLeft, ArrowUpDown, Check, MoreHorizontal, LogOut, Settings as SettingsIcon, User as UserIcon, Search, Bell, MessageSquare, Images, CircleEllipsis, Bookmark, UserRound, X, Clock, Home, PenSquare, Mic, Hash, MapPin, List, ArrowUpLeft } from "lucide-react";
 
+// Header
 type TimelineChromeTheme = 'light' | 'dark';
 
 type TimelineChromeState = {
@@ -2453,7 +2409,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button className="flex h-9 w-9 items-center justify-center rounded-full outline-none sm:h-10 sm:w-10">
-            <Avatar className="h-9 w-9 border-0 sm:h-10 sm:w-10">
+            <Avatar userId={user.id} className="h-9 w-9 border-0 sm:h-10 sm:w-10">
               <AvatarImage src={user.avatarUrl} alt={user.displayName} />
               <AvatarFallback>{user.displayName?.slice(0, 1)}</AvatarFallback>
             </Avatar>
@@ -2527,7 +2483,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
         aria-expanded={isMobileSidebarOpen}
         className="flex h-9 w-9 items-center justify-center rounded-full outline-none"
       >
-        <Avatar className="h-9 w-9 border-0">
+        <Avatar userId={user.id} className="h-9 w-9 border-0">
           <AvatarImage src={user.avatarUrl} alt={user.displayName} />
           <AvatarFallback>{user.displayName?.slice(0, 1)}</AvatarFallback>
         </Avatar>
@@ -3012,7 +2968,6 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
       desktopLayout ? desktopSidebarContainer! : document.body
     );
   };
-
 
 
   const headerContent = (
@@ -3655,4 +3610,19 @@ export function DirectMessagePanelHeader({children,actions,back,className=''}:{c
 /** Profile relationship list uses the existing Header module's panel chrome. */
 export function ProfileListHeader({name,username,back,verification}:{name:string;username:string;back:()=>void;verification?:User['providerVerification']}){
  return <header className="follow-list-heading"><button type="button" aria-label="戻る" onClick={back}><ArrowLeft size={22}/></button><div><h1>{name}<ProviderVerificationBadge verification={verification} className="ml-1 inline-block h-5 w-5 align-text-bottom"/></h1><p>@{displayUsername(username)}</p></div></header>;
+}
+
+
+// MobileSearchRecents
+export function MobileSearchRecents({accounts,history,onClear,onAccount,onSearch,onFill}:{accounts:User[];history:string[];onClear:()=>void;onAccount:(user:User)=>void;onSearch:(value:string)=>void;onFill:(value:string)=>void}){
+ if(!accounts.length&&!history.length)return null;
+ return <section aria-label="最近の検索" className="pb-6">
+  <div className="flex items-center justify-between px-4 pb-4 pt-5"><h2 className="text-xl font-semibold">最近</h2>{(accounts.length>0||history.length>0)&&<button type="button" aria-label="最近の検索をすべて消去" onClick={onClear} className="flex h-8 w-8 items-center justify-center rounded-full bg-muted/70 text-muted-foreground hover:bg-muted"><X className="h-5 w-5"/></button>}</div>
+  {accounts.length>0&&<div className="flex gap-2 overflow-x-auto px-2 pb-4" aria-label="最近検索したアカウント">{accounts.map(account=><button type="button" key={account.id} onClick={()=>onAccount(account)} className="flex w-[100px] shrink-0 flex-col items-center gap-0.5 text-center">
+   <Avatar userId={account.id} className="h-12 w-12"><AvatarImage src={account.avatarUrl} alt="" className="object-cover"/><AvatarFallback className="text-xl">{account.displayName.slice(0,1)}</AvatarFallback></Avatar>
+   <span className="flex w-full min-w-0 items-center justify-center gap-1"><span className="truncate text-[14px] font-normal">{account.displayName}</span><ProviderVerificationBadge verification={account.providerVerification} className="h-4 w-4 shrink-0"/>{account.isOfficial&&<img src={`${import.meta.env.BASE_URL}verified.png`} alt="公式" className="h-4 w-4 shrink-0"/>}</span>
+   <span className="w-full truncate text-xs text-muted-foreground">@{displayUsername(account.username)}</span>
+  </button>)}</div>}
+  {history.map(value=><div key={value} className="flex items-center px-4"><button type="button" onClick={()=>onSearch(value)} className="min-w-0 flex-1 py-3.5 text-left text-[16px] font-normal leading-6"><span className="block truncate">{value}</span></button><button type="button" aria-label={`${value}を検索欄に入力`} onClick={()=>onFill(value)} className="flex h-11 w-11 shrink-0 items-center justify-center text-primary"><ArrowUpLeft className="h-5 w-5"/></button></div>)}
+ </section>;
 }

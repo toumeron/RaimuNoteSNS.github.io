@@ -1,6 +1,9 @@
 import {afterEach,expect,it,vi} from 'vitest';
-const invoke=vi.hoisted(()=>vi.fn());vi.mock('./supabase',()=>({supabase:{functions:{invoke}}}));
-import {bookmarkAssetUrls,downloadBookmarkAssets,isInstalledPwa,openOfflineBookmarks,type OfflineBookmarks} from './offlineBookmarks';
+const invoke=vi.hoisted(()=>vi.fn());vi.mock("./supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("./supabase")>(),
+  supabase:{functions:{invoke}}
+}));
+import {bookmarkAssetUrls,downloadBookmarkAssets,isInstalledPwa,openOfflineBookmarks,type OfflineBookmarks} from "@/lib/mediaThumbnail";
 import type {PostWithAuthor} from '@/types';
 afterEach(()=>{vi.unstubAllGlobals();invoke.mockReset();});
 it('collects unique avatars and media from originals and nested quote snapshots',()=>{

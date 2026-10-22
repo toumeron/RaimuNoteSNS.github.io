@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi, describe } from "vitest";
 import fixtures from "@/lib/fixtures/recommendationVisual.json";
 import { classifyRecommendationVisual } from "@/lib/recommendationVisual";
 import { parseRecommendationCatalog, RECOMMENDATION_CATALOG_MAX_AGE, applyCatalogRecommendationVisuals } from "@/lib/recommendations";
-import { classifyTrendCategory, prepareExploreTrends, rankPersonalTrends } from "@/lib/topics";
+import { classifyTrendCategory, prepareExploreTrends, rankPersonalTrends } from "@/lib/recommendations";
 import { parseGoogleTrends, parseGoogleTrendingPage } from "./../../supabase/functions/get-trends/trends.ts";
 import { type PostWithAuthor } from "@/types/index";
 import { searchProviderBatch } from "@/api/search-news";
@@ -250,5 +250,19 @@ it('does not repeatedly request a failed image when scrolling reaches it again',
  await vi.advanceTimersByTimeAsync(60001);
  const retry=enrichRecommendationVisuals([recommendationVisualInferenceTestPost('failed-recovered','failed-shared')],['digital-illustration']);
  expect(workers).toHaveLength(2);workers[1].finish();expect((await retry)[0].recommendationVisualStatus).toBe('checked');
+});
+
+it('releases an idle PWA model on hide, without interrupting an active analysis',async()=>{
+ vi.stubGlobal('Worker',FakeWorker);vi.stubGlobal('navigator',{standalone:true});
+ const hidden=vi.spyOn(document,'hidden','get').mockReturnValue(false);
+ try{
+  warmRecommendationVisualWorker();const first=workers[0];
+  hidden.mockReturnValue(true);document.dispatchEvent(new Event('visibilitychange'));expect(first.terminate).toHaveBeenCalledOnce();
+  warmRecommendationVisualWorker();expect(workers).toHaveLength(1);
+  hidden.mockReturnValue(false);
+  const job=enrichRecommendationVisuals([recommendationVisualInferenceTestPost('pwa-background-active')],['digital-illustration']);const current=workers[1];
+  hidden.mockReturnValue(true);document.dispatchEvent(new Event('visibilitychange'));expect(current.terminate).not.toHaveBeenCalled();
+  current.finish();expect((await job)[0].recommendationVisualStatus).toBe('checked');expect(current.terminate).toHaveBeenCalledOnce();
+ }finally{hidden.mockRestore();}
 });
 });

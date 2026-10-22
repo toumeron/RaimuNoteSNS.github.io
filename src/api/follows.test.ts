@@ -1,11 +1,14 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 const fixture=vi.hoisted(()=>({currentId:'viewer' as string|null,calls:[] as string[]}));
 vi.mock('@/lib/currentUser',()=>({getCurrentUserId:async()=>fixture.currentId}));
-vi.mock('@/lib/supabase',()=>({supabase:{rpc:async()=>({data:{followed:fixture.currentId!==null,requested:false,canView:true},error:null}),from:(table:string)=>{
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase:{rpc:async()=>({data:{followed:fixture.currentId!==null,requested:false,canView:true},error:null}),from:(table:string)=>{
  fixture.calls.push(table);let counting=false;
  const query={select:(_columns:string,options?:{count?:string})=>{counting=!!options?.count;return query;},eq:()=>query,maybeSingle:()=>query,then:(resolve:(value:unknown)=>void)=>Promise.resolve({data:counting?null:{follower_id:'viewer'},count:counting?5:null,error:null}).then(resolve)};
  return query;
-}}}));
+}}
+}));
 
 import { getFollowStats } from "@/api/users";
 beforeEach(()=>{fixture.currentId='viewer';fixture.calls=[];});

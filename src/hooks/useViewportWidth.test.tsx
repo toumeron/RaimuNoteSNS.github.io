@@ -118,3 +118,24 @@ describe('installed PWA state',()=>{
   view.unmount();
  });
 });
+
+describe('pooled element visibility',()=>{
+ afterEach(()=>{vi.unstubAllGlobals();});
+ it('shares one observer for 200 thumbnails and releases it after the last thumbnail leaves',async()=>{
+  const {observeElementVisibility}=await import('./useViewportWidth');const created:any[]=[];
+  vi.stubGlobal('IntersectionObserver',class{observe=vi.fn();unobserve=vi.fn();disconnect=vi.fn();constructor(public callback:any){created.push(this);}});
+  const nodes=Array.from({length:200},()=>document.createElement('div')),changed=vi.fn();
+  const stops=nodes.map(node=>observeElementVisibility(node,changed,'160px'));expect(created).toHaveLength(1);expect(created[0].observe).toHaveBeenCalledTimes(200);
+  created[0].callback([{target:nodes[0],isIntersecting:true}]);expect(changed).toHaveBeenCalledWith(true);
+  stops[0]();stops[0]();expect(created[0].unobserve).toHaveBeenCalledTimes(1);
+  created[0].callback([{target:nodes[0],isIntersecting:true}]);expect(changed).toHaveBeenCalledTimes(1);
+  stops.slice(1).forEach(stop=>stop());expect(created[0].disconnect).toHaveBeenCalledTimes(1);
+  const stop=observeElementVisibility(nodes[0],changed,'160px');expect(created).toHaveLength(2);stops[0]();expect(created[1].disconnect).not.toHaveBeenCalled();stop();
+ });
+ it('keeps the observation until both consumers of the same element leave',async()=>{
+  const {observeElementVisibility}=await import('./useViewportWidth');let callback:any;const unobserve=vi.fn(),disconnect=vi.fn();
+  vi.stubGlobal('IntersectionObserver',class{observe(){}unobserve=unobserve;disconnect=disconnect;constructor(cb:any){callback=cb;}});
+  const node=document.createElement('div'),a=vi.fn(),b=vi.fn();const stopA=observeElementVisibility(node,a),stopB=observeElementVisibility(node,b);
+  callback([{target:node,isIntersecting:true}]);stopA();expect(unobserve).not.toHaveBeenCalled();callback([{target:node,isIntersecting:false}]);expect(a).toHaveBeenCalledTimes(1);expect(b).toHaveBeenLastCalledWith(false);stopB();expect(unobserve).toHaveBeenCalledTimes(1);expect(disconnect).toHaveBeenCalledTimes(1);
+ });
+});

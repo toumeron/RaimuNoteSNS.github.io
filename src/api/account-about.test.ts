@@ -1,9 +1,12 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({ row: null as Record<string, unknown> | null, rpc: vi.fn(), table: '', columns: '' }));
-vi.mock('@/lib/supabase', () => ({ supabase: {
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase: {
   from: (table:string) => { state.table=table; const q = { select: (columns:string) => {state.columns=columns;return q;}, eq: () => q, maybeSingle: async () => ({ data: state.row, error: null }) }; return q; },
   rpc: state.rpc,
-} }));
+}
+}));
 import { countryName, detectCountry, syncAccountConnection, getAccountAbout } from "@/api/users";
 const fetchMock = vi.fn();
 beforeEach(() => {

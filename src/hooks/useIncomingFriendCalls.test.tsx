@@ -5,7 +5,7 @@ vi.mock("@/lib/callRecorder", async importOriginal => {
 
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { incomingCallDelay, useIncomingFriendCalls } from "@/components/chat/CallSessionProvider";
+import { incomingCallDelay, useIncomingFriendCalls } from "@/components/layout/AppLayout";
 
 beforeEach(() => { vi.useFakeTimers(); localStorage.clear(); Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' }); });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });

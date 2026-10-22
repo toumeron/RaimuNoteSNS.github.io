@@ -1,4 +1,4 @@
-import { decodeHttp } from "./http.ts";
+import { decodeHttp } from "./load.ts";
 import { loadPreview, allowedImage, loadImage, loadMisskey } from "./load.ts";
 import { metadata } from "./metadata.ts";
 function assert(condition:unknown,message='Assertion failed'){if(!condition)throw new Error(message);}

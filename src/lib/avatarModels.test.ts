@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import { inferModelFormat, isSupportedModelFile, unzipModelArchive, pickArchiveModel, createArchiveResolver, zipPath } from "@/lib/avatarModels";
-import { MmdAvatarController, type MmdFrame, type MmdRuntime } from "@/lib/avatarRuntime";
+import { MmdAvatarController, type MmdFrame, type MmdRuntime } from "@/components/ai/AvatarStage";
 import { Bone, BufferGeometry, MeshBasicMaterial, Quaternion, Skeleton, SkinnedMesh, Vector3 } from "three";
 
 describe("avatarModels", () => {

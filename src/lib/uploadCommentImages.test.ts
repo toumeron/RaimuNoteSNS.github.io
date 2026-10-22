@@ -1,7 +1,10 @@
 import {afterEach,beforeEach,describe,it,expect,vi} from 'vitest';
 const state=vi.hoisted(()=>({user:'owner' as string|null,upload:vi.fn(),remove:vi.fn()}));
 vi.mock('./currentUser',()=>({getCurrentUserId:async()=>state.user}));
-vi.mock('./supabase',()=>({supabase:{storage:{from:()=>({upload:state.upload,remove:state.remove})}}}));
+vi.mock("./supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("./supabase")>(),
+  supabase:{storage:{from:()=>({upload:state.upload,remove:state.remove})}}
+}));
 import { uploadCommentImages } from "@/lib/mediaThumbnail";
 beforeEach(()=>{vi.stubGlobal('createImageBitmap',vi.fn().mockResolvedValue({width:1200,height:800,close:vi.fn()}));
  state.user='owner';state.upload.mockReset().mockResolvedValue({error:null});state.remove.mockReset().mockResolvedValue({error:null});

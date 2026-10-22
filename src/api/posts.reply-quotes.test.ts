@@ -3,11 +3,14 @@ import { beforeEach, expect, it, vi } from 'vitest';
 const fixture=vi.hoisted(()=>({visible:true,writes:[] as any[]}));
 vi.mock('@/lib/currentUser',()=>({getCurrentUserId:async()=> 'viewer'}));
 
-vi.mock('@/lib/supabase',()=>({supabase:{from(table:string){let write=false;const b={
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase:{from(table:string){let write=false;const b={
   select:()=>b,eq:()=>b,in:()=>b,single:()=>b,maybeSingle:()=>b,
   insert:(input:any)=>{write=true;fixture.writes.push({table,input});return b;},
   then:(resolve:any)=>Promise.resolve({data:write?null:table==='posts'?{id:'created',user_id:'viewer',content:'引用文',visibility:'public',profiles:{id:'viewer',username:'viewer'}}:[],error:null}).then(resolve),
-};return b;}}}));
+};return b;}}
+}));
 import { createPost } from './posts';
 beforeEach(()=>{fixture.visible=true;fixture.writes=[];});
 it('stores a reply quote using the reply reference, without referencing its root as the quoted post',async()=>{

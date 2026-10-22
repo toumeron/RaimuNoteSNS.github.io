@@ -1,6 +1,6 @@
 import {expect,it} from 'vitest';
 import type {User} from '@/types';
-import {rankAccountSearch,followedAccountMatcher} from './accountSearchRanking';
+import {rankAccountSearch,followedAccountMatcher} from "@/lib/utils";
 const user=(id:string,displayName:string,username=id,bio='')=>({id,displayName,username,bio} as User);
 it('ranks followed native and external accounts ahead of unfollowed matches in one suggestion list',()=>{
  const local=user('local','ねこ'),external=user('x-user:2','ねこの投稿','cat@twitter.com');

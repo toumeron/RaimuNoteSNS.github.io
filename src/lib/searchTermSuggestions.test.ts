@@ -1,5 +1,5 @@
 import {afterEach,expect,it,vi} from 'vitest';
-import {searchTermSuggestions} from './searchTermSuggestions';
+import {searchTermSuggestions} from "@/lib/utils";
 afterEach(()=>vi.unstubAllGlobals());
 it('returns up to two related search phrases, distinct from accounts and the entered query',async()=>{
  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json(['あ',['あ','あいの里','芦田愛菜','あいの里','あいの里3']])));

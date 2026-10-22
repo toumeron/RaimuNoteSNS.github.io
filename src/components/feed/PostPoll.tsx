@@ -2,13 +2,13 @@ import { useEffect, useState, useRef, type SVGProps, type DragEvent, memo } from
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Loader2, ImagePlus, Plus, X, CalendarClock, CalendarDays, Clock } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { readPoll, votePoll } from "@/api/comments";
+import { readPoll, votePoll } from "@/api/external-posts";
 import { pollPercent, pollRemaining, type PollDraft } from "@/lib/utils";
 import { type PostWithAuthor } from "@/types/index";
 import { toast } from "sonner";
 
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/button";
-import { allowAccountWrite } from "@/lib/accountSuspension";
+import { allowAccountWrite } from "@/lib/supabase";
 import { useDesktopLayout } from "@/components/layout/DesktopLayoutContext";
 
 // ComposerIcon

@@ -11,7 +11,7 @@ import { deleteDirectMessage, toggleDirectReaction, type DirectMessage, type Dir
 import { Avatar, AvatarImage, AvatarFallback, PrivateAccountBadge } from "@/components/ui/avatar";
 import { ChatMenuContent } from "@/components/ai/PageCompanion";
 import { YouTubeEmbed } from "@/components/feed/PostCard";
-import { openMediaViewer } from "@/components/media/openMediaViewer";
+import { openMediaViewer } from "@/lib/mediaThumbnail";
 import { uploadProfileMedia } from "@/lib/mediaThumbnail";
 import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";

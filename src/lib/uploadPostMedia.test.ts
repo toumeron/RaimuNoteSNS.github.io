@@ -1,6 +1,9 @@
 import {beforeEach, expect, it, vi} from 'vitest';
 const storage=vi.hoisted(()=>({upload:vi.fn(),remove:vi.fn()}));
-vi.mock('./supabase',()=>({supabase:{storage:{from:()=>storage}}}));
+vi.mock("./supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("./supabase")>(),
+  supabase:{storage:{from:()=>storage}}
+}));
 import { uploadPostMedia } from "@/lib/mediaThumbnail";
 beforeEach(()=>{vi.stubGlobal('createImageBitmap',vi.fn().mockResolvedValue({width:1200,height:800,close:vi.fn()}));storage.upload.mockReset().mockResolvedValue({error:null});storage.remove.mockReset().mockResolvedValue({error:null});vi.stubGlobal('fetch',vi.fn().mockResolvedValue({ok:true,blob:async()=>new Blob(['image'],{type:'image/png'})}));});
 it('uploads restricted images to private storage with owner and resource paths',async()=>{

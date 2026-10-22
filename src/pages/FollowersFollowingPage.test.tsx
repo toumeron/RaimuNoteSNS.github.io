@@ -17,9 +17,15 @@ import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 const state=vi.hoisted(()=>({follow:vi.fn(),list:vi.fn(),metadata:vi.fn()}));
 
 
-vi.mock('@/components/layout/Header',()=>({ProfileListHeader:()=>null}));
+vi.mock("@/components/layout/Header", async importOriginal => ({
+  ...await importOriginal<typeof import("@/components/layout/Header")>(),
+  ProfileListHeader:()=>null
+}));
 
-vi.mock('@/lib/supabase',()=>({supabase:{from:()=>{const q:any={select:()=>q,eq:()=>q,abortSignal:()=>q,maybeSingle:async()=>({data:{id:'owner',username:'owner',display_name:'Owner'}})};return q;}}}));
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase:{from:()=>{const q:any={select:()=>q,eq:()=>q,abortSignal:()=>q,maybeSingle:async()=>({data:{id:'owner',username:'owner',display_name:'Owner'}})};return q;}}
+}));
 vi.mock('@/lib/bluesky',()=>({isBlueskyProfileId:(id:string)=>/^(did:|misskey-user:|x-user:)/.test(id),fetchBlueskyProfile:async()=>null}));
 
 

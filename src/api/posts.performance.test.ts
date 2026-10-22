@@ -6,7 +6,8 @@ const db = vi.hoisted(() => ({
   errors: {} as Record<string, Error>,
 }));
 vi.mock('@/lib/currentUser', () => ({ getCurrentUserId: async () => 'viewer' }));
-vi.mock('@/lib/supabase', () => ({
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
   supabase: {
     from: (table: string) => {
       const call = { table, filters: {} as Record<string, unknown>, select: '',signal:undefined as AbortSignal|undefined };
@@ -36,7 +37,7 @@ vi.mock('@/lib/supabase', () => ({
       };
       return builder;
     },
-  },
+  }
 }));
 
 import { getUserByUsername } from './users';

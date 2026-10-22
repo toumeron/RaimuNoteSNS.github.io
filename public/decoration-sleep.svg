@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 120">
+ <defs><path id="sleep-z" d="m10 12 52-4-1 13-32 25 34-3v14L8 61V47l34-24-31 3Z"/></defs>
+ <g fill="#272c67" stroke="#fff" stroke-width="7" stroke-linejoin="round" paint-order="stroke fill">
+  <use href="#sleep-z"/>
+  <use href="#sleep-z" transform="translate(34 50) rotate(12 30 30) scale(.55)"/>
+  <use href="#sleep-z" transform="translate(64 83) rotate(18 30 30) scale(.33)"/>
+ </g>
+</svg>

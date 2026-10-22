@@ -1,6 +1,6 @@
 import {beforeEach,expect,it} from 'vitest';
 import type {User} from '@/types';
-import {recentSearchAccounts,rememberSearchAccount,clearRecentSearchAccounts} from './recentSearchAccounts';
+import {recentSearchAccounts,rememberSearchAccount,clearRecentSearchAccounts} from "@/lib/utils";
 const account=(id:string,username=id)=>({id,username,displayName:`名前${id}`,avatarUrl:'avatar'} as User);
 beforeEach(()=>localStorage.clear());
 it('keeps recent accounts in selection order, deduplicates handles and scopes history to the viewer',()=>{

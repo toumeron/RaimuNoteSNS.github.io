@@ -6,16 +6,17 @@ import { PrivateMediaImage, ProfileMediaPreview, PostTabMenu, type PostTabFilter
 import { ProviderVerificationBadge, twitterAvatarUrl, PrivateAccountBadge, Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { PostPoll, PostCardSkeleton } from "@/components/feed/PostPoll";
 import { SuspensionNotice } from "@/components/layout/AppLayout";
+
 import { type User } from "@/types/index";
 import { ExternalLikeButton, BookmarkButton, RepostButton } from "@/components/feed/RepostButton";
 import { useFollowStats, useProfile, useUserLikesInfinite, useUserMediaInfinite, useUserReactionsInfinite } from "@/hooks/useFeed";
 import { accountReviewsKey, accountAboutKey, countryName, getAccountAbout } from "@/api/users";
 import { AccountReviewsTab } from "@/components/lists/ListDialogs";
 import { useProfileHighlights } from "@/hooks/useTopics";
-import { openMediaViewer } from "@/components/media/openMediaViewer";
+import { openMediaViewer } from "@/lib/mediaThumbnail";
 import { getPostById, getProfilePosts, getProfilePopularityPosts } from "@/api/posts";
-import { getProfilePin, profilePinKey } from "@/api/comments";
-import { renderStickerText } from "@/components/stickers/Stickers";
+import { getProfilePin, profilePinKey } from "@/api/external-posts";
+import { renderStickerText } from "@/components/feed/QuotedPost";
 import { SpacePostCard } from "@/components/spaces/SpaceProvider";
 import { ReplyShare } from "@/components/post/CommentList";
 import { useAuth } from "@/hooks/useAuth";
@@ -34,7 +35,7 @@ import { LikeButton } from "@/components/post/LikeButton";
 import { Commentlikebutton } from "@/components/feed/RepostButton";
 import { YouTubeEmbed, SpotifyEmbed } from "@/components/feed/PostCard";
 import { getCurrentUserId } from "@/lib/currentUser";
-import { supabase } from "@/lib/supabase";
+import { supabase, sendLimeDrop } from "@/lib/supabase";
 import { fetchBlueskyAuthorFeed, fetchBlueskyProfile } from "@/lib/bluesky";
 import { useQuery, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
@@ -1899,7 +1900,8 @@ const ProfileShareButton = memo(function ProfileShareButton({
       const { data: followingRows, error: followingError } = await supabase
         .from('follows')
         .select('followee_id')
-        .eq('follower_id', userId);
+        .eq('follower_id', userId)
+        .eq('approved', true);
 
       if (followingError) throw followingError;
 
@@ -1911,6 +1913,7 @@ const ProfileShareButton = memo(function ProfileShareButton({
             .select('follower_id')
             .eq('followee_id', userId)
             .in('follower_id', followingIds)
+            .eq('approved', true)
         : { data: [], error: null };
 
       if (followerError) throw followerError;
@@ -1975,9 +1978,7 @@ const ProfileShareButton = memo(function ProfileShareButton({
     const postAuthorDisplayName = postAuthor?.displayName ?? postAuthor?.display_name ?? postAuthorUsername ?? 'ユーザー';
 
     try {
-      const { error } = await supabase
-        .from('lime_drops')
-        .insert({
+      await sendLimeDrop({
           sender_id: userId,
           recipient_id: target.id,
           post_id: postId,
@@ -1987,9 +1988,7 @@ const ProfileShareButton = memo(function ProfileShareButton({
           post_author_display_name: postAuthorDisplayName,
           post_text: text,
           status: 'pending',
-        });
-
-      if (error) throw error;
+        }, supabase);
 
       setLimeDropFeedback(`${target.displayName}さんに送信しました`);
       window.setTimeout(() => {

@@ -5,7 +5,14 @@ vi.mock("@/api/users", async importOriginal => {
 
 vi.mock("@/lib/externalAccounts", async importOriginal => ({...await importOriginal<typeof import("@/lib/externalAccounts")>(), setExternalAccountOwner: vi.fn(), initialiseExternalAccounts: vi.fn().mockResolvedValue(undefined), refreshExternalAccounts: vi.fn().mockResolvedValue(undefined)}));
 
-vi.mock("@/lib/accountSuspension", async importOriginal => ({...await importOriginal<typeof import("@/lib/accountSuspension")>(), getPrivateBotPrompt: mock.privatePrompt}));
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  getPrivateBotPrompt: mock.privatePrompt,
+  supabase: {
+  auth: { onAuthStateChange: mock.subscribe, signOut: mock.signOut, setSession: mock.setSession }, from: mock.from,
+}
+}));
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, render, screen } from '@testing-library/react';
@@ -16,9 +23,7 @@ import { getSavedAccountTokens, readSavedAccounts, saveAccountSession } from '@/
 const connectionSync = vi.hoisted(() => vi.fn());
 
 const mock = vi.hoisted(() => ({ callback: null as null | ((event: string, session: Session | null) => void), from: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn(), setSession: vi.fn(), signOut: vi.fn(), privatePrompt: vi.fn() }));
-vi.mock('@/lib/supabase', () => ({ supabase: {
-  auth: { onAuthStateChange: mock.subscribe, signOut: mock.signOut, setSession: mock.setSession }, from: mock.from,
-} }));
+
 
 import { AuthProvider, useAuth } from './useAuth';
 import { setExternalAccountOwner, initialiseExternalAccounts } from '@/lib/externalAccounts';
@@ -195,4 +200,15 @@ it('updates read-only state when the signed-in profile is frozen and unfrozen wi
   mock.from.mockReturnValue({select:()=>({eq:()=>({single:async()=>({data:{username:'profile',display_name:'Profile Name',Account_suspension:false},error:null})})})});
   await act(async()=>{window.dispatchEvent(new Event('focus'));});
   expect(currentAuth.user?.isSuspended).toBe(false);
+});
+
+it('coalesces simultaneous resume reads and keeps unchanged profiles from rerendering consumers',async()=>{
+ let renders=0;function Counted(){useAuth();renders++;return <Probe/>;}
+ const client=new QueryClient();
+ render(<QueryClientProvider client={client}><AuthProvider><Counted/></AuthProvider></QueryClientProvider>);
+ act(()=>mock.callback?.('INITIAL_SESSION',session));await act(async()=>{await vi.advanceTimersByTimeAsync(0);});
+ const before=renders;mock.from.mockClear();mock.privatePrompt.mockClear();
+ await act(async()=>{window.dispatchEvent(new Event('focus'));document.dispatchEvent(new Event('visibilitychange'));window.dispatchEvent(new Event('focus'));});
+ expect(mock.from).toHaveBeenCalledOnce();expect(mock.privatePrompt).toHaveBeenCalledOnce();expect(renders).toBe(before);
+ client.clear();
 });

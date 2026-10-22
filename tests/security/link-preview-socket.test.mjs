@@ -1,7 +1,7 @@
 // @vitest-environment node
 import {afterEach,expect,it,vi} from 'vitest';
 vi.mock('node:dns/promises',()=>{const lookup=vi.fn(async()=>[{address:'1.1.1.1',family:4}]);return {lookup,default:{lookup}};});
-import {page} from '../../supabase/functions/link-preview/http';
+import {page} from "../../supabase/functions/link-preview/load";
 afterEach(()=>{vi.useRealTimers();vi.unstubAllGlobals();});
 it('closes a socket whose connect completes after the request timeout',async()=>{
  vi.useFakeTimers();let resolve;

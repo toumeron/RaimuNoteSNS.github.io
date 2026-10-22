@@ -7,7 +7,13 @@ vi.mock("@/components/layout/AppLayout", async importOriginal => {
  return Object.assign({}, actual, ...overrides.map(values => Object.fromEntries(Object.entries(values).filter(([key, value]) => value !== actual[key]))));
 });
 
-vi.mock("@/lib/accountSuspension", async importOriginal => ({...await importOriginal<typeof import("@/lib/accountSuspension")>(), ...await importOriginal<object>(), returnToCompany: mocks.return}));
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  ...await importOriginal<object>(),
+  returnToCompany: mocks.return,
+  supabase: { auth: { signInWithPassword: mocks.signIn, getUser: mocks.getUser } }
+}));
 vi.mock("@/hooks/useAuth", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useAuth")>(), useAuth: () => ({ user: mocks.user, loading: mocks.loading, accounts: [] })}));
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -16,7 +22,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ return: vi.fn(), signIn: vi.fn(), getUser: vi.fn(), user: null as null | { id: string }, loading: false }));
 
 
-vi.mock('@/lib/supabase', () => ({ supabase: { auth: { signInWithPassword: mocks.signIn, getUser: mocks.getUser } } }));
+
 
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));

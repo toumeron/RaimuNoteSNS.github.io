@@ -1,6 +1,6 @@
 import { applyAccentTheme } from "@/components/ui/button";
 import { createRoot } from "react-dom/client";
-import { registerPwa } from "./lib/registerPwa";
+import { registerPwa } from "@/App";
 import App from "./App.tsx";
 import "./index.css";
 

@@ -4,7 +4,7 @@ import { Home, UserRound, Search, Bell, MessageSquare, Settings as SettingsIcon,
 import { RepostIcon } from "@/components/feed/PostPoll";
 import archiveDesignCss from '../index.css?inline';
 import { supabase } from './supabase';
-import { readOfflineBookmarks } from './offlineBookmarks';
+import { readOfflineBookmarks } from "@/lib/mediaThumbnail";
 import { savedPreviewImage } from "@/lib/mediaThumbnail";
 import { stickerUrl, type CustomSticker } from "@/lib/utils";
 import { listModels } from "@/lib/avatarModels";

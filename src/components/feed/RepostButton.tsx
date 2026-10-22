@@ -11,10 +11,10 @@ import { useQuery, useIsMutating, useMutation, useQueryClient } from "@tanstack/
 import { getExternalRepostState, isExternalPostId, getNativeRepostState, getExternalLikeState, setExternalLike, getReplyPost, getReplyRepostState, isReplyPostId } from "@/api/external-posts";
 import { AnimatedCount } from "@/components/feed/QuotedPost";
 import { toast } from "sonner";
-import { OfflineBookmarkContext } from "@/components/stickers/Stickers";
+import { OfflineBookmarkContext } from "@/components/feed/QuotedPost";
 import { getBookmarkIds, setBookmark, type BookmarkTarget } from "@/api/users";
 import { cn } from "@/lib/utils";
-import { isPostHighlighted, postHighlightKey, profileHighlightsKey, setPostHighlighted, getProfilePin, setProfilePin, profilePinKey } from "@/api/comments";
+import { isPostHighlighted, postHighlightKey, profileHighlightsKey, setPostHighlighted, getProfilePin, setProfilePin, profilePinKey } from "@/api/external-posts";
 import { LikeButton } from "@/components/post/LikeButton";
 import { fetchBlueskyPostViewerState, getBlueskyUriFromPostId, likeBlueskyPost, unlikeBlueskyPost } from "@/lib/bluesky";
 import * as Dialog from "@radix-ui/react-dialog";

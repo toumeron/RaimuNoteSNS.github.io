@@ -1,6 +1,8 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 const fixture = vi.hoisted(() => ({ data: null as unknown, error: null as Error | null, calls: [] as unknown[][] }));
-vi.mock('@/lib/supabase', () => ({ supabase: {
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase: {
   from: (table: string) => {
     fixture.calls.push(['from', table]);
     const builder = {
@@ -13,8 +15,9 @@ vi.mock('@/lib/supabase', () => ({ supabase: {
     };
     return builder;
   },
-} }));
-import { isPostHighlighted, setPostHighlighted } from "@/api/comments";
+}
+}));
+import { isPostHighlighted, setPostHighlighted } from "@/api/external-posts";
 beforeEach(() => { fixture.data = null; fixture.error = null; fixture.calls = []; });
 it('checks membership for the given owner and post', async () => {
   expect(await isPostHighlighted('owner', 'post')).toBe(false);

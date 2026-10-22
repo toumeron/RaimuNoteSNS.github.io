@@ -1,11 +1,12 @@
-import {rankAccountSearch} from '@/lib/accountSearchRanking';
-import { getPrivateBotPrompt, isAccountReadOnly } from "@/lib/accountSuspension";
+import { AVATAR_DECORATION_KINDS } from "@/types/index";
+import {rankAccountSearch} from "@/lib/utils";
+import { getPrivateBotPrompt, isAccountReadOnly } from "@/lib/supabase";
 import { randomUUID, getClientName } from "@/lib/utils";
 import { type User, type PostWithAuthor } from "@/types/index";
 import { supabase } from "@/lib/supabase";
 import { fetchBlueskyFollowers, fetchBlueskyFollows, isBlueskyProfileId, searchExternalUsers } from "@/lib/bluesky";
-import { refreshNotificationBadge, dismissNotificationToasts } from "@/lib/registerPwa";
-import { type AccountReadContext } from "@/lib/accountReadClient";
+import { refreshNotificationBadge, dismissNotificationToasts } from "@/App";
+import { type AccountReadContext } from "@/lib/supabase";
 import { getCurrentUserId } from "@/lib/currentUser";
 import { type LiveSpace, type SpaceMember } from "@/components/spaces/SpaceProvider";
 import { recordRecommendationEngagement } from "@/lib/recommendations";
@@ -66,7 +67,7 @@ async function getUserById(id: string): Promise<User | null> {
  */
 async function updateProfile(
   id: string,
-  patch: Partial<Pick<User, 'displayName' | 'bio' | 'location' | 'avatarUrl' | 'coverUrl' | 'emojiEffect' | 'bot_enabled' | 'bot_prompt' | 'isPrivate'>>,
+  patch: Partial<Pick<User, 'displayName' | 'bio' | 'location' | 'avatarUrl' | 'coverUrl' | 'avatarDecoration' | 'santaHat' | 'emojiEffect' | 'bot_enabled' | 'bot_prompt' | 'isPrivate'>>,
 ): Promise<User> {
   const dbPatch: Record<string, unknown> = {};
   if (patch.isPrivate !== undefined) dbPatch.is_private = patch.isPrivate;
@@ -111,9 +112,21 @@ async function updateProfile(
     }
   };
 
-  // avatarUrl があればアップロード（avatars バケットを使用）
-  if (patch.avatarUrl) {
-    dbPatch.avatar_url = await uploadImage(patch.avatarUrl, 'avatars');
+  if (patch.avatarUrl) dbPatch.avatar_url = await uploadImage(patch.avatarUrl, 'avatars');
+  if (patch.santaHat !== undefined) {
+    dbPatch.avatar_decoration = patch.santaHat ? 'santa' : null;
+    dbPatch.avatar_decoration_options = null;
+  }
+  if (patch.avatarDecoration !== undefined) {
+    const decoration = patch.avatarDecoration;
+    if (decoration && (!AVATAR_DECORATION_KINDS.includes(decoration.type) ||
+      !Number.isFinite(decoration.angle) || Math.abs(decoration.angle) > 180 ||
+      !Number.isFinite(decoration.x) || Math.abs(decoration.x) > 100 ||
+      !Number.isFinite(decoration.y) || Math.abs(decoration.y) > 100 || typeof decoration.flip !== 'boolean')) {
+      throw new Error('デコレーションの設定を確認してください');
+    }
+    dbPatch.avatar_decoration = decoration?.type ?? null;
+    dbPatch.avatar_decoration_options = decoration ? { angle: decoration.angle, x: decoration.x, y: decoration.y, flip: decoration.flip } : null;
   }
 
   // coverUrl があればアップロード（posts バケットを流用、または profiles バケットを作成）
@@ -128,7 +141,13 @@ async function updateProfile(
     .select(USER_SELECT_COLUMNS)
     .single();
 
-  if (error || !data) throw new Error('ユーザーが見つかりません');
+  if (error || !data) {
+    if ((patch.santaHat !== undefined || patch.avatarDecoration !== undefined) && (error?.code === '42703' || error?.code === 'PGRST204')) {
+      console.error('Santa decoration schema is unavailable:', { code: error.code, message: error.message });
+      throw new Error('デコレーションを保存できませんでした。しばらくしてからお試しください。');
+    }
+    throw new Error('プロフィールの更新に失敗しました');
+  }
   return toUser(data);
 }
 

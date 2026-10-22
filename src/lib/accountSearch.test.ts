@@ -1,7 +1,10 @@
 import {it,expect,vi,beforeEach} from 'vitest';
 const mocks=vi.hoisted(()=>({external:vi.fn(),native:vi.fn(),filter:vi.fn()}));
 vi.mock('./bluesky',()=>({searchExternalUsers:mocks.external}));
-vi.mock('./supabase',()=>({supabase:{from:()=>({select:()=>({or:(filter:string)=>{mocks.filter(filter);return {limit:()=>({abortSignal:mocks.native})};}})})}}));
+vi.mock("./supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("./supabase")>(),
+  supabase:{from:()=>({select:()=>({or:(filter:string)=>{mocks.filter(filter);return {limit:()=>({abortSignal:mocks.native})};}})})}
+}));
 import { searchAccounts, searchProfileUser } from "@/api/users";
 beforeEach(()=>{vi.clearAllMocks();mocks.native.mockResolvedValue({data:[{id:'native',username:'cat',display_name:'ねこ',is_official:true,is_private:true}],error:null});mocks.external.mockResolvedValue([{id:'did:plc:friend',username:'friend.bsky.social',displayName:'Friend'},{id:'misskey-user:friend',username:'friend@misskey.io',displayName:'友達'}]);});
 it('uses the search-page external account search and retains both providers and native badges',async()=>{

@@ -8,10 +8,12 @@ import { Label } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/button";
 import { supabase } from '@/lib/supabase';
 import { Logo } from "@/components/layout/AppLayout";
+
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { SavedAccountList } from "@/components/layout/AppLayout";
-import { companyReturnUrl, returnToCompany } from "@/lib/accountSuspension";
+
+import { companyReturnUrl, returnToCompany } from "@/lib/supabase";
 
 const schema = z.object({
   email: z.string().email('メールアドレスの形式が正しくありません'),

@@ -1,6 +1,9 @@
 import {beforeEach,expect,it,vi} from 'vitest';
 const mocks=vi.hoisted(()=>({session:vi.fn(),invoke:vi.fn()}));
-vi.mock('./supabase',()=>({supabase:{auth:{getSession:mocks.session},functions:{invoke:mocks.invoke}}}));
+vi.mock("./supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("./supabase")>(),
+  supabase:{auth:{getSession:mocks.session},functions:{invoke:mocks.invoke}}
+}));
 import { relayBlueskySearch } from "@/api/search-news";
 beforeEach(()=>{vi.clearAllMocks();mocks.session.mockResolvedValue({data:{session:{user:{id:'viewer'}}}});});
 it('relays the query and cursor through the authenticated function without provider credentials',async()=>{

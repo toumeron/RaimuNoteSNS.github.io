@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {blueskyEvent,misskeyEvent,connectStream} from './external-notification-events.mjs';
+import {blueskyEvent,misskeyEvent,connectStream} from "./external-notification-listener.mjs";
 const target={created_at:'2026-10-08T00:00:00Z',external_actor:'alice',target_name:'Alice'};
 const bsky={kind:'commit',did:'did:plc:alice',commit:{operation:'create',collection:'app.bsky.feed.post',rkey:'new',record:{createdAt:'2026-10-08T01:00:00Z',text:'new post'}}};
 const note={type:'channel',body:{id:'lime-new-posts',type:'note',body:{id:'new',userId:'alice',createdAt:'2026-10-08T01:00:00Z',visibility:'public',text:'new post',files:[]}}};

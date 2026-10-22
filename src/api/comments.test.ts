@@ -17,7 +17,9 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock('@/lib/currentUser', () => ({ getCurrentUserId: async () => state.userId }));
 
-vi.mock('@/lib/supabase', () => ({ supabase: { from: (table: string) => {
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase: { from: (table: string) => {
   let operation = 'read', head = false;
   const row = () => ({ id: 'reply', ...state.inserted, created_at: '2026-10-02T00:00:00Z', profiles: { id: 'viewer', username: 'viewer', display_name: 'Viewer' } });
   const builder = {
@@ -36,8 +38,9 @@ vi.mock('@/lib/supabase', () => ({ supabase: { from: (table: string) => {
     }).then(resolve),
   };
   return builder;
-} } }));
-import { createComment, getCommentsByPost } from './comments';
+} }
+}));
+import { createComment, getCommentsByPost } from "@/api/external-posts";
 beforeEach(() => {
   state.inserted = null; state.error = null; state.count = 1; state.userId = 'viewer';
   state.pages = null; state.cursors = []; state.authorSelects = [];

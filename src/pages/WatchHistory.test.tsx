@@ -5,12 +5,24 @@ import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
 import {MemoryRouter,Route,Routes} from 'react-router-dom';
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 import WatchHistory from './WatchHistory';
-import * as api from '@/api/watchHistory';
+import * as api from "@/api/topics";
 const mocks=vi.hoisted(()=>({user:null as null|{id:string;username:string},get:vi.fn(),search:vi.fn(),episodes:vi.fn(),save:vi.fn(),inView:false,artwork:vi.fn(),trailer:vi.fn(),change:vi.fn(),resolve:vi.fn(),importSave:vi.fn()}));
 
 
 vi.mock('react-intersection-observer',()=>({useInView:()=>({ref:()=>{},inView:mocks.inView})}));
-vi.mock('@/api/watchHistory',async()=>({...await vi.importActual('@/api/watchHistory'),getAnimeHistory:mocks.get,searchAnimeWorks:mocks.search,getAnimeEpisodes:mocks.episodes,saveAnimeViewing:mocks.save,changeAnimeHistory:mocks.change,resolveAnimeImport:mocks.resolve,saveAnimeImport:mocks.importSave,fetchAnimeArtwork:mocks.artwork,fetchAnimeYouTubeId:mocks.trailer}));
+vi.mock("@/api/topics", async importOriginal => ({
+  ...await importOriginal<typeof import("@/api/topics")>(),
+  ...await vi.importActual("@/api/topics"),
+  getAnimeHistory:mocks.get,
+  searchAnimeWorks:mocks.search,
+  getAnimeEpisodes:mocks.episodes,
+  saveAnimeViewing:mocks.save,
+  changeAnimeHistory:mocks.change,
+  resolveAnimeImport:mocks.resolve,
+  saveAnimeImport:mocks.importSave,
+  fetchAnimeArtwork:mocks.artwork,
+  fetchAnimeYouTubeId:mocks.trailer
+}));
 const work={id:1,title:'塩対応の佐藤さんが俺にだけ甘い',aliases:[],image:'https://example.com/anime.jpg',copyright:'',season:'2026年秋',episodesCount:12};
 const entry=(episode:number)=>({id:`ep:${episode}`,work,episode:{id:episode,workId:1,number:`第${episode}話`,title:`エピソード${episode}`},episodeText:`第${episode}話 エピソード${episode}`,watchedAt:'2026-10-18T00:00:00Z',addedAt:'2026-10-18T00:00:00Z',source:'manual' as const,sourceUrl:''});
 const state={entries:[entry(2),entry(1)],ignored:[],autoAdd:false};

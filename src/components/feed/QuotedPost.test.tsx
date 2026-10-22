@@ -2,9 +2,12 @@ vi.mock("@/components/feed/PostCard", async importOriginal => ({...await importO
 vi.mock("@/components/post/CommentList", async importOriginal => ({...await importOriginal<typeof import("@/components/post/CommentList")>(), RepostedReplyCard:({post,embedded}:any)=><p data-embedded={embedded}>{post.content}</p>}));
 
 
-vi.mock("@/App", () => ({ PostOverlay: ({ initialQuotedPost, isOpen, onClose }: { initialQuotedPost: PostWithAuthor; isOpen: boolean; onClose: () => void }) => (
+vi.mock("@/App", async importOriginal => ({
+  ...await importOriginal<typeof import("@/App")>(),
+  PostOverlay: ({ initialQuotedPost, isOpen, onClose }: { initialQuotedPost: PostWithAuthor; isOpen: boolean; onClose: () => void }) => (
   isOpen ? <button onClick={onClose}>引用投稿する: {initialQuotedPost.content}</button> : null
-) }));
+)
+}));
 import { cleanup, render, screen, fireEvent } from "@testing-library/react";
 import { afterEach, expect, it, vi, describe } from "vitest";
 import { QuotedPost, QuoteModal, ExternalPostDetails } from "@/components/feed/QuotedPost";

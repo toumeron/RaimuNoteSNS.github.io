@@ -7,7 +7,10 @@ vi.mock("@/lib/utils", async importOriginal => {
 
 import {beforeEach,expect,it,vi} from 'vitest';
 const state=vi.hoisted(()=>({invoke:vi.fn()}));
-vi.mock('@/lib/supabase',()=>({supabase:{functions:{invoke:state.invoke}}}));
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase:{functions:{invoke:state.invoke}}
+}));
 
 import { getExternalMapPostPage, filterExternalMapPins } from "@/api/external-posts";
 const pin={id:'flickr:123@N00/456',source:'flickr' as const,createdAt:'2026-10-09T00:00:00Z',mapLocation:{latitude:35,longitude:139}};

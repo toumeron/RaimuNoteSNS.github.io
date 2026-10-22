@@ -1,5 +1,5 @@
 import {afterEach,expect,it,vi} from 'vitest';
-import {TransientCache,sweepTransientCaches} from './transientCache';
+import {TransientCache,sweepTransientCaches} from "@/lib/utils";
 const used:TransientCache<string,number>[]=[];
 function cache(){const value=new TransientCache<string,number>(1000,4,2);used.push(value);return value;}
 afterEach(()=>{used.splice(0).forEach(value=>value.dispose());vi.useRealTimers();vi.restoreAllMocks();vi.unstubAllGlobals();});

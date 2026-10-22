@@ -1,6 +1,6 @@
 import {expect,it} from 'vitest';
 import {zipSync,strToU8} from 'fflate';
-import {validateDocxArchive} from './docxArchive';
+import {validateDocxArchive} from "@/lib/documentText.worker";
 const zip=(body:string)=>zipSync({'[Content_Types].xml':strToU8('<Types/>'),'word/document.xml':strToU8(body)});
 it('accepts a normal DOCX archive',()=>expect(()=>validateDocxArchive(zip('<document>hello</document>'))).not.toThrow());
 it('rejects a highly compressed archive before the document parser runs',()=>{

@@ -2,7 +2,7 @@ import {test,expect,type Page} from '@playwright/test';
 import {readFileSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 // Keep the Node runner independent of browser-only application imports.
-const topicLiteral=readFileSync(new URL('../../src/lib/topics.ts',import.meta.url),'utf8').match(/const TOPICS = \[([\s\S]*?)\] as const/)![1];
+const topicLiteral=readFileSync(new URL("../../src/lib/recommendations.ts",import.meta.url),'utf8').match(/const TOPICS = \[([\s\S]*?)\] as const/)![1];
 const TOPICS=[...topicLiteral.matchAll(/\{id:'([^']+)'/g)].map(match=>({id:match[1]}));
 const visualPrototypes=JSON.parse(readFileSync(new URL('../../src/lib/recommendationVisualPrototypes.json',import.meta.url),'utf8'));
 const user={id:'11111111-1111-1111-1111-111111111111',username:'lime',displayName:'Lime Note',avatarUrl:'',createdAt:'2026-10-01T00:00:00Z'};

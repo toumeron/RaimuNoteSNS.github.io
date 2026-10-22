@@ -10,7 +10,7 @@ const mocks=vi.hoisted(()=>({resolve:vi.fn(),poster:vi.fn()}));
 
 import {PostVideoPlayer} from './PostVideoPlayer';
 let running=false;
-beforeEach(()=>{localStorage.clear();running=false;vi.clearAllMocks();vi.stubGlobal('IntersectionObserver',class{observe(){}disconnect(){}});vi.spyOn(HTMLMediaElement.prototype,'paused','get').mockImplementation(()=>!running);vi.spyOn(HTMLMediaElement.prototype,'play').mockImplementation(async function(this:HTMLMediaElement){await Promise.resolve();running=true;this.dispatchEvent(new Event('play'));});vi.spyOn(HTMLMediaElement.prototype,'pause').mockImplementation(function(this:HTMLMediaElement){running=false;this.dispatchEvent(new Event('pause'));});});
+beforeEach(()=>{localStorage.clear();running=false;vi.clearAllMocks();vi.stubGlobal('IntersectionObserver',class{observe(){}unobserve(){}disconnect(){}});vi.spyOn(HTMLMediaElement.prototype,'paused','get').mockImplementation(()=>!running);vi.spyOn(HTMLMediaElement.prototype,'play').mockImplementation(async function(this:HTMLMediaElement){await Promise.resolve();running=true;this.dispatchEvent(new Event('play'));});vi.spyOn(HTMLMediaElement.prototype,'pause').mockImplementation(function(this:HTMLMediaElement){running=false;this.dispatchEvent(new Event('pause'));});});
 afterEach(()=>{cleanup();vi.restoreAllMocks();vi.unstubAllGlobals();});
 it('starts a delayed remote video with one click and never reloads its resolved source on React commit',async()=>{
  let finish!:(value:{url:string;local:boolean})=>void;mocks.resolve.mockImplementation(()=>new Promise(resolve=>{finish=resolve;}));

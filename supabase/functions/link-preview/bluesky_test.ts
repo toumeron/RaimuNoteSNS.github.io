@@ -1,4 +1,4 @@
-import { loadBlueskySearch } from "./bluesky.ts";
+import { loadBlueskySearch } from "./load.ts";
 Deno.test('searches the fixed search AppView and preserves query/cursor without forwarding credentials',async()=>{
  const original=globalThis.fetch;let called='';globalThis.fetch=async(input,init)=>{called=String(input);if(new Headers((init as RequestInit|undefined)?.headers).has('Authorization'))throw new Error('Provider credential forwarded');return Response.json({posts:[{uri:'at://example'}],cursor:'next'});};
  try{const result=await loadBlueskySearch('app.bsky.feed.searchPosts',{q:'JR東日本',limit:'30',cursor:'before'}) as {cursor:string};const url=new URL(called);if(url.origin!=='https://api.bsky.app'||url.searchParams.get('q')!=='JR東日本'||url.searchParams.get('cursor')!=='before'||result.cursor!=='next')throw new Error('Search metadata lost');}finally{globalThis.fetch=original;}

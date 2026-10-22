@@ -4,9 +4,12 @@ import { twitterAvatarUrl } from "@/components/ui/avatar";
 import { fetchBlueskyPostActivity, fetchBlueskyTopicPosts, fetchBlueskyAuthorFeed, fetchBlueskyPostThread, fetchBlueskyProfile, likeBlueskyPost, unlikeBlueskyPost, followBlueskyUser, unfollowBlueskyUser, getConfiguredExternalHandles, fetchTrendingJapaneseBlueskyPosts, searchExternalUsers, mapBlueskyFeedItemToPost, discoverBlueskyTopicFeeds, fetchBlueskyTopicFeed, refreshBlueskySession, getStoredBlueskySession, authorizedBlueskyFetch, logoutFromBluesky } from "@/lib/bluesky";
 import { splitMentionText, mentionProfileHandle, externalRead, externalFetch } from "@/lib/utils";
 import { searchMisskeyPostPage, configuredMisskeyHandles, mapMisskeyNote, type MisskeyNote, searchMisskey } from "@/lib/misskey";
-import { normalizeTimelineBlueskyPost } from "@/lib/timelinePaging";
+import { normalizeTimelineBlueskyPost } from "@/lib/utils";
 import { ACTIVE_ACCOUNT_KEY } from "@/lib/savedAccounts";
-vi.mock('./savedAccountSearch',()=>({searchSavedAccounts:vi.fn(async()=>[])}));
+vi.mock("@/lib/externalAccounts", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/externalAccounts")>(),
+  searchSavedAccounts:vi.fn(async()=>[])
+}));
 
 describe("fxTwitter", () => {
 describe("fxTwitter", () => {
@@ -69,7 +72,7 @@ it('honors an explicit no-reposts profile request',async()=>{
 });
 
 it('preserves source repost totals in the post, quote, and normalized timeline',async()=>{
- const {normalizeTimelineBlueskyPost}=await import('./timelinePaging');
+ const {normalizeTimelineBlueskyPost}=await import("@/lib/utils");
  const mapped=mapXPost({...post('880001'),reposts:150,quote:{...post('880002'),reposts:35}})!;
  expect(mapped.repostsCount).toBe(150);expect(mapped.externalDetails?.reposts).toBe(150);expect(mapped.parentPost?.repostsCount).toBe(35);expect(normalizeTimelineBlueskyPost(mapped).repostsCount).toBe(150);
 });

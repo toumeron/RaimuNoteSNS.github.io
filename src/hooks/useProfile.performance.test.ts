@@ -13,7 +13,9 @@ vi.mock('@tanstack/react-query', async original => ({...await original<typeof im
   useMutation: vi.fn(), useQueryClient: vi.fn(),
 }));
 vi.mock('@/lib/currentUser', () => ({ getCurrentUserId: async () => 'viewer' }));
-vi.mock('@/lib/supabase', () => ({ supabase: {
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase: {
   from: (table: string) => {
     const call = { table, filters: {} as Record<string, unknown>, select: '' };
     const builder = {
@@ -33,7 +35,8 @@ vi.mock('@/lib/supabase', () => ({ supabase: {
     };
     return builder;
   },
-} }));
+}
+}));
 
 import { useUserPostsInfinite, useUserMediaInfinite, useUserLikesInfinite, useUserReactionsInfinite } from "@/hooks/useFeed";
 type QueryOptions = { queryFn: (context: { pageParam: number }) => Promise<unknown> };

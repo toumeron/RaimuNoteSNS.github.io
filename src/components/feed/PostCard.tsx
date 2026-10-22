@@ -1,7 +1,7 @@
 import { initialImageFrame, initialMediaSize } from "@/lib/mediaThumbnail";
 import { ContentLink } from "@/components/ui/button";
-import { useMinuteTick, useTimelinePortalTheme, useViewportWidth, usePageVisible } from "@/hooks/useViewportWidth";
-import { displayUsername, canShowPostLinkPreview, hasAttachedPostVideo, randomUUID, splitMentionText, mentionProfileHandle, isIosPwa, hasStickers, spaceLinkIn, formatRelative } from "@/lib/utils";
+import { useMinuteTick, useTimelinePortalTheme, useViewportWidth, usePageVisible, observeElementVisibility } from "@/hooks/useViewportWidth";
+import { displayUsername, canShowPostLinkPreview, hasAttachedPostVideo, randomUUID, splitMentionText, mentionProfileHandle, isInstalledPwa, hasStickers, spaceLinkIn, formatRelative } from "@/lib/utils";
 import { PostSourceLabel, ExternalPostDetails, LinkPreviewCard, useLinkPreview, QuotedPost, PostImages } from "@/components/feed/QuotedPost";
 import { isDeferredPrivateMedia } from "@/lib/privateMediaFetch";
 import { PrivateMediaImage, ProviderVerificationBadge, PrivateAccountBadge, Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -10,11 +10,11 @@ import { PostPoll, RepostIcon } from "@/components/feed/PostPoll";
 import { ExternalReplyCard } from "@/components/post/CommentList";
 import { mobilePostMenuOS, ExternalLikeButton, HighlightPostMenuButton, PinPostMenuButton, BookmarkButton, RepostButton } from "@/components/feed/RepostButton";
 import { toast } from "sonner";
-import { openMediaViewer } from "@/components/media/openMediaViewer";
-import { OfflineBookmarkContext, renderStickerText } from "@/components/stickers/Stickers";
+import { openMediaViewer } from "@/lib/mediaThumbnail";
+import { OfflineBookmarkContext, renderStickerText } from "@/components/feed/QuotedPost";
 import { SpacePostCard } from "@/components/spaces/SpaceProvider";
 import { useDesktopLayout } from "@/components/layout/DesktopLayoutContext";
-import { lazy, Suspense, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, memo, useCallback, useId, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate } from "react-router-dom";
 import { Download, EyeOff, MessageCircle, MoreHorizontal, Trash2, CalendarDays, ChartBarBig, X, Globe, Lock, Sparkles, Plus, Link as LinkIcon, Upload, Send, Heart, Users, Pin, Pencil } from "lucide-react";
@@ -22,15 +22,14 @@ import { LikeButton } from "@/components/post/LikeButton";
 import { type PostWithAuthor } from "@/types/index";
 import { deletePost } from "@/api/posts";
 import { getCurrentUserId } from "@/lib/currentUser";
-import { supabase } from "@/lib/supabase";
+import { supabase, sendLimeDrop } from "@/lib/supabase";
 import dayjs from "dayjs";
-import { useMembershipStatus, useBlueskySession } from "@/hooks/useAuth";
+import { useAuth, useMembershipStatus, useBlueskySession } from "@/hooks/useAuth";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/button";
 import { FollowButton } from "@/components/profile/ProfileHeader";
 import { useFollowStats } from "@/hooks/useFeed";
 import { getBlueskyUriFromPostId } from "@/lib/bluesky";
 
-// YouTubeEmbed
 // YouTubeEmbed
 interface YouTubeEmbedProps {
   videoId: string;
@@ -39,6 +38,7 @@ interface YouTubeEmbedProps {
 declare global {
   interface Window {
     __limeBackgroundMediaActiveKey?: string | null;
+    __limeYouTubePlaybackDiagnostics?: Array<{ videoId: string; time: number; state: number; muted: boolean | null; volume: number | null; mini: boolean; currentTime?: number | null; action?: string }>;
   }
 }
 
@@ -51,6 +51,7 @@ const getYouTubeEmbedUrl = (videoId: string) => {
     rel: '0',
     enablejsapi: '1',
     autoplay: '0',
+    controls: '1',
   });
 
   if (typeof window !== 'undefined') {
@@ -91,83 +92,122 @@ const sendYouTubeListeningMessage = (iframe: HTMLIFrameElement | null, id: strin
   }
 };
 
+/** Keep the native iframe in its post: scrolling must not relocate or resize it. */
 const YouTubeEmbed = ({ videoId }: YouTubeEmbedProps) => {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const mediaKey = useMemo(() => `youtube:${videoId}`, [videoId]);
-  const embedUrl = useMemo(() => getYouTubeEmbedUrl(videoId), [videoId]);
-
-  const notifyPlaying = () => {
-    if (typeof window === 'undefined') return;
-
-    window.dispatchEvent(new CustomEvent(LIME_BACKGROUND_MEDIA_PLAY_EVENT, {
-      detail: {
-        key: mediaKey,
-        kind: 'youtube',
-        title: 'YouTube video player',
-        element: iframeRef.current,
-      },
-    }));
-  };
-
-  const notifyStopped = () => {
-    if (typeof window === 'undefined') return;
-
-    window.dispatchEvent(new CustomEvent(LIME_BACKGROUND_MEDIA_STOP_EVENT, {
-      detail: { key: mediaKey },
-    }));
-  };
-
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      const iframeWindow = iframeRef.current?.contentWindow;
-      if (!iframeWindow || event.source !== iframeWindow) return;
-
-      const message = parseYouTubeMessage(event.data);
-      if (!message) return;
-
-      const state = message?.info?.playerState ?? message?.info;
-
-      if (state === 1) {
-        notifyPlaying();
-        return;
-      }
-
-      if (state === 0 || state === 2) {
-        notifyStopped();
-      }
-    };
-
-    window.addEventListener('message', handleMessage);
-
-    return () => {
-      window.removeEventListener('message', handleMessage);
-    };
+  const id = useId();
+  const mediaKey = `youtube:${id}:${videoId}`;
+  const playingRef = useRef(false);
+  const soundState = useRef({ state: -1, muted: null as boolean | null, volume: null as number | null });
+  const playbackPosition = useRef<number | null>(null);
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const notify = useCallback((active: boolean) => {
+    if (playingRef.current === active) return;
+    playingRef.current = active;
+    const event = new CustomEvent(active ? LIME_BACKGROUND_MEDIA_PLAY_EVENT : LIME_BACKGROUND_MEDIA_STOP_EVENT, {
+      bubbles: true, detail: { key: mediaKey, kind: 'youtube', title: 'YouTube video player', element: iframeRef.current },
+    });
+    if (iframeRef.current?.isConnected) iframeRef.current.dispatchEvent(event);
+    else window.dispatchEvent(event);
   }, [mediaKey]);
 
-  const handleIframeLoad = () => {
-    sendYouTubeListeningMessage(iframeRef.current, mediaKey);
-    window.setTimeout(() => sendYouTubeListeningMessage(iframeRef.current, mediaKey), 500);
-    window.setTimeout(() => sendYouTubeListeningMessage(iframeRef.current, mediaKey), 1500);
-  };
+  useEffect(() => {
+    soundState.current = { state: -1, muted: null, volume: null };
+    playbackPosition.current = null;
+    let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
+    let restarted = false, restartPosition = 0, playingSince: number | null = null, blocked = false;
+    const record = (action?: string) => {
+      const history = window.__limeYouTubePlaybackDiagnostics ??= [];
+      history.push({ videoId, time: Date.now(), ...soundState.current, mini: false, currentTime: playbackPosition.current, ...(action ? { action } : {}) });
+      if (history.length > 40) history.splice(0, history.length - 40);
+    };
+    const cancelRecovery = () => { clearTimeout(recoveryTimer); recoveryTimer = undefined; };
+    const canRecover = () => !blocked && playingRef.current && soundState.current.state === 3 && document.visibilityState !== 'hidden';
+    const recover = () => {
+      if (!canRecover()) { cancelRecovery(); return; }
+      if (recoveryTimer !== undefined || restarted || playbackPosition.current === null) return;
+      recoveryTimer = setTimeout(() => {
+        recoveryTimer = undefined;
+        if (!canRecover()) return;
+        const target = iframeRef.current?.contentWindow;
+        if (!target) return;
+        // Repeated play/seek commands cannot repair a stuck stream. Request
+        // a fresh stream once at the last position, keeping this iframe alive.
+        restarted = true;
+        restartPosition = playbackPosition.current!;
+        target.postMessage(JSON.stringify({ event: 'command', func: 'loadVideoById', args: [{ videoId, startSeconds: restartPosition }] }), 'https://www.youtube.com');
+        record('recover-reload');
+      }, 4000);
+    };
 
-  return (
-    <div className="my-3 aspect-video w-full overflow-hidden rounded-xl border border-border bg-black shadow-sm">
-      <iframe
-        ref={iframeRef}
-        width="100%"
-        height="100%"
-        src={embedUrl}
-        loading="lazy"
-        title="YouTube video player"
-        frameBorder="0"
-        allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-        allowFullScreen
-        referrerPolicy="strict-origin-when-cross-origin"
-        className="block h-full w-full"
-        onLoad={handleIframeLoad}
-      />
-    </div>
-  );
+    const message = (event: MessageEvent) => {
+      if (event.origin !== 'https://www.youtube.com' || !iframeRef.current?.contentWindow || event.source !== iframeRef.current.contentWindow) return;
+      const data = parseYouTubeMessage(event.data);
+      if (!data || typeof data.event !== 'string') return;
+      // Stop handshake retries once this exact iframe has responded. Never
+      // reinitialise a player that is already delivering playback updates.
+      timers.current.forEach(clearTimeout);
+      timers.current = [];
+      const state = data.event === 'onStateChange' ? data.info : data.info?.playerState;
+      if (typeof data.info?.currentTime === 'number' && Number.isFinite(data.info.currentTime) && data.info.currentTime >= 0) playbackPosition.current = data.info.currentTime;
+      const previous = soundState.current;
+      const next = {
+        state: typeof state === 'number' ? state : previous.state,
+        muted: typeof data.info?.muted === 'boolean' ? data.info.muted : previous.muted,
+        volume: typeof data.info?.volume === 'number' ? data.info.volume : previous.volume,
+      };
+      if (next.state !== previous.state || next.muted !== previous.muted || next.volume !== previous.volume) {
+        soundState.current = next;
+        record();
+      }
+      if (state === 1) {
+        blocked = false;
+        if (previous.state !== 1) playingSince = Date.now();
+        notify(true);
+      } else if (state === 0 || state === 2 || data.event === 'onError') {
+        notify(false);
+        playingSince = null;
+      } else if (state === 3 && previous.state !== 3) {
+        // Permit a later recovery only after the stream has actually advanced;
+        // brief playing/buffering bounces must not cause a reload loop.
+        if (playingSince !== null && Date.now() - playingSince >= 5000 && playbackPosition.current !== null && playbackPosition.current >= restartPosition + 5) restarted = false;
+        playingSince = null;
+      }
+      if (data.event === 'onAutoplayBlocked' || data.event === 'onError') {
+        blocked = true;
+        record(data.event);
+      }
+      recover();
+    };
+    const otherPlayback = (event: Event) => {
+      const detail = (event as CustomEvent<{ key?: string; kind?: string }>).detail;
+      if (detail?.kind === 'youtube' && detail.key !== mediaKey && playingRef.current) iframeRef.current?.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'pauseVideo', args: [] }), 'https://www.youtube.com');
+    };
+    window.addEventListener(LIME_BACKGROUND_MEDIA_PLAY_EVENT, otherPlayback);
+    window.addEventListener('message', message);
+    document.addEventListener('visibilitychange', recover);
+    window.addEventListener('online', recover);
+    return () => {
+      cancelRecovery();
+      document.removeEventListener('visibilitychange', recover);
+      window.removeEventListener('online', recover);
+      window.removeEventListener('message', message);
+      window.removeEventListener(LIME_BACKGROUND_MEDIA_PLAY_EVENT, otherPlayback);
+      timers.current.forEach(clearTimeout);
+      if (playingRef.current) window.dispatchEvent(new CustomEvent(LIME_BACKGROUND_MEDIA_STOP_EVENT, { detail: { key: mediaKey } }));
+      playingRef.current = false;
+    };
+  }, [mediaKey, notify, videoId]);
+
+  return <div className="my-3 aspect-video w-full overflow-hidden rounded-xl border border-border bg-black shadow-sm">
+    <iframe key={videoId} ref={iframeRef} src={getYouTubeEmbedUrl(videoId)} width="100%" height="100%" loading="lazy" title="YouTube video player" frameBorder="0"
+      allow="autoplay; accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen referrerPolicy="strict-origin-when-cross-origin" className="block h-full w-full"
+      onLoad={() => {
+        timers.current.forEach(clearTimeout);
+        sendYouTubeListeningMessage(iframeRef.current, mediaKey);
+        timers.current = [500, 1500].map(delay => setTimeout(() => sendYouTubeListeningMessage(iframeRef.current, mediaKey), delay));
+      }} />
+  </div>;
 };
 
 // SpotifyEmbed
@@ -515,9 +555,9 @@ const pumpImageSizePreloadQueue = () => {
 const preloadImageNaturalSize = (url: string, priority: 'high' | 'low' = 'low') => {
   const cached = getCachedNaturalSize(url);
   if (cached) return Promise.resolve(cached);
-  // iOS must not decode a second full-size image merely to measure it.
+  // Installed PWAs must not decode a second full-size image merely to measure it.
   // The visible image's onLoad supplies its dimensions.
-  if(isIosPwa())return Promise.resolve(null);
+  if(isInstalledPwa())return Promise.resolve(null);
 
   const pending = imageSizePreloadPending.get(url);
   if (pending) {
@@ -1036,39 +1076,8 @@ function ensurePostCardStylesInjected() {
   document.head.appendChild(styleElement);
 }
 
-type CardIntersectionCallback = (isIntersecting: boolean) => void;
-
-const cardIntersectionCallbacks = new Map<Element, CardIntersectionCallback>();
-let sharedCardIntersectionObserver: IntersectionObserver | null = null;
-
-function getSharedCardIntersectionObserver() {
-  if (sharedCardIntersectionObserver) return sharedCardIntersectionObserver;
-  if (typeof IntersectionObserver === 'undefined') return null;
-
-  sharedCardIntersectionObserver = new IntersectionObserver(
-    (entries) => {
-      entries.forEach((entry) => {
-        const callback = cardIntersectionCallbacks.get(entry.target);
-        callback?.(entry.isIntersecting);
-      });
-    },
-    { rootMargin: '420px 0px 520px 0px' }
-  );
-
-  return sharedCardIntersectionObserver;
-}
-
-function observeCardIntersection(element: Element, callback: CardIntersectionCallback) {
-  const observer = getSharedCardIntersectionObserver();
-  if (!observer) return () => {};
-
-  cardIntersectionCallbacks.set(element, callback);
-  observer.observe(element);
-
-  return () => {
-    cardIntersectionCallbacks.delete(element);
-    observer.unobserve(element);
-  };
+function observeCardIntersection(element:Element,callback:(visible:boolean)=>void){
+  return observeElementVisibility(element,callback,'420px 0px 520px 0px');
 }
 
 function PostCardComponent({ post, timelineGlass = false, thread = false, embedded = false, repostedByLabel = post.externalRepostedBy?.displayName, pinned = false, mediaPresentation, onMediaReply, onMediaLikeChange, mediaDownload,onNotInterested }: { post: PostWithAuthor; timelineGlass?: boolean; thread?: boolean; embedded?: boolean; repostedByLabel?: string; pinned?:boolean; mediaPresentation?: 'actions' | 'menu'; onMediaReply?: () => void; onMediaLikeChange?: (state:{liked:boolean;count:number})=>void; mediaDownload?:()=>void;onNotInterested?:(post:PostWithAuthor)=>Promise<void> }) {
@@ -1631,7 +1640,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
 
   const isMembersOnlyPost = currentVisibility === 'members';
   const canViewMembersOnlyPost = !isMembersOnlyPost || isMyPost || isMember === true;
-  const linkPreview=useLinkPreview(post.content,canViewMembersOnlyPost&&canShowPostLinkPreview(post,embedded),post.linkPreview,!isBlueskyPost);
+  const linkPreview=useLinkPreview(post.content,canViewMembersOnlyPost&&canShowPostLinkPreview(post,embedded),post.linkPreview,!isBlueskyPost,!isInstalledPwa()||pageVisible&&(!!mediaPresentation||isCardActive));
   const isCheckingMembersOnlyAccess = isMembersOnlyPost && !isMyPost && isMember === undefined;
 
   const { youtubeId, spotifyUrls, allImageUrls, displayContent, singleImageUrl } = useMemo(() => {
@@ -2006,7 +2015,8 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
       const { data: followingRows, error: followingError } = await supabase
         .from('follows')
         .select('followee_id')
-        .eq('follower_id', currentUserId);
+        .eq('follower_id', currentUserId)
+        .eq('approved', true);
 
       if (followingError) throw followingError;
 
@@ -2024,6 +2034,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
             .select('follower_id')
             .eq('followee_id', currentUserId)
             .in('follower_id', followingIds)
+            .eq('approved', true)
         : { data: [], error: null };
 
       if (followerError) throw followerError;
@@ -2101,18 +2112,9 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
       const url = getPostShareUrl();
       const text = getPostShareText();
 
-      const { error } = await supabase
-        .from('lime_drops')
-        .insert({
+      await sendLimeDrop({
           sender_id: currentUserId,
           recipient_id: target.id,
-          // Bluesky発の投稿は post.id が "bsky:at://did:...#rkey" 形式、
-          // post.author.id が Bluesky の DID（did:plc:...）形式になっており、
-          // どちらも lime_drops テーブルの uuid 型カラムにそのまま入れると
-          // 必ず 400 (invalid input syntax for type uuid) で失敗していた。
-          // Bluesky投稿の場合はこの2項目だけ null にし、投稿の特定に必要な
-          // 情報は post_url / post_text / post_author_username /
-          // post_author_display_name（いずれも text カラム）でまかなう。
           post_id: isBlueskyPost ? null : post.id,
           post_url: url,
           post_author_id: isBlueskyPost ? null : post.author.id,
@@ -2120,9 +2122,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
           post_author_display_name: post.author.displayName,
           post_text: text,
           status: 'pending',
-        });
-
-      if (error) throw error;
+        }, supabase);
 
       setLimeDropFeedback(`${target.displayName}さんに送信しました`);
       window.setTimeout(() => {

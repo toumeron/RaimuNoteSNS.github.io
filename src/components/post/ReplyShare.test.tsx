@@ -1,10 +1,13 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({ insert: vi.fn() }));
-vi.mock('@/lib/supabase', () => ({ supabase: { from: (table: string) => {
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase: { from: (table: string) => {
   if (table === 'lime_drops') return { insert: state.insert };
   return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { is_official: true }, error: null }) }), neq: () => ({ order: async () => ({ data: [{ id: 'recipient', username: 'friend', display_name: 'Friend', avatar_url: '' }], error: null }) }) }) };
-} } }));
+} }
+}));
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReplyShare } from "@/components/post/CommentList";
 const comment = { id: 'child', postId: 'root', content: 'reply text', author: { id: 'author', username: 'author', displayName: 'Author' } };
@@ -23,6 +26,6 @@ describe('reply sharing', () => {
   it('preserves the selected reply URL in LimeDrop without root-post redirection', async () => {
     open(); fireEvent.click(screen.getByRole('button', { name: 'LimeDropで送信' }));
     fireEvent.click(await screen.findByRole('button', { name: /Friend/ }));
-    await waitFor(() => expect(state.insert).toHaveBeenCalledWith(expect.objectContaining({ post_id: null, post_url: expect.stringMatching(/\/post\/root\?reply=child$/), post_author_id: 'author', recipient_id: 'recipient' })));
+    await waitFor(() => expect(state.insert).toHaveBeenCalledWith(expect.objectContaining({ post_id: null, post_url: expect.stringMatching(/\/post\/root\?reply=child$/), post_author_id: null, recipient_id: 'recipient' })));
   });
 });

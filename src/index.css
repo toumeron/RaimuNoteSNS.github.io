@@ -269,7 +269,7 @@ body {
 :root[data-accent="purple"]{--theme-hue:252;--theme-primary:252 100% 67%;--theme-on-primary:0 0% 100%;}
 :root[data-accent="orange"]{--theme-hue:29;--theme-primary:29 100% 50%;--theme-on-primary:25 30% 12%;}
 :root[data-accent="green"]{--theme-hue:164;--theme-primary:164 100% 34%;--theme-on-primary:0 0% 100%;}
-:root[data-accent]:not([data-accent="pink"]){
+:root[data-accent]:not([data-accent="pink"]):not([data-accent="greige"]){
  --primary:var(--theme-primary);--primary-foreground:var(--theme-on-primary);--ring:var(--theme-primary);
  --primary-soft:var(--theme-hue) 85% 92%;--secondary:var(--theme-hue) 90% 95%;--secondary-foreground:var(--theme-hue) 60% 30%;
  --border:var(--theme-hue) 50% 90%;--input:var(--theme-hue) 40% 92%;--chat-received:hsl(var(--theme-hue) 75% 94%);
@@ -280,18 +280,26 @@ body {
  --shadow-soft:0 4px 14px -4px hsl(var(--theme-hue) 60% 75% / .25);--shadow-card:0 8px 24px -8px hsl(var(--theme-hue) 50% 70% / .18);--shadow-pop:0 12px 32px -8px hsl(var(--theme-hue) 70% 65% / .35);
  --decoration-pink:hsl(var(--theme-hue) 100% 95% / .6);
 }
-:root.dark[data-accent]:not([data-accent="pink"]){--primary-soft:var(--theme-hue) 50% 20%;--secondary:210 20% 18%;--secondary-foreground:var(--theme-hue) 80% 85%;--border:var(--theme-hue) 15% 25%;--input:var(--theme-hue) 15% 25%;--gradient-cream:linear-gradient(180deg,hsl(var(--background)),hsl(var(--theme-hue) 20% 8%));--decoration-pink:hsl(var(--theme-hue) 35% 18% / .6);}
+:root.dark[data-accent]:not([data-accent="pink"]):not([data-accent="greige"]){--primary-soft:var(--theme-hue) 50% 20%;--secondary:210 20% 18%;--secondary-foreground:var(--theme-hue) 80% 85%;--border:var(--theme-hue) 15% 25%;--input:var(--theme-hue) 15% 25%;--gradient-cream:linear-gradient(180deg,hsl(var(--background)),hsl(var(--theme-hue) 20% 8%));--decoration-pink:hsl(var(--theme-hue) 35% 18% / .6);}
+
+/* Greige changes the accent only; retain the default pink theme's surfaces. */
+:root[data-accent="greige"]{
+ --primary:13.0434782609 10.6976744186% 57.8431372549%;
+ --primary-foreground:0 0% 100%;--ring:var(--primary);
+ --sidebar-primary:var(--primary);--sidebar-primary-foreground:var(--primary-foreground);--sidebar-ring:var(--primary);
+ --gradient-primary:linear-gradient(135deg,#b4a29d,#9F8D88);
+}
 
 /* Alternative accents use neutral white surfaces and separators only in light mode. */
-:root:not(.dark)[data-accent]:not([data-accent="pink"]){
+:root:not(.dark)[data-accent]:not([data-accent="pink"]):not([data-accent="greige"]){
  --background:0 0% 100%;--sidebar-background:0 0% 100%;
  --border:192 18.5185% 94.7059%;--input:192 18.5185% 94.7059%;
  --sidebar-border:var(--border);--muted:192 18.5185% 94.7059%;
  --gradient-cream:linear-gradient(#fff,#fff);--decoration-pink:transparent;--decoration-teal:transparent;
 }
-:root:not(.dark)[data-accent]:not([data-accent="pink"]) .lime-app-shell{--desktop-line:#EFF3F4;}
-:root:not(.dark)[data-accent]:not([data-accent="pink"]) .dm-workspace{--dm-line:#EFF3F4;}
-:root:not(.dark)[data-accent]:not([data-accent="pink"]) :where([class*="border-border"]){border-color:#EFF3F4;}
+:root:not(.dark)[data-accent]:not([data-accent="pink"]):not([data-accent="greige"]) .lime-app-shell{--desktop-line:#EFF3F4;}
+:root:not(.dark)[data-accent]:not([data-accent="pink"]):not([data-accent="greige"]) .dm-workspace{--dm-line:#EFF3F4;}
+:root:not(.dark)[data-accent]:not([data-accent="pink"]):not([data-accent="greige"]) :where([class*="border-border"]){border-color:#EFF3F4;}
 
 /* Composer tools share one drawing scale and button box at every viewport width. */
 [data-lime-composer-tool], [data-lime-composer-audience="true"] {
@@ -1554,6 +1562,20 @@ body:has(.lime-media-lightbox) [data-radix-popper-content-wrapper]{z-index:21474
 .lime-media-reply-dialog .reply-submit{display:none}
 .lime-media-reply-dialog .reply-attachments{grid-column:2;grid-row:2;margin-top:12px}
 .lime-media-reply-dialog [aria-hidden=true].absolute{padding:6px 0;font-size:20px;line-height:28px}
+/* Fit each backdrop around its icon and count without moving the action slots. */
+@media(min-width:768px){
+.lime-media-top>button,.lime-media-top-right>button,.lime-media-prev,.lime-media-next{background:rgba(0,0,0,.3);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
+.lime-media-bottom .lime-media-actions :is([data-lime-post-actions],[data-lime-comment-actions])>:nth-child(-n+4):not(:last-child),
+.lime-media-bottom .lime-media-actions :is([data-lime-post-actions],[data-lime-comment-actions])>div:last-child>*{position:relative;isolation:isolate;background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none}
+.lime-media-bottom .lime-media-actions :is([data-lime-post-actions],[data-lime-comment-actions])>:nth-child(-n+4):not(:last-child)::before,
+.lime-media-bottom .lime-media-actions :is([data-lime-post-actions],[data-lime-comment-actions])>div:last-child>*::before{content:"";position:absolute;left:var(--lime-media-action-left,50%);top:50%;width:var(--lime-media-action-width,40px);height:40px;transform:translate(-50%,-50%);border-radius:999px;background:rgba(0,0,0,.3);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);z-index:-1;pointer-events:none}
+}
+/* Desktop images use the whole main pane; controls no longer reduce its height. */
+@media(min-width:768px){
+.lime-image-mode .lime-media-main{background:#000}
+.lime-image-mode .lime-media-stage{position:absolute;inset:0}
+.lime-image-mode .lime-media-bottom{position:absolute;inset:auto 0 0;background:linear-gradient(transparent,#000b)}
+}
 @media(max-width:767px){
 .lime-media-lightbox{background:#000}.lime-media-follow{display:block}.lime-media-follow button{width:auto;height:32px;max-width:110px;white-space:nowrap;overflow:hidden}.lime-media-follow button span{white-space:nowrap}
 .lime-media-detail,.lime-media-pane-toggle,.lime-media-desktop-close{display:none!important}.lime-media-mobile-menu,.lime-media-mobile-back{display:flex!important}.lime-media-prev,.lime-media-next,.lime-media-download{display:none}
@@ -2282,3 +2304,22 @@ header[data-lime-post-activity-header="true"] button:hover { background: hsl(var
 
 @keyframes lime-new-posts-enter{from{opacity:0;transform:translateY(-8px) scale(.96);}to{opacity:1;transform:translateY(0) scale(1);}}
 @media(prefers-reduced-motion:reduce){.lime-new-posts-notice>button{animation:none;}}
+
+/* Snow is a non-interactive canvas; particle shape and motion are independent. */
+.lime-snow{position:fixed;inset:0;overflow:hidden;pointer-events:none!important;user-select:none;z-index:9999;contain:strict;}
+.lime-snow canvas{display:block;width:100%;height:100%;pointer-events:none;}
+
+/* Keep the editor's content mounted and stationary through its exit fade. */
+.avatar-decoration-editor{display:flex;flex-direction:column;gap:0;overflow:hidden;}
+.avatar-decoration-editor[data-state="open"]{animation:lime-decoration-enter 160ms ease-out both;}
+.avatar-decoration-editor[data-state="closed"]{animation:lime-decoration-exit 140ms ease-in both;}
+.avatar-decoration-heading{flex-shrink:0;}
+@keyframes lime-decoration-enter{from{opacity:0}to{opacity:1}}
+@keyframes lime-decoration-exit{from{opacity:1}to{opacity:0}}
+@media(max-width:767px){
+ .avatar-decoration-editor{left:0;top:0;width:100%;max-width:none;height:100vh;height:100dvh;max-height:none;transform:none;border:0;border-radius:0;padding:0;}
+ .avatar-decoration-heading{padding-top:max(20px,env(safe-area-inset-top));padding-left:max(24px,env(safe-area-inset-left));padding-right:max(48px,env(safe-area-inset-right));}
+ .avatar-decoration-editor>button{top:max(16px,env(safe-area-inset-top));right:max(16px,env(safe-area-inset-right));}
+ .avatar-decoration-footer{padding-bottom:max(16px,env(safe-area-inset-bottom));}
+}
+@media(prefers-reduced-motion:reduce){.avatar-decoration-editor[data-state]{animation-duration:1ms;}}

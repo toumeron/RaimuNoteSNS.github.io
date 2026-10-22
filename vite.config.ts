@@ -149,7 +149,7 @@ export default defineConfig(({ mode }) => {
         globIgnores: [
           "decoders/**", "assets/LimeMap-*", "assets/LimeMaps-*", "assets/DirectMessages-*", "assets/hls-*", "assets/AgoraRTC*", "assets/pdfjs*", "assets/three*",
           "assets/*Loader-*", "assets/draco*", "assets/meshopt*",
-          "assets/mmdAvatar-*", "assets/avatarRuntime-*",
+          "assets/mmdAvatar-*", "assets/avatarRuntime-*", "assets/AvatarStage-*",
           "assets/spaceMusicScore-*", "assets/ChatPage-*", "assets/Settings-*", "assets/MediaViewer-*",
           "assets/PostDetail-*", "assets/Profile-*",
           "assets/localGemma.worker-*", "assets/recommendationVisual.worker-*", "assets/recommendationVisualInference-*", "assets/transformers*", "assets/ort-*",

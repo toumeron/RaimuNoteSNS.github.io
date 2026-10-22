@@ -1,7 +1,10 @@
 import {beforeEach,expect,it,vi} from 'vitest';
 const fixture=vi.hoisted(()=>({result:vi.fn(),filter:vi.fn()}));
-vi.mock('./supabase',()=>({supabase:{from:()=>({select:()=>({eq:()=>({not:()=>({or:(filter:string)=>{fixture.filter(filter);return {limit:()=>({abortSignal:fixture.result})};}})})})})}}));
-import {searchSavedAccounts} from './savedAccountSearch';
+vi.mock("./supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("./supabase")>(),
+  supabase:{from:()=>({select:()=>({eq:()=>({not:()=>({or:(filter:string)=>{fixture.filter(filter);return {limit:()=>({abortSignal:fixture.result})};}})})})})}
+}));
+import {searchSavedAccounts} from "@/lib/externalAccounts";
 beforeEach(()=>vi.clearAllMocks());
 it('finds public saved external profiles by display name without a follower count condition',async()=>{
  fixture.result.mockResolvedValue({data:[{external_provider:'misskey',external_handle:'artist@misskey.io',external_profile:{id:'misskey-user:artist',username:'artist@misskey.io',displayName:'たんたんめん',avatarUrl:'avatar'}}],error:null});

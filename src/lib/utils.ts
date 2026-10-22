@@ -1,14 +1,14 @@
+import "dayjs/locale/ja";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
-import "dayjs/locale/ja";
 import { type QueryClient } from "@tanstack/react-query";
-import { type CommentWithAuthor, type PostWithAuthor } from "@/types/index";
+import { type CommentWithAuthor, type PostWithAuthor, type User } from "@/types/index";
 import { type PostTabFilter, type PostTabSort } from "@/components/ui/avatar";
+import { type BlueskyAuthorFeedPage } from "@/lib/bluesky";
+import { type FeedCursor } from "@/api/posts";
 
-// utils
-// utils
 // utils
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -234,7 +234,6 @@ function insertDraftEmoji(input:HTMLTextAreaElement|HTMLInputElement|null,text:s
   requestAnimationFrame(()=>{if(input?.value!==next)return;input.focus();input.setSelectionRange(start+1,start+1);});
 }
 
-// postPresentation
 // postPresentation
 type PreviewPost={content?:string;imageUrls?:readonly string[];video?:unknown;externalVideo?:unknown;linkPreview?:{image?:string}};
 function hasAttachedPostVideo(post:unknown):boolean{
@@ -567,3 +566,359 @@ export { collectProfilePages };
 export { uniqueProfileMediaPosts };
 export { nextTwitterReplyCursor };
 export { twitterReplyText };
+
+
+// transientCache
+const caches=new Set<{sweep:()=>void}>();
+/** Bounded LRU for disposable API results. Drafts and offline storage stay separate. */
+export class TransientCache<K,V>{
+ private records=new Map<K,{value:V;until:number}>();
+ constructor(private ttlMs:number,private browserLimit=64,private pwaLimit=24){caches.add(this);}
+ get size(){return this.records.size;}
+ clear(){this.records.clear();}
+ dispose(){this.clear();caches.delete(this);}
+ get(key:K):V|undefined{
+  const entry=this.records.get(key);if(!entry)return;
+  if(entry.until<=Date.now()){this.records.delete(key);return;}
+  this.records.delete(key);this.records.set(key,entry);return entry.value;
+ }
+ set(key:K,value:V){
+  this.sweep();this.records.delete(key);this.records.set(key,{value,until:Date.now()+this.ttlMs});
+  const limit=isInstalledPwa()?this.pwaLimit:this.browserLimit;
+  while(this.records.size>limit)this.records.delete(this.records.keys().next().value!);
+  return this;
+ }
+ sweep(){const now=Date.now();for(const [key,entry]of this.records)if(entry.until<=now)this.records.delete(key);}
+}
+export function sweepTransientCaches(){caches.forEach(cache=>cache.sweep());}
+
+
+// pwaPerformance
+export function pwaQueryGcTime(){return isInstalledPwa()?90_000:300_000;}
+/** Bound inactive route data only; never truncate a visible feed or cancel a read. */
+export function trimInactivePwaQueries(client:QueryClient,maxQueries=32,maxItems=1200){
+ if(!isInstalledPwa())return;
+ const entries=client.getQueryCache().getAll().filter(query=>query.getObserversCount()===0&&query.state.fetchStatus==='idle').sort((a,b)=>b.state.dataUpdatedAt-a.state.dataUpdatedAt);
+ let count=0,items=0;
+ for(const query of entries){
+  const data=query.state.data as {pages?:Array<unknown[]|{posts?:unknown[];items?:unknown[]}>;posts?:unknown[];items?:unknown[]}|unknown[]|undefined;
+  const size=Array.isArray(data)?data.length:data?.pages?.reduce((sum,page)=>sum+(Array.isArray(page)?page.length:page?.posts?.length??page?.items?.length??0),0)??data?.posts?.length??data?.items?.length??0;
+  // Recently left routes keep their back-navigation data even under the budget.
+  const recent=Date.now()-query.state.dataUpdatedAt<30_000;
+  if(!recent&&(count>=maxQueries||items+size>maxItems)){client.removeQueries({queryKey:query.queryKey,exact:true});continue;}
+  count++;items+=size;
+ }
+}
+export function installPwaMemoryManagement(client:QueryClient){
+ let timer:ReturnType<typeof setTimeout>|undefined,idle:number|undefined,disposed=false;
+ const cancel=()=>{clearTimeout(timer);timer=undefined;if(idle!==undefined)window.cancelIdleCallback(idle);idle=undefined;};
+ const trim=()=>{if(isInstalledPwa()){sweepTransientCaches();trimInactivePwaQueries(client);}};
+ // Batch route changes once the back-navigation grace period has elapsed.
+ // This is cache housekeeping, with no network reads or background interval.
+ const schedule=()=>{
+  if(disposed||!isInstalledPwa()||document.hidden||timer!==undefined||idle!==undefined)return;
+  timer=setTimeout(()=>{timer=undefined;if(document.hidden)return;
+   if(typeof window.requestIdleCallback==='function')idle=window.requestIdleCallback(()=>{idle=undefined;trim();},{timeout:2000});
+   else trim();
+  },30_100);
+ };
+ const unsubscribe=client.getQueryCache().subscribe(event=>{
+  if(event.type==='observerRemoved'||event.type==='updated'&&event.query.getObserversCount()===0)schedule();
+ });
+ const hide=()=>{cancel();trim();};
+ const visibility=()=>{if(document.hidden)hide();else schedule();};
+ document.addEventListener('visibilitychange',visibility);window.addEventListener('pagehide',hide);schedule();
+ return()=>{disposed=true;cancel();unsubscribe();document.removeEventListener('visibilitychange',visibility);window.removeEventListener('pagehide',hide);};
+}
+export function pwaHlsBuffers(){
+ return isInstalledPwa()?{backBufferLength:10,maxBufferSize:20*1024*1024}:{};
+}
+
+
+// visibleRenderLoop
+/** Suspend GPU rendering outside the viewport or while the app is hidden. */
+export function bindVisibleRenderLoop(element:Element,setLoop:(loop:(()=>void)|null)=>void,render:()=>void,onResume:()=>void=()=>{}){
+ let inView=true,pageHidden=false,active:boolean|undefined;
+ const update=()=>{const next=!document.hidden&&!pageHidden&&inView;if(next===active)return;active=next;if(next)onResume();setLoop(next?render:null);};
+ const visibility=()=>update(),hide=()=>{pageHidden=true;update();},show=()=>{pageHidden=false;update();};
+ const observer=typeof IntersectionObserver==='undefined'?undefined:new IntersectionObserver(entries=>{for(const entry of entries)if(entry.target===element){inView=entry.isIntersecting;update();}},{rootMargin:'100px'});
+ observer?.observe(element);document.addEventListener('visibilitychange',visibility);window.addEventListener('pagehide',hide);window.addEventListener('pageshow',show);update();
+ return()=>{observer?.disconnect();document.removeEventListener('visibilitychange',visibility);window.removeEventListener('pagehide',hide);window.removeEventListener('pageshow',show);if(active)setLoop(null);active=false;};
+}
+
+
+// accountSearchRanking
+export const normalizeAccountText=(value:string|null|undefined)=>(value??'').normalize('NFKC').toLocaleLowerCase().replace(/^@+/, '').replace(/:[a-z0-9_]+:/gi,' ').replace(/[ァ-ヶ]/g,char=>String.fromCharCode(char.charCodeAt(0)-0x60)).trim();
+const normalize=normalizeAccountText;
+export const accountHandleKey=(username:string)=>normalize(username).replace(/@x\.com$/,'@twitter.com');
+export function followedAccountMatcher(following:readonly User[]){
+ const ids=new Set(following.map(user=>user.id)),handles=new Set(following.map(user=>accountHandleKey(user.username)).filter(Boolean));
+ return (user:Pick<User,'id'|'username'>)=>ids.has(user.id)||handles.has(accountHandleKey(user.username));
+}
+export function accountQueryScore(user:User,query:string):number{
+ const terms=normalize(query.trim()).split(/\s+/).filter(Boolean);if(!terms.length)return 0;
+ const fields=[normalize(user.displayName),normalize(user.username)],bio=normalize(user.bio??'');
+ let score=0;
+ for(const term of terms){
+  if(fields.includes(term))score+=100;
+  else if(fields.some(field=>field.startsWith(term)))score+=60;
+  else if(fields.some(field=>field.includes(term)))score+=30;
+  else if(bio.includes(term))score+=10;
+  else return 0;
+ }
+ return score;
+}
+/** API matches may resolve aliases absent from the profile's literal display name. */
+export function rankAccountSearch(local:readonly User[],remote:readonly User[],following:readonly User[],query:string,limit=Infinity):User[]{
+ if(!query.trim().replace(/^@+/,''))return [];
+ const remoteIds=new Set(remote.map(user=>user.id)),isFollowed=followedAccountMatcher(following);
+ const users=[...new Map([...following,...local,...remote].map(user=>[accountHandleKey(user.username)||user.id,user])).values()];
+ return users.map((user,index)=>({user,index,score:accountQueryScore(user,query)}))
+  .filter(item=>item.score>0||remoteIds.has(item.user.id))
+  .sort((a,b)=>Number(isFollowed(b.user))-Number(isFollowed(a.user))||b.score-a.score||a.index-b.index)
+  .map(item=>item.user).slice(0,limit);
+}
+
+
+// accountAliases
+const cache=new Map<string,{until:number;handles:string[]}>();
+/** Wikibase label/alias search -> current P2002 claims; never guess an account handle. */
+export async function searchAccountAliasHandles(query:string,signal?:AbortSignal):Promise<string[]>{
+ const term=query.normalize('NFKC').trim();
+ if(term.length<2||term.length>100||term.startsWith('@')||/https?:\/\/|@|\b(?:from|to|source):/i.test(term))return [];
+ if(signal?.aborted)throw signal.reason;
+ const key=term.toLocaleLowerCase(),saved=cache.get(key);if(saved&&saved.until>Date.now())return saved.handles;
+ const controller=new AbortController(),abort=()=>controller.abort(signal?.reason);
+ signal?.addEventListener('abort',abort,{once:true});
+ const timer=setTimeout(()=>controller.abort(),2500);
+ const read=async(params:Record<string,string>,origin='https://www.wikidata.org')=>{
+  const response=await fetch(`${origin}/w/api.php?${new URLSearchParams({format:'json',origin:'*',...params})}`,{signal:controller.signal,credentials:'omit',referrerPolicy:'no-referrer'});
+  if(!response.ok)throw new Error('Alias search unavailable');return response.json();
+ };
+ try{
+  const lookups=await Promise.allSettled([
+   read({action:'wbsearchentities',search:term,language:/[ぁ-んァ-ヶ一-龯]/.test(term)?'ja':'en',uselang:'ja',type:'item',limit:'3'}),
+   read({action:'query',titles:term,redirects:'1',prop:'pageprops',ppprop:'wikibase_item'},'https://ja.wikipedia.org'),
+  ]);
+  if(controller.signal.aborted)throw controller.signal.reason;
+  const matches=lookups[0].status==='fulfilled'?lookups[0].value:{},pages=lookups[1].status==='fulfilled'?lookups[1].value?.query?.pages??{}:{};
+  const ids=[...new Set([...Object.values(pages).map((page:any)=>page.pageprops?.wikibase_item),...(matches.search??[]).map((item:{id?:string})=>item.id)].filter((id:unknown):id is string=>typeof id==='string'&&/^Q\d+$/.test(id)))].slice(0,3);
+  let handles:string[]=[];
+  if(ids.length){
+   const data=await read({action:'wbgetentities',ids:ids.join('|'),props:'claims'});
+   for(const id of ids){
+    const claims=data.entities?.[id]?.claims?.P2002??[];
+    const active=claims.filter((claim:any)=>claim.rank!=='deprecated'&&!claim.qualifiers?.P582);
+    const preferred=active.filter((claim:any)=>claim.rank==='preferred');
+    handles.push(...(preferred.length?preferred:active).map((claim:any)=>claim.mainsnak?.datavalue?.value).filter((handle:unknown):handle is string=>typeof handle==='string'&&/^[A-Za-z0-9_]{1,15}$/.test(handle)));
+   }
+  }
+  handles=[...new Set(handles)].slice(0,3);
+  if(cache.size>=100)cache.delete(cache.keys().next().value!);
+  cache.set(key,{until:Date.now()+600_000,handles});return handles;
+ }catch(error){if(signal?.aborted)throw error;return [];}
+ finally{clearTimeout(timer);signal?.removeEventListener('abort',abort);}
+}
+
+
+// recentSearchAccounts
+export const RECENT_SEARCH_ACCOUNTS_EVENT='lime:recent-search-accounts';
+const key=(owner:string)=>`search:recent-accounts:${owner}`;
+export function recentSearchAccounts(owner?:string):User[]{
+ if(!owner)return [];
+ try{const value=JSON.parse(localStorage.getItem(key(owner))??'[]');return Array.isArray(value)?value.filter(user=>user&&typeof user.id==='string'&&typeof user.username==='string'&&typeof user.displayName==='string').slice(0,10):[];}catch{return [];}
+}
+export function rememberSearchAccount(owner:string|undefined,user:User){
+ if(!owner)return;
+ const {id,username,displayName,avatarUrl,isOfficial,isPrivate,providerVerification}=user;
+ const next=[{id,username,displayName,avatarUrl,isOfficial,isPrivate,providerVerification},...recentSearchAccounts(owner).filter(previous=>accountHandleKey(previous.username)!==accountHandleKey(username))].slice(0,10);
+ try{localStorage.setItem(key(owner),JSON.stringify(next));window.dispatchEvent(new Event(RECENT_SEARCH_ACCOUNTS_EVENT));}catch{/* Storage may be unavailable. */}
+}
+export function clearRecentSearchAccounts(owner?:string){
+ if(!owner)return;
+ try{localStorage.removeItem(key(owner));window.dispatchEvent(new Event(RECENT_SEARCH_ACCOUNTS_EVENT));}catch{/* Storage may be unavailable. */}
+}
+
+
+// searchTermSuggestions
+const searchTermSuggestionsCache=new Map<string,string[]>();
+/** Public title completion: return related phrases only, never invented fillers. */
+export async function searchTermSuggestions(query:string,signal?:AbortSignal):Promise<string[]>{
+ const q=query.normalize('NFKC').trim();
+ if(!q||q.length>100||/[@:$]|https?:\/\//i.test(q))return [];
+ if(searchTermSuggestionsCache.has(q))return searchTermSuggestionsCache.get(q)!;
+ const response=await fetch(`https://ja.wikipedia.org/w/api.php?${new URLSearchParams({action:'opensearch',search:q,limit:'8',namespace:'0',format:'json',origin:'*'})}`,{signal,credentials:'omit',referrerPolicy:'no-referrer'});
+ if(!response.ok)throw new Error('検索候補を取得できませんでした');
+ const data=await response.json();
+ const normalize=(value:string)=>value.normalize('NFKC').toLocaleLowerCase().replace(/[ァ-ヶ]/g,c=>String.fromCharCode(c.charCodeAt(0)-0x60));
+ const terms=Array.isArray(data?.[1])?data[1]:[];
+ const result=[...new Set<string>(terms.filter((value:unknown):value is string=>typeof value==='string'&&value.length<=100&&normalize(value)!==normalize(q)&&normalize(value).startsWith(normalize(q))))].slice(0,2);
+ if(searchTermSuggestionsCache.size>=100)searchTermSuggestionsCache.delete(searchTermSuggestionsCache.keys().next().value!);searchTermSuggestionsCache.set(q,result);
+ return result;
+}
+
+
+// timelinePaging
+const SOURCE_PAGE_SIZE = 10;
+const TIMELINE_PAGE_SIZE = 20;
+
+type SourceCursor = { done: boolean; posts: PostWithAuthor[] };
+export type TimelineCursor = {
+  lime: SourceCursor & { page: number; before?: FeedCursor };
+  bluesky: Record<string, SourceCursor & { cursor: string | null }>;
+};
+export type TimelinePage = { posts: PostWithAuthor[]; next: TimelineCursor | undefined };
+export type TimelineSources = {
+  lime: (page: number, limit: number, before?: FeedCursor) => Promise<PostWithAuthor[]>;
+  bluesky: (handle: string, cursor: string | null, limit: number) => Promise<BlueskyAuthorFeedPage>;
+};
+
+export function createTimelineCursor(handles: string[]): TimelineCursor {
+  const twitter=(handle:string)=>/@(?:twitter|x)\.com$/i.test(handle)||handle.startsWith('x-user:');
+  const pools=[handles.filter(twitter),handles.filter(handle=>!twitter(handle))];
+  const ordered=Array.from({length:Math.max(0,...pools.map(pool=>pool.length))},(_,index)=>pools.flatMap(pool=>pool[index]?[pool[index]]:[])).flat();
+  return {
+    lime: { page: 0, done: false, posts: [] },
+    bluesky: Object.fromEntries(ordered.map(handle => [handle, { cursor: null, done: false, posts: [] }])),
+  };
+}
+
+export function normalizeTimelineBlueskyPost(post: BlueskyAuthorFeedPage['posts'][number]): PostWithAuthor {
+  return {
+    ...post,
+    id: post.id, userId: post.userId, content: post.content, imageUrls: post.imageUrls,
+    createdAt: post.createdAt, visibility: post.visibility,
+    likedByMe: post.likedByMe, likesCount: post.likesCount, commentsCount: post.commentsCount,
+    isBot: post.isBot,
+    ...(post.is_bot !== undefined ? { is_bot: post.is_bot } : {}),
+    repostsCount: post.externalDetails?.reposts??post.repostsCount??0, repostedByMe: false,
+    author: {
+      id: post.author.id, username: post.author.username, displayName: post.author.displayName,
+      avatarUrl: post.author.avatarUrl, coverUrl: '', isOfficial: false, providerVerification: post.author.providerVerification,
+      bio: post.author.bio, createdAt: post.author.createdAt,
+    },
+  };
+}
+
+const newestFirst = (a: PostWithAuthor, b: PostWithAuthor) =>
+  Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.id.localeCompare(a.id);
+
+type SourceResult = Partial<SourceCursor> & {page?:number;before?:FeedCursor;cursor?:string|null};
+type SourceRead = {settled:boolean;result?:SourceResult;error?:unknown;promise:Promise<void>};
+const pendingReads=new WeakMap<SourceCursor,SourceRead>();
+let activeAuthorReads=0;
+const authorReads:Array<()=>void>=[];
+function readAuthor<T>(load:()=>Promise<T>):Promise<T>{
+ return new Promise((resolve,reject)=>{
+  const start=()=>{
+   activeAuthorReads++;
+   void load().then(resolve,reject).finally(()=>{activeAuthorReads--;authorReads.shift()?.();});
+  };
+  if(activeAuthorReads<2)start();else authorReads.push(start);
+ });
+}
+function sourceRead(state:SourceCursor,load:()=>Promise<SourceResult>):SourceRead{
+ const existing=pendingReads.get(state);if(existing)return existing;
+ const job={settled:false,promise:null as unknown as Promise<void>} as SourceRead;
+ job.promise=load().then(result=>{job.result=result;},error=>{job.error=error;}).finally(()=>{job.settled=true;});
+ pendingReads.set(state,job);return job;
+}
+export function watchTimelineSources(cursor:TimelineCursor,onReady:()=>void):()=>void{
+ let active=true;
+ const jobs=new Set([cursor.lime,...Object.values(cursor.bluesky)].map(state=>pendingReads.get(state)).filter((job):job is SourceRead=>!!job));
+ for(const job of jobs)void job.promise.then(()=>{if(active)onReady();});
+ return()=>{active=false;};
+}
+/** Publish already-started source responses without starting another page read. */
+export function collectReadyTimelineSources(previous:TimelineCursor):TimelinePage|undefined{
+ let changed=false;
+ const posts:PostWithAuthor[]=[];
+ const collect=<T extends SourceCursor>(old:T):T=>{
+  const state={...old,posts:[...old.posts]},job=pendingReads.get(old);
+  if(!job)return state;
+  if(!job.settled){pendingReads.set(state,job);return state;}
+  changed=true;
+  if(job.error)return state; // Keep the original position for an ordinary retry.
+  Object.assign(state,job.result,{posts:[]});
+  posts.push(...(job.result?.posts??[]).filter(isTimelinePost));
+  return state;
+ };
+ const lime=collect(previous.lime),bluesky=Object.fromEntries(Object.entries(previous.bluesky).map(([handle,state])=>[handle,collect(state)]));
+ if(!changed)return undefined;
+ const states=[lime,...Object.values(bluesky)];
+ return {posts:posts.sort(newestFirst),next:states.some(state=>!state.done||state.posts.length)?{lime,bluesky}:undefined};
+}
+/** Keep slow reads for the next page without making ready posts wait for every account. */
+export async function loadTimelinePage(previous: TimelineCursor, sources: TimelineSources): Promise<TimelinePage> {
+ const started=Date.now();
+ const copy=<T extends SourceCursor>(old:T):T=>{
+  const state={...old,posts:[...old.posts]};
+  const pending=pendingReads.get(old);if(pending&&!pending.error)pendingReads.set(state,pending);
+  return state;
+ };
+ const lime=copy(previous.lime);
+ const bluesky=Object.fromEntries(Object.entries(previous.bluesky).map(([handle,state])=>[handle,copy(state)]));
+ const states=[lime,...Object.values(bluesky)],posts:PostWithAuthor[]=[],seen=new Set<string>();
+ const reads=new Map<SourceCursor,number>(),failures=new Map<SourceCursor,unknown>();
+ while(posts.length<TIMELINE_PAGE_SIZE){
+  const missing=states.filter(state=>!state.done&&!state.posts.length);
+  const jobs:Array<{state:SourceCursor;job:SourceRead}>=[];
+  for(const state of missing){
+   if(failures.has(state)||(reads.get(state)??0)>=2||Date.now()-started>=1000&&!pendingReads.has(state))continue;
+   const existing=pendingReads.get(state);
+   const job=sourceRead(state,()=>{
+    if(state===lime)return sources.lime(lime.page,SOURCE_PAGE_SIZE,lime.before).then(rows=>{
+     const ordered=[...rows].sort(newestFirst),oldest=ordered.at(-1);
+     return {page:lime.page+1,done:rows.length<SOURCE_PAGE_SIZE,posts:ordered,...(oldest?{before:{createdAt:oldest.createdAt,id:oldest.id}}:{})};
+    });
+    const [handle,blue]=Object.entries(bluesky).find(([,value])=>value===state)!;
+    return readAuthor(()=>sources.bluesky(handle,blue.cursor,SOURCE_PAGE_SIZE)).then(page=>{
+     if(page.cursor&&page.cursor===blue.cursor)throw new Error(`Bluesky cursor did not advance for ${handle}`);
+     return {cursor:page.cursor,done:!page.cursor,posts:page.posts.map(normalizeTimelineBlueskyPost).sort(newestFirst)};
+    });
+   });
+   if(!existing)reads.set(state,(reads.get(state)??0)+1);
+   jobs.push({state,job});
+  }
+  if(jobs.length){
+   const remaining=1000-(Date.now()-started);
+   let timer:ReturnType<typeof setTimeout>|undefined;
+   try{if(remaining>0)await Promise.race([Promise.all(jobs.map(({job})=>job.promise)),new Promise<void>(resolve=>{timer=setTimeout(resolve,remaining);})]);}
+   finally{clearTimeout(timer);}
+   for(const {state,job} of jobs)if(job.settled){
+    pendingReads.delete(state);
+    if(job.error){failures.set(state,job.error);continue;}
+    Object.assign(state,{...job.result,posts:[...(job.result?.posts??[])]});
+   }
+  }
+  const available=states.filter(state=>state.posts.length);
+  if(!available.length){
+   if(jobs.some(({job})=>!job.settled)||missing.some(state=>(reads.get(state)??0)>=2)||Date.now()-started>=1000)break;
+   if(states.some(state=>!state.done&&!failures.has(state)))continue;
+   break;
+  }
+  // Fast sources retain chronological merging. After the display budget,
+  // delayed accounts join later through their preserved, shared pending read.
+  available.sort((a,b)=>newestFirst(a.posts[0],b.posts[0]));
+  const post=available[0].posts.shift()!;
+  if(seen.has(post.id)||!isTimelinePost(post))continue;
+  seen.add(post.id);posts.push(post);
+ }
+ if(!posts.length&&failures.size&&!states.some(state=>pendingReads.has(state)||state.posts.length))throw failures.values().next().value;
+ const hasMore=states.some(state=>!state.done||state.posts.length);
+ return {posts,next:hasMore?{lime,bluesky}:undefined};
+}
+
+/** Replies stay on reply/profile screens. Quotes remain timeline posts. */
+export function isTimelinePost(post:PostWithAuthor):boolean {
+ return !post.replyId&&!post.replyPostId&&!post.externalReplyToId&&!(post.parentId&&!post.isQuote);
+}
+/** External discovery searches cannot prove that no matching posts exist. */
+export function showTimelineEmpty(loading:boolean,fetching:boolean,error:boolean,count:number,tab?:string):boolean {
+ return tab!=='recommended'&&tab!=='trending'&&!loading&&!fetching&&!error&&count===0;
+}
+
+/** Latest is LimeNote-only; a native quote may still contain an external parent. */
+export function isLimeNoteTimelinePost(post:PostWithAuthor):boolean{
+ return (!post.source||post.source==='lime')&&!/^(?:bsky:|misskey:|x:)/.test(post.id);
+}

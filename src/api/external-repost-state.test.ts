@@ -2,12 +2,15 @@ import {beforeEach,afterEach,expect,it,vi} from 'vitest';
 const m=vi.hoisted(()=>({reads:0,active:0,max:0,fail:false}));
 vi.mock('@/lib/currentUser',()=>({getCurrentUserId:async()=> 'viewer'}));
 vi.mock('@/lib/bluesky',()=>({fetchBlueskyPost:vi.fn()}));
-vi.mock('@/lib/supabase',()=>({supabase:{from:()=>{
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase:{from:()=>{
  const q={select:()=>q,eq:()=>q,maybeSingle:()=>q,abortSignal:()=>q,then:(resolve:any,reject:any)=>{
   m.reads++;m.active++;m.max=Math.max(m.max,m.active);
   return Promise.resolve().then(()=>{m.active--;return {data:null,count:1,error:m.fail?new Error('connection closed'):null};}).then(resolve,reject);
  }};return q;
-}}}));
+}}
+}));
 import {getExternalRepostState} from './external-posts';
 let clock=Date.now();
 beforeEach(()=>{clock+=20_000;vi.spyOn(Date,'now').mockReturnValue(clock);m.reads=0;m.active=0;m.max=0;m.fail=false;});

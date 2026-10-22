@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const db = vi.hoisted(() => ({ existing: false, lookupError: false, writeError: false, countError: false, writes: [] as string[] }));
 vi.mock('@/lib/currentUser', () => ({ getCurrentUserId: async () => 'viewer' }));
-vi.mock('@/lib/supabase', () => ({ supabase: {
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase: {
   from: (table: string) => {
     let action = 'select';
     let counting = false;
@@ -23,7 +25,8 @@ vi.mock('@/lib/supabase', () => ({ supabase: {
     };
     return builder;
   },
-} }));
+}
+}));
 import { toggleRepost } from './posts';
 beforeEach(() => { db.existing = false; db.lookupError = false; db.writeError = false; db.countError = false; db.writes = []; });
 describe('repost persistence', () => {

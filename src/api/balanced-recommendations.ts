@@ -1,5 +1,5 @@
 import {createRecommendationCursor,getRecommendationPage,getRecommendationPreferences,type RecommendationCursor} from './recommendations';
-import {getRecommendationTwitterPage} from './recommendation-twitter';
+import {getRecommendationTwitterPage} from "@/api/search-news";
 import {rankRecommendations} from '@/lib/recommendations';
 import { recommendationIdentity, recommendationFingerprint } from "@/lib/recommendations";
 import { uniqueRecommendationPosts } from "@/lib/recommendations";

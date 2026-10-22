@@ -1,4 +1,4 @@
-vi.mock("@/api/comments", async importOriginal => ({...await importOriginal<typeof import("@/api/comments")>(), readPoll:mocks.read, votePoll:mocks.vote}));
+vi.mock("@/api/external-posts", async importOriginal => ({...await importOriginal<typeof import("@/api/external-posts")>(), readPoll:mocks.read, votePoll:mocks.vote}));
 const mocks=vi.hoisted(()=>({read:vi.fn(),vote:vi.fn(),user:{id:'viewer'}}));
 
 vi.mock("@/hooks/useAuth", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useAuth")>(), useAuth:()=>({user:mocks.user})}));

@@ -2,8 +2,8 @@ import { displayUsername } from "@/lib/utils";
 import { PrivateMediaImage } from "@/components/ui/avatar";
 import { PrivateAccountBadge } from "@/components/ui/avatar";
 import {splitMentionText} from '@/lib/utils';
-import { openMediaViewer } from '@/components/media/openMediaViewer';
-import { renderStickerText } from "@/components/stickers/Stickers";
+import { openMediaViewer } from "@/lib/mediaThumbnail";
+import { renderStickerText } from "@/components/feed/QuotedPost";
 import { hasStickers } from "@/lib/utils";
 import {
   useCallback,

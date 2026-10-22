@@ -28,14 +28,17 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 const mocks = vi.hoisted(() => ({ from: vi.fn(), channel: vi.fn() }));
 
-vi.mock('@/lib/supabase', () => ({ supabase: mocks }));
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase: mocks
+}));
 
 
 
 
 
 
-import { ExternalReplyList } from "@/components/post/ExternalReplyList";
+import { ExternalReplyList } from "@/components/post/CommentList";
 const author = { id: 'bsky-user:person', username: 'person.bsky.social', displayName: '返信者', avatarUrl: '', coverUrl: '', bio: '', createdAt: '2026-10-01', isOfficial: false };
 const parent: any = { id: 'bsky:at://did:plc:parent/app.bsky.feed.post/root', author: { ...author, username: 'parent.bsky.social' } };
 function Path() { return <output aria-label="path">{useLocation().pathname}</output>; }

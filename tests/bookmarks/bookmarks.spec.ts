@@ -147,7 +147,7 @@ test('PWA downloads every bookmark page and images, then deletes only the offlin
  await expect(page.getByText('オフライン投稿 22',{exact:true})).toHaveCount(0);
  await expect(save).toBeEnabled();await press(page,save);
  const remove=page.getByRole('button',{name:'オフライン保存データを削除'});await expect(remove).toBeEnabled();
- const stored=await page.evaluate(async(id)=>{const {readOfflineBookmarks}=await import('/RaimuNoteSNS.github.io/src/lib/offlineBookmarks.ts');const value=await readOfflineBookmarks(id);return {count:value?.posts.length,assets:value?.assets.length};},user.id);
+ const stored=await page.evaluate(async(id)=>{const {readOfflineBookmarks}=await import('/RaimuNoteSNS.github.io/src/lib/mediaThumbnail.ts');const value=await readOfflineBookmarks(id);return {count:value?.posts.length,assets:value?.assets.length};},user.id);
  expect(stored).toEqual({count:23,assets:1});
  const blockNetwork=(route:import('@playwright/test').Route)=>/^https?:/.test(route.request().url())?route.abort():route.continue();
  if(info.project.name.includes('WebKit')){await page.route('**/*',blockNetwork);await page.evaluate(()=>{Object.defineProperty(navigator,'onLine',{configurable:true,get:()=>false});window.dispatchEvent(new Event('offline'));});}else await context.setOffline(true);
@@ -182,7 +182,7 @@ test('iOS PWA stores a CORS-blocked image through the authenticated image reader
  state.extraPosts=[{...base,id:'cors-post',content:'保存対象',imageUrls:[image]}];state.rows=[{id:'cors-bookmark',user_id:user.id,post_id:'cors-post',comment_id:null,external_id:null,created_at:user.createdAt}];
  await page.goto('bookmarks');await press(page,page.getByRole('button',{name:'ブックマークをすべてオフラインに保存'}));
  await expect(page.getByRole('button',{name:'オフライン保存データを削除'})).toBeEnabled();
- const stored=await page.evaluate(async(id)=>{const {readOfflineBookmarks}=await import('/RaimuNoteSNS.github.io/src/lib/offlineBookmarks.ts');const value=await readOfflineBookmarks(id);return value?.assets.map(asset=>asset.url);},user.id);expect(stored).toContain(image);
+ const stored=await page.evaluate(async(id)=>{const {readOfflineBookmarks}=await import('/RaimuNoteSNS.github.io/src/lib/mediaThumbnail.ts');const value=await readOfflineBookmarks(id);return value?.assets.map(asset=>asset.url);},user.id);expect(stored).toContain(image);
 });
 
 test('installed iOS feed does not decode full images again just to measure post sizes',async({page},info)=>{
@@ -213,7 +213,7 @@ test('loads later bookmarks by scrolling without a pagination button',async({pag
 test('offline generations survive simultaneous saves and failed replacements',async({page})=>{
  await page.goto('./');
  const result=await page.evaluate(async()=>{
-  const api=await import('/RaimuNoteSNS.github.io/src/lib/offlineBookmarks.ts');
+  const api=await import('/RaimuNoteSNS.github.io/src/lib/mediaThumbnail.ts');
   const owner='offline-atomic-regression',url='https://images.example/atomic.png';
   const snapshot=(id:string)=>({userId:owner,savedAt:new Date().toISOString(),posts:[{id,content:id,imageUrls:[url]}] as any,emojis:[],assets:[{url,bytes:new Uint8Array([1,2,3]).buffer,type:'image/png'}]});
   try{

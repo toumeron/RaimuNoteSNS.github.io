@@ -1,13 +1,13 @@
-import { useViewportWidth } from "@/hooks/useViewportWidth";
+import { useViewportWidth, observeElementVisibility } from "@/hooks/useViewportWidth";
 import { initialMediaSize, inlineVideoFrame, type PostVideo } from "@/lib/mediaThumbnail";
-import { openMediaViewer, type MediaViewerSelection } from "@/components/media/openMediaViewer";
+import { openMediaViewer, type MediaViewerSelection } from "@/lib/mediaThumbnail";
 import { type PostWithAuthor } from "@/types/index";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Loader2, Play, Pause, Volume2, VolumeOff, Settings, PictureInPicture2, Maximize2, Minimize2 } from "lucide-react";
 import { resolvePostVideo, resolvePostVideoPoster } from "@/lib/mediaThumbnail";
 
 import { createPortal } from "react-dom";
-import {pwaHlsBuffers} from '@/lib/pwaPerformance';
+import {pwaHlsBuffers} from "@/lib/utils";
 
 // hlsPlayback
 /** Attach an HLS stream only when playback is requested; abort releases buffers and requests. */
@@ -136,8 +136,8 @@ function PostVideoPlayer({video,postId,previewUrl,post,externalVideo,embedded=fa
  const [poster,setPoster]=useState<string>(),[error,setError]=useState(''),[loading,setLoading]=useState(false),[playing,setPlaying]=useState(false),[started,setStarted]=useState(false),[time,setTime]=useState(0),[controls,setControls]=useState(true),[settings,setSettings]=useState(false),[full,setFull]=useState(false);
  useEffect(()=>{source.current=previewUrl;busy.current=false;setError('');setStarted(false);setLoading(false);setTime(0);setPlaying(false);setControls(true);setSettings(false);setRate(1);setDuration(video.duration);setForcedMuted(false);},[previewUrl,postId,video.width,video.height,externalVideo?.playlist]);
  useEffect(()=>{if(externalVideo){setPoster(externalVideo.thumbnail);return;}if(!postId||!root.current)return;let local:string|undefined;const controller=new AbortController();setPoster(undefined);
-  const observer=new IntersectionObserver(entries=>{if(!entries.some(entry=>entry.isIntersecting))return;observer.disconnect();void resolvePostVideoPoster(postId,controller.signal).then(url=>{if(controller.signal.aborted)URL.revokeObjectURL(url);else{local=url;setPoster(url);}}).catch(()=>{});},{rootMargin:'160px'});observer.observe(root.current);
-  return()=>{controller.abort();observer.disconnect();if(local)URL.revokeObjectURL(local);};
+  let stop=()=>{};stop=observeElementVisibility(root.current,visible=>{if(!visible)return;stop();void resolvePostVideoPoster(postId,controller.signal).then(url=>{if(controller.signal.aborted)URL.revokeObjectURL(url);else{local=url;setPoster(url);}}).catch(()=>{});},'160px');
+  return()=>{controller.abort();stop();if(local)URL.revokeObjectURL(local);};
  },[postId,externalVideo?.playlist,externalVideo?.thumbnail]);
  useEffect(()=>{if(settings)clearTimeout(timer.current);},[settings]);
  const resolved=useRef<string>();const pending=useRef<AbortController>();
@@ -194,7 +194,7 @@ function PostVideoPlayer({video,postId,previewUrl,post,externalVideo,embedded=fa
 // PostVideoThumbnail
 function PostVideoThumbnail({postId,duration,thumbnail,external}:{postId:string;duration:number;thumbnail?:string;external?:boolean}){
  const element=useRef<HTMLDivElement>(null),[url,setUrl]=useState<string>();
- useEffect(()=>{if(external){setUrl(thumbnail);return;}let local:string|undefined;const abort=new AbortController();setUrl(undefined);const observer=new IntersectionObserver(entries=>{if(!entries.some(entry=>entry.isIntersecting))return;observer.disconnect();void resolvePostVideoPoster(postId,abort.signal).then(url=>{if(abort.signal.aborted)URL.revokeObjectURL(url);else{local=url;setUrl(url);}}).catch(()=>{});},{rootMargin:'120px'});if(element.current)observer.observe(element.current);return()=>{abort.abort();observer.disconnect();if(local)URL.revokeObjectURL(local);};},[postId,thumbnail,external]);
+ useEffect(()=>{if(external){setUrl(thumbnail);return;}let local:string|undefined;const abort=new AbortController();setUrl(undefined);const target=element.current;let stop=()=>{};if(target)stop=observeElementVisibility(target,visible=>{if(!visible)return;stop();void resolvePostVideoPoster(postId,abort.signal).then(url=>{if(abort.signal.aborted)URL.revokeObjectURL(url);else{local=url;setUrl(url);}}).catch(()=>{});},'160px');return()=>{abort.abort();stop();if(local)URL.revokeObjectURL(local);};},[postId,thumbnail,external]);
  return <div ref={element} className="relative h-full w-full bg-black">{url&&<img referrerPolicy="no-referrer" src={url} loading="lazy" decoding="async" alt="動画のプレビュー" className="h-full w-full object-cover"/>}{duration>0&&<span className="absolute bottom-2 left-2 rounded bg-black/70 px-1.5 py-1 text-sm leading-none text-white tabular-nums">{Math.floor(Math.max(0,duration)/60)}:{Math.floor(Math.max(0,duration)%60).toString().padStart(2,'0')}</span>}</div>;
 }
 

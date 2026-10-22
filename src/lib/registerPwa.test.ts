@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { registerPwa } from "@/lib/registerPwa";
+import { registerPwa } from "@/App";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
-import { fetchExternalEvents } from "./../../supabase/functions/check-external-notifications/sources.ts";
+import { fetchExternalEvents } from "../../supabase/functions/check-external-notifications/sources.ts";
 
 describe("registerPwa", () => {
 describe("registerPwa", () => {

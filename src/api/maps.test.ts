@@ -19,7 +19,9 @@ const state = vi.hoisted(() => ({ calls: [] as {
 
 
 vi.mock('@/lib/currentUser', () => ({ getCurrentUserId: async () => 'viewer' }));
-vi.mock('@/lib/supabase', () => ({ supabase: { rpc: state.rpc, from: (table: string) => {
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase: { rpc: state.rpc, from: (table: string) => {
             const call = { table, filters: {} as Record<string, unknown> };
             state.calls.push(call);
             let single = false;
@@ -27,7 +29,8 @@ vi.mock('@/lib/supabase', () => ({ supabase: { rpc: state.rpc, from: (table: str
             for (const method of ['insert', 'select', 'eq', 'not', 'gte', 'lte', 'or', 'limit', 'order', 'in', 'ilike', 'abortSignal'])
                 builder[method] = (...args: any[]) => { call.filters[`${method}:${args[0]}`] = args.length > 1 ? args.slice(1) : args[0]; return builder; };
             return builder;
-        } } }));
+        } }
+}));
 import { getMapPosts, setPostMapLocation, createPost } from './posts';
 import { normaliseMapLocation } from "@/lib/mapLocation";
 beforeEach(() => { state.calls = []; state.rows = [{ id: 'post', user_id: 'author', content: '画像だけでも場所を表示', created_at: '2026-10-09T00:00:00Z', map_latitude: 35, map_longitude: 139, visibility: 'public', profiles: { id: 'author', username: 'author', display_name: '作者' } }]; state.rpc.mockReset().mockResolvedValue({ error: null }); });

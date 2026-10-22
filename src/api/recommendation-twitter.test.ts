@@ -1,7 +1,7 @@
 import {beforeEach,expect,it,vi} from 'vitest';
 const {search,authorFeed}=vi.hoisted(()=>({search:vi.fn(),authorFeed:vi.fn()}));vi.mock('@/lib/fxTwitter',()=>({searchXPage:search,xFeed:authorFeed}));
 import {writeVisualCache} from '@/lib/recommendationVisual';
-import {getRecommendationTwitterPage} from './recommendation-twitter';
+import {getRecommendationTwitterPage} from "@/api/search-news";
 const preferences={authors:{},terms:{},followedTopics:['anime','digital-illustration'] as any};
 beforeEach(()=>{authorFeed.mockReset();search.mockReset().mockResolvedValue({posts:[],cursor:'yahoo:2'});});
 it('starts with specific artwork, reads media directly, and carries its independent cursor without mutating the previous page',async()=>{

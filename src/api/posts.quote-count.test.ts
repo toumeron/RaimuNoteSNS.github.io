@@ -1,6 +1,9 @@
 import {beforeEach,expect,it,vi} from 'vitest';
 const fixture=vi.hoisted(()=>({select:vi.fn(),eq:vi.fn(),read:vi.fn()}));
-vi.mock('@/lib/supabase',()=>({supabase:{from:(table:string)=>{const query={select:(...args:unknown[])=>{fixture.select(table,...args);return query;},eq:(...args:unknown[])=>{fixture.eq(...args);return query;},abortSignal:fixture.read};return query;}}}));
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase:{from:(table:string)=>{const query={select:(...args:unknown[])=>{fixture.select(table,...args);return query;},eq:(...args:unknown[])=>{fixture.eq(...args);return query;},abortSignal:fixture.read};return query;}}
+}));
 import {getPostQuoteCount} from './posts';
 beforeEach(()=>{vi.clearAllMocks();fixture.read.mockResolvedValue({count:27,error:null});});
 it('counts visible quotes without downloading posts or altering their permissions',async()=>{

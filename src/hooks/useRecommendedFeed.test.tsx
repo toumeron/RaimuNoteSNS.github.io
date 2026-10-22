@@ -32,7 +32,10 @@ const work=(id:string,userId:string):PostWithAuthor=>({id,userId,content:'',imag
 const positive=work('bsky:positive','favorite');
 const negative=work('bsky:negative','unwanted');
 const candidate=work('bsky:candidate','unfamiliar');
-vi.mock('@/api/recommendation-twitter',()=>({getRecommendationTwitterPage:(...args:unknown[])=>mocks.twitter(...args)}));
+vi.mock("@/api/search-news", async importOriginal => ({
+  ...await importOriginal<typeof import("@/api/search-news")>(),
+  getRecommendationTwitterPage:(...args:unknown[])=>mocks.twitter(...args)
+}));
 
 
 vi.mock('@/lib/bluesky',()=>({getConfiguredExternalHandles:()=>[],fetchBlueskyPost:async()=>null}));
@@ -194,7 +197,7 @@ it('uses fresh initial preferences on refresh instead of an older cached dismiss
 
 it('retains empty initial source cursors without claiming recommendations do not exist',async()=>{
  const api=await import('@/api/recommendations');
- const {showTimelineEmpty}=await import("@/lib/timelinePaging");
+ const {showTimelineEmpty}=await import("@/lib/utils");
  const cursor=api.createRecommendationCursor([]);cursor.preferences={authors:{},terms:{}};
  const pages=Array.from({length:8},(_,i)=>({posts:[],preferences:{authors:{},terms:{}},next:cursor,pendingAnalysis:false,automaticPaused:false,requestKey:500+i}));
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});

@@ -9,7 +9,10 @@ import { FriendPhoto } from "@/components/chat/FriendProfile";
 import { DirectChatMessage } from "@/components/chat/FriendProfile";
 import { appendFriendPhoto } from "./../../../supabase/functions/_shared/chatContext.ts";
 const viewer=vi.hoisted(()=>vi.fn());
-vi.mock('@/components/media/openMediaViewer',()=>({openMediaViewer:viewer}));
+vi.mock("@/lib/mediaThumbnail", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/mediaThumbnail")>(),
+  openMediaViewer:viewer
+}));
 
 const photo={url:'https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a1/Noodles.jpg/960px-Noodles.jpg',sourceUrl:'https://commons.wikimedia.org/wiki/File:Noodles.jpg',title:'Noodles.jpg',artist:'Photographer',license:'CC BY-SA 4.0'};
 afterEach(()=>{cleanup();vi.clearAllMocks()});

@@ -1,23 +1,33 @@
-import { AccountSuspensionFeedback } from "@/components/layout/AppLayout";
-import { ComposerIcon } from "@/components/feed/PostPoll";
-import { MediaLightboxRoot } from '@/components/media/MediaLightboxRoot';
-import {PostOverlay} from '@/components/feed/DeferredPostComposer';
-export {PostOverlay,PostComposer} from '@/components/feed/DeferredPostComposer';
-import {installPwaMemoryManagement,pwaQueryGcTime} from '@/lib/pwaPerformance';
+import { useSnowEffect } from "@/components/ui/button";
+import { AccountSuspensionFeedback, PostOverlay, AppLayout } from "@/components/layout/AppLayout";
 import { PostOverlayContext } from "@/components/layout/DesktopLayoutContext";
+import { ComposerIcon, PostCardSkeleton } from "@/components/feed/PostPoll";
+import { installPwaMemoryManagement, pwaQueryGcTime, cn, shouldRetryRead } from "@/lib/utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, Component } from "react";
 import { createPortal } from "react-dom";
-import { SonnerToaster as Sonner } from "@/components/ui/button";
-import { Toaster } from "@/components/ui/button";
-import { TooltipProvider } from "@/components/ui/button";
+import { SonnerToaster as Sonner, Toaster, TooltipProvider } from "@/components/ui/button";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
-import { AppLayout } from "@/components/layout/AppLayout";
 import { ThemeProvider } from "next-themes";
 import { useOSNotification } from "@/hooks/useOSNotification";
+import Feed from "@/pages/Feed";
+import { SpaceProvider } from "@/components/spaces/SpaceProvider";
+import { X, PenSquare } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { type PostWithAuthor } from "@/types/index";
+import { supabase, type AccountReadContext } from "@/lib/supabase";
+import { useScrollDirection } from "@/hooks/useViewportWidth";
+import { OfflineBookmarkContext } from "@/components/feed/QuotedPost";
+import { MEDIA_VIEWER_EVENT, type MediaViewerSelection } from "@/lib/mediaThumbnail";
+import { toast } from "sonner";
+
+// App
+export {PostOverlay,PostComposer} from "@/components/layout/AppLayout";
+
+
 const AuthPage = lazy(() => import("./pages/Auth"));
-import Feed from "./pages/Feed";
+
 const Bookmarks = lazy(() => import("./pages/Bookmarks"));
 const Lists = lazy(() => import("@/pages/Bookmarks").then(module => ({default: module.Lists})));
 const Topics = lazy(() => import("./pages/Topics"));
@@ -34,27 +44,20 @@ const WatchHistory = lazy(() => import("./pages/WatchHistory"));
 const AccountAboutPage = lazy(() => import("@/pages/Profile").then(module => ({default: module.AccountAboutPage})));
 const FollowersFollowingPage = lazy(() => import("@/pages/Bookmarks").then(module => ({default: module.FollowersFollowingPage})));
 const SpacePage = lazy(() => import("@/components/spaces/SpaceProvider").then(module => ({default: module.SpacePage})));
-import { SpaceProvider } from '@/components/spaces/SpaceProvider';
+
 const LimeMaps = lazy(() => import("./pages/LimeMaps"));
 const NewsPage = lazy(() => import("@/pages/Topics").then(module => ({default: module.NewsPage})));
 const TermsPage = lazy(() => import("./pages/terms"));
 const LimeProLanding = lazy(() => import("./pages/LimePro"));
 const MediaViewer = lazy(() => import("./pages/MediaViewer"));
 
-import { PostCardSkeleton } from "@/components/feed/PostPoll";
 
 function RouteLoading() {
   return <div role="status" aria-label="読み込み中"><PostCardSkeleton /><PostCardSkeleton /><PostCardSkeleton /></div>;
 }
 
 // PostComposer 用のインポート群
-import {X,PenSquare} from 'lucide-react';
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { cn, shouldRetryRead } from '@/lib/utils';
-import type { PostWithAuthor } from '@/types';
-import { supabase } from '@/lib/supabase';
 
-import { useScrollDirection } from "@/hooks/useViewportWidth";
 
 // --- モバイル幅判定フック ---
 // Tailwind の `md:` ブレークポイント(768px)と合わせている。
@@ -113,7 +116,7 @@ const configurePlaybackAudioSession = () => {
   try {
     const audioSession = (navigator as NavigatorWithAudioSession).audioSession;
 
-    if (audioSession && 'type' in audioSession) {
+    if (audioSession && 'type' in audioSession && audioSession.type !== 'playback' && audioSession.type !== 'play-and-record') {
       audioSession.type = 'playback';
     }
   } catch (error) {
@@ -121,24 +124,7 @@ const configurePlaybackAudioSession = () => {
   }
 };
 
-const sendYouTubeCommand = (iframe: HTMLIFrameElement | null | undefined, command: 'playVideo' | 'pauseVideo' | 'stopVideo') => {
-  if (!iframe?.contentWindow) return;
-
-  try {
-    iframe.contentWindow.postMessage(
-      JSON.stringify({
-        event: 'command',
-        func: command,
-        args: [],
-      }),
-      'https://www.youtube.com'
-    );
-  } catch {
-    // noop
-  }
-};
-
-function BackgroundMediaRoot({ children }: { children: ReactNode }) {
+export function BackgroundMediaRoot({ children }: { children: ReactNode }) {
   const [activeMedia, setActiveMedia] = useState<BackgroundMediaItem | null>(null);
   const activeMediaRef = useRef<BackgroundMediaItem | null>(null);
 
@@ -157,12 +143,12 @@ function BackgroundMediaRoot({ children }: { children: ReactNode }) {
       const detail = (event as CustomEvent<BackgroundMediaItem>).detail;
       if (!detail?.key || !detail?.kind || !detail?.title) return;
 
-      configurePlaybackAudioSession();
+      // The cross-origin YouTube player owns its audio and Media Session.
+      // Claiming another session in this document can interrupt that output.
+      if (detail.kind !== 'youtube') configurePlaybackAudioSession();
+      activeMediaRef.current = detail;
       setActiveMedia(detail);
 
-      if (detail.kind === 'youtube') {
-        window.setTimeout(() => sendYouTubeCommand(detail.element, 'playVideo'), 80);
-      }
     };
 
     const handleStop = (event: Event) => {
@@ -172,6 +158,7 @@ function BackgroundMediaRoot({ children }: { children: ReactNode }) {
       if (!current) return;
       if (detail?.key && detail.key !== current.key) return;
 
+      activeMediaRef.current = null;
       setActiveMedia(null);
     };
 
@@ -185,7 +172,7 @@ function BackgroundMediaRoot({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!activeMedia) return;
+    if (!activeMedia || activeMedia.kind === 'youtube') return;
 
     const mediaSession = typeof navigator !== 'undefined'
       ? (navigator as any).mediaSession
@@ -199,30 +186,21 @@ function BackgroundMediaRoot({ children }: { children: ReactNode }) {
     try {
       mediaSession.metadata = new MediaMetadataConstructor({
         title: activeMedia.title,
-        artist: activeMedia.kind === 'spotify' ? 'Spotify' : 'YouTube',
+        artist: 'Spotify',
         album: 'LimeNote SNS',
       });
       mediaSession.playbackState = 'playing';
 
       mediaSession.setActionHandler?.('play', () => {
         configurePlaybackAudioSession();
-        if (activeMedia.kind === 'youtube') {
-          sendYouTubeCommand(activeMedia.element, 'playVideo');
-        }
         mediaSession.playbackState = 'playing';
       });
 
       mediaSession.setActionHandler?.('pause', () => {
-        if (activeMedia.kind === 'youtube') {
-          sendYouTubeCommand(activeMedia.element, 'pauseVideo');
-        }
         mediaSession.playbackState = 'paused';
       });
 
       mediaSession.setActionHandler?.('stop', () => {
-        if (activeMedia.kind === 'youtube') {
-          sendYouTubeCommand(activeMedia.element, 'stopVideo');
-        }
         setActiveMedia(null);
       });
     } catch (error) {
@@ -243,18 +221,14 @@ function BackgroundMediaRoot({ children }: { children: ReactNode }) {
   }, [activeMedia]);
 
   useEffect(() => {
-    if (!activeMedia) return;
+    if (!activeMedia || activeMedia.kind === 'youtube') return;
 
     const keepPlaybackSessionAlive = () => {
       const current = activeMediaRef.current;
-      if (!current) return;
+      if (!current || current.kind === 'youtube') return;
 
       configurePlaybackAudioSession();
 
-      if (current.kind === 'youtube') {
-        sendYouTubeCommand(current.element, 'playVideo');
-        window.setTimeout(() => sendYouTubeCommand(current.element, 'playVideo'), 160);
-      }
     };
 
     const handleVisibilityChange = () => {
@@ -307,13 +281,14 @@ interface IncomingLimeDrop {
   };
 }
 
-const LimeDropReceiver = () => {
+export const LimeDropReceiver = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [drops, setDrops] = useState<IncomingLimeDrop[]>([]);
   const [busyDropId, setBusyDropId] = useState<string | null>(null);
   const [swipeOffset, setSwipeOffset] = useState(0);
   const swipeStartYRef = useRef<number | null>(null);
+  const reloadDropsRef = useRef<() => void>(() => {});
 
   const attachSenderProfiles = async (rows: any[]): Promise<IncomingLimeDrop[]> => {
     if (rows.length === 0) return [];
@@ -368,77 +343,66 @@ const LimeDropReceiver = () => {
     }
 
     let cancelled = false;
+    let loading = false;
+    let requested = false;
+    setDrops([]);
+    setBusyDropId(null);
+    setSwipeOffset(0);
 
+    // One snapshot at a time. Events received during a query invalidate its result
+    // and request a fresh snapshot, so an old response cannot resurrect handled drops.
     const loadPendingDrops = async () => {
-      const { data, error } = await supabase
-        .from('lime_drops')
-        .select('id, sender_id, recipient_id, post_id, post_url, post_author_display_name, post_author_username, post_text, created_at, status')
-        .eq('recipient_id', user.id)
-        .eq('status', 'pending')
-        .order('created_at', { ascending: false })
-        .limit(5);
-
-      if (error) {
+      requested = true;
+      if (loading) return;
+      loading = true;
+      try {
+        while (requested && !cancelled) {
+          requested = false;
+          const { data, error } = await supabase
+            .from('lime_drops')
+            .select('id, sender_id, recipient_id, post_id, post_url, post_author_display_name, post_author_username, post_text, created_at, status')
+            .eq('recipient_id', user.id)
+            .eq('status', 'pending')
+            .order('created_at', { ascending: true })
+            .limit(5);
+          if (cancelled) return;
+          if (error) {
+            console.error('Fetch pending LimeDrops failed:', error);
+            break;
+          }
+          const hydrated = await attachSenderProfiles(data || []);
+          if (!cancelled && !requested) setDrops(hydrated);
+        }
+      } catch (error) {
         console.error('Fetch pending LimeDrops failed:', error);
-        return;
-      }
-
-      const hydrated = await attachSenderProfiles(data || []);
-      if (!cancelled) {
-        setDrops(hydrated);
+      } finally {
+        loading = false;
       }
     };
-
-    const hydrateRealtimeDrop = async (row: any) => {
-      if (!row || row.status !== 'pending') return;
-
-      const hydrated = await attachSenderProfiles([row]);
-      if (cancelled || hydrated.length === 0) return;
-
-      setDrops((prev) => {
-        if (prev.some((drop) => drop.id === hydrated[0].id)) return prev;
-        return [hydrated[0], ...prev].slice(0, 5);
-      });
+    reloadDropsRef.current = loadPendingDrops;
+    const refreshWhenVisible = () => {
+      if (document.visibilityState !== 'hidden') void loadPendingDrops();
     };
-
-    loadPendingDrops();
-
+    void loadPendingDrops();
     const channel = supabase
       .channel(`lime-drop-receiver-${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'lime_drops',
-          filter: `recipient_id=eq.${user.id}`,
-        },
-        (payload) => {
-          hydrateRealtimeDrop(payload.new);
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'lime_drops',
-          filter: `recipient_id=eq.${user.id}`,
-        },
-        (payload) => {
-          const next = payload.new as any;
-          if (next?.status === 'pending') {
-            hydrateRealtimeDrop(next);
-            return;
-          }
-
-          setDrops((prev) => prev.filter((drop) => drop.id !== next?.id));
-        }
-      )
-      .subscribe();
-
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'lime_drops',
+        filter: `recipient_id=eq.${user.id}`,
+      }, () => { void loadPendingDrops(); })
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') void loadPendingDrops();
+      });
+    // Recover deliveries missed while offline/backgrounded without periodic polling.
+    window.addEventListener('online', refreshWhenVisible);
+    window.addEventListener('focus', refreshWhenVisible);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
     return () => {
       cancelled = true;
+      reloadDropsRef.current = () => {};
+      window.removeEventListener('online', refreshWhenVisible);
+      window.removeEventListener('focus', refreshWhenVisible);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
       supabase.removeChannel(channel);
     };
   }, [user?.id]);
@@ -447,6 +411,7 @@ const LimeDropReceiver = () => {
 
   const removeDrop = (dropId: string) => {
     setDrops((prev) => prev.filter((drop) => drop.id !== dropId));
+    reloadDropsRef.current();
   };
 
   const declineDrop = async () => {
@@ -485,13 +450,17 @@ const LimeDropReceiver = () => {
       if (error) throw error;
       removeDrop(activeDrop.id);
 
-      // post_id が無い（＝Bluesky発の投稿）場合、内部の /post/:id ページには
-      // 対応するレコードが存在しないため「投稿は見つかりませんでした」になっていた。
-      // その場合は post_url（bsky.appのURL）を外部タブで開く。
-      if (activeDrop.post_id) {
+      if (activeDrop.post_url) {
+        const url = new URL(activeDrop.post_url, window.location.href);
+        if (url.origin === window.location.origin) {
+          const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+          const path = base && url.pathname.startsWith(`${base}/`) ? url.pathname.slice(base.length) : url.pathname;
+          navigate(`${path}${url.search}${url.hash}`);
+        } else if (url.protocol === 'https:' || url.protocol === 'http:') {
+          window.location.assign(url.href);
+        }
+      } else if (activeDrop.post_id) {
         navigate(`/post/${activeDrop.post_id}`);
-      } else if (activeDrop.post_url) {
-        window.location.href = activeDrop.post_url;
       }
     } catch (error) {
       console.error('Accept LimeDrop failed:', error);
@@ -692,6 +661,164 @@ const LimeDropReceiver = () => {
   );
 };
 
+// Snowflakes are irregular aggregates, with wind/drag integrated over time.
+// Keep drawing off React's render path and stop work when the page is hidden.
+export function SnowEffect() {
+  const enabled = useSnowEffect();
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [hidden, setHidden] = useState(() => document.visibilityState === 'hidden');
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!enabled || !canvas) return;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    let width = 1, height = 1, frame = 0, lastTime = 0, elapsed = 0;
+    let disposed = false;
+    // Original aggregate textures, generated once. Different torn silhouettes and
+    // soft edges avoid both a crystal icon and a smooth circular billboard.
+    const textures = Array.from({ length: 20 }, (_, variant) => {
+      const texture = document.createElement('canvas');
+      texture.width = texture.height = 64;
+      const brush = texture.getContext('2d')!;
+      brush.shadowColor = 'rgba(240,245,255,.55)';
+      brush.shadowBlur = variant % 4 === 0 ? 2.4 : .6;
+      for (let fragment = 0; fragment < 4 + variant % 4; fragment++) {
+        const cx = 20 + Math.random() * 24, cy = 20 + Math.random() * 24;
+        const radius = 6 + Math.random() * 10;
+        const vertices = 7 + Math.floor(Math.random() * 5);
+        brush.fillStyle = `rgba(255,255,255,${.7 + Math.random() * .3})`;
+        brush.strokeStyle = 'rgba(75,90,110,.14)';
+        brush.lineWidth = .6;
+        brush.beginPath();
+        for (let vertex = 0; vertex < vertices; vertex++) {
+          const angle = (vertex + Math.random() * .45) / vertices * Math.PI * 2;
+          const distance = radius * (.35 + Math.random() * .65);
+          const x = cx + Math.cos(angle) * distance, y = cy + Math.sin(angle) * distance;
+          if (!vertex) brush.moveTo(x, y); else brush.lineTo(x, y);
+        }
+        brush.closePath(); brush.fill(); brush.stroke();
+      }
+      return texture;
+    });
+    // Continuous spatial noise: neighbouring flakes share a moving air field,
+    // rather than following identical sine-wave animation paths.
+    const noise = (x: number, y: number, time: number, seed: number) => {
+      const ix = Math.floor(x), iy = Math.floor(y), it = Math.floor(time);
+      const smooth = (v: number) => v * v * (3 - 2 * v);
+      const sx = smooth(x - ix), sy = smooth(y - iy), st = smooth(time - it);
+      const hash = (a: number, b: number, c: number) => {
+        let n = Math.imul(a, 374761393) ^ Math.imul(b, 668265263) ^ Math.imul(c, 1274126177) ^ seed;
+        n = Math.imul(n ^ (n >>> 13), 1274126177);
+        return ((n ^ (n >>> 16)) >>> 0) / 2147483648 - 1;
+      };
+      const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+      const plane = (z: number) => lerp(lerp(hash(ix, iy, z), hash(ix + 1, iy, z), sx), lerp(hash(ix, iy + 1, z), hash(ix + 1, iy + 1, z), sx), sy);
+      return lerp(plane(it), plane(it + 1), st);
+    };
+    const makeFlake = (initial: boolean) => {
+      const z = .85 + Math.pow(Math.random(), .6) * 3.8;
+      // A skewed distribution keeps large clumps occasional, not evenly mixed.
+      const diameter = 3.5 + Math.min(9, -Math.log(Math.max(.001, Math.random())) * 2.7);
+      const terminal = 24 + Math.sqrt(diameter) * 13;
+      return {
+        x: (Math.random() - .5) * (width + 80) * z,
+        y: initial ? (Math.random() - .5) * height * z : (-height / 2 - 35) * z,
+        z, diameter, terminal,
+        alpha: .7 + Math.random() * .3,
+        vx: Math.random() * 8 - 4, vy: terminal,
+        angle: Math.random() * Math.PI * 2, tilt: Math.random() * Math.PI * 2,
+        spin: (Math.random() - .5) * .55, tumble: .3 + Math.random() * .8,
+        drag: .4 + Math.random() * .7, aggregate: Math.random() > .35,
+        texture: textures[Math.floor(Math.random() * textures.length)],
+      };
+    };
+    let flakes: ReturnType<typeof makeFlake>[] = [];
+    const resize = () => {
+      const oldWidth = width, oldHeight = height;
+      width = Math.max(1, window.innerWidth);
+      height = Math.max(1, window.innerHeight);
+      const ratio = Math.min(window.devicePixelRatio || 1, 1.5);
+      canvas.width = Math.ceil(width * ratio);
+      canvas.height = Math.ceil(height * ratio);
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      flakes.forEach(flake => { flake.x *= width / oldWidth; flake.y *= height / oldHeight; });
+      const count = Math.max(48, Math.min(width < 768 ? 70 : 140, Math.round(width * height / 8500)));
+      flakes = flakes.slice(0, count);
+      while (flakes.length < count) flakes.push(makeFlake(true));
+    };
+    const draw = (time: number) => {
+      if (disposed) return;
+      frame = requestAnimationFrame(draw);
+      if (!lastTime) { lastTime = time; return; }
+      if (time - lastTime < (motion.matches ? 80 : 33)) return;
+      const dt = Math.min((time - lastTime) / 1000, .06) * (motion.matches ? .3 : 1);
+      lastTime = time;
+      elapsed += dt;
+      context.clearRect(0, 0, width, height);
+      const wind = 9 + noise(0, 0, elapsed * .09, 17) * 22;
+      // Alpha-composite distant flakes first.
+      flakes.sort((a, b) => b.z - a.z);
+      for (const flake of flakes) {
+        const fieldX = flake.x / 240, fieldY = flake.y / 210;
+        const flow = noise(fieldX, fieldY, elapsed * .2 + flake.z, 37)
+          + .4 * noise(fieldX * 2.7, fieldY * 2.7, elapsed * .36, 91);
+        const lift = noise(fieldX, fieldY, elapsed * .16 + flake.z, 131);
+        const response = 1 - Math.exp(-dt * flake.drag);
+        flake.vx += (wind + flow * 38 - flake.vx) * response;
+        flake.vy += (flake.terminal * (1 + lift * .28) - flake.vy) * response;
+        flake.x += flake.vx * dt;
+        flake.y += flake.vy * dt;
+        flake.angle += (flake.spin + flow * .35) * dt;
+        flake.tilt += flake.tumble * dt;
+        const halfWorldWidth = (width / 2 + 40) * flake.z;
+        if (flake.x > halfWorldWidth) flake.x = -halfWorldWidth;
+        if (flake.x < -halfWorldWidth) flake.x = halfWorldWidth;
+        if (flake.y / flake.z > height / 2 + 40) Object.assign(flake, makeFlake(false));
+        // Perspective couples visible size and speed to the same physical depth.
+        const size = Math.max(6, Math.min(48, flake.diameter * 4.8 / flake.z));
+        const face = Math.abs(Math.cos(flake.tilt));
+        const squash = flake.aggregate ? .62 + face * .38 : .12 + face * .88;
+        const alpha = flake.alpha * Math.exp(-flake.z * .05) * (.6 + face * .4);
+        context.save();
+        context.translate(width / 2 + flake.x / flake.z, height / 2 + flake.y / flake.z);
+        // Two exposure samples soften movement without leaving long screen trails.
+        const trailX = -flake.vx / flake.z / 90, trailY = -flake.vy / flake.z / 90;
+        context.rotate(flake.angle);
+        const localTrailX = trailX * Math.cos(flake.angle) + trailY * Math.sin(flake.angle);
+        const localTrailY = -trailX * Math.sin(flake.angle) + trailY * Math.cos(flake.angle);
+        context.globalAlpha = alpha * .16;
+        context.drawImage(flake.texture, -size / 2 + localTrailX, -size * squash / 2 + localTrailY, size, size * squash);
+        context.globalAlpha = alpha * .84;
+        context.drawImage(flake.texture, -size / 2, -size * squash / 2, size, size * squash);
+        context.restore();
+      }
+    };
+    const updateVisibility = () => {
+      const paused = document.visibilityState === 'hidden';
+      setHidden(paused);
+      cancelAnimationFrame(frame);
+      lastTime = 0;
+      if (!paused) frame = requestAnimationFrame(draw);
+    };
+    resize();
+    updateVisibility();
+    window.addEventListener('resize', resize);
+    document.addEventListener('visibilitychange', updateVisibility);
+    return () => {
+      disposed = true;
+      cancelAnimationFrame(frame);
+      window.removeEventListener('resize', resize);
+      document.removeEventListener('visibilitychange', updateVisibility);
+      context.clearRect(0, 0, width, height);
+      flakes = [];
+      textures.forEach(texture => { texture.width = texture.height = 0; });
+    };
+  }, [enabled]);
+  if (!enabled) return null;
+  return createPortal(<div className="lime-snow" aria-hidden="true" data-paused={hidden}><canvas ref={canvasRef}/></div>, document.body);
+}
+
 const EmojiRainEffect = () => {
   const { user } = useAuth();
   const [items, setItems] = useState<{ id: number; char: string; left: number; duration: number; delay: number; size: number }[]>([]);
@@ -818,6 +945,7 @@ const shouldHideFAB = isChatPage || isAuthPage || isTermsPage || isMediaPage || 
         <MediaLightboxRoot />
         <LimeDropReceiver />
         <EmojiRainEffect />
+        <SnowEffect />
 
         <Routes>
           <Route path="/auth" element={<Suspense fallback={<RouteLoading />}><AuthPage /></Suspense>} />
@@ -889,3 +1017,133 @@ const App = () => {
 };
 
 export default App;
+
+
+// MediaLightboxRoot
+const Viewer=lazy(()=>import("@/components/media/MediaLightbox").then(module=>({default:module.MediaLightbox})));
+function Loading({onClose,failed=false}:{onClose:()=>void;failed?:boolean}){
+ return createPortal(<div role="status" className="fixed inset-0 z-[2147483500] flex items-center justify-center bg-black text-white"><span>{failed?'画像・動画の画面を読み込めませんでした':'読み込み中…'}</span><button type="button" onClick={onClose} aria-label="メディアを閉じる" className="absolute right-4 top-[max(16px,env(safe-area-inset-top))] rounded-full bg-white/15 px-4 py-2">閉じる</button></div>,document.body);
+}
+class ViewerBoundary extends Component<{children:ReactNode;onClose:()=>void},{failed:boolean}>{
+ state={failed:false};static getDerivedStateFromError(){return{failed:true};}
+ render(){return this.state.failed?<Loading failed onClose={this.props.onClose}/>:this.props.children;}
+}
+/** Keep the event listener ready, but load viewer UI only on an actual open. */
+export function MediaLightboxRoot(){
+ const [selection,setSelection]=useState<MediaViewerSelection|null>(null);
+ const location=useLocation(),{user}=useAuth();
+ useEffect(()=>{const open=(event:Event)=>setSelection((event as CustomEvent<MediaViewerSelection>).detail);window.addEventListener(MEDIA_VIEWER_EVENT,open);return()=>window.removeEventListener(MEDIA_VIEWER_EVENT,open);},[]);
+ useEffect(()=>setSelection(null),[location.key,user?.id]);
+ if(!selection)return null;
+ const close=()=>setSelection(null);
+ return <ViewerBoundary key={`${selection.post?.id??selection.postId}:${selection.url}`} onClose={close}><Suspense fallback={<Loading onClose={close}/>}><OfflineBookmarkContext.Provider value={selection.offline??null}><Viewer selection={selection} onClose={close}/></OfflineBookmarkContext.Provider></Suspense></ViewerBoundary>;
+}
+
+
+// registerPwa
+/** Check on launch/resume and reload once when an updated worker takes control. */
+function registerPwa({reload=()=>window.location.reload()}:{reload?:()=>void}={}) {
+  if (!('serviceWorker' in navigator)) return () => {};
+  const workers=navigator.serviceWorker;
+  let cancelled=false,reloading=false,hadController=!!workers.controller;
+  let timer:ReturnType<typeof setTimeout>|undefined,reloadTimer:ReturnType<typeof setTimeout>|undefined,idle:number|undefined;
+  let registration:ServiceWorkerRegistration|undefined,lastCheck=0,checking=false;
+  const cleanupWorkers:(()=>void)[]=[];
+  const queueReload=()=>{
+    if(cancelled||reloading||reloadTimer!==undefined||import.meta.env.DEV)return;
+    reloadTimer=setTimeout(()=>{if(cancelled)return;reloading=true;reload();},250);
+  };
+  const controllerChanged=()=>{
+    if(hadController)queueReload();
+    hadController=!!workers.controller;
+  };
+  const workerMessage=(event:MessageEvent)=>{
+    if(event.data?.type!=='LIME_PWA_UPDATE'||typeof event.data.token!=='string')return;
+    (event.source as ServiceWorker|null)?.postMessage({type:'LIME_PWA_UPDATE_ACK',token:event.data.token});
+    if(hadController)queueReload();
+  };
+  if(!import.meta.env.DEV){workers.addEventListener('controllerchange',controllerChanged);workers.addEventListener('message',workerMessage);}
+  const activateWaiting=()=>registration?.waiting?.postMessage({type:'SKIP_WAITING'});
+  const check=()=>{
+    if(cancelled||!registration||checking||document.visibilityState==='hidden'||Date.now()-lastCheck<60000)return;
+    lastCheck=Date.now();checking=true;
+    void registration.update().catch(error=>console.debug('PWA update check unavailable',error)).finally(()=>{checking=false;});
+    activateWaiting();
+  };
+  const register=()=>{
+    if(cancelled)return;
+    const script=import.meta.env.DEV?'dev-sw.js?dev-sw':'sw.js';
+    void workers.register(`${import.meta.env.BASE_URL}${script}`,{scope:import.meta.env.BASE_URL,updateViaCache:'none'}).then(result=>{
+      if(cancelled)return;registration=result;
+      const found=()=>{
+        const installing=result.installing;if(!installing)return;
+        const state=()=>{if(installing.state==='installed')activateWaiting();};
+        installing.addEventListener('statechange',state);cleanupWorkers.push(()=>installing.removeEventListener('statechange',state));state();
+      };
+      result.addEventListener('updatefound',found);cleanupWorkers.push(()=>result.removeEventListener('updatefound',found));found();activateWaiting();
+      if(!import.meta.env.DEV)check();
+    }).catch(error=>console.warn('PWA registration failed',error));
+  };
+  const schedule=()=>{
+    if(cancelled||timer!==undefined||idle!==undefined)return;
+    if(typeof window.requestIdleCallback==='function')idle=window.requestIdleCallback(register,{timeout:5000});
+    else timer=setTimeout(register,1000);
+  };
+  if(document.readyState==='complete')schedule();else window.addEventListener('load',schedule,{once:true});
+  if(!import.meta.env.DEV){window.addEventListener('focus',check);window.addEventListener('online',check);window.addEventListener('pageshow',check);document.addEventListener('visibilitychange',check);}
+  return()=>{
+    cancelled=true;window.removeEventListener('load',schedule);clearTimeout(timer);clearTimeout(reloadTimer);if(idle!==undefined)window.cancelIdleCallback(idle);
+    workers.removeEventListener('controllerchange',controllerChanged);workers.removeEventListener('message',workerMessage);
+    window.removeEventListener('focus',check);window.removeEventListener('online',check);window.removeEventListener('pageshow',check);document.removeEventListener('visibilitychange',check);cleanupWorkers.forEach(cleanup=>cleanup());
+  };
+}
+
+// notificationBadge
+const latestBadgeRequests=new Map<string,number>();
+let latestDeviceBadgeRequest=0;
+type BadgeNavigator=Navigator&{setAppBadge?:(count:number)=>Promise<void>;clearAppBadge?:()=>Promise<void>};
+async function refreshNotificationBadge(userId:string,readIds:string[]=[],context?:AccountReadContext){
+ const request=(latestBadgeRequests.get(userId)??0)+1;
+ latestBadgeRequests.set(userId,request);
+ const deviceRequest=context?0:++latestDeviceBadgeRequest;
+ const {count,error}=await (context?.client??supabase).from('notifications').select('id',{count:'exact',head:true}).eq('user_id',userId).eq('is_read',false);
+ if(error||request!==latestBadgeRequests.get(userId))return;
+ const unread=Math.max(0,count??0);const nav=navigator as BadgeNavigator;
+ // In-app unread counts must not wait for the optional OS badge API.
+ window.dispatchEvent(new CustomEvent('lime-notification-count-changed',{detail:{userId,count:unread}}));
+ // A saved account must update its own in-app count without replacing the active account's OS badge.
+ if(context||deviceRequest!==latestDeviceBadgeRequest)return;
+ try{
+  const update=unread?nav.setAppBadge?.(unread):nav.clearAppBadge?.();
+  void update?.catch(()=>{});
+ }catch{/* Badge APIs are optional. */}
+ try{
+  // ready never resolves on an unregistered page; badge refresh must not wait for it.
+  const registration=await navigator.serviceWorker?.getRegistration(import.meta.env.BASE_URL);
+  if(request!==latestBadgeRequests.get(userId)||deviceRequest!==latestDeviceBadgeRequest)return;
+  const worker=registration?.active??navigator.serviceWorker?.controller;
+  worker?.postMessage({type:unread?'LIME_SET_BADGE':'LIME_CLEAR_BADGE',count:unread});
+  if(readIds.length){
+   worker?.postMessage({type:'LIME_NOTIFICATIONS_READ',ids:readIds,count:unread});
+   const notices=await registration?.getNotifications?.();
+   notices?.filter(n=>readIds.includes(n.data?.notificationId)||readIds.includes(n.tag)).forEach(n=>n.close());
+  }
+ }catch{/* Keep successful read updates even when the worker is unavailable. */}
+}
+
+// notificationToast
+const timers=new Map<string,ReturnType<typeof setTimeout>>();
+function showNotificationToast(id:string,title:string,message:string){
+ const key=`notification-${id}`;const previous=timers.get(key);if(previous)clearTimeout(previous);
+ toast(title,{id:key,description:message,duration:5000});
+ // Sonner pauses its own timer while hovered; notification popups still expire.
+ timers.set(key,setTimeout(()=>{toast.dismiss(key);timers.delete(key);},5000));
+}
+function dismissNotificationToasts(ids?:string[]){
+ for(const [key,timer]of timers)if(!ids||ids.some(id=>key===`notification-${id}`)){clearTimeout(timer);toast.dismiss(key);timers.delete(key);}
+}
+
+export { registerPwa };
+export { refreshNotificationBadge };
+export { showNotificationToast };
+export { dismissNotificationToasts };

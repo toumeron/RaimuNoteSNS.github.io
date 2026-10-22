@@ -15,7 +15,9 @@ const db = vi.hoisted(() => ({
 }));
 vi.mock('@/lib/currentUser', () => ({ getCurrentUserId: async () => 'viewer' }));
 
-vi.mock('@/lib/supabase', () => ({ supabase: {
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase: {
   from: () => {
     let head = false;
     const builder = {
@@ -41,7 +43,8 @@ vi.mock('@/lib/supabase', () => ({ supabase: {
     return channel;
   },
   removeChannel: (...args: unknown[]) => db.removed(...args),
-} }));
+}
+}));
 import { LikeButton } from './LikeButton';
 
 function mount(id = 'post-one', count = 0) {

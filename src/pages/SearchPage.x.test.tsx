@@ -19,16 +19,28 @@ import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import SearchPage, { SearchResults } from './SearchPage';
 vi.mock('@/hooks/useAuth',async original=>({...await original<typeof import('@/hooks/useAuth')>(),useAuth:()=>({user:null,accounts:[]})}));
 vi.mock('@/hooks/useTopics',async original=>({...await original<typeof import('@/hooks/useTopics')>(),useTrends:()=>({data:[],isPending:false}),useSearchNews:()=>({data:{items:[],sources:{}},isPending:false}),useSearchExploreTab:()=>['recommended']}));
-vi.mock('@/api/recommendations',async original=>({...await original<typeof import('@/api/recommendations')>(),getRecommendationPreferences:async()=>({authors:{},terms:{}})}));
+vi.mock("@/api/recommendations", async importOriginal => ({
+  ...await importOriginal<typeof import("@/api/recommendations")>(),
+  ...await (async original=>({...await original<typeof import('@/api/recommendations')>(),getRecommendationPreferences:async()=>({authors:{},terms:{}})}))(importOriginal)
+}));
 const searchFixtures=vi.hoisted(()=>({twitter:vi.fn(),following:[] as any[]}));
-vi.mock('@/api/search-news',async original=>({...await original<typeof import('@/api/search-news')>(),searchTwitterResults:(...args:any[])=>searchFixtures.twitter(...args)}));
-vi.mock('@/hooks/useSearchFollowing',()=>({useSearchFollowing:()=>({data:searchFixtures.following})}));
+vi.mock("@/api/search-news", async importOriginal => ({
+  ...await importOriginal<typeof import("@/api/search-news")>(),
+  ...await (async original=>({...await original<typeof import('@/api/search-news')>(),searchTwitterResults:(...args:any[])=>searchFixtures.twitter(...args)}))(importOriginal)
+}));
+vi.mock("@/hooks/useFeed", async importOriginal => ({
+  ...await importOriginal<typeof import("@/hooks/useFeed")>(),
+  useSearchFollowing:()=>({data:searchFixtures.following})
+}));
 vi.mock('@/components/feed/PostCard',async original=>({...await original<typeof import('@/components/feed/PostCard')>(),PostCard:({post}:{post:PostWithAuthor})=><article data-testid="ordered-search-post" data-post-id={post.id}>{post.content}</article>}));
 const externalPages=vi.hoisted(()=>vi.fn());
 beforeEach(()=>{externalPages.mockReset().mockResolvedValue({posts:[],cursor:null});searchFixtures.following=[];searchFixtures.twitter.mockReset().mockResolvedValue({posts:[],cursor:null,error:null});});
 vi.mock('@/lib/bluesky',async original=>({...await original<typeof import('@/lib/bluesky')>(),fetchBlueskyTopicPosts:(...args:any[])=>externalPages(...args),searchBluesky:async()=>({posts:[],users:[]}),searchExternalUsers:async()=>[]}));
 vi.mock('@/lib/misskey',async original=>({...await original<typeof import('@/lib/misskey')>(),misskeyEnabled:()=>false}));
-vi.mock('@/lib/supabase',()=>({supabase:{auth:{getUser:async()=>({data:{user:null}}),getSession:async()=>({data:{session:null}})},from:()=>{const q=new Proxy({},{get:(_,name)=>name==='then'?(done:Function)=>Promise.resolve({data:[],error:null}).then(done as never):()=>q});return q;}}}));
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase:{auth:{getUser:async()=>({data:{user:null}}),getSession:async()=>({data:{session:null}})},from:()=>{const q=new Proxy({},{get:(_,name)=>name==='then'?(done:Function)=>Promise.resolve({data:[],error:null}).then(done as never):()=>q});return q;}}
+}));
 let queryClient:QueryClient|undefined;
 afterEach(()=>{cleanup();queryClient?.clear();vi.restoreAllMocks();vi.unstubAllGlobals();});
 function RouteProbe(){const location=useLocation(),navigate=useNavigate();return <><output data-testid="search-url">{location.pathname+location.search}</output><button onClick={()=>navigate(-1)}>前の検索へ</button><button onClick={()=>navigate('/search')}>検索トップへ</button></>;}

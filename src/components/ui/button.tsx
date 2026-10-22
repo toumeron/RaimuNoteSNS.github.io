@@ -893,6 +893,7 @@ const ACCENT_COLORS=[
  {id:'purple',label:'パープル',color:'#7856ff'},
  {id:'orange',label:'オレンジ',color:'#ff7a00'},
  {id:'green',label:'グリーン',color:'#00ad80'},
+ {id:'greige',label:'グレージュ (#9F8D88)',color:'#9F8D88'},
 ] as const;
 type AccentColor=typeof ACCENT_COLORS[number]['id'];
 const KEY='lime-accent-color',EVENT='lime-accent-change';
@@ -984,4 +985,27 @@ export function ContentLink({href,...props}:React.AnchorHTMLAttributes<HTMLAncho
  const path=href?socialLinkPath(href):null;
  if(path&&inRouter)return <RouterLink {...props} to={path} target={undefined} rel={undefined}/>;
  return <a {...props} href={path?`${import.meta.env.BASE_URL}${path.slice(1)}`:href} target={path?undefined:props.target} rel={path?undefined:props.rel}/>;
+}
+
+// Snow is a device appearance preference, independent of the profile's emoji effect.
+const SNOW_KEY = 'lime-snow-effect';
+const SNOW_EVENT = 'lime-snow-change';
+let snowEnabled = false;
+function readSnowEffect() {
+ try { snowEnabled = localStorage.getItem(SNOW_KEY) === 'true'; } catch {}
+ return snowEnabled;
+}
+function subscribeSnowEffect(listener: () => void) {
+ const onStorage = (event: StorageEvent) => { if (event.key === SNOW_KEY || event.key === null) listener(); };
+ window.addEventListener(SNOW_EVENT, listener);
+ window.addEventListener('storage', onStorage);
+ return () => { window.removeEventListener(SNOW_EVENT, listener); window.removeEventListener('storage', onStorage); };
+}
+export function setSnowEffect(enabled: boolean) {
+ snowEnabled = enabled;
+ try { localStorage.setItem(SNOW_KEY, String(enabled)); } catch {}
+ window.dispatchEvent(new Event(SNOW_EVENT));
+}
+export function useSnowEffect() {
+ return useSyncExternalStore(subscribeSnowEffect, readSnowEffect, () => false);
 }

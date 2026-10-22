@@ -5,11 +5,18 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { NotificationRow } from '@/api/users';
 const state=vi.hoisted(()=>({read:vi.fn(),get:vi.fn(),sharing:false,account:vi.fn(),sharedRows:[] as NotificationRow[],counts:{a:1,b:1} as Record<string,number>}));
 vi.mock('@/api/users',async original=>({...await original<typeof import('@/api/users')>(),getNotifications:state.get,markAllNotificationsRead:state.read}));
-vi.mock('@/lib/externalAccounts',async original=>({...await original<typeof import('@/lib/externalAccounts')>(),useSharedDisplay:()=>state.sharing}));
-vi.mock('@/lib/accountReadClient',async original=>({...await original<typeof import('@/lib/accountReadClient')>(),getAccountReadClient:state.account}));
+vi.mock("@/lib/externalAccounts", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/externalAccounts")>(),
+  ...await (async original=>({...await original<typeof import('@/lib/externalAccounts')>(),useSharedDisplay:()=>state.sharing}))(importOriginal)
+}));
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  ...await (async original=>({...await original<typeof import("@/lib/supabase")>(),getAccountReadClient:state.account}))(importOriginal),
+  supabase:{channel:()=>{const c={on:()=>c,subscribe:()=>c};return c;},removeChannel:vi.fn()}
+}));
 vi.mock('@/hooks/useSharedAccountLists',async original=>({...await original<typeof import('@/hooks/useSharedAccountLists')>(),useSharedNotifications:(enabled:boolean)=>useInfiniteQuery({queryKey:['notifications','shared','a'],enabled,initialPageParam:0,queryFn:async()=>({items:state.sharedRows}),getNextPageParam:()=>undefined})}));
 vi.mock('@/hooks/useAuth',async original=>({...await original<typeof import('@/hooks/useAuth')>(),useAuth:()=>({user:{id:'a'},accounts:[{id:'b'}]})}));
-vi.mock('@/lib/supabase',()=>({supabase:{channel:()=>{const c={on:()=>c,subscribe:()=>c};return c;},removeChannel:vi.fn()}}));
+
 import { Notifications } from '@/pages/Topics';
 let client:QueryClient;
 const row=(owner:string,type:NotificationRow['type']='new_post'):NotificationRow=>({id:`${owner}-${type}`,user_id:owner,actor_name:owner==='a'?'Own':'Other',actor_id:'actor',actor_avatar_url:null,post_id:'post',type,created_at:'2026-10-11',is_read:false,content_preview:null});

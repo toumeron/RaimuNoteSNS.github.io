@@ -1,4 +1,4 @@
-import { setAccountSuspended, SUSPENSION_EVENT, getPrivateBotPrompt } from "@/lib/accountSuspension";
+import { setAccountSuspended, SUSPENSION_EVENT, getPrivateBotPrompt } from "@/lib/supabase";
 import { setExternalAccountOwner, initialiseExternalAccounts, refreshExternalAccounts } from "@/lib/externalAccounts";
 import { accountAboutKey, syncAccountConnection } from "@/api/users";
 import { clearPrivateMedia } from "@/lib/privateMediaFetch";
@@ -123,11 +123,12 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     let cachedViewerId: string | null | undefined;
     let profileUserId: string | null = null;
     let profileTimer: ReturnType<typeof setTimeout> | undefined;
+    const profileRequests = new Map<string, Promise<void>>();
     /**
      * DBから詳細プロフィールを取得する関数
      * select('*')を避け、必要なカラムのみを指定することでタイムアウトを抑制します。
      */
-    const fetchProfile = async (supabaseUser: SupabaseUser) => {
+    const readProfile = async (supabaseUser: SupabaseUser) => {
       try {
         const { data: profile, error } = await supabase
           .from('profiles')
@@ -163,6 +164,7 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
               bot_enabled: profile.bot_enabled ?? false, // DBから取得した値を反映
               bot_prompt: current.bot_prompt, // 非公開設定の取得結果だけを反映
             };
+            if (Object.entries(updated).every(([key,value]) => Object.is(current[key],value))) return current;
             profileRef.current = updated;
             return updated;
           });
@@ -171,7 +173,7 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
           void getPrivateBotPrompt(supabaseUser.id).then(prompt => {
             if (!alive || profileUserId !== supabaseUser.id) return;
             setUser(current => {
-              if (!current || current.id !== supabaseUser.id) return current;
+              if (!current || current.id !== supabaseUser.id || current.bot_prompt === prompt) return current;
               const updated = { ...current, bot_prompt: prompt };
               profileRef.current = updated;
               return updated;
@@ -181,6 +183,17 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         console.error("AuthProvider: Background profile fetch failed", err);
       }
+    };
+    // iOS resumes can emit focus, visibility and online events together.
+    // Share the read without delaying a later genuine profile change.
+    const fetchProfile = (supabaseUser: SupabaseUser): Promise<void> => {
+      const pending = profileRequests.get(supabaseUser.id);
+      if (pending) return pending;
+      const request = readProfile(supabaseUser).finally(() => {
+        if (profileRequests.get(supabaseUser.id) === request) profileRequests.delete(supabaseUser.id);
+      });
+      profileRequests.set(supabaseUser.id,request);
+      return request;
     };
 
     // An installed app must be able to open its locally saved bookmarks even
@@ -248,9 +261,12 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     };
     if(offlineSession)applySession('INITIAL_SESSION',offlineSession);
     const {data:{subscription}}=supabase.auth.onAuthStateChange(applySession);
-    const refreshProfile = () => {
+    const refreshProfile = (event:Event) => {
       const active = sessionRef.current?.user;
-      if (active && navigator.onLine && document.visibilityState !== 'hidden') void fetchProfile(active);
+      if (active && navigator.onLine && document.visibilityState !== 'hidden') {
+        // A rejected write explicitly requests a fresh suspension check.
+        void (event.type===SUSPENSION_EVENT?readProfile(active):fetchProfile(active));
+      }
     };
     window.addEventListener('focus',refreshProfile);
     window.addEventListener('online',refreshProfile);

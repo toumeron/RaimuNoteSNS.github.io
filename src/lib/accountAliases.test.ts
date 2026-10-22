@@ -1,5 +1,5 @@
 import {afterEach,expect,it,vi} from 'vitest';
-import {searchAccountAliasHandles} from './accountAliases';
+import {searchAccountAliasHandles} from "@/lib/utils";
 afterEach(()=>vi.unstubAllGlobals());
 it('uses the alias search API and current account claims, excluding ended, deprecated and unsafe handles',async()=>{
  const claim=(value:string,extra={})=>({mainsnak:{datavalue:{value}},...extra});

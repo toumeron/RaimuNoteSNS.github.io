@@ -1,5 +1,5 @@
 import { DirectMessageContent, DirectMessageMedia, directMessageText } from "@/components/chat/FriendProfile";
-import { allowAccountWrite, isAccountReadOnly } from '@/lib/accountSuspension';
+import { allowAccountWrite, isAccountReadOnly } from "@/lib/supabase";
 import { TypingPixelCat, MessagePixelCat, useMessagePixelCat, LIME_AI_CAT_ICON } from "@/components/chat/FriendProfile";
 import { randomUUID } from "@/lib/utils";
 import { useChatBackground } from "@/lib/aiFriends";
@@ -11,7 +11,7 @@ import { askGroupFriends } from "@/api/users";
 import { DirectGroupDialogs, GroupAvatar, type GroupDialogView } from "@/components/chat/FriendProfile";
 import { getDirectGroup, sendDirectGroupMessage, getDirectGroupInvitation, requestDirectGroupJoin, type DirectGroup } from "@/api/users";
 import { ChatPostPreview } from "@/components/ai/PageCompanion";
-import {openMediaViewer} from '@/components/media/openMediaViewer';
+import {openMediaViewer} from "@/lib/mediaThumbnail";
 import { ChatMenuContent } from "@/components/ai/PageCompanion";
 import { AI_CHAT_DELETED, AI_CHAT_HISTORY_CHANGED, AI_FRIENDS_CHANGED, listAssistants, loadAvatars, avatarOf } from '@/lib/aiFriends';
 import {lazy,Suspense,useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';

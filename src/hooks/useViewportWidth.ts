@@ -60,6 +60,33 @@ function sharedBrowserStore<T>(read:()=>T,listen:(update:(value:T)=>void)=>()=>v
 }
 const noBrowserSubscription=()=>()=>{};
 
+type VisibilityListener=(visible:boolean)=>void;
+const elementVisibilityPools=new Map<string,{observer:IntersectionObserver;listeners:Map<Element,Set<VisibilityListener>>;visible:Map<Element,boolean>}>();
+/** Share viewport observations across cards and thumbnails, releasing empty pools. */
+export function observeElementVisibility(element:Element,listener:VisibilityListener,rootMargin='0px'){
+ if(typeof IntersectionObserver==='undefined'){
+  let cancelled=false;queueMicrotask(()=>{if(!cancelled)listener(true);});return()=>{cancelled=true;};
+ }
+ let pool=elementVisibilityPools.get(rootMargin);
+ if(!pool){
+  const listeners=new Map<Element,Set<VisibilityListener>>(),visible=new Map<Element,boolean>();
+  const observer=new IntersectionObserver(entries=>{for(const entry of entries){if(!listeners.has(entry.target))continue;visible.set(entry.target,entry.isIntersecting);listeners.get(entry.target)?.forEach(notify=>notify(entry.isIntersecting));}},{rootMargin});
+  pool={observer,listeners,visible};elementVisibilityPools.set(rootMargin,pool);
+ }
+ const current=pool;
+ let listeners=current.listeners.get(element);
+ if(!listeners){listeners=new Set();current.listeners.set(element,listeners);current.observer.observe(element);}
+ listeners.add(listener);
+ if(current.visible.has(element))queueMicrotask(()=>{if(listeners!.has(listener))listener(current.visible.get(element)!);});
+ let stopped=false;
+ return()=>{
+  if(stopped)return;stopped=true;
+  listeners!.delete(listener);
+  if(!listeners!.size&&current.listeners.has(element)){current.observer.unobserve(element);current.listeners.delete(element);current.visible.delete(element);}
+  if(!current.listeners.size){current.observer.disconnect();if(elementVisibilityPools.get(rootMargin)===current)elementVisibilityPools.delete(rootMargin);}
+ };
+}
+
 const pageVisibility = sharedBrowserStore(() => !document.hidden, update => {
  const changed = () => update(!document.hidden);
  document.addEventListener('visibilitychange', changed);

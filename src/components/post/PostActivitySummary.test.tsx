@@ -6,7 +6,7 @@ import type {PostWithAuthor} from '@/types';
 const fixture=vi.hoisted(()=>({quotes:vi.fn()}));
 vi.mock('@/api/posts',()=>({getPostQuoteCount:fixture.quotes}));
 vi.mock('@/hooks/useAuth',()=>({useAuth:()=>({user:{id:'viewer'}})}));
-import {PostActivitySummary} from './PostActivitySummary';
+import {PostActivitySummary} from "@/pages/PostDetail";
 const post={id:'native-post',likesCount:1,repostsCount:2} as PostWithAuthor;
 beforeEach(()=>{fixture.quotes.mockReset().mockResolvedValue(3);});
 afterEach(cleanup);

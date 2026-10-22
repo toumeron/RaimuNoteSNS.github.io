@@ -1,4 +1,4 @@
-vi.mock("@/lib/offlineBookmarks", async importOriginal => ({...await importOriginal<typeof import("@/lib/offlineBookmarks")>(), readChatImage:async(account:string,url:string)=>records.get(JSON.stringify([account,url])), writeChatImage:async(account:string,url:string,blob:Blob)=>{records.set(JSON.stringify([account,url]),blob)}}));
+vi.mock("@/lib/mediaThumbnail", async importOriginal => ({...await importOriginal<typeof import("@/lib/mediaThumbnail")>(), readChatImage:async(account:string,url:string)=>records.get(JSON.stringify([account,url])), writeChatImage:async(account:string,url:string,blob:Blob)=>{records.set(JSON.stringify([account,url]),blob)}}));
 import {afterEach,expect,it,vi} from 'vitest';
 import { loadChatImage } from "@/lib/aiFriends";
 const records=vi.hoisted(()=>new Map<string,Blob>());

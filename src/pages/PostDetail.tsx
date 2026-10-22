@@ -1,45 +1,37 @@
-import { initialImageFrame, initialMediaSize } from "@/lib/mediaThumbnail";
-import { displayUsername, randomUUID, splitMentionText, mentionProfileHandle, hasStickers, formatDate, formatRelative, getYouTubeId } from "@/lib/utils";
-import { nextTwitterReplyCursor, canShowPostLinkPreview, hasAttachedPostVideo, spaceLinkIn, getCommentAncestors } from "@/lib/utils";
+import { initialImageFrame, initialMediaSize, openMediaViewer } from "@/lib/mediaThumbnail";
+import { displayUsername, randomUUID, splitMentionText, mentionProfileHandle, hasStickers, formatDate, formatRelative, getYouTubeId, nextTwitterReplyCursor, canShowPostLinkPreview, hasAttachedPostVideo, spaceLinkIn, getCommentAncestors } from "@/lib/utils";
 import { PostSourceLabel, ExternalPostDetails, LinkPreviewCard, useLinkPreview, QuotedPost, PostImages } from "@/components/feed/QuotedPost";
-import { PrivateMediaImage } from "@/components/ui/avatar";
+import { PrivateMediaImage, ProviderVerificationBadge, PrivateAccountBadge, Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { xConversationPage, twitterReplyUrl } from "@/lib/fxTwitter";
-import { ProviderVerificationBadge, PrivateAccountBadge, Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { PostVideoPlayer } from "@/components/video/PostVideoPlayer";
 import { PostPoll, PostCardSkeleton } from "@/components/feed/PostPoll";
-import { ExternalReplyDetail, ExternalReplyList } from "@/components/post/ExternalReplyList";
+import { ExternalReplyDetail, ExternalReplyList } from "@/components/post/CommentList";
 import { mobilePostMenuOS, ExternalLikeButton, HighlightPostMenuButton, PinPostMenuButton, RepostButton, BookmarkButton } from "@/components/feed/RepostButton";
-import { openMediaViewer } from "@/components/media/openMediaViewer";
 import { useLayoutEffect, useState, useEffect, useRef, type CSSProperties } from "react";
-import { renderStickerText } from "@/components/stickers/Stickers";
+import { renderStickerText } from "@/components/feed/QuotedPost";
 import { SpacePostCard } from "@/components/spaces/SpaceProvider";
-
 import { useDesktopLayout } from "@/components/layout/DesktopLayoutContext";
 import { createPortal } from "react-dom";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, MessageCircle, X, Plus, Link as LinkIcon, Upload, Send, Globe, MoreHorizontal, Trash2, ChartBarBig, Lock, Users, Loader2, Share2 } from "lucide-react";
 import { LikeButton } from "@/components/post/LikeButton";
-import {PostActivitySummary} from '@/components/post/PostActivitySummary';
-import { CommentList, CommentCard } from "@/components/post/CommentList";
+import { CommentList, CommentCard, ReplyChain } from "@/components/post/CommentList";
 import { CommentForm } from "@/components/post/CommentForm";
-import { usePost } from "@/hooks/useFeed";
+import { usePost, useComments } from "@/hooks/useFeed";
 import { fetchBlueskyPostThread, getBlueskyUriFromPostId } from "@/lib/bluesky";
 import { useBlueskySession, useAuth } from "@/hooks/useAuth";
 import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
-import { YouTubeEmbed } from "@/components/feed/PostCard";
-import { supabase } from "@/lib/supabase";
+import { YouTubeEmbed, PostCard } from "@/components/feed/PostCard";
+import { supabase, sendLimeDrop } from "@/lib/supabase";
 import { getCurrentUserId } from "@/lib/currentUser";
-import { deletePost, getPostLikers, getPostQuotes, getPostReposters } from "@/api/posts";
+import { deletePost, getPostLikers, getPostQuotes, getPostReposters, getPostQuoteCount } from "@/api/posts";
 import { type PostWithAuthor, type User } from "@/types/index";
-import { useComments } from "@/hooks/useFeed";
-import { PostCard } from "@/components/feed/PostCard";
-import { ReplyChain } from "@/components/post/CommentList";
-import { getExternalPostActivity, hasExternalActivity, type ActivityCursor, getCommentLikers } from "@/api/comments";
+import { getExternalPostActivity, hasExternalActivity, type ActivityCursor, getCommentLikers } from "@/api/external-posts";
 import { Skeleton, Button } from "@/components/ui/button";
 import { FollowButton } from "@/components/profile/ProfileHeader";
-
 import { PostComposer } from "@/components/feed/PostComposer";
 
+// PostDetail
 // ReplyDetail
 function ReplyDetail({ commentId, post, mobileFlat }: { commentId: string; post: PostWithAuthor; mobileFlat: boolean }) {
   const { user } = useAuth();
@@ -1092,7 +1084,8 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
       const { data: followingRows, error: followingError } = await supabase
         .from('follows')
         .select('followee_id')
-        .eq('follower_id', currentUserId);
+        .eq('follower_id', currentUserId)
+        .eq('approved', true);
 
       if (followingError) throw followingError;
 
@@ -1110,6 +1103,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
             .select('follower_id')
             .eq('followee_id', currentUserId)
             .in('follower_id', followingIds)
+            .eq('approved', true)
         : { data: [], error: null };
 
       if (followerError) throw followerError;
@@ -1184,9 +1178,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
       const url = getPostShareUrl();
       const text = getPostShareText();
 
-      const { error } = await supabase
-        .from('lime_drops')
-        .insert({
+      await sendLimeDrop({
           sender_id: currentUserId,
           recipient_id: target.id,
           post_id: data.id,
@@ -1196,9 +1188,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
           post_author_display_name: data.author.displayName,
           post_text: text,
           status: 'pending',
-        });
-
-      if (error) throw error;
+        }, supabase);
 
       setLimeDropFeedback(`${target.displayName}さんに送信しました`);
       window.setTimeout(() => {
@@ -2442,3 +2432,17 @@ export { PostDetail as default };
 export { ReplyDetail };
 export { PostActivity };
 export { Share };
+
+
+// PostActivitySummary
+export function PostActivitySummary({post,mobile}:{post:PostWithAuthor;mobile:boolean}){
+ const {user}=useAuth();
+ const enabled=mobile&&(!post.source||post.source==='lime')&&!/^(bsky:|misskey:|x:|reply:)/.test(post.id);
+ const quotes=useQuery({queryKey:['post',post.id,'quote-count',user?.id??null],queryFn:({signal})=>getPostQuoteCount(post.id,signal),enabled,staleTime:15_000,retry:false,throwOnError:false});
+ if(!enabled)return null;
+ const entries=[{tab:'reposts',label:'件のリポスト',count:post.repostsCount},{tab:'quotes',label:'件の引用リポスト',count:quotes.data},{tab:'likes',label:'件のいいね',count:post.likesCount}].filter(entry=>Number.isFinite(entry.count)&&(entry.count??0)>0);
+ if(!entries.length)return null;
+ return <nav aria-label="ポストアクティビティ" className="mt-3 flex flex-wrap gap-x-4 gap-y-2 border-y border-border/60 py-3 text-sm">
+  {entries.map(entry=><Link key={entry.tab} to={`/post/${encodeURIComponent(post.id)}/activity?tab=${entry.tab}`} className="inline-flex items-baseline gap-1 hover:underline"><strong className="font-bold tabular-nums text-foreground">{entry.count!.toLocaleString('ja-JP')}</strong><span className="text-muted-foreground">{entry.label}</span></Link>)}
+ </nav>;
+}

@@ -15,7 +15,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const state=vi.hoisted(()=>({user:'a',accounts:[{id:'a',needsLogin:false},{id:'b',needsLogin:false},{id:'expired',needsLogin:true}],client:vi.fn(),bookmarks:vi.fn(),notifications:vi.fn()}));
 
 
-vi.mock('@/lib/accountReadClient',async importOriginal=>({...await importOriginal<typeof import('@/lib/accountReadClient')>(),getAccountReadClient:state.client}));
+vi.mock("@/lib/supabase",async importOriginal=>({...await importOriginal<typeof import("@/lib/supabase")>(),getAccountReadClient:state.client}));
 
 
 import { useSharedBookmarks, useSharedNotifications } from './useSharedAccountLists';

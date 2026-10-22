@@ -5,7 +5,9 @@ const state = vi.hoisted(() => ({
   user: 'alice', rows: [] as {user_id:string;provider:string;handle:string;created_at?:string;external_profile?:any}[],
   imported: new Set<string>(), fail: false, writes: [] as Record<string, unknown>[],
 }));
-vi.mock('./supabase', () => ({ supabase: {
+vi.mock("./supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("./supabase")>(),
+  supabase: {
   rpc: async (_name:string,args:any)=>{
     const {legacy,provider,handle,enabled}=args;
     if (state.fail) return {error:new Error('offline')};
@@ -43,7 +45,8 @@ vi.mock('./supabase', () => ({ supabase: {
       },
     };return q;
   },
-} }));
+}
+}));
 import { importedFollowCount, removeImportedFollows, importPublicFollows, followImportActor, cloudExternalHandles, initialiseExternalAccounts, refreshExternalAccounts, setExternalAccountAdded, setExternalAccountOwner } from './externalAccounts';
 beforeEach(() => {
   setExternalAccountOwner(null); localStorage.clear();source.profile.mockReset().mockResolvedValue({id:'did:plc:me',username:'me.bsky.social',followingCount:2,isPrivate:false});source.page.mockReset().mockResolvedValue({users:[],cursor:null});

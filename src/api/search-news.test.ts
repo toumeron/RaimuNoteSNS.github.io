@@ -1,7 +1,10 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 const lookup = vi.hoisted(() => vi.fn());
 const summaries=vi.hoisted(()=>({rows:[] as any[]}));
-vi.mock('@/lib/supabase',()=>({supabase:{from:()=>{const q:any={select:()=>q,eq:()=>q,order:()=>q,limit:async()=>({data:summaries.rows,error:null})};return q;}}}));
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase:{from:()=>{const q:any={select:()=>q,eq:()=>q,order:()=>q,limit:async()=>({data:summaries.rows,error:null})};return q;}}
+}));
 vi.mock('./posts', () => ({getPostById: lookup}));
 import { getNewsRelatedPosts, getNewsSources, latestNewsPerSource, type SearchNewsItem } from './search-news';
 import {selectPopularPosts,validateSummary,selectNewsTopic} from '../../supabase/functions/generate-news/sources';

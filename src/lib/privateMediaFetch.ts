@@ -1,4 +1,4 @@
-import { randomUUID } from "@/lib/utils";
+import { randomUUID, isInstalledPwa } from "@/lib/utils";
 
 // privateMediaFetch
 /** Persist storage references, never public URLs for newly attached post media. */
@@ -6,6 +6,36 @@ const POST_MEDIA_BUCKET = 'post-media';
 const MEDIA_PREFIX = `storage://${POST_MEDIA_BUCKET}/`;
 const localMedia = new Set<string>();
 const mediaByReference = new Map<string,string>();
+const mediaRecords=new Map<string,{reference:string;bytes:number;users:number;eager:boolean;usedAt:number}>();
+let mediaTrimTimer:ReturnType<typeof setTimeout>|undefined,mediaLifecycle=false;
+const PRIVATE_MEDIA_BYTES=24*1024*1024,PRIVATE_MEDIA_ENTRIES=24;
+function schedulePrivateMediaTrim(){
+  if(!isInstalledPwa()||mediaTrimTimer!==undefined)return;
+  mediaTrimTimer=setTimeout(()=>{mediaTrimTimer=undefined;trimPrivateMedia(PRIVATE_MEDIA_BYTES,PRIVATE_MEDIA_ENTRIES,document.hidden?0:30_000);},document.hidden?0:30_100);
+}
+/** Mounted images and explicit downloads own a lease; only unused bytes may be reclaimed. */
+function retainPrivateMediaUrl(url:string){
+  const record=mediaRecords.get(url);if(!record)return()=>{};
+  record.users++;record.usedAt=Date.now();let released=false;
+  return()=>{if(released)return;released=true;record.users--;if(mediaRecords.get(url)!==record)return;record.usedAt=Date.now();schedulePrivateMediaTrim();};
+}
+function trimPrivateMedia(maxBytes=PRIVATE_MEDIA_BYTES,maxEntries=PRIVATE_MEDIA_ENTRIES,graceMs=30_000){
+  if(!isInstalledPwa())return;
+  const records=[...mediaRecords],now=Date.now();let bytes=records.reduce((sum,[,record])=>sum+record.bytes,0),count=records.length;
+  for(const [url,record]of records.sort((a,b)=>a[1].usedAt-b[1].usedAt)){
+    if(bytes<=maxBytes&&count<=maxEntries)break;
+    // Eager responses store the Blob URL directly; they cannot reload from a token.
+    if(record.eager||record.users||now-record.usedAt<graceMs)continue;
+    URL.revokeObjectURL(url);localMedia.delete(url);mediaRecords.delete(url);
+    if(mediaByReference.get(record.reference)===url)mediaByReference.delete(record.reference);
+    bytes-=record.bytes;count--;
+  }
+  if((bytes>maxBytes||count>maxEntries)&&[...mediaRecords.values()].some(record=>!record.eager&&!record.users&&now-record.usedAt<graceMs))schedulePrivateMediaTrim();
+}
+const privateMediaHidden=()=>{
+  if(!document.hidden)return;
+  clearTimeout(mediaTrimTimer);mediaTrimTimer=undefined;trimPrivateMedia(PRIVATE_MEDIA_BYTES,PRIVATE_MEDIA_ENTRIES,0);
+};
 const deferredMedia = new Map<string,{reference:string;load:()=>Promise<string|null>}>();
 const isDeferredPrivateMedia=(url:string)=>url.startsWith('lime-private-media:');
 const privateMediaReference=(url:string)=>deferredMedia.get(url)?.reference??url;
@@ -101,6 +131,9 @@ function createSupabaseReadFetch(baseUrl: string, transport: typeof fetch = fetc
 
 function clearPrivateMedia(): void {
   generation++;
+  clearTimeout(mediaTrimTimer);mediaTrimTimer=undefined;
+  if(mediaLifecycle)document.removeEventListener('visibilitychange',privateMediaHidden);
+  mediaLifecycle=false;mediaRecords.clear();
   for (const url of localMedia) URL.revokeObjectURL(url);
   localMedia.clear();
   mediaByReference.clear();
@@ -111,7 +144,7 @@ function clearPrivateMedia(): void {
  * Download through Storage RLS with the request's credentials. No transferable
  * signed URL or persistent HTTP cache is created for restricted attachments.
  */
-function createPrivateMediaFetch(baseUrl: string, transport: typeof fetch = fetch, deferPostImages = false): typeof fetch {
+function createPrivateMediaFetch(baseUrl: string, transport: typeof fetch = fetch, deferPostImages = false, accessToken?:()=>Promise<string|null>): typeof fetch {
   const origin = new URL(baseUrl).origin;
   return async (input, init) => {
     const epoch = generation;
@@ -125,7 +158,17 @@ function createPrivateMediaFetch(baseUrl: string, transport: typeof fetch = fetc
     if (!isRest || !response.ok ||
         !response.headers.get('content-type')?.includes('json') || response.status === 204 || init?.method === 'HEAD') return response;
     const body = await response.clone().json().catch(() => null);
-    if (!body || !JSON.stringify(body).includes(MEDIA_PREFIX)) return response;
+    // Avoid serializing a full text-heavy feed merely to detect attachments.
+    // Only these image fields are hydrated below; ordinary post text is untouched.
+    const hasPrivateImages = (value:unknown):boolean => {
+      if(Array.isArray(value))return value.some(hasPrivateImages);
+      if(!value||typeof value!=='object')return false;
+      return Object.entries(value).some(([key,item]) =>
+        (key==='image_urls'||key==='imageUrls')&&Array.isArray(item)
+          ? item.some(ref=>typeof ref==='string'&&ref.startsWith(MEDIA_PREFIX))
+          : hasPrivateImages(item));
+    };
+    if (!hasPrivateImages(body)) return response;
     const headers = new Headers(input instanceof Request ? input.headers : undefined);
     new Headers(init?.headers).forEach((value, key) => headers.set(key, value));
     const credentials = new Headers();
@@ -139,7 +182,14 @@ function createPrivateMediaFetch(baseUrl: string, transport: typeof fetch = fetc
       if (!downloads.has(ref)) downloads.set(ref, (async () => {
         const path = ref.slice(MEDIA_PREFIX.length);
         if (!/^[\da-f-]{36}\/[\da-f-]{36}\/[\da-f-]{36}(?:--[1-9][0-9]{0,5}x[1-9][0-9]{0,5})?\.(png|jpg|webp|gif|avif)$/i.test(path)) return null;
+        // A deferred image can outlive the JWT used to fetch its post metadata.
+        if(accessToken){
+          const token=await accessToken();if(!token||epoch!==generation)return null;
+          credentials.set('authorization',`Bearer ${token}`);
+        }
         const cached = mediaByReference.get(ref);
+        const releaseCached=cached?retainPrivateMediaUrl(cached):()=>{};
+        try{
         const asset = await transport(`${origin}/storage/v1/object/authenticated/${POST_MEDIA_BUCKET}/${path}`, {
           method: cached ? 'HEAD' : 'GET',
           headers: credentials, cache: 'no-store', redirect: 'error', signal: deferAttachments?AbortSignal.timeout(12000):init?.signal,
@@ -148,14 +198,21 @@ function createPrivateMediaFetch(baseUrl: string, transport: typeof fetch = fetc
         // Revalidate RLS on each response, reuse the immutable image bytes only
         // after Storage approves this viewer again. Avoid accumulating another
         // Blob for the same attachment on every timeline refresh.
-        if (cached && epoch === generation) { await asset.body?.cancel(); return cached; }
+        if (cached && epoch === generation) {
+          const record=mediaRecords.get(cached);if(record){record.usedAt=Date.now();if(!deferAttachments)record.eager=true;}
+          await asset.body?.cancel(); return cached;
+        }
         const blob = await asset.blob();
         if (epoch !== generation) return null;
         const local = URL.createObjectURL(blob);
         localMedia.add(local);
         mediaByReference.set(ref,local);
+        mediaRecords.set(local,{reference:ref,bytes:blob.size,users:0,eager:!deferAttachments,usedAt:Date.now()});
+        if(isInstalledPwa()&&!mediaLifecycle){document.addEventListener('visibilitychange',privateMediaHidden);mediaLifecycle=true;}
+        schedulePrivateMediaTrim();
         return local;
-      })());
+        }finally{releaseCached();}
+      })().finally(()=>downloads.delete(ref)));
       return downloads.get(ref)!;
     };
     const hydrate = async (value: unknown): Promise<unknown> => {
@@ -169,7 +226,15 @@ function createPrivateMediaFetch(baseUrl: string, transport: typeof fetch = fetc
             // explicit image analysis downloads bytes, still through Storage RLS.
             if(deferAttachments){
               let token=deferred.get(ref);
-              if(!token){token=`lime-private-media:${randomUUID()}`;deferred.set(ref,token);deferredMedia.set(token,{reference:ref,load:()=>epoch===generation?resolve(ref):Promise.resolve(null)});}
+              if(!token){
+                token=`lime-private-media:${randomUUID()}`;deferred.set(ref,token);
+                let loaded:string|null|undefined;
+                deferredMedia.set(token,{reference:ref,load:async()=>{
+                  if(epoch!==generation)return null;
+                  if(loaded&&localMedia.has(loaded))return loaded;
+                  loaded=await resolve(ref);return loaded;
+                }});
+              }
               return token;
             }
             return resolve(ref);
@@ -232,6 +297,8 @@ async function boundedResponseBlob(response: Response, maxBytes: number): Promis
 }
 
 export { resolvePrivateMediaUrl };
+export { retainPrivateMediaUrl };
+export { trimPrivateMedia };
 export { clearPrivateMedia };
 export { createPrivateMediaFetch };
 export { POST_MEDIA_BUCKET };

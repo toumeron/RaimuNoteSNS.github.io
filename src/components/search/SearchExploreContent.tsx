@@ -5,7 +5,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { useHiddenTrends, type SearchExploreTab, SEARCH_EXPLORE_TABS, useSearchExploreTab, useNewsStory } from "@/hooks/useTopics";
 import { latestNewsPerSource, type SearchNewsItem, type NewsSources } from "@/api/search-news";
 import { type User } from "@/types/index";
-import { prepareExploreTrends, rankPersonalTrends, type ExploreTrend } from "@/lib/topics";
+import { prepareExploreTrends, rankPersonalTrends, type ExploreTrend } from "@/lib/recommendations";
 import { type RecommendationPreferences } from "@/lib/recommendations";
 
 import { useSearchParams, useNavigate, useLocation, Link } from "react-router-dom";

@@ -30,7 +30,11 @@ function readStoredAccounts(): StoredAccount[] {
 }
 function writeAccounts(accounts: StoredAccount[]) {
   fallback = accounts;
-  try { localStorage.setItem(SAVED_ACCOUNTS_KEY, JSON.stringify(accounts)); } catch { /* Keep this session usable when storage is unavailable. */ }
+  try {
+    const serialized = JSON.stringify(accounts);
+    if (localStorage.getItem(SAVED_ACCOUNTS_KEY) === serialized) return;
+    localStorage.setItem(SAVED_ACCOUNTS_KEY, serialized);
+  } catch { /* Keep this session usable when storage is unavailable. */ }
   window.dispatchEvent(new Event(SAVED_ACCOUNTS_EVENT));
 }
 export function readSavedAccounts(): SavedAccount[] {

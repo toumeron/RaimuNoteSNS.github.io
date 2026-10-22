@@ -1,5 +1,6 @@
-import {connectStream,blueskyEvent,misskeyEvent} from './external-notification-events.mjs';
-import {fetchExternalEvents} from '../supabase/functions/check-external-notifications/sources.ts';
+import { fetchExternalEvents } from "../supabase/functions/check-external-notifications/sources.ts";
+
+// external-notification-listener.mjs
 async function requestJson(url,body){const response=await fetch(url,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:undefined,body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(10000)});if(!response.ok)throw new Error('External actor resolution failed');return response.json();}
 export async function startExternalNotificationListener({db,publicJson=requestJson,fetchEvents=fetchExternalEvents,connect=connectStream}){
 const targets=new Map(),actors=new Map(),resolutions=new Map(),queues=new Map();
@@ -87,4 +88,72 @@ console.log('External notification listener started; waiting for events (no poll
 async function stop(){if(stopping)return;stopping=true;stopBluesky?.();stopMisskey?.();await db.removeChannel(channel);await Promise.allSettled([...queues.values()]);}
 
 return stop;
+}
+
+
+// external-notification-events.mjs
+// Pure decoding shared by the permanent listener and its tests.
+export function blueskyEvent(message, target) {
+ const commit=message?.commit;
+ if(message?.kind!=='commit'||commit?.operation!=='create'||commit.collection!=='app.bsky.feed.post'||!commit.rkey||commit.record?.reply)return null;
+ const record=commit.record;const created_at=record?.createdAt;
+ if(!Number.isFinite(Date.parse(created_at))||Date.parse(created_at)<Date.parse(target.created_at))return null;
+ const embed=record.embed?.media??record.embed;
+ const images=(embed?.images??[]).map(image=>image.image?.ref?.$link).filter(Boolean).map(cid=>`https://cdn.bsky.app/img/feed_thumbnail/plain/${encodeURIComponent(message.did)}/${encodeURIComponent(cid)}@jpeg`);
+ return {id:`bsky:at://${message.did}/app.bsky.feed.post/${commit.rkey}`,created_at,name:target.target_name||target.external_actor,avatar:target.target_avatar_url||'',content:record.text??'',images};
+}
+export function misskeyEvent(message, target) {
+ if(message?.type!=='channel'||message.body?.id!=='lime-new-posts'||message.body.type!=='note')return null;
+ const note=message.body.body;
+ if(!note?.id||note.visibility!=='public'||note.replyId||note.renoteId&&!note.text&&!note.files?.length)return null;
+ if(!Number.isFinite(Date.parse(note.createdAt))||Date.parse(note.createdAt)<Date.parse(target.created_at))return null;
+ return {id:`misskey:https://misskey.io/notes/${note.id}`,created_at:note.createdAt,name:note.user?.name||target.target_name||target.external_actor,avatar:note.user?.avatarUrl||target.target_avatar_url||'',content:[note.cw,note.text].filter(Boolean).join('\n\n'),images:(note.files??[]).filter(file=>file.type?.startsWith('image/')).map(file=>file.thumbnailUrl||file.url)};
+}
+// Timers are used only after connection failure, never to check for posts.
+export function connectStream(url, onMessage, {opened=()=>{},socketFactory=url=>new WebSocket(url),schedule=setTimeout,cancel=clearTimeout}={}) {
+ let socket,timer,stopped=false,attempt=0;
+ const connect=()=>{
+  if(stopped)return;
+  const current=socketFactory(url());socket=current;let retryScheduled=false;
+  const retry=()=>{if(stopped||retryScheduled)return;retryScheduled=true;timer=schedule(connect,Math.min(30000,1000*2**attempt++));};
+  current.onopen=()=>{attempt=0;opened(current);};
+  current.onmessage=event=>{try{const message=JSON.parse(event.data);Promise.resolve(onMessage(message)).catch(()=>console.error('Stream delivery failed; recovery will reconcile on reconnect'));}catch{/* Ignore malformed public frames. */}};
+  current.onerror=()=>{current.close();retry();};current.onclose=retry;
+ };
+ connect();return ()=>{stopped=true;if(timer)cancel(timer);socket?.close();};
+}
+
+
+// socket.mjs
+// Cloudflare's outgoing sockets use an HTTP Upgrade rather than new WebSocket(url).
+export function cloudflareSocketClass(fetcher=fetch){
+ return class CloudflareSocket extends EventTarget {
+  static CONNECTING=0;static OPEN=1;static CLOSING=2;static CLOSED=3;
+  readyState=0;binaryType='arraybuffer';bufferedAmount=0;extensions='';protocol='';
+  onopen=null;onmessage=null;onclose=null;onerror=null;
+  constructor(address,protocols){
+   super();this.url=String(address);this.socket=null;this.closed=false;
+   void this.connect(protocols);
+  }
+  emit(type,details={}){const event=Object.assign(new Event(type),details);this.dispatchEvent(event);this[`on${type}`]?.(event);}
+  async connect(protocols){
+   try{
+    const url=new URL(this.url);url.protocol=url.protocol==='wss:'?'https:':'http:';
+    const headers={Upgrade:'websocket'};if(protocols?.length)headers['Sec-WebSocket-Protocol']=Array.isArray(protocols)?protocols.join(','):protocols;
+    const response=await fetcher(url.href,{headers});const socket=response.webSocket;
+    if(!socket)throw new Error('WebSocket upgrade failed');this.socket=socket;
+    socket.addEventListener('message',event=>this.emit('message',{data:event.data}));
+    socket.addEventListener('error',()=>this.emit('error'));
+    socket.addEventListener('close',event=>{this.closed=true;this.readyState=3;this.emit('close',{code:event.code,reason:event.reason,wasClean:event.wasClean});});
+    socket.accept();if(this.closed){socket.close(1000,'Listener stopped');return;}
+    this.readyState=1;this.emit('open');
+   }catch{this.readyState=3;this.emit('error');if(!this.closed){this.closed=true;this.emit('close',{code:1006,reason:'Connection failed',wasClean:false});}}
+  }
+  send(data){if(this.readyState!==1)throw new Error('WebSocket is not open');this.socket.send(data);}
+  close(code=1000,reason=''){
+   if(this.closed)return;this.closed=true;this.readyState=2;
+   if(this.socket)this.socket.close(code,reason);
+   else{this.readyState=3;this.emit('close',{code,reason,wasClean:true});}
+  }
+ };
 }

@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { useSearchParams, Link, Navigate, useLocation } from "react-router-dom";
 import { Check, CheckCircle2, Hash, Loader2, Plus, X, AtSign, Bell, Heart, MessageCircle, Repeat2, Smile, UserPlus } from "lucide-react";
 import { useTopics, useNewsStory } from "@/hooks/useTopics";
-import { TOPICS, EMPTY_TOPIC_PREFERENCES, type TopicId } from "@/lib/topics";
+import { TOPICS, EMPTY_TOPIC_PREFERENCES, type TopicId } from "@/lib/recommendations";
 import { Button } from "@/components/ui/button";
 import { PrivateAccountBadge, Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAutoPagination } from "@/hooks/useViewportWidth";
@@ -16,7 +16,7 @@ import { SearchTabIndicator } from "@/components/search/SearchExploreContent";
 import { useSharedDisplay } from "@/lib/externalAccounts";
 import { useSharedNotifications } from "@/hooks/useSharedAccountLists";
 import { supabase } from "@/lib/supabase";
-import { getAccountReadClient } from "@/lib/accountReadClient";
+import { getAccountReadClient } from "@/lib/supabase";
 import { getNotifications, groupNotifications, markAllNotificationsRead, notificationDescription, notificationLink, type NotificationKind, type NotificationRow } from "@/api/users";
 
 // Topics

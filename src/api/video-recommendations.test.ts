@@ -1,17 +1,27 @@
 import {afterEach, beforeEach, expect, it, vi} from 'vitest';
 import type {PostWithAuthor} from '@/types';
-import type {MediaViewerSelection} from '@/components/media/openMediaViewer';
+import type {MediaViewerSelection} from "@/lib/mediaThumbnail";
 const mocks = vi.hoisted(() => ({native: vi.fn(), external: vi.fn(), popular: vi.fn(), follows: [] as unknown[], filters: vi.fn()}));
 vi.mock('./posts', () => ({getVideoFeed: (...args: unknown[]) => mocks.native(...args), getPostById: vi.fn()}));
-vi.mock('./external-posts', () => ({getExternalPost: vi.fn(), isExternalPostId: (id: string) => id.startsWith('x:')}));
+vi.mock("./external-posts", async importOriginal => ({
+  ...await importOriginal<typeof import("./external-posts")>(),
+  getExternalPost: vi.fn(),
+  isExternalPostId: (id: string) => id.startsWith('x:')
+}));
 vi.mock('@/lib/bluesky', () => ({fetchBlueskyAuthorFeed: (...args: unknown[]) => mocks.external(...args)}));
 vi.mock('@/lib/fxTwitter', () => ({searchXPage: (...args: unknown[]) => mocks.popular(...args)}));
-vi.mock('@/lib/timelinePaging', () => ({normalizeTimelineBlueskyPost: (post: unknown) => post}));
-vi.mock('@/lib/supabase', () => ({supabase: {from: () => {
+vi.mock("@/lib/utils", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/utils")>(),
+  normalizeTimelineBlueskyPost: (post: unknown) => post
+}));
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase: {from: () => {
   const query = {select: () => query, eq: (...args: unknown[]) => {mocks.filters(...args); return query;}, order: () => query, range: () => query, abortSignal: async () => ({data: mocks.follows, error: null})};
   return query;
-}}}));
-import {getVideoRecommendationPage, type VideoRecommendationCursor} from './video-recommendations';
+}}
+}));
+import {getVideoRecommendationPage, type VideoRecommendationCursor} from "@/api/recommendations";
 const post = (id: string, userId = 'creator', date = '2026-10-20T00:00:00Z', likes = 1) => ({id, userId, author: {id: userId, username: userId}, createdAt: date, likesCount: likes, video: {key: id}} as PostWithAuthor);
 const selection = (first: PostWithAuthor): MediaViewerSelection => ({post: first, url: 'video:' + first.id, video: {postId: first.id, video: first.video!}});
 afterEach(() => {vi.restoreAllMocks();});

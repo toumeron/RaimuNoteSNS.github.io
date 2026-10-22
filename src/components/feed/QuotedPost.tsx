@@ -1,18 +1,19 @@
-import { ContentLink } from "@/components/ui/button";
-import { quotePreviewText, pollPercent, pollRemaining } from "@/lib/utils";
-
+import { ContentLink, Button, Popover, PopoverContent, PopoverTrigger } from "@/components/ui/button";
+import { quotePreviewText, pollPercent, pollRemaining, cn, stickerUrl, type CustomSticker, splitStickers, stickersAreInline, draftEmojiName } from "@/lib/utils";
 import { PostCard } from "@/components/feed/PostCard";
 import { type PostWithAuthor } from "@/types/index";
 import { RepostedReplyCard } from "@/components/post/CommentList";
 import { PostOverlay } from "@/App";
 import { PrivateMediaImage } from "@/components/ui/avatar";
-import { cn } from "@/lib/utils";
-import { readSavedPreview, savePreview, savedPreviewImage, fetchLinkPreview, singlePreviewUrl, previewUrlMatches, type LinkPreview } from "@/lib/mediaThumbnail";
-import { useContext, useEffect, useState, createContext, useLayoutEffect, useRef } from "react";
+import { readSavedPreview, savePreview, savedPreviewImage, fetchLinkPreview, singlePreviewUrl, previewUrlMatches, type LinkPreview, type OfflineSpaceCard } from "@/lib/mediaThumbnail";
+import { useContext, useEffect, useState, createContext, useLayoutEffect, useRef, Fragment, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { OfflineBookmarkContext } from "@/components/stickers/Stickers";
 import { useAuth } from "@/hooks/useAuth";
-import { Globe } from "lucide-react";
+import { Globe, Sticker, X, Loader2 } from "lucide-react";
+import { ComposerIcon } from "@/components/feed/PostPoll";
+import { createPortal } from "react-dom";
+import { useIsMobile } from "@/hooks/useViewportWidth";
+import { supabase } from "@/lib/supabase";
 
 // QuotedPost
 function QuotedPost({ post, timelineGlass = false, compact = false }: { post?: PostWithAuthor | null; timelineGlass?: boolean; compact?: boolean }) {
@@ -105,7 +106,7 @@ function PostImages({
 }
 
 // LinkPreviewCard
-function useLinkPreview(content:string,enabled=true,provided?:LinkPreview,persist=true) {
+function useLinkPreview(content:string,enabled=true,provided?:LinkPreview,persist=true,request=true) {
   const {user,loading}=useAuth();
   const url=singlePreviewUrl(content);
   const saved=url&&persist?readSavedPreview(url):undefined;
@@ -115,8 +116,8 @@ function useLinkPreview(content:string,enabled=true,provided?:LinkPreview,persis
   const [failed,setFailed]=useState<string|null>(null);
   // The reader requires a session. An anonymous result from the auth-loading
   // frame must not suppress the card after login or an account switch.
-  const query=useQuery({queryKey:[persist?'link-preview-saved-v7':'link-preview-live-v7',user?.id??null,url],queryFn:()=>fetchLinkPreview(url!,persist),enabled:enabled&&!loading&&!!user&&!!url&&!offline&&!seed,initialData:saved?.preview,staleTime:persist&&saved?.preview?Infinity:60_000,gcTime:86400000,retry:1});
-  useEffect(()=>{if(persist&&enabled&&url&&providedMatches&&!offline&&!saved)savePreview(url,{...provided!,url});},[persist,enabled,url,provided,providedMatches,offline,saved]);
+  const query=useQuery({queryKey:[persist?'link-preview-saved-v7':'link-preview-live-v7',user?.id??null,url],queryFn:()=>fetchLinkPreview(url!,persist),enabled:enabled&&request&&!loading&&!!user&&!!url&&!offline&&!seed,initialData:saved?.preview,staleTime:persist&&saved?.preview?Infinity:60_000,gcTime:86400000,retry:1});
+  useEffect(()=>{if(persist&&enabled&&request&&url&&providedMatches&&!offline&&!saved)savePreview(url,{...provided!,url});},[persist,enabled,request,url,provided,providedMatches,offline,saved]);
   const resolved=enabled&&url?(offline?offline.linkPreviews?.[url]??seed:seed??query.data):null;
   const preview=resolved&&failed===url?{...resolved,image:''}:resolved;
   return {preview:preview??null,cacheImage:persist&&!offline,onImageError:()=>setFailed(url),text:(text:string)=>preview?text.replace(url!, '').replace(content.match(/https?:\/\/[^\s<>"\u3000]+/i)?.[0]??url!, '').trim():text};
@@ -186,3 +187,74 @@ export { PostLinkPreview };
 export { PostSourceLabel };
 export { PostSourceLabelVisibility };
 export { AnimatedCount };
+
+
+// Stickers
+// OfflineBookmarkContext
+const OfflineBookmarkContext=createContext<{bookmarkIds:string[];linkPreviews?:Record<string,LinkPreview|null>;emojis:CustomSticker[];spaces:Record<string,OfflineSpaceCard|null>;media:Map<string,string>}|null>(null);
+
+// Stickers
+function useStickers(enabled=true) {
+  return useQuery({queryKey:['custom-stickers'],enabled,staleTime:60000,queryFn:async()=>{
+    const {data,error}=await supabase.from('custom_emojis').select('id,name,public_id,format').order('name');
+    if(error)throw error; return (data||[]) as CustomSticker[];
+  }});
+}
+function StickerImage({name,inline=false}:{name:string;inline?:boolean}) {
+  const offline=useContext(OfflineBookmarkContext);const {data}=useStickers(!offline);const sticker=(offline?.emojis??data)?.find(s=>s.name===name);const src=sticker&&stickerUrl(sticker);
+  return src?<img data-lime-sticker src={offline?.media.get(src)??src} alt={`${name}のスタンプ`} loading="lazy" data-lime-sticker-inline={inline} className={`inline-block max-w-full object-contain align-middle ${inline?'h-6 w-6':'my-1 h-36 w-36'}`}/>:<span className="text-sm text-muted-foreground">{name}のスタンプ</span>;
+}
+function StickerPicker({onSelect,disabled=false,iconOnly=false,simple=false,className=''}:{onSelect:(name:string)=>void;disabled?:boolean;iconOnly?:boolean;simple?:boolean;className?:string}) {
+  const [open,setOpen]=useState(false),[search,setSearch]=useState('');
+  const mobile=useIsMobile();
+  const {data,isPending,isError,refetch}=useStickers(open);
+  const items=(data||[]).filter(s=>s.name.toLowerCase().includes(search.toLowerCase())&&stickerUrl(s));
+  useEffect(()=>{
+    if(!open||!mobile)return;
+    const onKey=(event:KeyboardEvent)=>{if(event.key==='Escape'){event.stopImmediatePropagation();setOpen(false);}};
+    document.addEventListener('keydown',onKey,true);
+    return ()=>document.removeEventListener('keydown',onKey,true);
+  },[open,mobile]);
+  const trigger=<Button type="button" disabled={disabled} variant="ghost" size="sm" data-lime-composer-tool={simple||undefined} data-lime-attachment-tool aria-label="スタンプを選ぶ"
+    onPointerDown={event=>event.preventDefault()}
+    onClick={mobile?()=>setOpen(true):undefined}
+    className={`h-9 [&_svg]:size-5 shrink-0 rounded-full ${simple?'text-muted-foreground hover:bg-transparent hover:text-foreground':'text-primary hover:bg-primary/10 hover:text-primary'} ${iconOnly?'w-9 p-0':''} ${className}`}>
+    <>{simple?<ComposerIcon kind="smile"/>:<Sticker className={iconOnly?'h-5 w-5':'h-5 w-5 sm:mr-1.5'}/>}</>{!iconOnly&&<span className="hidden sm:inline">スタンプ</span>}
+  </Button>;
+  const contents=<>
+    <input aria-label="スタンプを検索" placeholder="スタンプを検索" value={search} onChange={e=>setSearch(e.target.value)} className="mb-2 w-full rounded-full border border-border bg-background px-3 py-2 text-sm"/>
+    {isPending?<Loader2 className="mx-auto my-6 h-5 w-5 animate-spin"/>:isError?<button type="button" onClick={()=>refetch()} className="text-sm text-primary">読み込みを再試行</button>:items.length?<div className={`grid gap-2 overflow-y-auto ${mobile?'max-h-[45dvh] grid-cols-4':'max-h-72 grid-cols-4'}`}>
+      {items.map(s=><button key={s.id} type="button" aria-label={`${s.name}を選ぶ`} onClick={()=>{onSelect(s.name);setOpen(false);}} className="rounded-xl p-2 hover:bg-muted"><img src={stickerUrl(s)!} alt={s.name} loading="lazy" className="h-14 w-full object-contain"/><span className="block truncate text-xs text-muted-foreground">{s.name}</span></button>)}
+    </div>:<p className="py-6 text-center text-sm text-muted-foreground">スタンプがありません</p>}
+  </>;
+  if(mobile)return <>{trigger}{open&&createPortal(<div className="fixed inset-0 z-[2147483100] flex items-end bg-black/40" onClick={event=>event.stopPropagation()} onPointerDown={event=>{if(event.target===event.currentTarget)setOpen(false);}}>
+    <section role="dialog" aria-modal="true" aria-label="スタンプを選択" data-lime-sticker-picker="mobile" className="w-full rounded-t-3xl border-t border-border bg-background p-4 pb-[max(16px,env(safe-area-inset-bottom))] shadow-xl" onFocusCapture={event=>event.stopPropagation()}>
+      <div className="mb-3 flex items-center justify-between"><span className="font-bold">スタンプ</span><button type="button" aria-label="スタンプ選択を閉じる" className="rounded-full p-2 hover:bg-muted" onClick={()=>setOpen(false)}><X className="h-5 w-5"/></button></div>{contents}
+    </section>
+  </div>,document.body)}</>;
+  return <Popover open={open} onOpenChange={setOpen}><PopoverTrigger asChild>{trigger}</PopoverTrigger><PopoverContent data-lime-sticker-picker="desktop" side="top" align="end" className="z-[2147483100] w-96 max-w-[calc(100vw-24px)] p-3" onOpenAutoFocus={e=>e.preventDefault()} onEscapeKeyDown={event=>event.stopPropagation()}>{contents}</PopoverContent></Popover>;
+}
+function StickerDraft({name,onRemove,inline=false}:{name:string|null;onRemove:()=>void;inline?:boolean}) {
+  return name?<div data-lime-sticker-draft className={inline?'mt-2 flex w-fit items-center gap-1':'relative mt-2 w-fit'}><StickerImage name={name} inline={inline}/><button type="button" aria-label="スタンプを外す" onClick={onRemove} className={`${inline?'':'absolute right-0 top-0'} rounded-full bg-background p-1 text-muted-foreground shadow`}><X className="h-4 w-4"/></button></div>:null;
+}
+
+function renderStickerText(text:string,renderText:(text:string)=>ReactNode):ReactNode {
+  const inline=stickersAreInline(text);
+  return splitStickers(text).map((part,i)=><Fragment key={i}>{part.name?<StickerImage name={part.name} inline={inline || part.inline}/>:renderText(part.text)}</Fragment>);
+}
+
+// Each draft emoji occupies one native text character, so cursor movement,
+// selection, deletion and IME composition remain native textarea operations.
+function DraftEmojiText({text,renderText=(value)=>value}:{text:string;renderText?:(value:string)=>ReactNode}) {
+  return text.split(/([\uE000-\uF8FF])/).map((part,index)=>{
+    const name=draftEmojiName(part);
+    return <Fragment key={index}>{name?<span data-lime-draft-emoji className="relative inline-block align-baseline"><span className="invisible">{part}</span><span className="pointer-events-none absolute inset-0 flex items-center justify-center [&_img]:!m-0 [&_img]:!h-[1em] [&_img]:!w-full"><StickerImage name={name} inline/></span></span>:renderText(part)}</Fragment>;
+  });
+}
+
+export { StickerImage };
+export { StickerPicker };
+export { StickerDraft };
+export { renderStickerText };
+export { DraftEmojiText };
+export { OfflineBookmarkContext };

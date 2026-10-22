@@ -1,10 +1,10 @@
 import { uploadPostVideo, discardPostVideo, deleteVideoPost } from "@/lib/mediaThumbnail";
 import type { PreparedVideo } from "@/lib/mediaThumbnail";
 import { validSchedule } from "@/components/feed/PostPoll";
-import { isAccountReadOnly } from '@/lib/accountSuspension';
-import { preparePoll, discardPollImages } from "@/api/comments";
+import { isAccountReadOnly } from "@/lib/supabase";
+import { preparePoll, discardPollImages } from "@/api/external-posts";
 import { validatePollDraft, type PollDraft } from "@/lib/utils";
-import type { AccountReadContext } from '@/lib/accountReadClient';
+import type { AccountReadContext } from "@/lib/supabase";
 import { randomUUID } from "@/lib/utils";
 import { collectProfilePages } from "@/lib/utils";
 import { validMapLocation, type MapLocation, type MapBounds, type MapPostPin } from "@/lib/mapLocation";
@@ -19,7 +19,8 @@ import { getReplyPost, getProfileReplyReposts, isReplyPostId, toggleReplyRepost,
 
 export type FeedCursor = { createdAt: string; id: string };
 
-const POST_SELECT_QUERY = `
+// Build after module initialization: reply readers can import this API through a cycle.
+function postSelectQuery() { return `
   *,
   profiles:user_id (id, username, display_name, bio, avatar_url, cover_url, created_at, is_official, is_private),
   parent_reply:quoted_reply_id (${REPLY_REPOST_SELECT}),
@@ -27,7 +28,7 @@ const POST_SELECT_QUERY = `
     *,
     profiles:user_id (id, username, display_name, bio, avatar_url, cover_url, created_at, is_official, is_private)
   )
-`;
+` as const; }
 
 function rowToUser(profile: any): User {
   if (!profile) return {} as User;
@@ -153,7 +154,7 @@ export async function getFeed(page: number = 0, limit: number = 10, before?: Fee
 
   const postsRes = await readWithSignal(supabase
       .from('posts')
-      .select(POST_SELECT_QUERY).or('parent_id.is.null,is_quote.eq.true')
+      .select(postSelectQuery()).or('parent_id.is.null,is_quote.eq.true')
       .or(before
         ? `and(or(${conditions.join(',')}),or(created_at.lt.${before.createdAt},and(created_at.eq.${before.createdAt},id.lt.${before.id})))`
         : conditions.join(','))
@@ -171,7 +172,7 @@ export async function getVideoFeed(before?:FeedCursor,signal?:AbortSignal,scope?
  const userId=await getCurrentUserId();
  if(scope&&!scope.authorIds.length)return {posts:[],nextCursor:null};
  const limit=scope?.limit??8;
- let query=supabase.from('posts').select(POST_SELECT_QUERY).not('video','is',null)
+ let query=supabase.from('posts').select(postSelectQuery()).not('video','is',null)
   .order('created_at',{ascending:false}).order('id',{ascending:false}).limit(limit);
  if(scope)query=query.in('user_id',scope.authorIds);
  if(before)query=query.or(`created_at.lt.${before.createdAt},and(created_at.eq.${before.createdAt},id.lt.${before.id})`);
@@ -223,7 +224,7 @@ export async function getFollowingFeed(page: number = 0, limit: number = 10, bef
 
   const postsRes = await readWithSignal(supabase
       .from('posts')
-      .select(POST_SELECT_QUERY).or('parent_id.is.null,is_quote.eq.true')
+      .select(postSelectQuery()).or('parent_id.is.null,is_quote.eq.true')
       .or(before
         ? `and(or(${filterConditions}),or(created_at.lt.${before.createdAt},and(created_at.eq.${before.createdAt},id.lt.${before.id})))`
         : filterConditions)
@@ -264,7 +265,7 @@ export async function getPostsByUser(targetUserId: string, page: number = 0, lim
 
   let query = supabase
     .from('posts')
-    .select(POST_SELECT_QUERY)
+    .select(postSelectQuery())
     .eq('user_id', targetUserId);
 
   // 本人以外の場合は、条件を満たす visibility のみに絞り込む
@@ -298,7 +299,7 @@ export async function getLikedPostsByUser(targetUserId: string, page: number = 0
     .from('likes')
     .select(`
       created_at,
-      posts!inner (${POST_SELECT_QUERY})
+      posts!inner (${postSelectQuery()})
     `)
     .eq('user_id', targetUserId)
     .order('created_at', { ascending: false })
@@ -356,7 +357,7 @@ export async function searchPosts(query: string, page: number = 0, limit: number
 
   const postsRes = await readWithSignal(supabase
       .from('posts')
-      .select(POST_SELECT_QUERY)
+      .select(postSelectQuery())
       .ilike('content', `%${query}%`)
       .or(conditions.join(','))
       .order('created_at', { ascending: false })
@@ -370,7 +371,7 @@ export async function searchPosts(query: string, page: number = 0, limit: number
 export async function getHighlightedPosts(userId: string, page = 0, limit = 10): Promise<PostWithAuthor[]> {
   const viewerId = await getCurrentUserId();
   const { data, error } = await supabase.from('profile_highlights')
-    .select(`post_id, posts!inner (${POST_SELECT_QUERY})`)
+    .select(`post_id, posts!inner (${postSelectQuery()})`)
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .order('post_id', { ascending: false })
@@ -388,7 +389,7 @@ export async function getPostById(id: string, context?: AccountReadContext): Pro
   const client = context?.client ?? supabase;
   context?.signal?.throwIfAborted();
 
-  const postRes = await client.from('posts').select(POST_SELECT_QUERY).eq('id', id).single();
+  const postRes = await client.from('posts').select(postSelectQuery()).eq('id', id).single();
 
   if (postRes.error || !postRes.data) return null;
 
@@ -503,7 +504,7 @@ export async function createPost(input: {
 
   const post = await getPostById(newId);
   if (!post) throw new Error('投稿の取得に失敗しました');
-  void import('./watchHistory').then(({recordAnimePost})=>recordAnimePost(userId,newId)).catch(()=>{});
+  void import("@/api/topics").then(({recordAnimePost})=>recordAnimePost(userId,newId)).catch(()=>{});
   return post;
 }
 
@@ -575,7 +576,7 @@ export async function getProfilePosts(userId: string, page = 0, limit = 10): Pro
     const visible: any[] = [];
     let offset = 0;
     while (visible.length < end) {
-      const result = await supabase.from('reposts').select(`created_at, posts!inner (${POST_SELECT_QUERY})`)
+      const result = await supabase.from('reposts').select(`created_at, posts!inner (${postSelectQuery()})`)
         .eq('user_id', userId).order('created_at', { ascending: false }).order('post_id', { ascending: false }).range(offset, offset + end - 1);
       if (result.error) throw result.error;
       const entries = result.data ?? [];
@@ -621,7 +622,7 @@ export async function getProfilePopularityPosts(userId: string, signal?: AbortSi
   const own = collect(page => getPostsByUser(userId, page, size, signal));
   const shared = collectProfilePages<PostWithAuthor, number>(async cursor => {
     const offset = cursor ?? 0;
-    const result = await readWithSignal(supabase.from('reposts').select(`created_at, posts!inner (${POST_SELECT_QUERY})`)
+    const result = await readWithSignal(supabase.from('reposts').select(`created_at, posts!inner (${postSelectQuery()})`)
       .eq('user_id', userId).order('created_at', { ascending: false }).order('post_id', { ascending: false }).range(offset, offset + size - 1), signal);
     if (result.error) throw result.error;
     const raw = result.data ?? [];
@@ -665,7 +666,7 @@ export async function getPostQuoteCount(postId:string,signal?:AbortSignal):Promi
 
 export async function getPostQuotes(postId:string,replyId:string|null=null,sort:'top'|'latest'='top',page=0):Promise<PostWithAuthor[]> {
  const viewer=await getCurrentUserId();
- let query=supabase.from('posts').select(POST_SELECT_QUERY).eq('is_quote',true);
+ let query=supabase.from('posts').select(postSelectQuery()).eq('is_quote',true);
  query=replyId?query.eq('quoted_reply_id',replyId):isExternalPostId(postId)?query.eq('quoted_external_post->>id',postId):query.eq('parent_id',postId);
  if(sort==='top')query=query.order('likes_count',{ascending:false}).order('reposts_count',{ascending:false});
  const {data,error}=await query.order('created_at',{ascending:false}).order('id',{ascending:false}).range(page*20,page*20+19);
@@ -685,7 +686,7 @@ export async function getPostReposters(postId:string,replyId:string|null=null,pa
 export async function getListNativePosts(authorIds:string[],page=0,limit=10,before?:FeedCursor,signal?:AbortSignal):Promise<PostWithAuthor[]> {
  if(!authorIds.length)return [];
  const userId=await getCurrentUserId();
- let query=supabase.from('posts').select(POST_SELECT_QUERY).or('parent_id.is.null,is_quote.eq.true').in('user_id',authorIds);
+ let query=supabase.from('posts').select(postSelectQuery()).or('parent_id.is.null,is_quote.eq.true').in('user_id',authorIds);
  if(before)query=query.or(`created_at.lt.${before.createdAt},and(created_at.eq.${before.createdAt},id.lt.${before.id})`);
  const {data,error}=await readWithSignal(query.order('created_at',{ascending:false}).order('id',{ascending:false}).range(before?0:page*limit,(before?0:page*limit)+limit-1),signal);
  if(error)throw error;const rows=data??[];const {likedIds,repostedIds}=await getViewerReactions(userId,rows,signal);return rows.map(row=>rowToPost(row,likedIds,repostedIds));

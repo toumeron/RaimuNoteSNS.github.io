@@ -1,17 +1,19 @@
-vi.mock("@/api/external-posts", async importOriginal => ({...await importOriginal<typeof import("@/api/external-posts")>(), isExternalPostId: (id: string) => id.startsWith('bsky:at://')}));
 
 import { beforeEach, expect, it, vi } from 'vitest';
-vi.mock("@/lib/bluesky",async original=>({...await original<typeof import("@/lib/bluesky")>(),fetchBlueskyPost:(...args:any[])=>state.externalLookup(...args)}));
+vi.mock("@/lib/bluesky", () => ({ fetchBlueskyPost: (...args:any[]) => state.externalLookup(...args) }));
 const state = vi.hoisted(() => ({ viewer: 'viewer', rows: [] as any[], error: null as any, writes: [] as any[], externalLookup:vi.fn(), lookup: vi.fn() }));
 vi.mock('@/lib/currentUser', () => ({ getCurrentUserId: async () => state.viewer }));
 vi.mock('./posts', () => ({ getPostById: state.lookup }));
 
-vi.mock('@/lib/supabase', () => ({ supabase: { from: () => {
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase: { from: () => {
   let action = 'select', payload: unknown, start = 0, end = Infinity;
   const filters: unknown[] = [];
   const query = { select: () => query, order: () => query, eq: (key: string, value: string) => { filters.push([key, value]); return query; }, range: (a: number, b: number) => { start = a; end = b; return query; }, insert: (value: unknown) => { action = 'insert'; payload = value; return query; }, delete: () => { action = 'delete'; return query; }, then: (resolve: any) => { if (action !== 'select') state.writes.push({action,payload,filters}); return Promise.resolve({data: action === 'select' ? state.rows.slice(start,end+1) : null,error:state.error}).then(resolve); } };
   return query;
-} } }));
+} }
+}));
 import { getBookmarkIds, getBookmarkPage, setBookmark } from "@/api/users";
 beforeEach(() => { state.externalLookup.mockReset().mockResolvedValue(null); state.viewer = 'viewer'; state.rows = []; state.error = null; state.writes = []; state.lookup.mockReset().mockImplementation(async (id: string) => ({id,content:'current content'})); });
 it('saves native posts and replies by reference without retaining restricted content', async () => {

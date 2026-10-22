@@ -2,7 +2,7 @@ import { useAutoPagination } from "@/hooks/useViewportWidth";
 import { useSharedOfflineBookmarks, useSharedBookmarks } from "@/hooks/useSharedAccountLists";
 import { useSharedDisplay, externalProfileMetadata } from "@/lib/externalAccounts";
 import { useOfflineBookmarks } from "@/hooks/useSharedAccountLists";
-import { OfflineBookmarkContext } from "@/components/stickers/Stickers";
+import { OfflineBookmarkContext } from "@/components/feed/QuotedPost";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Search, Download, Trash2, Loader2, Lock, Pin, Plus, AlertTriangle } from "lucide-react";
 import { useEffect, useState, useRef } from "react";

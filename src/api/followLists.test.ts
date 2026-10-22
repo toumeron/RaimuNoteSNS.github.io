@@ -2,7 +2,10 @@ vi.mock("@/lib/externalAccounts", async importOriginal => ({...await importOrigi
 
 import {beforeEach,expect,it,vi} from 'vitest';
 const state=vi.hoisted(()=>({queries:[] as any[],rows:[] as any[],known:[] as any[],external:vi.fn()}));
-vi.mock('@/lib/supabase',()=>({supabase:{from:()=>{const call:any={filters:{}};state.queries.push(call);const q:any={select:(s:string)=>{call.select=s;return q},eq:(key:string,value:any)=>{call.filters[key]=value;return q},order:()=>q,range:(start:number,end:number)=>{call.range=[start,end];return q},abortSignal:()=>Promise.resolve({data:call.select==='followee_id,external_handle'?state.known:state.rows,error:null})};return q}}}));
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase:{from:()=>{const call:any={filters:{}};state.queries.push(call);const q:any={select:(s:string)=>{call.select=s;return q},eq:(key:string,value:any)=>{call.filters[key]=value;return q},order:()=>q,range:(start:number,end:number)=>{call.range=[start,end];return q},abortSignal:()=>Promise.resolve({data:call.select==='followee_id,external_handle'?state.known:state.rows,error:null})};return q}}
+}));
 vi.mock('@/lib/bluesky',()=>({isBlueskyProfileId:(id:string)=>/^(did:|misskey-user:)/.test(id),fetchBlueskyFollowers:(args:any)=>state.external('followers',args),fetchBlueskyFollows:(args:any)=>state.external('following',args)}));
 
 import { fetchFollowListPage } from "@/api/users";

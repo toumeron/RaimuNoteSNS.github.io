@@ -1,10 +1,10 @@
-import { loadMapPins } from "./maps.ts";
-import { mapSearchJobs } from "./maps.ts";
-import { inferPostPlace } from "./places.ts";
-import { geoMapJobs } from "./maps.ts";
-import { loadGeoMapPins } from "./maps.ts";
-import { loadGeoMapDetail } from "./maps.ts";
-import { flickrAvatarUrl } from "./maps.ts";
+import { loadMapPins } from "./load.ts";
+import { mapSearchJobs } from "./load.ts";
+import { inferPostPlace } from "./load.ts";
+import { geoMapJobs } from "./load.ts";
+import { loadGeoMapPins } from "./load.ts";
+import { loadGeoMapDetail } from "./load.ts";
+import { flickrAvatarUrl } from "./load.ts";
 
 {
 const assert=(value:unknown)=>{if(!value)throw new Error('Assertion failed');};

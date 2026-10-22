@@ -3,8 +3,11 @@ import {render,screen,fireEvent,waitFor} from '@testing-library/react';
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
 import {vi,it,expect,beforeEach} from 'vitest';
 import { PostLinkPreview, useLinkPreview, LinkPreviewCard } from "@/components/feed/QuotedPost";
-import { OfflineBookmarkContext } from "@/components/stickers/Stickers";
-const invoke=vi.hoisted(()=>vi.fn());vi.mock('@/lib/supabase',()=>({supabase:{functions:{invoke}}}));
+import { OfflineBookmarkContext } from "@/components/feed/QuotedPost";
+const invoke=vi.hoisted(()=>vi.fn());vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase:{functions:{invoke}}
+}));
 const auth=vi.hoisted(()=>({user:{id:'viewer'} as {id:string}|null,loading:false}));
 const preview={url:'https://example.com/diary',domain:'example.com',title:'9月日記',image:'https://example.com/cover.jpg'};
 function mount(content:string){return render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><PostLinkPreview content={content}/></QueryClientProvider>);}
@@ -65,4 +68,13 @@ it.each([{imageUrls:['https://example.com/attached.jpg']},{video:{url:'video.mp4
  function Card(){const state=useLinkPreview(preview.url,canShowPostLinkPreview(extra,extra.embedded),preview);return <LinkPreviewCard {...state}/>;}
  const view=render(<QueryClientProvider client={new QueryClient()}><Card/></QueryClientProvider>);
  expect(view.container.querySelector('[data-link-preview]')).toBeNull();expect(invoke).not.toHaveBeenCalled();view.unmount();
+});
+
+it('defers offscreen metadata reads, fetches on approach, and keeps the result when leaving the viewport',async()=>{
+ invoke.mockResolvedValue({data:{preview}});const client=new QueryClient();
+ function Card({near}:{near:boolean}){return <LinkPreviewCard {...useLinkPreview(preview.url,true,undefined,true,near)}/>;}
+ const tree=(near:boolean)=><QueryClientProvider client={client}><Card near={near}/></QueryClientProvider>;
+ const view=render(tree(false));expect(invoke).not.toHaveBeenCalled();
+ view.rerender(tree(true));expect(await screen.findByRole('link',{name:preview.title})).toBeInTheDocument();expect(invoke).toHaveBeenCalledOnce();
+ view.rerender(tree(false));expect(screen.getByRole('link',{name:preview.title})).toBeInTheDocument();expect(invoke).toHaveBeenCalledOnce();view.unmount();client.clear();
 });

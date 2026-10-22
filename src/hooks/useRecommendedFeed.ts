@@ -1,5 +1,5 @@
 import { topicsKey, getRecommendationContinuation, recordLearnedRecommendation } from "@/api/topics";
-import { type TopicPreferences } from "@/lib/topics";
+import { type TopicPreferences } from "@/lib/recommendations";
 import { type RecommendationFeedback, readRecommendationReserve, saveRecommendationReserve, clearRecommendationReserve, preserveRecommendationHistory, uniqueRecommendationPosts, recordRecommendationEngagement, recommendationIsDismissed, recordRecommendationDelivery, selectRecommendationLikeSamples, readRecommendationLikedIds, recordRecommendationImpression } from "@/lib/recommendations";
 import { getBalancedRecommendationPage } from "@/api/balanced-recommendations";
 import { useInfiniteQuery, useQueryClient, type QueryKey } from "@tanstack/react-query";
@@ -10,7 +10,7 @@ import { useEffect, useCallback, useRef, useState, useMemo } from "react";
 import { enrichExternalLike } from "@/api/external-posts";
 import { recommendationImageIdentity } from "@/lib/recommendationVisual";
 import { type PostWithAuthor } from "@/types/index";
-import { observePostElements } from "@/hooks/useViewportWidth";
+import { observePostElements,usePageVisible } from "@/hooks/useViewportWidth";
 
 // useRecommendationImages
 // useRecommendationImages
@@ -18,13 +18,21 @@ type Page=Awaited<ReturnType<typeof getRecommendationPage>>;
 type Feed={pages:Page[];pageParams:unknown[]};
 /** A serial, bounded pixel-analysis job runs after first paint, never in the page request. */
 function useRecommendationImages(enabled:boolean,viewer:string|null,key:QueryKey,feed:Feed|undefined,busy:boolean){
+ const pageVisible=usePageVisible();
  const [completed,setCompleted]=useState(0);
  const client=useQueryClient(),job=useRef<AbortController|null>(null),attempted=useRef(new Set<string>()),count=useRef(0);
- useEffect(()=>{attempted.current.clear();count.current=0;return()=>{job.current?.abort();job.current=null;};},[enabled,viewer]);
+ const unfinished=useRef(new Set<string>());
+ useEffect(()=>{
+  if(pageVisible)return;
+  job.current?.abort();job.current=null;
+  for(const url of unfinished.current)attempted.current.delete(url);
+  count.current=Math.max(0,count.current-unfinished.current.size);unfinished.current.clear();
+ },[pageVisible]);
+ useEffect(()=>{attempted.current.clear();count.current=0;unfinished.current.clear();return()=>{job.current?.abort();job.current=null;};},[enabled,viewer]);
  const revision=feed?.pages.flatMap(page=>page.posts.map(post=>post.id)).join('|');
  useEffect(()=>{
   const prefs=feed?.pages.at(-1)?.preferences,limit=16+Math.max(0,(feed?.pages.length??1)-1)*4;
-  if(!enabled||busy||!prefs?.followedTopics?.length||job.current||count.current>=limit||typeof Worker==='undefined')return;
+  if(!enabled||!pageVisible||busy||!prefs?.followedTopics?.length||job.current||count.current>=limit||typeof Worker==='undefined')return;
   const pending=(posts:PostWithAuthor[])=>posts.filter(post=>post.imageUrls.length&&!post.recommendationVisual&&!attempted.current.has(post.imageUrls[0]));
   // Learn actual liked pixels as well as candidate pixels. One worker, four images maximum per job.
   const candidates=pending(feed!.pages.flatMap(page=>page.posts)),pools=new Map<string,PostWithAuthor[]>();
@@ -36,9 +44,10 @@ function useRecommendationImages(enabled:boolean,viewer:string|null,key:QueryKey
   if(!rows.length)return;
   const controller=new AbortController();job.current=controller;
   const timer=window.setTimeout(()=>{
-   rows.forEach(post=>attempted.current.add(post.imageUrls[0]));count.current+=rows.length;
+   unfinished.current=new Set(rows.map(post=>post.imageUrls[0]));rows.forEach(post=>attempted.current.add(post.imageUrls[0]));count.current+=rows.length;
    void import("@/lib/recommendationVisualInference").then(async({enrichRecommendationVisuals,releaseRecommendationVisualWorker})=>{
     try{await enrichRecommendationVisuals(rows,prefs.followedTopics!,controller.signal,checked=>{
+     if(!controller.signal.aborted)unfinished.current.delete(checked.imageUrls[0]);
      if(controller.signal.aborted||!checked.recommendationVisual)return;
      client.setQueryData<Feed>(key,data=>{
       if(!data)return data;
@@ -51,11 +60,11 @@ function useRecommendationImages(enabled:boolean,viewer:string|null,key:QueryKey
       return {...data,pages};
      });
     },rows.length);}finally{releaseRecommendationVisualWorker();}
-   }).catch(()=>{}).finally(()=>{if(job.current===controller){job.current=null;if(!controller.signal.aborted)setCompleted(value=>value+1);}});
+   }).catch(()=>{}).finally(()=>{if(job.current===controller){job.current=null;unfinished.current.clear();if(!controller.signal.aborted)setCompleted(value=>value+1);}});
   },1200);
   // A new page may arrive while analysis runs. Do not abort completed work or start a second worker.
   return()=>{window.clearTimeout(timer);if(!attempted.current.has(rows[0].imageUrls[0])){controller.abort();if(job.current===controller)job.current=null;}};
- },[enabled,viewer,revision,busy,completed,feed?.pages.length,feed?.pages.at(-1)?.preferences.likedSamples?.length]);
+ },[enabled,pageVisible,viewer,revision,busy,completed,feed?.pages.length,feed?.pages.at(-1)?.preferences.likedSamples?.length]);
 }
 
 // useTimelineContinuation

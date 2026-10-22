@@ -8,7 +8,7 @@ import { useEffect } from 'react';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CallSessionProvider, useCallSession } from './CallSessionProvider';
+import { CallSessionProvider, useCallSession } from "@/components/layout/AppLayout";
 import { requestMicrophonePermission } from "@/lib/callRecorder";
 
 

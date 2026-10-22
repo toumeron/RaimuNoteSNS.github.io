@@ -1,10 +1,10 @@
 import { getNotificationPreferences, notificationDescription, notificationLink, markNotificationsRead, type NotificationRow } from "@/api/users";
 import { useEffect, useCallback, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { refreshNotificationBadge as updateAppBadge, showNotificationToast, dismissNotificationToasts } from "@/lib/registerPwa";
+import { refreshNotificationBadge as updateAppBadge, showNotificationToast, dismissNotificationToasts } from "@/App";
 import { useQuery, useQueryClient, useQueries } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
-import { getAccountReadClient } from "@/lib/accountReadClient";
+import { getAccountReadClient } from "@/lib/supabase";
 
 // useOSNotification
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;

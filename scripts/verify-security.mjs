@@ -12,8 +12,12 @@ try {
  const page=await browser.newPage();
  await page.route('http://127.0.0.1:9876/**',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><body>Security fixture</body>'}));
  await page.goto('http://127.0.0.1:9876/');
- const source=await readFile(new URL('../src/lib/sandboxExecution.ts',import.meta.url),'utf8');
- const code=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
+ const source=await readFile(new URL("../src/pages/ChatPage.tsx",import.meta.url),'utf8');
+ const ast=ts.createSourceFile('ChatPage.tsx',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
+ const sandboxNames=new Set(['sandboxDocument','createSandboxWorker','SandboxWorker']);
+ const sandboxSource=ast.statements.filter(node=>node.name&&sandboxNames.has(node.name.text)).map(node=>node.getText(ast)).join('\n')+'\nexport {sandboxDocument,createSandboxWorker};';
+ assert.equal(ast.statements.filter(node=>node.name&&sandboxNames.has(node.name.text)).length,3);
+ const code=ts.transpileModule(sandboxSource,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
  await page.addScriptTag({content:'const sandbox={}; (function(exports){'+code+'})(sandbox);'});
  await page.evaluate(()=>localStorage.setItem('private-session','must-not-leak'));
  const run=async userCode=>page.evaluate(code=>new Promise((resolve,reject)=>{
@@ -69,7 +73,7 @@ try {
  for(let i=0;i<objects.length;i++){offsets.push(Buffer.byteLength(pdf));pdf+=`${i+1} 0 obj\n${objects[i]}\nendobj\n`;}
  const xref=Buffer.byteLength(pdf);pdf+=`xref\n0 6\n0000000000 65535 f \n${offsets.slice(1).map(n=>String(n).padStart(10,'0')+' 00000 n \n').join('')}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
  const run=async(kind,bytes)=>page.evaluate(async({kind,bytes})=>{
-  const {extractDocumentText}=await import('/RaimuNoteSNS.github.io/src/lib/sandboxExecution.ts');
+  const {extractDocumentText}=await import('/RaimuNoteSNS.github.io/src/pages/ChatPage.tsx');
   return extractDocumentText(new File([new Uint8Array(bytes)],`fixture.${kind}`),kind);
  },{kind,bytes:[...bytes]});
  assert.match(await run('docx',docx),/Safe document text/);

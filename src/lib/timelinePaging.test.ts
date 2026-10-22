@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PostWithAuthor } from "@/types";
 import type { BlueskyAuthorFeedPage } from "./bluesky";
-import { createTimelineCursor, loadTimelinePage, type TimelineCursor, type TimelineSources } from "./timelinePaging";
-import { showTimelineEmpty, isTimelinePost } from "@/lib/timelinePaging";
-import { mergeAccountPage } from "@/lib/accountReadClient";
+import { createTimelineCursor, loadTimelinePage, type TimelineCursor, type TimelineSources } from "@/lib/utils";
+import { showTimelineEmpty, isTimelinePost } from "@/lib/utils";
+import { mergeAccountPage } from "@/lib/supabase";
 
 describe("timelinePaging", () => {
 const post = (id: string, minute: number): PostWithAuthor => ({
@@ -227,7 +227,7 @@ it('never labels an empty recommendation scan as no recommendations',()=>{
 });
 
 it('excludes external sources from latest while retaining LimeNote quotes of them',async()=>{
- const {isLimeNoteTimelinePost}=await import('./timelinePaging');
+ const {isLimeNoteTimelinePost}=await import("@/lib/utils");
  expect(isLimeNoteTimelinePost({id:'native',isQuote:true,parentPost:{id:'x:20'}} as any)).toBe(true);
  for(const source of ['x','bluesky','misskey'])expect(isLimeNoteTimelinePost({id:'post',source} as any)).toBe(false);
  for(const id of ['x:20','bsky:at://post','misskey:https://misskey.io/notes/test'])expect(isLimeNoteTimelinePost({id} as any)).toBe(false);

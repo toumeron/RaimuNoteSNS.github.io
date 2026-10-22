@@ -1,10 +1,10 @@
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
-import { getAccountReadClient, mergeAccountPage, type MergedCursor } from "@/lib/accountReadClient";
+import { getAccountReadClient, mergeAccountPage, type MergedCursor } from "@/lib/supabase";
 import { getBookmarkPage, spaceRpc } from "@/api/users";
 import { getNotifications, type NotificationRow } from "@/api/users";
 import { useEffect, useState, useRef } from "react";
-import { openOfflineBookmarks, readOfflineBookmarks, type OfflineSpaceCard, bookmarkAssetUrls, deleteOfflineBookmarks, downloadBookmarkAssets, isInstalledPwa, writeOfflineBookmarks } from "@/lib/offlineBookmarks";
+import { openOfflineBookmarks, readOfflineBookmarks, type OfflineSpaceCard, bookmarkAssetUrls, deleteOfflineBookmarks, downloadBookmarkAssets, isInstalledPwa, writeOfflineBookmarks } from "@/lib/mediaThumbnail";
 import { fetchLinkPreview, singlePreviewUrl, type LinkPreview } from "@/lib/mediaThumbnail";
 import { spaceLinkIn } from "@/lib/utils";
 import { toast } from "sonner";

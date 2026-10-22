@@ -8,7 +8,10 @@ import {MemoryRouter,useLocation} from 'react-router-dom';
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
 vi.mock('@/api/posts',()=>({getMapPosts:vi.fn(),getPostById:vi.fn()}));
 
-vi.mock('@/App',()=>({PostOverlay:()=>null}));
+vi.mock("@/App", async importOriginal => ({
+  ...await importOriginal<typeof import("@/App")>(),
+  PostOverlay:()=>null
+}));
 
 import LimeMaps from "@/pages/LimeMaps";
 function Location(){return <output data-testid="location">{useLocation().pathname}</output>}

@@ -1,0 +1,61 @@
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
+vi.mock('@/lib/supabase', async original => ({...await original<typeof import('@/lib/supabase')>(),supabase:{from:()=>({select:()=>({in:async()=>({data:[],error:null})})})}}));
+import { AvatarDecorationSettings } from './Settings';
+import { setAvatarDecorationSnapshot } from '@/components/ui/avatar';
+const user={id:'e5555555-5555-4555-8555-555555555555',avatarUrl:'https://example.com/my-avatar.png',displayName:'自分'};
+afterEach(()=>{cleanup();setAvatarDecorationSnapshot(user.id,null);vi.restoreAllMocks();});
+it('shows four real-avatar previews and saves angle, position and flip only after applying',async()=>{
+ const save=vi.fn().mockResolvedValue({});
+ render(<AvatarDecorationSettings user={user} onSave={save}/>);
+ const gallery=screen.getByLabelText('デコレーション一覧');
+ expect(within(gallery).getAllByRole('button')).toHaveLength(4);
+ fireEvent.click(within(gallery).getByRole('button',{name:'サングラス'}));
+ const dialog=screen.getByRole('dialog');
+ fireEvent.change(within(dialog).getByRole('slider',{name:'角度'}),{target:{value:'31'}});
+ fireEvent.change(within(dialog).getByRole('slider',{name:'X 位置'}),{target:{value:'-15'}});
+ fireEvent.change(within(dialog).getByRole('slider',{name:'Y 位置'}),{target:{value:'20'}});
+ fireEvent.click(within(dialog).getByRole('switch',{name:'反転'}));
+ expect(dialog.querySelector('[data-avatar-decoration="sunglasses"]')?.getAttribute('style')).toContain('rotate(31deg) scaleX(-1)');
+ expect(save).not.toHaveBeenCalled();
+ fireEvent.click(within(dialog).getByRole('button',{name:'付ける'}));
+ await waitFor(()=>expect(save).toHaveBeenCalledWith({type:'sunglasses',angle:31,x:-15,y:20,flip:true}));
+ await waitFor(()=>expect(screen.queryByRole('dialog')).toBeNull());
+ expect(within(gallery).getByRole('button',{name:'サングラス'}).getAttribute('aria-pressed')).toBe('true');
+ fireEvent.click(screen.getByRole('button',{name:'解除'}));
+ await waitFor(()=>expect(save).toHaveBeenLastCalledWith(null));
+});
+it('cancels changes without saving and keeps the editor usable after a failed save',async()=>{
+ const save=vi.fn().mockRejectedValue(new Error('network'));
+ render(<AvatarDecorationSettings user={user} onSave={save}/>);
+ fireEvent.click(screen.getByRole('button',{name:'サンタ'}));
+ fireEvent.click(within(screen.getByRole('dialog')).getByRole('button',{name:'Close'}));
+ expect(save).not.toHaveBeenCalled();
+ fireEvent.click(screen.getByRole('button',{name:'サングラス'}));
+ fireEvent.click(within(screen.getByRole('dialog')).getByRole('button',{name:'付ける'}));
+ expect(await screen.findByRole('alert')).toHaveTextContent('保存できませんでした');
+ expect(screen.getByRole('dialog')).toBeTruthy();
+ expect(within(screen.getByRole('dialog')).getByRole('button',{name:'付ける'})).not.toBeDisabled();
+});
+
+it('retains the edited preview and controls until the close animation completes',async()=>{
+ const actualStyle=window.getComputedStyle.bind(window);
+ vi.spyOn(window,'getComputedStyle').mockImplementation(element=>{
+  const style=actualStyle(element);
+  if(element.classList.contains('avatar-decoration-editor'))Object.defineProperty(style,'animationName',{configurable:true,get:()=>element.getAttribute('data-state')==='closed'?'lime-decoration-exit':'lime-decoration-enter'});
+  return style;
+ });
+ const save=vi.fn();render(<AvatarDecorationSettings user={user} onSave={save}/>);
+ fireEvent.click(screen.getByRole('button',{name:'Zzz'}));
+ const dialog=screen.getByRole('dialog');
+ fireEvent.change(within(dialog).getByRole('slider',{name:'角度'}),{target:{value:'24'}});
+ fireEvent.click(within(dialog).getByRole('button',{name:'Close'}));
+ const exiting=document.querySelector('.avatar-decoration-editor[data-state="closed"]')!;
+ expect(exiting).not.toBeNull();
+ expect(exiting.querySelector('input[type="range"]')).toHaveValue('24');
+ expect(exiting.querySelector('[data-avatar-decoration="sleep"]')).not.toBeNull();
+ expect(save).not.toHaveBeenCalled();
+ const end=new Event('animationend',{bubbles:true});Object.defineProperty(end,'animationName',{value:'lime-decoration-exit'});
+ fireEvent(exiting,end);
+ await waitFor(()=>expect(document.querySelector('.avatar-decoration-editor')).toBeNull());
+});

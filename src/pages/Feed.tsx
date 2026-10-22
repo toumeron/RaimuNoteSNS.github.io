@@ -3,7 +3,8 @@ import { useTrendViews } from "@/hooks/useTopics";
 import { readTrendViews, recordTrendDeliveries } from "@/hooks/useTopics";
 import { createTwitterTrendCursor, getTwitterTrendPage, type TwitterTrendCursor } from "@/api/search-news";
 import { SuspensionNotice } from "@/components/layout/AppLayout";
-import {isTimelinePost,isLimeNoteTimelinePost,showTimelineEmpty} from "@/lib/timelinePaging";
+
+import {isTimelinePost,isLimeNoteTimelinePost,showTimelineEmpty} from "@/lib/utils";
 import { useListFeed } from "@/hooks/useTopics";
 import { useTopicFeed } from "@/hooks/useTopics";
 import { isFeedTabValue, feedTabTopic, useTimelineTabs, type FeedTabValue } from "@/components/feed/TimelineTabBar";
@@ -240,6 +241,22 @@ function readCachedTimelineDesignForReturnNavigation() {
   }
 
   return timelineVisualDesignCache;
+}
+
+/** Keep one playing post mounted without rendering all posts between it and the viewport. */
+export function timelineRenderSegments(start: number, end: number, length: number, playingIndex = -1) {
+  const ranges = [{ start, end }];
+  if (playingIndex >= 0 && playingIndex < length && (playingIndex < start || playingIndex >= end)) ranges.push({ start: playingIndex, end: playingIndex + 1 });
+  ranges.sort((a, b) => a.start - b.start);
+  const segments: Array<{ kind: 'posts' | 'spacer'; start: number; end: number }> = [];
+  let cursor = 0;
+  for (const range of ranges) {
+    if (range.start > cursor) segments.push({ kind: 'spacer', start: cursor, end: range.start });
+    if (range.end > range.start) segments.push({ kind: 'posts', ...range });
+    cursor = range.end;
+  }
+  if (cursor < length) segments.push({ kind: 'spacer', start: cursor, end: length });
+  return segments;
 }
 
 export default function Feed() {
@@ -1432,6 +1449,29 @@ export default function Feed() {
   const postSizeObserverRef = useRef<ResizeObserver | null>(null);
   const postElementsByIdRef = useRef<Map<string, Element>>(new Map());
   const postIdsByElementRef = useRef<Map<Element, string>>(new Map());
+  const [playingYouTubePost, setPlayingYouTubePost] = useState<string | null>(null);
+  useEffect(() => {
+    let playingKey: string | undefined;
+    setPlayingYouTubePost(null);
+    const play = (event: Event) => {
+      const detail = (event as CustomEvent<{ kind?: string; key?: string; element?: HTMLIFrameElement }>).detail;
+      if (detail?.kind !== 'youtube' || !detail.element) return;
+      for (const [postId, element] of postElementsByIdRef.current) if (element.contains(detail.element)) {
+        playingKey = detail.key;
+        setPlayingYouTubePost(postId);
+        return;
+      }
+    };
+    const stop = (event: Event) => {
+      if ((event as CustomEvent<{ key?: string }>).detail?.key !== playingKey) return;
+      playingKey = undefined;
+      setPlayingYouTubePost(null);
+    };
+    window.addEventListener('lime-background-media-play', play);
+    window.addEventListener('lime-background-media-stop', stop);
+    return () => { window.removeEventListener('lime-background-media-play', play); window.removeEventListener('lime-background-media-stop', stop); };
+  }, [activeTab]);
+
 
   const getPostSizeObserver = useCallback(() => {
     if (postSizeObserverRef.current) return postSizeObserverRef.current;
@@ -1557,10 +1597,12 @@ export default function Feed() {
     postOffsets,
   ]);
 
-  const renderedPosts = useMemo(
-    () => allPosts.slice(virtualRange.start, virtualRange.end).map((post) => (
+  const renderedPosts = useMemo(() => timelineRenderSegments(virtualRange.start, virtualRange.end, allPosts.length, playingYouTubePost ? allPosts.findIndex(post => post.id === playingYouTubePost) : -1).flatMap(segment => {
+    if (segment.kind === 'spacer') return [<div key={`spacer-${segment.start}-${segment.end}`} style={{ height: `${postOffsets[segment.end] - postOffsets[segment.start]}px`, marginTop: segment.start === virtualRange.end ? undefined : 0 }} aria-hidden="true" />];
+    return allPosts.slice(segment.start, segment.end).map((post, index) => (
       <div
         key={`${activeTab}-${post.id}`}
+        style={segment.start + index < virtualRange.start || segment.start + index >= virtualRange.end ? { marginTop: 0 } : undefined}
         data-lime-trend-post={activeTab==='trending'?post.id:undefined}
         data-lime-recommendation-post={isRankedTab ? recommendationIdentity(post) : undefined}
         data-lime-recommendation-fingerprint={isRankedTab ? recommendationFingerprint(post) : undefined}
@@ -1569,19 +1611,8 @@ export default function Feed() {
       >
         <PostCard post={post} timelineGlass={hasTimelineBackground} onNotInterested={isRankedTab?rankedFeed.dismiss:undefined} />
       </div>
-    )),
-    [
-      activeTab,
-      allPosts,
-      rankedFeed.dismiss,
-      hasTimelineBackground,
-      shouldPlayInitialFloatAnimation,
-      virtualRange.end,
-      virtualRange.start,
-      registerPostElement,
-    ]
-  );
-
+    ));
+  }), [activeTab, allPosts, rankedFeed.dismiss, hasTimelineBackground, shouldPlayInitialFloatAnimation, virtualRange.end, virtualRange.start, registerPostElement, postOffsets, playingYouTubePost, isRankedTab]);
 
   const isBusyLoadingMore = activeTab === 'trending'
     ? trendingLoading
@@ -1851,15 +1882,7 @@ export default function Feed() {
           </div>
         )}
 
-        {virtualRange.topSpacer > 0 && (
-          <div style={{ height: `${virtualRange.topSpacer}px` }} aria-hidden="true" />
-        )}
-
         {renderedPosts}
-
-        {virtualRange.bottomSpacer > 0 && (
-          <div style={{ height: `${virtualRange.bottomSpacer}px` }} aria-hidden="true" />
-        )}
 
         <div ref={ref} className="py-10 flex justify-center">
           {isBusyLoadingMore && !(isRankedTab&&isInitialLoading) ? (

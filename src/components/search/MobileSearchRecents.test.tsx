@@ -1,9 +1,12 @@
 import {cleanup,fireEvent,render,screen} from '@testing-library/react';
 import {afterEach,expect,it,vi} from 'vitest';
 import type {User} from '@/types';
-vi.mock('@/components/ui/avatar',()=>({ProviderVerificationBadge:()=>null}));
-vi.mock('@/lib/utils',()=>({displayUsername:(value:string)=>value}));
-import {MobileSearchRecents} from './MobileSearchRecents';
+vi.mock('@/components/ui/avatar', async original => ({...await original<typeof import('@/components/ui/avatar')>(),ProviderVerificationBadge:()=>null}));
+vi.mock("@/lib/utils", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/utils")>(),
+  displayUsername:(value:string)=>value
+}));
+import {MobileSearchRecents} from "@/components/layout/Header";
 afterEach(cleanup);
 it('distinguishes opening a recent account, repeating a search, filling the input, and clearing history',()=>{
  const onClear=vi.fn(),onAccount=vi.fn(),onSearch=vi.fn(),onFill=vi.fn();

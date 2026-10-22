@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi, describe } from "vitest";
-import { clearPrivateMedia, createSupabaseReadFetch, createPrivateMediaFetch, MEDIA_PREFIX, privateMediaReference, resolvePrivateMediaUrl, isDeferredPrivateMedia, boundedResponseBlob, ResponseTooLarge, createDevFunctionFetch } from "@/lib/privateMediaFetch";
+import { retainPrivateMediaUrl, trimPrivateMedia, clearPrivateMedia, createSupabaseReadFetch, createPrivateMediaFetch, MEDIA_PREFIX, privateMediaReference, resolvePrivateMediaUrl, isDeferredPrivateMedia, boundedResponseBlob, ResponseTooLarge, createDevFunctionFetch } from "@/lib/privateMediaFetch";
 import { randomUUID } from "@/lib/utils";
 
 describe("privateMediaFetch", () => {
@@ -246,4 +246,83 @@ it('retains dimensioned attachment references before a deferred download',async(
  expect(privateMediaReference(token)).toBe(ref);expect(transport).toHaveBeenCalledTimes(1);
  expect(await resolvePrivateMediaUrl(token)).toBe('blob:dimensioned');
  expect(transport.mock.calls[1][0]).toContain('--1200x800.png');clearPrivateMedia();
+});
+
+it('does not serialize an attachment-free feed just to detect private images',async()=>{
+ const response=Response.json(Array.from({length:100},(_,i)=>({id:i,content:'長い投稿本文'.repeat(1000),image_urls:[],parent_post:{content:'引用 '+MEDIA_PREFIX+'is plain text',imageUrls:['https://images.example/photo.jpg']}})));
+ const transport=vi.fn().mockResolvedValue(response),stringify=vi.spyOn(JSON,'stringify');
+ try{
+  const result=await createPrivateMediaFetch('https://example.supabase.co',transport,true)('https://example.supabase.co/rest/v1/posts');
+  expect(result).toBe(response);expect(stringify).not.toHaveBeenCalled();expect(transport).toHaveBeenCalledOnce();
+ }finally{stringify.mockRestore();}
+});
+
+
+describe('PWA private image retention',()=>{
+ let sequence=0;
+ const ref=(id:number)=>MEDIA_PREFIX+'11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/'+String(id).padStart(8,'0')+'-3333-4333-8333-333333333333.png';
+ beforeEach(()=>{
+  vi.useFakeTimers();sequence=0;vi.stubGlobal('navigator',{standalone:true});
+  const NativeURL=globalThis.URL;
+  vi.stubGlobal('URL',class extends NativeURL{static createObjectURL=vi.fn(()=>`blob:pwa-private-${++sequence}`);static revokeObjectURL=vi.fn();});
+ });
+ afterEach(()=>{clearPrivateMedia();vi.restoreAllMocks();vi.unstubAllGlobals();vi.useRealTimers();});
+ it('reclaims unused bytes while protecting visible images, then reloads an evicted token through Storage RLS',async()=>{
+  const transport=vi.fn(async(input:RequestInfo|URL)=>String(input).includes('/rest/v1/')?Response.json({image_urls:[ref(1),ref(2)]}):new Response('0123456789',{headers:{'content-type':'image/png'}}));
+  const fetcher=createPrivateMediaFetch('https://example.supabase.co',transport,true);
+  const {image_urls:[a,b]}=await(await fetcher('https://example.supabase.co/rest/v1/posts')).json();
+  const first=await resolvePrivateMediaUrl(a);const release=retainPrivateMediaUrl(first!);const second=await resolvePrivateMediaUrl(b);
+  await vi.advanceTimersByTimeAsync(31000);trimPrivateMedia(10,1);
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith(second);expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(first);
+  expect(await resolvePrivateMediaUrl(a)).toBe(first);expect(transport).toHaveBeenCalledTimes(3);
+  release();trimPrivateMedia(0,0,0);expect(URL.revokeObjectURL).toHaveBeenCalledWith(first);
+  const reloaded=await resolvePrivateMediaUrl(a);expect(reloaded).not.toBe(first);expect(transport).toHaveBeenCalledTimes(4);
+  expect(transport.mock.calls[3][0]).toContain('/storage/v1/object/authenticated/post-media/');
+ });
+ it('never revokes eager-response URLs which cannot be restored from a deferred token',async()=>{
+  const transport=vi.fn(async(input:RequestInfo|URL)=>String(input).includes('/rest/v1/')?Response.json({image_urls:[ref(3)]}):new Response('image',{headers:{'content-type':'image/png'}}));
+  const response=await createPrivateMediaFetch('https://example.supabase.co',transport)('https://example.supabase.co/rest/v1/posts');const {image_urls:[url]}=await response.json();
+  await vi.advanceTimersByTimeAsync(31000);trimPrivateMedia(0,0,0);expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(url);
+ });
+ it('keeps cached bytes alive during an overlapping Storage permission check',async()=>{
+  let finish!:(value:Response)=>void;
+  const transport=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>String(input).includes('/rest/v1/')?Response.json({image_urls:[ref(4)]}):init?.method==='HEAD'?await new Promise<Response>(resolve=>{finish=resolve;}):new Response('image',{headers:{'content-type':'image/png'}}));
+  const fetcher=createPrivateMediaFetch('https://example.supabase.co',transport,true);
+  const token=async()=>(await(await fetcher('https://example.supabase.co/rest/v1/posts')).json()).image_urls[0];
+  const first=await resolvePrivateMediaUrl(await token());const second=resolvePrivateMediaUrl(await token());
+  trimPrivateMedia(0,0,0);expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(first);
+  finish(new Response(null,{headers:{'content-type':'image/png'}}));expect(await second).toBe(first);
+ });
+ it('retains browser behavior and tears down housekeeping and leases at account changes',async()=>{
+  const transport=vi.fn(async(input:RequestInfo|URL)=>String(input).includes('/rest/v1/')?Response.json({image_urls:[ref(5)]}):new Response('image',{headers:{'content-type':'image/png'}}));
+  const token=(await(await createPrivateMediaFetch('https://example.supabase.co',transport,true)('https://example.supabase.co/rest/v1/posts')).json()).image_urls[0];
+  const url=await resolvePrivateMediaUrl(token),release=retainPrivateMediaUrl(url!);clearPrivateMedia();release();
+  expect(await resolvePrivateMediaUrl(token)).toBeNull();expect(vi.getTimerCount()).toBe(0);
+  vi.stubGlobal('navigator',{standalone:false});const next=(await(await createPrivateMediaFetch('https://example.supabase.co',transport,true)('https://example.supabase.co/rest/v1/posts')).json()).image_urls[0];
+  const fresh=await resolvePrivateMediaUrl(next);vi.mocked(URL.revokeObjectURL).mockClear();trimPrivateMedia(0,0,0);expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(fresh);expect(vi.getTimerCount()).toBe(0);
+ });
+});
+
+it('uses current credentials when a deferred image is opened after its metadata token expires',async()=>{
+ const path='11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/33333333-3333-4333-8333-333333333333.png';
+ const credentials=vi.fn().mockResolvedValue('refreshed-access');
+ const transport=vi.fn().mockResolvedValueOnce(Response.json({image_urls:[MEDIA_PREFIX+path]})).mockResolvedValue(new Response('image',{headers:{'content-type':'image/png'}}));
+ const response=await createPrivateMediaFetch('https://example.supabase.co',transport,true,credentials)('https://example.supabase.co/rest/v1/posts',{headers:{authorization:'Bearer old-access',apikey:'public-key'}});
+ const token=(await response.json()).image_urls[0];expect(credentials).not.toHaveBeenCalled();
+ const original=URL.createObjectURL;URL.createObjectURL=vi.fn(()=> 'blob:refreshed');
+ try{
+  expect(await resolvePrivateMediaUrl(token)).toBe('blob:refreshed');
+  expect(transport.mock.calls[1][1].headers.get('authorization')).toBe('Bearer refreshed-access');
+  expect(transport.mock.calls[1][1].headers.get('apikey')).toBe('public-key');
+ }finally{clearPrivateMedia();URL.createObjectURL=original;}
+});
+
+it('does not start an old image download if accounts change while credentials refresh',async()=>{
+ let finish!:(token:string)=>void;
+ const credentials=()=>new Promise<string>(resolve=>{finish=resolve;});
+ const ref=MEDIA_PREFIX+'11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/33333333-3333-4333-8333-333333333333.png';
+ const transport=vi.fn().mockResolvedValue(Response.json({image_urls:[ref]}));
+ const response=await createPrivateMediaFetch('https://example.supabase.co',transport,true,credentials)('https://example.supabase.co/rest/v1/posts');
+ const pending=resolvePrivateMediaUrl((await response.json()).image_urls[0]);
+ clearPrivateMedia();finish('next-account-access');expect(await pending).toBeNull();expect(transport).toHaveBeenCalledOnce();
 });

@@ -1,4 +1,4 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {storage} from './storage.mjs';
+import {test} from 'node:test';import assert from 'node:assert/strict';import {storage} from "./worker.mjs";
 test('failed upload cleanup removes the exact B2 version, instead of leaving a hidden billable copy',async()=>{
  const original=globalThis.fetch,requests=[];
  globalThis.fetch=async(request)=>{requests.push(request);return request.method==='HEAD'?new Response(null,{headers:{'x-amz-version-id':'synthetic-version'}}):new Response(null,{status:204});};

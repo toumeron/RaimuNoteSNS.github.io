@@ -1,6 +1,6 @@
 import {createClient} from 'https://esm.sh/@supabase/supabase-js@2';
 import {authenticate,boundedBody,quota,secretMatches} from '../_shared/security.ts';
-import {FEATURE_NAMES,validFeatures,validRankModel,predictRank,type RankModel} from '../_shared/recommendationModel.ts';
+import {FEATURE_NAMES,validFeatures,validRankModel,predictRank,type RankModel} from "../_shared/chatContext.ts";
 const headers={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization,apikey,content-type,x-client-info,x-recommendation-training-secret','Access-Control-Allow-Methods':'POST,OPTIONS','Cache-Control':'no-store'};
 const db=()=>createClient(Deno.env.get('SUPABASE_URL')!,Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,{auth:{persistSession:false,autoRefreshToken:false}});
 let cached:RankModel|null=null,lastRead=0;

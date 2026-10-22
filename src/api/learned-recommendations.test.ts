@@ -1,6 +1,9 @@
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 const mocks=vi.hoisted(()=>({session:vi.fn(),rpc:vi.fn()}));
-vi.mock('@/lib/supabase',()=>({supabase:{auth:{getSession:mocks.session},rpc:mocks.rpc}}));
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase:{auth:{getSession:mocks.session},rpc:mocks.rpc}
+}));
 import { learnedRecommendationScores, rankingFeatures, recordLearnedRecommendation } from "@/api/topics";
 import type {PostWithAuthor} from '@/types';
 const post={id:'native-post',userId:'author',source:'lime',content:'猫',createdAt:new Date().toISOString(),likesCount:1,commentsCount:0,repostsCount:0,likedByMe:false,repostedByMe:false,imageUrls:[],author:{id:'author',username:'author'}} as PostWithAuthor;

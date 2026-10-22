@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createSuspensionFetch, setAccountSuspended, SUSPENSION_EVENT } from "@/lib/accountSuspension";
-import { companyReturnUrl } from "@/lib/accountSuspension";
+import { createSuspensionFetch, setAccountSuspended, SUSPENSION_EVENT } from "@/lib/supabase";
+import { companyReturnUrl } from "@/lib/supabase";
 
 describe("accountSuspension", () => {
 afterEach(()=>setAccountSuspended(false));

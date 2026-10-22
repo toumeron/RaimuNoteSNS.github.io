@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+ <defs>
+  <linearGradient id="cap" x1="0" y1="0" x2="0.3" y2="1">
+   <stop stop-color="#ff605b"/><stop offset=".55" stop-color="#ff5350"/><stop offset="1" stop-color="#f54849"/>
+  </linearGradient>
+ </defs>
+ <path d="M91 163C73 119 123 63 194 54C252 44 311 73 340 120L180 207C158 176 134 135 112 143L102 177Z" fill="url(#cap)" stroke="#e64b4b" stroke-width="2"/>
+ <path d="M171 191Q247 144 337 112Q348 110 354 126Q357 132 349 136Q248 165 181 215Q171 219 164 207Q159 197 171 191Z" fill="#fffefa" stroke="#e2e5e3" stroke-width="3" stroke-linejoin="round"/>
+ <circle cx="94" cy="183" r="28" fill="#fffefa" stroke="#dfe4e3" stroke-width="3"/>
+ <ellipse cx="87" cy="175" rx="14" ry="12" fill="#fff" opacity=".55"/>
+</svg>

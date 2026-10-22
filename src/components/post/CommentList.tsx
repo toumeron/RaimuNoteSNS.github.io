@@ -1,34 +1,29 @@
-import { initialImageFrame, initialMediaSize } from "@/lib/mediaThumbnail";
-import { ContentLink } from "@/components/ui/button";
+import { initialImageFrame, initialMediaSize, openMediaViewer } from "@/lib/mediaThumbnail";
+import { ContentLink, HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/button";
 import { useMinuteTick, useViewportWidth } from "@/hooks/useViewportWidth";
-import { twitterReplyText, canShowPostLinkPreview, hasAttachedPostVideo, commentThreadUrl, getAuthorReplyConversations } from "@/lib/utils";
-import { displayUsername, splitMentionText, mentionProfileHandle, hasStickers, formatDate, formatRelative, getYouTubeId } from "@/lib/utils";
-import { PostSourceLabel, ExternalPostDetails, LinkPreviewCard, useLinkPreview, PostImages } from "@/components/feed/QuotedPost";
-import { PrivateMediaImage } from "@/components/ui/avatar";
+import { twitterReplyText, canShowPostLinkPreview, hasAttachedPostVideo, commentThreadUrl, getAuthorReplyConversations, displayUsername, splitMentionText, mentionProfileHandle, hasStickers, formatDate, formatRelative, getYouTubeId } from "@/lib/utils";
+import { PostSourceLabel, ExternalPostDetails, LinkPreviewCard, useLinkPreview, PostImages, OfflineBookmarkContext, renderStickerText } from "@/components/feed/QuotedPost";
+import { PrivateMediaImage, ProviderVerificationBadge, PrivateAccountBadge, Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { twitterReplyUrl } from "@/lib/fxTwitter";
-import { ProviderVerificationBadge, PrivateAccountBadge, Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/button";
 import { PostVideoPlayer } from "@/components/video/PostVideoPlayer";
-import { mobilePostMenuOS, ExternalLikeButton, RepostButton, BookmarkButton } from "@/components/feed/RepostButton";
-import { openMediaViewer } from "@/components/media/openMediaViewer";
-import { OfflineBookmarkContext, renderStickerText } from "@/components/stickers/Stickers";
-import { useState, useContext, useEffect, useRef, useMemo, useLayoutEffect, type ReactNode } from "react";
+import { mobilePostMenuOS, ExternalLikeButton, RepostButton, BookmarkButton, Commentlikebutton } from "@/components/feed/RepostButton";
+import { useState, useContext, useEffect, useRef, useMemo, useLayoutEffect, type ReactNode, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate } from "react-router-dom";
 import { MoreHorizontal, Download, Link as LinkIcon, ChartBarBig, Trash2, CalendarDays, X, Plus, MessageCircle, Send, Upload } from "lucide-react";
 import { PostCardSkeleton, RepostIcon } from "@/components/feed/PostPoll";
 import { type PostWithAuthor, type CommentWithAuthor } from "@/types/index";
 import { replyToPost } from "@/api/external-posts";
-import { Commentlikebutton } from "@/components/feed/RepostButton";
 import { FollowButton } from "@/components/profile/ProfileHeader";
-import { useFollowStats } from "@/hooks/useFeed";
-import { useComments } from "@/hooks/useFeed";
+import { useFollowStats, useComments } from "@/hooks/useFeed";
 import { getCurrentUserId } from "@/lib/currentUser";
-import { supabase } from "@/lib/supabase";
-import { YouTubeEmbed, SpotifyEmbed } from "@/components/feed/PostCard";
+import { supabase, sendLimeDrop } from "@/lib/supabase";
+import { YouTubeEmbed, SpotifyEmbed, PostCard } from "@/components/feed/PostCard";
 import dayjs from "dayjs";
 import { useAuth } from "@/hooks/useAuth";
+import { type BlueskyMappedPost } from "@/lib/bluesky";
 
+// CommentList
 // ReplyShare
 interface SharedReply { id: string; postId: string; content: string; author: { id: string; username: string; displayName: string } }
 interface LimeDropTarget { id: string; username: string; displayName: string; avatarUrl: string }
@@ -206,7 +201,8 @@ function ReplyShare({ comment, currentUserId, externalPost, className = '' }: { 
       const { data: followingRows, error: followingError } = await supabase
         .from('follows')
         .select('followee_id')
-        .eq('follower_id', currentUserId);
+        .eq('follower_id', currentUserId)
+        .eq('approved', true);
 
       if (followingError) throw followingError;
 
@@ -224,6 +220,7 @@ function ReplyShare({ comment, currentUserId, externalPost, className = '' }: { 
             .select('follower_id')
             .eq('followee_id', currentUserId)
             .in('follower_id', followingIds)
+            .eq('approved', true)
         : { data: [], error: null };
 
       if (followerError) throw followerError;
@@ -297,9 +294,7 @@ function ReplyShare({ comment, currentUserId, externalPost, className = '' }: { 
       const url = getPostShareUrl();
       const text = getPostShareText();
 
-      const { error } = await supabase
-        .from('lime_drops')
-        .insert({
+      await sendLimeDrop({
           sender_id: currentUserId,
           recipient_id: target.id,
           post_id: null,
@@ -309,9 +304,7 @@ function ReplyShare({ comment, currentUserId, externalPost, className = '' }: { 
           post_author_display_name: comment.author.displayName,
           post_text: text,
           status: 'pending',
-        });
-
-      if (error) throw error;
+        }, supabase);
 
       setLimeDropFeedback(`${target.displayName}さんに送信しました`);
       window.setTimeout(() => {
@@ -1969,3 +1962,69 @@ export { ExternalReplyCard };
 export { RepostedReplyCard };
 export { ReplyShare };
 export { ReplyChain };
+
+
+// ExternalReplyList
+/** External replies use the same presentation as LimeNote comments, with external IDs intact. */
+function ExternalReplyList({ parent, replies, isLoading, isError, mobileFlat }: {
+  parent: PostWithAuthor;
+  replies: BlueskyMappedPost[];
+  isLoading: boolean;
+  isError: boolean;
+  mobileFlat: boolean;
+}) {
+  const { user } = useAuth();
+  const [expandedReplies, setExpandedReplies] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => { setExpandedReplies(new Set()); }, [parent.id]);
+  if (isLoading) return <PostCardSkeleton />;
+  if (isError) return <div className="rounded-3xl border border-destructive/40 bg-destructive/5 p-6 text-center"><p className="text-sm text-destructive">返信の読み込みに失敗しました。</p></div>;
+  if (!replies.length) return <div className={mobileFlat ? 'p-8 text-center text-muted-foreground' : 'rounded-3xl border border-border/60 bg-card p-8 text-center text-muted-foreground'}>まだ返信はありません。</div>;
+  const replyIds = new Set(replies.map(reply => reply.id));
+  const comments = replies.map(reply => {
+    const post: PostWithAuthor = { repostsCount: 0, repostedByMe: false, ...reply, author: { coverUrl: '', ...reply.author } };
+    // External pages can omit a deleted/hidden parent or return a child before
+    // its parent. Keep that reply visible until the parent arrives on a later page.
+    return { ...post, postId: parent.id, parentCommentId: post.externalReplyToId && post.externalReplyToId !== parent.id && replyIds.has(post.externalReplyToId) ? post.externalReplyToId : null, externalPost: post } as CommentWithAuthor & { externalPost: PostWithAuthor };
+  });
+  return <CommentConversations comments={comments} currentUserId={user?.id ?? null} mobileFlat={mobileFlat}
+    threadAuthorId={parent.userId ?? parent.author.id} expandedReplies={expandedReplies}
+    onExpand={id => setExpandedReplies(previous => new Set([...previous, id]))} />;
+}
+
+// ExternalReplyDetail
+function ExternalReplyDetail({ post, mobileFlat }: { post: PostWithAuthor; mobileFlat: boolean }) {
+  const selected = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!selected.current) return;
+    const host = selected.current.closest('[data-lime-reply-chain]') ?? selected.current;
+    let anchoring = true;
+    const align = () => { if (anchoring) selected.current?.scrollIntoView({ block: 'center', behavior: 'auto' }); };
+    const resize = new ResizeObserver(align);
+    resize.observe(host);
+    const stop = () => { anchoring = false; resize.disconnect(); };
+    const interactions = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
+    interactions.forEach(event => window.addEventListener(event, stop, { passive: true }));
+    host.addEventListener('load', align, true);
+    align();
+    return () => {
+      stop();
+      host.removeEventListener('load', align, true);
+      interactions.forEach(event => window.removeEventListener(event, stop));
+    };
+  }, [post.id]);
+  const parents:PostWithAuthor[]=[],seen=new Set([post.id]);let parent=post.externalReplyParent;
+  while(parent&&!seen.has(parent.id)&&parents.length<20){seen.add(parent.id);parents.unshift(parent);parent=parent.externalReplyParent;}
+  return <div style={{ '--reply-frame-padding': mobileFlat ? '16px' : '24px' } as CSSProperties}
+    className={mobileFlat ? 'post-detail-mobile-article' : 'rounded-3xl border border-border/60 bg-card p-6 shadow-soft'}>
+    <style>{`[data-lime-reply-chain] [data-lime-reply-detail] { padding-bottom: 0 !important; }`}</style>
+    <ReplyChain>
+      {parents.map(parent=><PostCard key={parent.id} post={parent} thread />)}
+      <div ref={selected} data-lime-selected-reply>
+        <ExternalReplyCard post={post} detail thread mobileFlat={mobileFlat} />
+      </div>
+    </ReplyChain>
+  </div>;
+}
+
+export { ExternalReplyList };
+export { ExternalReplyDetail };

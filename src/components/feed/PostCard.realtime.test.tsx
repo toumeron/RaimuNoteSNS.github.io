@@ -13,7 +13,9 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { PostWithAuthor } from '@/types';
 
-vi.mock('@/lib/supabase', async () => {
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  ...await (async () => {
   const { createClient } = await import('@supabase/supabase-js');
   const client = createClient('https://test.invalid', 'fixture-anon-key', {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
@@ -30,7 +32,8 @@ vi.mock('@/lib/supabase', async () => {
     return builder as never;
   });
   return { supabase: client };
-});
+})()
+}));
 
 
 vi.mock('@/lib/currentUser', () => ({ getCurrentUserId: async () => 'viewer' }));

@@ -3,8 +3,11 @@ const m=vi.hoisted(()=>({blue:vi.fn(),twitter:vi.fn(),quotes:vi.fn(),reposts:vi.
 vi.mock('@/lib/bluesky',()=>({fetchBlueskyPostActivity:m.blue}));
 vi.mock('@/lib/fxTwitter',()=>({fetchTwitterPostActivity:m.twitter}));
 vi.mock('./posts',()=>({getPostQuotes:m.quotes,getPostReposters:m.reposts}));
-vi.mock('@/lib/timelinePaging',()=>({normalizeTimelineBlueskyPost:(post:unknown)=>post}));
-import { getExternalPostActivity } from "@/api/comments";
+vi.mock("@/lib/utils", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/utils")>(),
+  normalizeTimelineBlueskyPost:(post:unknown)=>post
+}));
+import { getExternalPostActivity } from "@/api/external-posts";
 beforeEach(()=>{vi.clearAllMocks();m.blue.mockResolvedValue({users:[],posts:[],cursor:null});m.twitter.mockResolvedValue({users:[],posts:[],cursor:null});m.quotes.mockResolvedValue([]);m.reposts.mockResolvedValue([]);});
 const post=(id:string,likesCount=1)=>({id,likesCount,createdAt:'2026-10-17'});
 it('combines provider quotes with LimeNote quotes and follows only remaining cursors',async()=>{

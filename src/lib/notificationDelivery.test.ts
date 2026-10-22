@@ -1,9 +1,12 @@
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 const state=vi.hoisted(()=>({count:3,set:vi.fn(),clear:vi.fn(),dismiss:vi.fn(),toast:vi.fn(),message:vi.fn(),closed:vi.fn(),rpc:vi.fn(),pushOwner:'owner'}));
 vi.mock('sonner',()=>({toast:Object.assign(state.toast,{dismiss:state.dismiss})}));
-vi.mock('@/lib/supabase',()=>({supabase:{auth:{getSession:async()=>({data:{session:{user:{id:state.pushOwner}}}})},rpc:(...args:unknown[])=>state.rpc(...args),from:()=>{const q={select:()=>q,eq:()=>q,then:(done:Function)=>Promise.resolve({count:state.count,error:null}).then(done as never)};return q;}}}));
-import { refreshNotificationBadge } from "@/lib/registerPwa";
-import { showNotificationToast, dismissNotificationToasts } from "@/lib/registerPwa";
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase:{auth:{getSession:async()=>({data:{session:{user:{id:state.pushOwner}}}})},rpc:(...args:unknown[])=>state.rpc(...args),from:()=>{const q={select:()=>q,eq:()=>q,then:(done:Function)=>Promise.resolve({count:state.count,error:null}).then(done as never)};return q;}}
+}));
+import { refreshNotificationBadge } from "@/App";
+import { showNotificationToast, dismissNotificationToasts } from "@/App";
 beforeEach(()=>{vi.useFakeTimers();Object.assign(state,{count:3});for(const name of ['set','clear','dismiss','toast','message','closed'] as const)state[name].mockClear();Object.defineProperty(navigator,'setAppBadge',{configurable:true,value:state.set});Object.defineProperty(navigator,'clearAppBadge',{configurable:true,value:state.clear});Object.defineProperty(navigator,'serviceWorker',{configurable:true,value:{getRegistration:async()=>({active:{postMessage:state.message},getNotifications:async()=>[{tag:'read',data:{notificationId:'read'},close:state.closed}]})}});});
 afterEach(()=>{dismissNotificationToasts();vi.useRealTimers();});
 it('dismisses notification popups after five seconds independently of toast hover state',async()=>{showNotificationToast('one','title','body');expect(state.dismiss).not.toHaveBeenCalled();await vi.advanceTimersByTimeAsync(5000);expect(state.dismiss).toHaveBeenCalledWith('notification-one');});

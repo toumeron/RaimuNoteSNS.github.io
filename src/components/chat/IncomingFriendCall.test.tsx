@@ -5,7 +5,7 @@ vi.mock("@/lib/callRecorder", async importOriginal => {
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { IncomingFriendCall } from "@/components/chat/CallSessionProvider";
+import { IncomingFriendCall } from "@/components/layout/AppLayout";
 const stop = vi.hoisted(() => vi.fn());
 
 afterEach(() => { cleanup(); vi.clearAllMocks(); });

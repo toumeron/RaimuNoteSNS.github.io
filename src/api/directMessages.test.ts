@@ -1,6 +1,9 @@
 import {beforeEach,describe,expect,it,vi} from 'vitest';
 const mocks=vi.hoisted(()=>({invoke:vi.fn(),signed:vi.fn(),from:vi.fn(),storage:vi.fn()}));
-vi.mock('@/lib/supabase',()=>({supabase:{functions:{invoke:mocks.invoke},from:mocks.from,storage:{from:mocks.storage}}}));
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase:{functions:{invoke:mocks.invoke},from:mocks.from,storage:{from:mocks.storage}}
+}));
 import { uploadDirectMedia, getDirectMessages } from "@/api/users";
 beforeEach(()=>{vi.clearAllMocks();mocks.storage.mockReturnValue({createSignedUrls:mocks.signed});});
 describe('DM Cloudinary media',()=>{

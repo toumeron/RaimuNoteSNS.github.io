@@ -1,7 +1,10 @@
 import {expect,it,vi,beforeEach} from 'vitest';
 const search=vi.hoisted(()=>vi.fn());
 vi.mock('./fxTwitter',()=>({searchXPage:search}));
-vi.mock('./timelinePaging',()=>({normalizeTimelineBlueskyPost:(post:any)=>post}));
+vi.mock("@/lib/utils", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/utils")>(),
+  normalizeTimelineBlueskyPost:(post:any)=>post
+}));
 import { searchTwitterResults } from "@/api/search-news";
 const post=(id:string,content='match')=>({id,source:'x',content}) as any;
 const options={cursor:null,feed:'top' as const,matches:(post:any)=>post.content==='match'};

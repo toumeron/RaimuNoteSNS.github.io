@@ -5,10 +5,13 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ signUp: vi.fn(), signIn: vi.fn(), upsert: vi.fn(), success: vi.fn(), error: vi.fn() }));
-vi.mock('@/lib/supabase', () => ({ supabase: {
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase: {
   auth: { signUp: mocks.signUp, signInWithPassword: mocks.signIn },
   from: () => ({ upsert: mocks.upsert }),
-} }));
+}
+}));
 
 vi.mock('sonner', () => ({ toast: { success: mocks.success, error: mocks.error } }));
 import AuthPage from './Auth';

@@ -1,10 +1,10 @@
 import {composerMediaDrop,isVideoAttachment,ScheduleControl,ScheduledPostNotice,ComposerIcon,PollIcon,PollEditor,newPollDraft} from '@/components/feed/PostPoll';
 import {preparePostVideo,type PreparedVideo} from '@/lib/mediaThumbnail';
 import {PostVideoPlayer} from '@/components/video/PostVideoPlayer';
-import {allowAccountWrite} from '@/lib/accountSuspension';
+import {allowAccountWrite} from "@/lib/supabase";
 import {useAutoTextarea} from '@/hooks/useViewportWidth';
 import {validatePollDraft,type PollDraft,appendSticker,insertDraftEmoji,draftEmojiCharacter,cn,formatRelative} from '@/lib/utils';
-import {DraftEmojiText,StickerPicker,StickerDraft} from '@/components/stickers/Stickers';
+import {DraftEmojiText,StickerPicker,StickerDraft} from "@/components/feed/QuotedPost";
 import {QuotedPost} from '@/components/feed/QuotedPost';
 import {useCallback,useEffect,useLayoutEffect,useRef,useState,type ChangeEvent,type ClipboardEvent,type PointerEvent as ReactPointerEvent,type UIEvent as ReactUIEvent} from 'react';
 import {createPortal} from 'react-dom';

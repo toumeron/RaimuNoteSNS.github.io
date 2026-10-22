@@ -21,3 +21,14 @@ it('cancels a scheduled analysis when leaving the feed',async()=>{
  vi.stubGlobal('Worker',class{});const client=new QueryClient(),data={pages:[{posts:[post('x:601')],preferences:{authors:{},terms:{},followedTopics:['digital-illustration'] as any},next:undefined,pendingAnalysis:false,automaticPaused:false,requestKey:1}],pageParams:[]};
  const view=renderHook(()=>useRecommendationImages(true,'viewer',['cancel-images'],data,false),{wrapper:({children})=><QueryClientProvider client={client}>{children}</QueryClientProvider>});view.unmount();await act(async()=>{await new Promise(resolve=>setTimeout(resolve,1250));});expect(mocks.analyze).not.toHaveBeenCalled();client.clear();
 });
+it('aborts hidden analysis and retries unfinished images after the app becomes visible',async()=>{
+ let hidden=false;vi.spyOn(document,'hidden','get').mockImplementation(()=>hidden);vi.stubGlobal('Worker',class{});
+ const client=new QueryClient(),candidate=post('x:701'),data={pages:[{posts:[candidate],preferences:{authors:{},terms:{},followedTopics:['digital-illustration'] as any},next:undefined,pendingAnalysis:false,automaticPaused:false,requestKey:1}],pageParams:[]};
+ mocks.analyze.mockImplementation((_rows:any,_topics:any,signal:AbortSignal)=>new Promise(resolve=>signal.addEventListener('abort',()=>resolve([]),{once:true})));
+ const view=renderHook(()=>useRecommendationImages(true,'viewer',['resume-images'],data,false),{wrapper:({children})=><QueryClientProvider client={client}>{children}</QueryClientProvider>});
+ await waitFor(()=>expect(mocks.analyze).toHaveBeenCalledTimes(1),{timeout:2500});const first=mocks.analyze.mock.calls[0][2] as AbortSignal;
+ act(()=>{hidden=true;document.dispatchEvent(new Event('visibilitychange'));});expect(first.aborted).toBe(true);
+ act(()=>{hidden=false;document.dispatchEvent(new Event('visibilitychange'));});
+ await waitFor(()=>expect(mocks.analyze).toHaveBeenCalledTimes(2),{timeout:2500});expect(mocks.analyze.mock.calls[1][0].map((row:any)=>row.id)).toEqual([candidate.id]);
+ view.unmount();client.clear();vi.restoreAllMocks();
+});

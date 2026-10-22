@@ -1,7 +1,8 @@
 import { type PostWithAuthor } from "@/types/index";
-import { type TopicId } from "@/lib/topics";
+import { type TopicId } from "@/lib/recommendations";
 import { classifyRecommendationVisual, readVisualCache, writeVisualCache, recommendationImageIdentity, type RecommendationVisual } from "@/lib/recommendationVisual";
-import { isDeferredPrivateMedia, resolvePrivateMediaUrl } from "@/lib/privateMediaFetch";
+import { isDeferredPrivateMedia, resolvePrivateMediaUrl, retainPrivateMediaUrl } from "@/lib/privateMediaFetch";
+import { isInstalledPwa } from "@/lib/utils";
 
 // recommendationVisualQueue
 /** Fetch a few images concurrently, but keep the model and decoded pixels serial. */
@@ -56,28 +57,32 @@ export {classifyRecommendationVisual} from './recommendationVisual';
 
 let worker:Worker|undefined;
 let idleTimer:ReturnType<typeof setTimeout>|undefined;
-function idleRecommendationVisualWorker(){clearTimeout(idleTimer);idleTimer=setTimeout(releaseRecommendationVisualWorker,120000);}
-function warmRecommendationVisualWorker(){if(typeof Worker==='undefined')return;visualWorker().postMessage({warm:true});idleRecommendationVisualWorker();}
+function idleRecommendationVisualWorker(){clearTimeout(idleTimer);if(isInstalledPwa()&&document.hidden){releaseRecommendationVisualWorker();return;}idleTimer=setTimeout(releaseRecommendationVisualWorker,120000);}
+function warmRecommendationVisualWorker(){if(typeof Worker==='undefined'||isInstalledPwa()&&document.hidden)return;visualWorker().postMessage({warm:true});idleRecommendationVisualWorker();}
 // A failed public image must not be fetched again on every scroll page.
 const unavailableUntil=new Map<string,number>();
 const FAILURE_COOLDOWN=60_000;
 let nextId=0;
 const pending=new Map<number,{resolve:(vector:number[])=>void;reject:(error:Error)=>void}>();
+const releaseHiddenWorker=()=>{if(isInstalledPwa()&&document.hidden)releaseRecommendationVisualWorker();};
 /** Release the WASM heap and model after a bounded analysis job. */
 function releaseRecommendationVisualWorker(){
  clearTimeout(idleTimer);
  if(pending.size)return;
  worker?.terminate();worker=undefined;
+ document.removeEventListener('visibilitychange',releaseHiddenWorker);
 }
 function visualWorker():Worker {
  clearTimeout(idleTimer);
  if(worker)return worker;
  worker=new Worker(new URL('./recommendationVisual.worker.ts',import.meta.url),{type:'module'});
+ document.addEventListener('visibilitychange',releaseHiddenWorker);
  worker.onmessage=({data}:{data:{id:number;vector?:number[];error?:string}})=>{
   const request=pending.get(data.id);if(!request)return;pending.delete(data.id);
   if(data.vector)request.resolve(data.vector);else request.reject(new Error(data.error??'Image analysis unavailable'));
+  releaseHiddenWorker();
  };
- worker.onerror=()=>{for(const request of pending.values())request.reject(new Error('Image analysis unavailable'));pending.clear();worker?.terminate();worker=undefined;};
+ worker.onerror=()=>{for(const request of pending.values())request.reject(new Error('Image analysis unavailable'));pending.clear();releaseRecommendationVisualWorker();};
  return worker;
 }
 async function analyze(url:string,signal?:AbortSignal):Promise<RecommendationVisual> {
@@ -90,6 +95,7 @@ async function analyze(url:string,signal?:AbortSignal):Promise<RecommendationVis
  if(signal?.aborted)throw signal.reason;
  if(!imageUrl)throw new Error('Image unavailable');
  const prepared=recommendationThumbnailUrl(imageUrl)?await prepareRecommendationImage(imageUrl,signal):{url:imageUrl,release:()=>{}};
+ const releasePrivate=retainPrivateMediaUrl(imageUrl);
  try{
  if(signal?.aborted)throw signal.reason;
  const vector=await new Promise<number[]>((resolve,reject)=>{
@@ -105,7 +111,7 @@ async function analyze(url:string,signal?:AbortSignal):Promise<RecommendationVis
  }catch(error){
   if(!signal?.aborted){unavailableUntil.set(identity,Date.now()+FAILURE_COOLDOWN);if(unavailableUntil.size>512)unavailableUntil.delete(unavailableUntil.keys().next().value!);}
   throw error;
- }finally{prepared.release();}
+ }finally{prepared.release();releasePrivate();}
 }
 /** Only on a requested feed page, in a worker. No upload of image pixels,
  * server inference, paid API, background loop or database is used. */

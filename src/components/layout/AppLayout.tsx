@@ -1,28 +1,29 @@
-import { DesktopLayoutContext } from "./DesktopLayoutContext";
-import React, { useEffect, useState, useCallback, useRef, type ReactElement, forwardRef } from "react";
+import { DesktopLayoutContext } from "@/components/layout/DesktopLayoutContext";
+import React from "react";
+import { useEffect, useState, useCallback, useRef, type ReactElement, forwardRef, lazy, Suspense, Component, type ComponentProps, type ReactNode, createContext, useContext } from "react";
 import { Outlet, Navigate, useLocation, NavLink as BottomNavNavLink, useNavigate, NavLinkProps, Link } from "react-router-dom";
 import { Header } from "@/components/layout/Header";
 import { useAuth } from "@/hooks/useAuth";
-import { CallSessionProvider } from "@/components/chat/CallSessionProvider";
-
-import { PageCompanion } from "@/components/ai/PageCompanionGate";
 import { Skeleton, Popover, PopoverContent, PopoverTrigger } from "@/components/ui/button";
 import { PrivateAccountBadge, Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { isIpad, cn } from "@/lib/utils";
 import { UnreadBadge } from "@/components/search/SearchExploreContent";
 import { createPortal } from "react-dom";
-import { Bell, Home, User as UserIcon, Settings as SettingsIcon, Search, MessageSquare, Loader2, TrendingUp, Check, CircleEllipsis, Plus, X } from "lucide-react";
+import { Bell, Home, User as UserIcon, Settings as SettingsIcon, Search, MessageSquare, Loader2, TrendingUp, Check, CircleEllipsis, Plus, X, Phone } from "lucide-react";
 import { CommentForm } from "@/components/post/CommentForm";
 import { useTrends, useHiddenTrends } from "@/hooks/useTopics";
 import { useSavedAccountUnreadTotal } from "@/hooks/useOSNotification";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/lib/supabase";
+import { supabase, SUSPENSION_EVENT, SUSPENSION_MESSAGE } from "@/lib/supabase";
 import { Drawer } from "vaul";
 import { toast } from "sonner";
 import { type SavedAccount } from "@/lib/savedAccounts";
+import { useCompanion } from "@/lib/aiFriends";
+import { type PostOverlay as Overlay, type PostComposer as Composer } from "@/components/feed/OverlayPostComposer";
+import { microphoneErrorMessage, requestMicrophonePermission, unlockAudioPlayback, playIncomingRingtone, unlockIncomingRingtone } from "@/lib/callRecorder";
+import { type PostWithAuthor } from "@/types/index";
 
-import { SUSPENSION_EVENT, SUSPENSION_MESSAGE } from "@/lib/accountSuspension";
-
+// AppLayout
 // BottomNav
 type TimelineChromeTheme = 'light' | 'dark';
 
@@ -973,3 +974,193 @@ export { NavLink };
 export { Logo };
 export { SuspensionNotice };
 export { AccountSuspensionFeedback };
+
+
+// PageCompanionGate
+const Companion=lazy(()=>import("@/components/ai/PageCompanion").then(module=>({default:module.PageCompanion})));
+/** Disabled companions do not load settings/model UI on the initial timeline. */
+export function PageCompanion({userId}:{userId:string}){
+ const prefs=useCompanion(userId);
+ return prefs.enabled?<Suspense fallback={null}><Companion userId={userId}/></Suspense>:null;
+}
+
+
+// DeferredPostComposer
+const LazyOverlay=lazy(()=>import("@/components/feed/OverlayPostComposer").then(module=>({default:module.PostOverlay})));
+const LazyComposer=lazy(()=>import("@/components/feed/OverlayPostComposer").then(module=>({default:module.PostComposer})));
+function Pending({onClose,failed=false}:{onClose?:()=>void;failed?:boolean}){
+ return <div role="status" className="flex items-center gap-4 bg-background p-6 text-foreground"><span>{failed?'投稿画面を読み込めませんでした':'読み込み中…'}</span>{onClose&&<button type="button" onClick={onClose} className="underline">閉じる</button>}</div>;
+}
+class Boundary extends Component<{children:ReactNode;onClose?:()=>void},{failed:boolean}>{
+ state={failed:false};static getDerivedStateFromError(){return{failed:true};}
+ render(){return this.state.failed?<Pending failed onClose={this.props.onClose}/>:this.props.children;}
+}
+export function PostOverlay(props:ComponentProps<typeof Overlay>){
+ if(!props.isOpen)return null;
+ const fallback=createPortal(<div className="fixed inset-0 z-[2147483000] flex items-start justify-center bg-black/20 pt-[max(16px,env(safe-area-inset-top))]"><Pending onClose={props.onClose}/></div>,document.body);
+ return <Boundary onClose={props.onClose}><Suspense fallback={fallback}><LazyOverlay {...props}/></Suspense></Boundary>;
+}
+export function PostComposer(props:ComponentProps<typeof Composer>){
+ return <Boundary onClose={props.onCancel}><Suspense fallback={<Pending onClose={props.onCancel}/>}><LazyComposer {...props}/></Suspense></Boundary>;
+}
+
+
+// CallSessionProvider
+type CallSession = {
+  start: (render: (close: () => void) => ReactNode) => Promise<boolean>;
+  isActive: () => boolean;
+};
+const CallSessionContext = createContext<CallSession | null>(null);
+
+/** Lives above the route outlet so navigation does not tear down the call. */
+function CallSessionProvider({ children }: { children: ReactNode }) {
+  const [call, setCall] = useState<ReactNode>(null);
+  const active = useRef(false);
+  const pending = useRef(false);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; active.current = false; };
+  }, []);
+  const close = useCallback(() => {
+    active.current = false;
+    setCall(null);
+  }, []);
+  const isActive = useCallback(() => active.current || pending.current, []);
+  const start = useCallback((render: (close: () => void) => ReactNode) => {
+    if (pending.current || active.current) return Promise.resolve(false);
+    pending.current = true;
+    unlockAudioPlayback();
+    // Call getUserMedia immediately, before any timer or asynchronous setup.
+    return requestMicrophonePermission().then(() => {
+      if (!mounted.current) return false;
+      active.current = true;
+      setCall(render(close));
+      return true;
+    }).catch(error => {
+      if (mounted.current) toast.error(microphoneErrorMessage(error), { duration: 10000 });
+      return false;
+    }).finally(() => { pending.current = false; });
+  }, [close]);
+  return <CallSessionContext.Provider value={{ start, isActive }}>{children}{call}</CallSessionContext.Provider>;
+}
+
+function useCallSession() {
+  const context = useContext(CallSessionContext);
+  if (!context) throw new Error('CallSessionProvider is required');
+  return context;
+}
+
+// IncomingFriendCall
+function IncomingFriendCall({ name, avatar, onAnswer, onDecline }: {
+  name: string; avatar: string; onAnswer: () => Promise<boolean>; onDecline: () => void;
+}) {
+  const [answering, setAnswering] = useState(false);
+  useEffect(() => playIncomingRingtone(), []);
+  return createPortal(<section className="lime-incoming-call" role="alertdialog" aria-label={`${name}から着信`} aria-describedby="lime-incoming-status">
+    <img className="lime-incoming-avatar" src={avatar} alt="" />
+    <div className="lime-incoming-person"><strong>{name}</strong><span id="lime-incoming-status">{answering ? '接続中…' : 'フレンドからの着信'}</span></div>
+    <div className="lime-incoming-actions">
+      <button type="button" className="decline" disabled={answering} aria-label="着信を拒否" onClick={onDecline}><Phone fill="currentColor"/><span>拒否</span></button>
+      <button type="button" className="answer" disabled={answering} aria-label="着信に応答" onClick={async () => {
+        setAnswering(true);
+        try { if (await onAnswer()) onDecline(); }
+        finally { setAnswering(false); }
+      }}><Phone fill="currentColor"/><span>応答</span></button>
+    </div>
+  </section>, document.body);
+}
+
+// useIncomingFriendCalls
+const INCOMING_CALL_TIMEOUT = 45000;
+function incomingCallDelay(first: boolean, random = Math.random): number {
+  const [minimum, maximum] = first ? [3, 8] : [8, 20];
+  return Math.round((minimum + random() * (maximum - minimum)) * 60000);
+}
+
+/** Foreground, one-shot scheduling; no server polling or background job. */
+function useIncomingFriendCalls<T>({ account, busy, prepare }: {
+  account: string | null;
+  busy: () => boolean;
+  prepare: (signal: AbortSignal) => Promise<T | null>;
+}) {
+  const [incoming, setIncoming] = useState<T | null>(null);
+  const latest = useRef({ busy, prepare }); latest.current = { busy, prepare };
+  const dismiss = () => setIncoming(null);
+  useEffect(() => {
+    setIncoming(null);
+    if (!account) return;
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let request: AbortController | null = null;
+    const key = `limeai:${account}:next-incoming-call`;
+    const read = () => { try { return Number(localStorage.getItem(key)) || 0; } catch { return 0; } };
+    const write = (value: number) => { try { localStorage.setItem(key, String(value)); } catch { /* no persistence */ } };
+    const reschedule = (first = false) => {
+      const next = Date.now() + incomingCallDelay(first);
+      write(next); return next;
+    };
+    const schedule = () => {
+      clearTimeout(timer);
+      if (disposed || document.visibilityState === 'hidden') return;
+      let due = read();
+      // No catch-up burst when the app returns after a long absence.
+      if (!due || due < Date.now() - 60000 || due > Date.now() + incomingCallDelay(false, () => 1)) due = reschedule(true);
+      timer = setTimeout(attempt, Math.max(1000, due - Date.now()));
+    };
+    const attempt = async () => {
+      if (disposed || document.visibilityState === 'hidden') return;
+      if (latest.current.busy()) { reschedule(true); schedule(); return; }
+      const claim = async () => {
+        if (disposed || read() > Date.now() + 1000) return;
+        reschedule();
+        request = new AbortController();
+        const timeout = setTimeout(() => request?.abort(), 25000);
+        try {
+          const offer = await latest.current.prepare(request.signal);
+          if (!disposed && !request.signal.aborted && document.visibilityState !== 'hidden' && !latest.current.busy()) setIncoming(offer);
+        } catch { /* Failed preparations never create an empty call. */ }
+        finally { clearTimeout(timeout); request = null; }
+      };
+      try {
+        if (navigator.locks) await navigator.locks.request(key, { ifAvailable: true }, lock => lock ? claim() : undefined);
+        else await claim();
+      } catch { reschedule(); }
+      finally { schedule(); }
+    };
+    const visibility = () => {
+      if (document.visibilityState === 'hidden') { clearTimeout(timer); request?.abort(); setIncoming(null); }
+      else schedule();
+    };
+    const storage = (event: StorageEvent) => { if (event.key === key) schedule(); };
+    window.addEventListener('pointerdown', unlockIncomingRingtone);
+    window.addEventListener('touchend', unlockIncomingRingtone);
+    window.addEventListener('click', unlockIncomingRingtone);
+    window.addEventListener('keydown', unlockIncomingRingtone);
+    window.addEventListener('storage', storage);
+    document.addEventListener('visibilitychange', visibility);
+    schedule();
+    return () => {
+      disposed = true; clearTimeout(timer); request?.abort();
+      window.removeEventListener('pointerdown', unlockIncomingRingtone);
+      window.removeEventListener('touchend', unlockIncomingRingtone);
+      window.removeEventListener('click', unlockIncomingRingtone);
+      window.removeEventListener('keydown', unlockIncomingRingtone);
+      window.removeEventListener('storage', storage);
+      document.removeEventListener('visibilitychange', visibility);
+    };
+  }, [account]);
+  useEffect(() => {
+    if (!incoming) return;
+    const timer = setTimeout(() => setIncoming(null), INCOMING_CALL_TIMEOUT);
+    return () => clearTimeout(timer);
+  }, [incoming]);
+  return { incoming, dismiss };
+}
+
+export { CallSessionProvider };
+export { useCallSession };
+export { IncomingFriendCall };
+export { incomingCallDelay };
+export { useIncomingFriendCalls };
+export { INCOMING_CALL_TIMEOUT };

@@ -1,6 +1,8 @@
+import { AVATAR_DECORATION_KINDS, type AvatarDecoration, type AvatarDecorationKind } from "@/types/index";
+import { supabase } from "@/lib/supabase";
 import * as React from "react";
 import { memo, forwardRef, useEffect, useState, type ImgHTMLAttributes, useRef, type MutableRefObject, type ReactNode, cloneElement, type ReactElement } from "react";
-import { isDeferredPrivateMedia, resolvePrivateMediaUrl } from "@/lib/privateMediaFetch";
+import { isDeferredPrivateMedia, resolvePrivateMediaUrl, retainPrivateMediaUrl } from "@/lib/privateMediaFetch";
 import * as AvatarPrimitive from "@radix-ui/react-avatar";
 import { cn } from "@/lib/utils";
 import { SpaceIcon, useSpaces } from "@/components/spaces/SpaceProvider";
@@ -10,6 +12,118 @@ import { PostVideoThumbnail } from "@/components/video/PostVideoPlayer";
 import { fitLegacyImageFrame, mediaThumbnailUrl } from "@/lib/mediaThumbnail";
 import { ChevronRight } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/button";
+import { observeElementVisibility, useIsPWA } from "@/hooks/useViewportWidth";
+
+// Batch public profile decoration reads across all visible avatars. No polling.
+const santaEntries = new Map<string, { value: AvatarDecoration | null; time: number; owner?: string; listeners: Set<() => void> }>();
+const santaQueue = new Set<string>();
+let santaTimer: ReturnType<typeof setTimeout> | undefined;
+let santaSchemaUnavailable = false;
+const santaUuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+function santaEntry(key: string) {
+  let entry = santaEntries.get(key);
+  if (!entry) {
+    if (santaEntries.size >= 320) {
+      const unused = [...santaEntries].find(([, item]) => !item.listeners.size);
+      if (unused) santaEntries.delete(unused[0]);
+    }
+    entry = { value: null, time: 0, listeners: new Set() }; santaEntries.set(key, entry);
+  }
+  return entry;
+}
+async function loadSantaAvatars() {
+  santaTimer = undefined;
+  const pending = [...santaQueue]; santaQueue.clear();
+  for (const kind of ['id:', 'src:']) {
+    const keys = pending.filter(key => key.startsWith(kind));
+    for (let offset = 0; offset < keys.length; offset += 80) {
+      const batch = keys.slice(offset, offset + 80);
+      const versions = new Map(batch.map(key => [key, santaEntries.get(key)?.time]));
+      try {
+        const { data, error } = await supabase.from('profiles').select('id, avatar_url, avatar_decoration, avatar_decoration_options')
+          .in(kind === 'id:' ? 'id' : 'avatar_url', batch.map(key => key.slice(kind.length)));
+        if (error) {
+          if (error.code === '42703' || error.code === 'PGRST204') {
+            santaSchemaUnavailable = true;
+            santaQueue.clear();
+            return;
+          }
+          continue;
+        }
+        for (const key of batch) {
+          const entry = santaEntries.get(key); if (!entry || entry.time !== versions.get(key)) continue;
+          const rows = (data || []).filter(row => kind === 'id:' ? row.id === key.slice(3) : row.avatar_url === key.slice(4));
+          entry.value = rows.length === 1 ? parseAvatarDecoration(rows[0].avatar_decoration, rows[0].avatar_decoration_options) : null;
+          entry.owner = rows.length === 1 ? rows[0].id : undefined;
+          entry.time = Date.now(); entry.listeners.forEach(listener => listener());
+        }
+      } catch { /* A later focus or mount can retry a failed read. */ }
+    }
+  }
+}
+function queueSantaAvatar(key: string) {
+  if (santaSchemaUnavailable) return;
+  santaQueue.add(key);
+  santaTimer ??= setTimeout(() => { void loadSantaAvatars(); }, 15);
+}
+export function parseAvatarDecoration(type: unknown, options?: any): AvatarDecoration | null {
+  if (!AVATAR_DECORATION_KINDS.includes(type as AvatarDecorationKind)) return null;
+  const bound = (value: unknown, max: number) => typeof value === 'number' && Number.isFinite(value) ? Math.max(-max, Math.min(max, value)) : 0;
+  return { type: type as AvatarDecorationKind, angle: bound(options?.angle, 180), x: bound(options?.x, 100), y: bound(options?.y, 100), flip: options?.flip === true };
+}
+export function setAvatarDecorationSnapshot(userId: string, decoration: AvatarDecoration | null) {
+  santaSchemaUnavailable = false;
+  santaEntry(`id:${userId}`);
+  for (const [key, entry] of santaEntries) if (key === `id:${userId}` || entry.owner === userId) {
+    santaQueue.delete(key);
+    entry.value = decoration; entry.time = Date.now(); entry.listeners.forEach(listener => listener());
+  }
+}
+export function setAvatarSantaSnapshot(userId: string, _source: string, enabled: boolean) {
+  setAvatarDecorationSnapshot(userId, enabled ? parseAvatarDecoration('santa') : null);
+}
+export function useAvatarDecoration(userId: string, source: string) {
+  const key = userId ? santaUuid.test(userId) ? `id:${userId}` : '' : /^https?:\/\//.test(source) ? `src:${source}` : '';
+  const subscribe = React.useCallback((listener: () => void) => {
+    if (!key) return () => {};
+    const entry = santaEntry(key); entry.listeners.add(listener);
+    if (Date.now() - entry.time > 60000) queueSantaAvatar(key);
+    return () => { entry.listeners.delete(listener); };
+  }, [key]);
+  const snapshot = React.useCallback(() => key ? santaEntry(key).value : null, [key]);
+  return React.useSyncExternalStore(subscribe, snapshot, () => null);
+}
+export function useAvatarSanta(userId: string, source: string) {
+  return useAvatarDecoration(userId, source)?.type === 'santa';
+}
+export const AVATAR_DECORATIONS: { type: AvatarDecorationKind; label: string; symbol: string; file: string; left: number; top: number; width: number; height: number }[] = [
+  {type:'santa',label:'サンタ',symbol:'🎅',file:'santa-hat.svg',left:-34,top:-25,width:125,height:125},
+  {type:'sunglasses',label:'サングラス',symbol:'😎',file:'decoration-sunglasses.svg',left:-2,top:34,width:104,height:40},
+  {type:'censored',label:'口元の記号',symbol:'🤬',file:'decoration-censored.svg',left:18,top:55,width:66,height:25},
+  {type:'sleep',label:'Zzz',symbol:'💤',file:'decoration-sleep.svg',left:-16,top:-14,width:50,height:58},
+];
+export function AvatarDecorationOverlay({decoration}: {decoration: AvatarDecoration}) {
+  const item = AVATAR_DECORATIONS.find(item => item.type === decoration.type);
+  if (!item) return null;
+  return <img src={`${import.meta.env.BASE_URL}${item.file}`} data-avatar-decoration={item.type} alt="" aria-hidden="true" draggable={false}
+    className="pointer-events-none absolute z-10 max-w-none select-none object-contain"
+    style={{left:`${item.left + decoration.x}%`,top:`${item.top + decoration.y}%`,width:`${item.width}%`,height:`${item.height}%`,transform:`rotate(${decoration.angle}deg) scaleX(${decoration.flip ? -1 : 1})`}}/>;
+}
+if (typeof window !== 'undefined') {
+  const refreshSanta = () => {
+    if (document.visibilityState === 'hidden') return;
+    for (const [key, entry] of santaEntries) if (entry.listeners.size && Date.now() - entry.time > 1000) queueSantaAvatar(key);
+  };
+  window.addEventListener('focus', refreshSanta);
+  window.addEventListener('online', refreshSanta);
+  document.addEventListener('visibilitychange', refreshSanta);
+  import.meta.hot?.dispose(() => {
+    window.removeEventListener('focus', refreshSanta);
+    window.removeEventListener('online', refreshSanta);
+    document.removeEventListener('visibilitychange', refreshSanta);
+    clearTimeout(santaTimer); santaQueue.clear();
+  });
+}
 
 // avatar
 // avatar
@@ -28,21 +142,24 @@ function twitterAvatarUrl(value: string | undefined): string | undefined {
 // avatar
 const Avatar = React.forwardRef<
   React.ElementRef<typeof AvatarPrimitive.Root>,
-  React.ComponentPropsWithoutRef<typeof AvatarPrimitive.Root> & { userId?: string }
->(({ className, userId, children, ...props }, ref) => {
+  React.ComponentPropsWithoutRef<typeof AvatarPrimitive.Root> & { userId?: string; decoration?: AvatarDecoration | null }
+>(({ className, userId, decoration: previewDecoration, children, ...props }, ref) => {
+  const image = React.Children.toArray(children).find(child => React.isValidElement<{src?: string}>(child) && typeof child.props.src === 'string') as React.ReactElement<{src?: string}> | undefined;
+  const storedDecoration = useAvatarDecoration(previewDecoration === undefined ? userId ?? '' : '', previewDecoration === undefined ? image?.props.src ?? '' : '');
+  const decoration = previewDecoration === undefined ? storedDecoration : previewDecoration;
   const { spaces, open } = useSpaces();
   const live = userId ? spaces.find(space => space.host_id === userId) : undefined;
   return (
   <AvatarPrimitive.Root
     ref={ref}
-    className={cn("relative flex h-10 w-10 shrink-0 overflow-hidden rounded-full", className, live && 'lime-space-avatar')}
+    className={cn("relative flex h-10 w-10 shrink-0 overflow-hidden rounded-full", className, live && 'lime-space-avatar', decoration && 'overflow-visible')}
     {...props}
     {...(live ? {
       role: 'button', tabIndex: 0, 'aria-label': `${live.title}に参加`,
       onClick: (event: React.MouseEvent) => { event.preventDefault(); event.stopPropagation(); open(live.id); },
       onKeyDown: (event: React.KeyboardEvent) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); open(live.id); } },
     } : {})}
-  >{children}{live && <span aria-hidden="true" className="lime-space-avatar-badge"><SpaceIcon /></span>}</AvatarPrimitive.Root>
+  >{decoration ? <><span className="flex h-full w-full overflow-hidden" style={{borderRadius:'inherit'}}>{children}</span><AvatarDecorationOverlay decoration={decoration}/></> : children}{live && <span aria-hidden="true" className="lime-space-avatar-badge"><SpaceIcon /></span>}</AvatarPrimitive.Root>
 ); });
 Avatar.displayName = AvatarPrimitive.Root.displayName;
 
@@ -50,15 +167,7 @@ const AvatarImage = React.forwardRef<
   React.ElementRef<typeof AvatarPrimitive.Image>,
   React.ComponentPropsWithoutRef<typeof AvatarPrimitive.Image>
 >(({ className, ...props }, ref) => {
-  const input=props.src,deferred=!!input&&isDeferredPrivateMedia(input);
-  const [resolved,setResolved]=React.useState<{input:string;url:string|null}>();
-  React.useEffect(()=>{
-    if(!input||!deferred)return;
-    let active=true;
-    void resolvePrivateMediaUrl(input).then(url=>{if(active)setResolved({input,url});}).catch(()=>{if(active)setResolved({input,url:null});});
-    return()=>{active=false;};
-  },[input,deferred]);
-  const src=deferred?(resolved?.input===input?resolved.url??undefined:undefined):input;
+  const src=usePrivateMediaUrl(props.src);
   return <AvatarPrimitive.Image ref={ref} className={cn("aspect-square h-full w-full", className)} {...props} src={twitterAvatarUrl(src)} referrerPolicy={props.referrerPolicy??(/^https:\/\/pbs[.]twimg[.]com\//.test(src??'')?'no-referrer':undefined)} />;
 });
 AvatarImage.displayName = AvatarPrimitive.Image.displayName;
@@ -103,22 +212,32 @@ function ProviderVerificationBadge({verification,className='ml-1 h-4 w-4 inline-
 // ProfileMediaPreview
 // PrivateMediaImage
 /** Keep attachment downloads outside the post metadata request. */
-function usePrivateMediaUrl(src:string|undefined){
+function usePrivateMediaUrl(src:string|undefined,enabled=true){
  const [resolved,setResolved]=useState<{input:string;url:string|null}>();
  const deferred=!!src&&isDeferredPrivateMedia(src);
  useEffect(()=>{
-  if(!src||!deferred)return;
-  let active=true;
-  void resolvePrivateMediaUrl(src).then(url=>{if(active)setResolved({input:src,url});}).catch(()=>{if(active)setResolved({input:src,url:null});});
-  return()=>{active=false;};
- },[src,deferred]);
+  if(!src||!enabled)return;
+  if(!deferred)return retainPrivateMediaUrl(src);
+  let active=true,release=()=>{};
+  void resolvePrivateMediaUrl(src).then(url=>{if(active){if(url)release=retainPrivateMediaUrl(url);setResolved({input:src,url});}}).catch(()=>{if(active)setResolved({input:src,url:null});});
+  return()=>{active=false;release();};
+ },[src,deferred,enabled]);
  return deferred?(resolved?.input===src?resolved.url??undefined:undefined):src;
 }
 const PrivateMediaImage=forwardRef<HTMLImageElement,ImgHTMLAttributes<HTMLImageElement>>(({src,...props},ref)=>{
- const resolved=usePrivateMediaUrl(src);
+ const pwa=useIsPWA(),element=useRef<HTMLImageElement|null>(null);
+ const [near,setNear]=useState<string>();
+ const defer=pwa&&props.loading==='lazy'&&!!src&&isDeferredPrivateMedia(src);
+ const ready=!defer||near===src;
+ useEffect(()=>{
+  if(ready||!element.current)return;
+  return observeElementVisibility(element.current,visible=>{if(visible)setNear(src);},'400px 0px');
+ },[src,ready]);
+ const resolved=usePrivateMediaUrl(src,ready);
+ const attach=React.useCallback((node:HTMLImageElement|null)=>{element.current=node;if(typeof ref==='function')ref(node);else if(ref)ref.current=node;},[ref]);
  const [loaded,setLoaded]=useState<string>();
  const framed=!!(props as Record<string,unknown>)['data-lime-media-loading-frame'];
- return <img {...props} ref={ref} src={resolved} style={{...props.style,...(framed&&(!resolved||loaded!==resolved)?{opacity:0}:{} )}} onLoad={event=>{if(framed){fitLegacyImageFrame(event.currentTarget);setLoaded(resolved);}props.onLoad?.(event);}} onError={event=>{if(framed)setLoaded(undefined);props.onError?.(event);}}/>;
+ return <img {...props} ref={attach} src={resolved} style={{...props.style,...(framed&&(!resolved||loaded!==resolved)?{opacity:0}:{} )}} onLoad={event=>{if(framed){fitLegacyImageFrame(event.currentTarget);setLoaded(resolved);}props.onLoad?.(event);}} onError={event=>{if(framed)setLoaded(undefined);props.onError?.(event);}}/>;
 });
 PrivateMediaImage.displayName='PrivateMediaImage';
 
@@ -194,10 +313,32 @@ const ProfileVirtualizedListItem = memo(function ProfileVirtualizedListItem({
   children: ReactNode;
 }) {
   const { inViewRef, measureRef, inView, placeholderHeight } = useProfileRowVisibility(rowKey, heightCache);
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  const [playingKey, setPlayingKey] = useState<string | null>(null);
+  const attachRow = React.useCallback((node: HTMLDivElement | null) => { rowRef.current = node; inViewRef(node); }, [inViewRef]);
+  useEffect(() => {
+    const row = rowRef.current;
+    if (!row) return;
+    const play = (event: Event) => {
+      const detail = (event as CustomEvent<{ kind?: string; key?: string }>).detail;
+      if (detail?.kind === 'youtube' && detail.key) setPlayingKey(detail.key);
+    };
+    row.addEventListener('lime-background-media-play', play);
+    return () => row.removeEventListener('lime-background-media-play', play);
+  }, []);
+  useEffect(() => {
+    if (!playingKey) return;
+    const stop = (event: Event) => {
+      const key = (event as CustomEvent<{ key?: string }>).detail?.key;
+      setPlayingKey(current => current === key ? null : current);
+    };
+    window.addEventListener('lime-background-media-stop', stop);
+    return () => window.removeEventListener('lime-background-media-stop', stop);
+  }, [playingKey]);
 
   return (
-    <div ref={inViewRef} data-lime-profile-row={rowKey}>
-      {inView || !placeholderHeight ? (
+    <div ref={attachRow} data-lime-profile-row={rowKey}>
+      {inView || playingKey || !placeholderHeight ? (
         <div ref={measureRef}>{children}</div>
       ) : (
         <div style={{ height: placeholderHeight ? `${placeholderHeight}px` : undefined }} aria-hidden="true" />

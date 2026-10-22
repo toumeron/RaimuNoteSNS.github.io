@@ -1,8 +1,8 @@
 import { displayUsername } from "@/lib/utils";
 import { PrivateMediaImage } from "@/components/ui/avatar";
 import { ComposerIcon } from "@/components/feed/PostPoll";
-import {DraftEmojiText} from "@/components/stickers/Stickers";
-import { StickerPicker, StickerDraft } from '@/components/stickers/Stickers';
+import {DraftEmojiText} from "@/components/feed/QuotedPost";
+import { StickerPicker, StickerDraft } from "@/components/feed/QuotedPost";
 import { appendSticker, insertDraftEmoji, hasDraftEmojis, draftEmojiCharacter } from "@/lib/utils";
 import { createPortal } from 'react-dom';
 import type { PostWithAuthor } from '@/types';

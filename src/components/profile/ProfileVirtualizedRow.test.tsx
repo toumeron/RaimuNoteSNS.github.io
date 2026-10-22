@@ -23,3 +23,12 @@ it('keeps an unmeasured row mounted when the observer marks it offscreen, then r
   view.rerender(<Example />);
   expect(screen.getByText('プロフィールの投稿')).toBeInTheDocument();
 });
+it('retains a playing YouTube iframe offscreen and releases the row only after playback stops',()=>{
+ vi.spyOn(HTMLElement.prototype,'offsetHeight','get').mockReturnValue(360);
+ function Example(){const cache=useRef(new Map<string,number>());return <ProfileVirtualizedListItem rowKey="video" heightCache={cache}><iframe title="playing-video"/></ProfileVirtualizedListItem>;}
+ const view=render(<Example/>);const frame=screen.getByTitle('playing-video');
+ act(()=>frame.dispatchEvent(new CustomEvent('lime-background-media-play',{bubbles:true,detail:{key:'youtube:test',kind:'youtube',element:frame}})));
+ inView=false;view.rerender(<Example/>);expect(screen.getByTitle('playing-video')).toBe(frame);
+ act(()=>window.dispatchEvent(new CustomEvent('lime-background-media-stop',{detail:{key:'youtube:other'}})));expect(screen.getByTitle('playing-video')).toBe(frame);
+ act(()=>window.dispatchEvent(new CustomEvent('lime-background-media-stop',{detail:{key:'youtube:test'}})));expect(screen.queryByTitle('playing-video')).toBeNull();
+});

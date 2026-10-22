@@ -1,8 +1,8 @@
-import {useTimelineSourceUpdates} from './useTimelineSourceUpdates';
+import {useTimelineSourceUpdates} from "@/hooks/useFeed";
 import { useMutation, useQuery, useQueryClient, useInfiniteQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { getTopicPreferences, topicsKey, updateTopicPreferences, createTopicCursor, getTopicPage, getTrendRanking } from "@/api/topics";
-import { type TopicId } from "@/lib/topics";
+import { type TopicId } from "@/lib/recommendations";
 import { useEffect, useCallback, useMemo, useSyncExternalStore, useState } from "react";
 import { createRecommendationFeedback, dismissRecommendation } from "@/api/recommendations";
 import { recommendationIsDismissed } from "@/lib/recommendations";
@@ -10,8 +10,8 @@ import { type PostWithAuthor } from "@/types/index";
 import { getList, getLists, getListCatalog, listsKey } from "@/api/users";
 import { getListNativePosts, getHighlightedPosts } from "@/api/posts";
 import { fetchBlueskyAuthorFeed } from "@/lib/bluesky";
-import { createTimelineCursor, loadTimelinePage } from "@/lib/timelinePaging";
-import { profileHighlightsKey } from "@/api/comments";
+import { createTimelineCursor, loadTimelinePage } from "@/lib/utils";
+import { profileHighlightsKey } from "@/api/external-posts";
 import { getLatestSearchNews, getNewsStory } from "@/api/search-news";
 import { observePostElements } from "@/hooks/useViewportWidth";
 

@@ -1,6 +1,6 @@
-import { loadTwitterSearch } from "./twitterSearch.ts";
-import { loadBlueskySearch } from "./bluesky.ts";
-import { loadGeoMapPins, geoMapJobs, loadGeoMapDetail } from "./maps.ts";
+import { loadTwitterSearch } from "./metadata.ts";
+import { loadBlueskySearch } from "./load.ts";
+import { loadGeoMapPins, geoMapJobs, loadGeoMapDetail } from "./load.ts";
 import { quota, boundedBody } from '../_shared/security.ts';
 import {createClient} from 'https://esm.sh/@supabase/supabase-js@2';
 import { loadPreview, loadImage, loadMisskey } from "./load.ts";

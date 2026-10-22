@@ -1,8 +1,11 @@
 import {beforeEach,afterEach,it,expect,vi} from 'vitest';
 const mocks=vi.hoisted(()=>({invoke:vi.fn(),from:vi.fn(),viewer:vi.fn()}));
-vi.mock('@/lib/supabase',()=>({supabase:{functions:{invoke:mocks.invoke},from:mocks.from}}));
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase:{functions:{invoke:mocks.invoke},from:mocks.from}
+}));
 vi.mock('@/lib/currentUser',()=>({getCurrentUserId:mocks.viewer}));
-import { preparePoll, votePoll } from "@/api/comments";
+import { preparePoll, votePoll } from "@/api/external-posts";
 beforeEach(()=>{vi.clearAllMocks();mocks.viewer.mockResolvedValue('viewer');});afterEach(()=>vi.unstubAllGlobals());
 it('creates text-only polls without invoking any image service',async()=>{
  const draft={options:[{label:' 猫 '},{label:'犬'}],durationMinutes:1440};expect(await preparePoll(draft,'post')).toEqual({...draft,options:[{label:'猫'},{label:'犬'}]});expect(mocks.invoke).not.toHaveBeenCalled();

@@ -1,4 +1,4 @@
-vi.mock("@/api/comments", async importOriginal => ({...await importOriginal<typeof import("@/api/comments")>(), getCommentsByPost: async () => { db.reads(); return db.comments.map(c => ({ ...c })); }, createComment: vi.fn()}));
+vi.mock("@/api/external-posts", async importOriginal => ({...await importOriginal<typeof import("@/api/external-posts")>(), getCommentsByPost: async () => { db.reads(); return db.comments.map(c => ({ ...c })); }, createComment: vi.fn()}));
 
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -13,7 +13,9 @@ const db = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/currentUser', () => ({ getCurrentUserId: async () => 'viewer' }));
-vi.mock('@/lib/supabase', () => ({ supabase: {
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase: {
   from: (table: string) => {
     const builder = {
       select: () => builder, in: () => builder,
@@ -26,7 +28,8 @@ vi.mock('@/lib/supabase', () => ({ supabase: {
     return channel;
   },
   removeChannel: db.removed,
-} }));
+}
+}));
 import { useComments } from "@/hooks/useFeed";
 const comment = (id: string, parentCommentId: string | null) => ({ id, postId: 'original', parentCommentId, content: id, userId: 'author', createdAt: '', imageUrls: ['https://example.com/image.png'], author: { id: 'author', username: 'author' } } as CommentWithAuthor);
 beforeEach(() => {

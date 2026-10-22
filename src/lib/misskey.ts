@@ -1,10 +1,10 @@
-import { isAccountReadOnly } from '@/lib/accountSuspension';
+import { isAccountReadOnly } from "@/lib/supabase";
 import { extractPostMapLocation } from "@/lib/mapLocation";
 import { cloudExternalHandles, saveExternalProviderHandles } from './externalAccounts';
 import type { BlueskyMappedPost, BlueskyProfile } from './bluesky';
 import {supabase} from './supabase';
 import {externalRead, accountSearchScore} from './utils';
-import {normalizeAccountText} from './accountSearchRanking';
+import {normalizeAccountText} from "@/lib/utils";
 
 // All requests, credentials and IDs are scoped to the selected server.
 export const MISSKEY_ORIGIN = 'https://misskey.io';

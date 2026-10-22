@@ -1,6 +1,5 @@
-import {useTimelineSourceUpdates} from './useTimelineSourceUpdates';
 import { completeSavedPosts } from "@/api/external-posts";
-import { useMutation, useQuery, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useInfiniteQuery, useQueryClient, type InfiniteData, type QueryKey } from "@tanstack/react-query";
 import { createPost, getFeed, getFollowingFeed, getPostById, getPostsByUser, toggleLike, toggleRepost, getProfilePosts } from "@/api/posts";
 import { supabase } from "@/lib/supabase";
 import { getCurrentUserId } from "@/lib/currentUser";
@@ -10,11 +9,10 @@ import { useEffect, useState } from "react";
 import { initialiseExternalAccounts, setExternalAccountOwner, completeExternalPostAuthors } from "@/lib/externalAccounts";
 import { useAuth } from "@/hooks/useAuth";
 import { fetchBlueskyAuthorFeed, getConfiguredExternalHandles } from "@/lib/bluesky";
-import { createTimelineCursor, loadTimelinePage } from "@/lib/timelinePaging";
-import { createComment, getCommentsByPost, type CommentInput } from "@/api/comments";
-import { getUserByUsername, updateProfile, getFollowStats, toggleFollow } from "@/api/users";
+import { createTimelineCursor, loadTimelinePage, searchTermSuggestions, watchTimelineSources, collectReadyTimelineSources, type TimelinePage } from "@/lib/utils";
+import { createComment, getCommentsByPost, type CommentInput } from "@/api/external-posts";
+import { getUserByUsername, updateProfile, getFollowStats, toggleFollow, getSearchFollowingUsers } from "@/api/users";
 
-// useFeed
 // useFeed
 /**
  * クエリキー定義
@@ -1139,7 +1137,7 @@ const useUpdateProfile = (userId: string) => {
       qc.invalidateQueries({ queryKey: ['auth-user'] });
       toast.success('プロフィールを更新しました');
     },
-    onError: () => toast.error('プロフィールの更新に失敗しました'),
+    onError: (error) => toast.error(error instanceof Error ? error.message : 'プロフィールの更新に失敗しました'),
   });
 };
 
@@ -1171,3 +1169,43 @@ export { useUserReactionsInfinite };
 export { useFollowStats };
 export { useToggleFollow };
 export { useUpdateProfile };
+
+
+// useSearchFollowing
+export function useSearchFollowing(enabled=true){
+ const {user}=useAuth();
+ return useQuery({queryKey:['follow-list','search-priority',user?.id],queryFn:({signal})=>getSearchFollowingUsers(user!.id,signal),enabled:enabled&&!!user?.id,staleTime:60_000,refetchOnWindowFocus:false});
+}
+
+
+// useSearchTermSuggestions
+export function useSearchTermSuggestions(query:string,enabled=true){
+ const [terms,setTerms]=useState<string[]>([]);
+ useEffect(()=>{
+  setTerms([]);if(!enabled||!query.trim())return;
+  const controller=new AbortController();
+  const timer=setTimeout(()=>{void searchTermSuggestions(query,controller.signal).then(values=>{if(!controller.signal.aborted)setTerms(values);}).catch(()=>{});},250);
+  return()=>{controller.abort();clearTimeout(timer);};
+ },[query,enabled]);
+ return terms;
+}
+
+
+// useTimelineSourceUpdates
+/** Publish every delayed account as it finishes, even if the user has not scrolled again. */
+export function useTimelineSourceUpdates(queryKey:QueryKey,data:InfiniteData<TimelinePage>|undefined,fetching:boolean,enabled=true){
+ const client=useQueryClient(),key=JSON.stringify(queryKey);
+ useEffect(()=>{
+  const cursor=data?.pages.at(-1)?.next;if(!enabled||fetching||!cursor)return;
+  return watchTimelineSources(cursor,()=>{
+   if(client.getQueryState(queryKey)?.fetchStatus==='fetching')return;
+   client.setQueryData<InfiniteData<TimelinePage>>(queryKey,current=>{
+    const last=current?.pages.at(-1);if(!current||last?.next!==cursor)return current;
+    const ready=collectReadyTimelineSources(cursor);if(!ready)return current;
+    const seen=new Set(current.pages.flatMap(page=>page.posts.map(post=>post.id)));
+    const posts=ready.posts.filter(post=>{if(seen.has(post.id))return false;seen.add(post.id);return true;});
+    return {...current,pages:[...current.pages.slice(0,-1),{posts:[...last.posts,...posts],next:ready.next}]};
+   });
+  });
+ },[client,key,data,fetching,enabled]);
+}

@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Plus, X, GripHorizontal, ArrowLeft, ArrowRight, Hash, ChevronDown, TrendingUp, Landmark, Volleyball, BriefcaseBusiness, Atom, Cpu, Brain, Palette, Pencil, Film, Gamepad2, Bitcoin, Plane, Tv, Utensils, GraduationCap, Cat, Music, Paintbrush, Shirt, Smile, HeartPulse } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/button";
-import { TOPICS, isTopicId, type TopicId } from "@/lib/topics";
+import { TOPICS, isTopicId, type TopicId } from "@/lib/recommendations";
 
 // timelineTabs
 type FeedTabValue = 'all'|'following'|'trending'|`topic:${TopicId}`|`list:${string}`;

@@ -1,6 +1,9 @@
 import {beforeEach,expect,it,vi} from 'vitest';
 const state=vi.hoisted(()=>({invoke:vi.fn()}));
-vi.mock('./supabase',()=>({supabase:{functions:{invoke:state.invoke}}}));
+vi.mock("./supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("./supabase")>(),
+  supabase:{functions:{invoke:state.invoke}}
+}));
 import { uploadProfileMedia } from "@/lib/mediaThumbnail";
 beforeEach(()=>state.invoke.mockReset());
 it('uploads settings images through an authenticated server function',async()=>{

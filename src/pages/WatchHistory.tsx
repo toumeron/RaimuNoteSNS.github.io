@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/button";
 import {toast} from 'sonner';
 import {useInView} from 'react-intersection-observer';
 import {externalRead} from '@/lib/utils';
-import {ANIME_HISTORY_CHANGED,animeHistoryKey,animeArtworkUrl,groupAnimeHistory,fetchAnimeArtwork,fetchAnimeYouTubeId,animeYouTubeUrl,getAnimeHistory,changeAnimeHistory,searchAnimeWorks,getAnimeEpisodes,saveAnimeViewing,resolveAnimeImport,saveAnimeImport,scanAnimePosts,parseAnimeImport,importWorkTitle,type AnimeHistoryState,type AnimeWork,type AnimeImportItem,type AnimeImportResolution} from '@/api/watchHistory';
+import {ANIME_HISTORY_CHANGED,animeHistoryKey,animeArtworkUrl,groupAnimeHistory,fetchAnimeArtwork,fetchAnimeYouTubeId,animeYouTubeUrl,getAnimeHistory,changeAnimeHistory,searchAnimeWorks,getAnimeEpisodes,saveAnimeViewing,resolveAnimeImport,saveAnimeImport,scanAnimePosts,parseAnimeImport,importWorkTitle,type AnimeHistoryState,type AnimeWork,type AnimeImportItem,type AnimeImportResolution} from "@/api/topics";
 
 const importKey=(item:AnimeImportItem)=>JSON.stringify([item.source,item.sourceUrl,item.title,item.episodeText]);
 const dateLabel=(value:string|null)=>value?new Intl.DateTimeFormat('ja-JP',{dateStyle:'medium',timeStyle:'short'}).format(new Date(value)):'視聴日時不明';

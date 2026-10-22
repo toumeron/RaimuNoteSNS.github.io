@@ -2,7 +2,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 const state=vi.hoisted(()=>({tokens:{access_token:'access',refresh_token:'refresh'} as {access_token:string;refresh_token:string}|null,create:vi.fn(),save:vi.fn(),session:vi.fn()}));
 vi.mock('@supabase/supabase-js',()=>({createClient:state.create}));
 vi.mock('./savedAccounts',()=>({getSavedAccountTokens:()=>state.tokens,saveAccountSession:state.save}));
-import { getAccountReadClient } from './accountReadClient';
+import { getAccountReadClient } from "@/lib/supabase";
 beforeEach(()=>{state.tokens={access_token:'access',refresh_token:'refresh'};state.save.mockReset();state.session.mockReset().mockResolvedValue({data:{session:{user:{id:'other'},refresh_token:'refresh'}},error:null});state.create.mockReset().mockReturnValue({auth:{setSession:state.session}});});
 it('isolates concurrent reads and does not replace the application session or persist its own session',async()=>{
  const [a,b]=await Promise.all([getAccountReadClient('other'),getAccountReadClient('other')]);

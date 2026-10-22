@@ -5,7 +5,7 @@ vi.mock('./OverlayPostComposer',async()=>{
  fixture.loaded++;await new Promise<void>(resolve=>{fixture.finish=resolve;});
  return {PostOverlay:({onClose,initialQuotedPost}:any)=><section data-testid="loaded-composer"><span>{initialQuotedPost?.content}</span><button onClick={onClose}>投稿画面を閉じる</button></section>,PostComposer:({initialContent}:any)=><span>{initialContent}</span>};
 });
-import {PostOverlay,PostComposer} from './DeferredPostComposer';
+import {PostOverlay,PostComposer} from "@/components/layout/AppLayout";
 afterEach(cleanup);
 it('does not load a closed composer, allows closing while loading, and preserves quote props on opening',async()=>{
  const close=vi.fn(),quote={content:'引用する本文'} as any;

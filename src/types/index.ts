@@ -1,3 +1,6 @@
+export const AVATAR_DECORATION_KINDS = ['santa', 'sunglasses', 'censored', 'sleep'] as const;
+export type AvatarDecorationKind = typeof AVATAR_DECORATION_KINDS[number];
+export type AvatarDecoration = { type: AvatarDecorationKind; angle: number; x: number; y: number; flip: boolean };
 // src/types/index.ts
 
 export type User = {
@@ -14,6 +17,8 @@ export type User = {
   isPrivate?: boolean;
   providerVerification?: { provider: 'twitter'; type: 'individual' | 'organization' | 'government' };
   isOfficial?: boolean;
+  santaHat?: boolean;
+  avatarDecoration?: AvatarDecoration | null;
   emojiEffect?: string; // 絵文字の雨機能用の追加
 
   // --- Bot代理投稿機能用の追加 ---

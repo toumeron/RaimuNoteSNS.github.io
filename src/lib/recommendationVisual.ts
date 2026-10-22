@@ -1,7 +1,8 @@
 import prototypes from './recommendationVisualClassifierData.json';
 import type {PostWithAuthor} from '@/types';
-import {isTopicId,type TopicId} from './topics';
+import {isTopicId,type TopicId} from "@/lib/recommendations";
 import {privateMediaReference} from './privateMediaFetch';
+import {isInstalledPwa} from './utils';
 export type RecommendationVisual={version:1;classifierVersion?:3;kind:string;topics:TopicId[];confidence:number;similarity:number;vector:number[]};
 export function visualSimilarity(a:number[],b:number[]):number {
  if(a.length!==512||b.length!==512||a.some(value=>!Number.isFinite(value))||b.some(value=>!Number.isFinite(value)))return 0;
@@ -29,20 +30,51 @@ export function createVisualSimilarityComparator(){
 const cache=new Map<string,RecommendationVisual>();
 const cacheKey='lime_recommendation_visual_cache_v1';
 let restored=false;
+const unclassified=new Set<string>();
 export function recommendationImageIdentity(url:string):string{
  url=privateMediaReference(url);
  try{const parsed=new URL(url);if(parsed.hostname==='cdn.bsky.app')return (parsed.pathname.split('/').at(-1)??url).split('@')[0];return parsed.origin+parsed.pathname;}catch{return url;}
 }
-export function readVisualCache(url:string):RecommendationVisual|undefined{
+function restoreVisualCache(){
  if(!restored){restored=true;try{
   const rows=JSON.parse(localStorage.getItem(cacheKey)??'[]');
-  for(const [key,result] of rows)if(typeof key==='string'&&result?.version===1&&typeof result.kind==='string'&&Array.isArray(result.topics)&&result.topics.every(isTopicId)&&Number.isFinite(result.confidence)&&Array.isArray(result.vector)&&result.vector.length===512&&result.vector.every(Number.isFinite))cache.set(key,classifyRecommendationVisual(result.vector));
+  if(!Array.isArray(rows))return;
+  for(const row of rows.slice(-150)){
+   if(!Array.isArray(row))continue;
+   const [key,result]=row;
+   if(typeof key==='string'&&result?.version===1&&typeof result.kind==='string'&&Array.isArray(result.topics)&&result.topics.every(isTopicId)&&Number.isFinite(result.confidence)&&Array.isArray(result.vector)&&result.vector.length===512&&result.vector.every(Number.isFinite)){cache.set(key,result);unclassified.add(key);}
+  }
  }catch{/* Public-media cache is optional. */}}
- return cache.get(recommendationImageIdentity(url));
+}
+export function readVisualCache(url:string):RecommendationVisual|undefined{
+ restoreVisualCache();
+ const key=recommendationImageIdentity(url),value=cache.get(key);
+ if(value&&unclassified.delete(key)){const classified=classifyRecommendationVisual(value.vector);cache.set(key,classified);return classified;}
+ return value;
+}
+let dirty=false,saveTimer:ReturnType<typeof setTimeout>|undefined,idleSave:number|undefined;
+const flushHidden=()=>{if(document.hidden)flushVisualCache();};
+export function flushVisualCache(){
+ clearTimeout(saveTimer);saveTimer=undefined;
+ if(typeof window!=='undefined'){
+  if(idleSave!==undefined){window.cancelIdleCallback?.(idleSave);idleSave=undefined;}
+  window.removeEventListener('pagehide',flushVisualCache);document.removeEventListener('visibilitychange',flushHidden);
+ }
+ if(!dirty)return;dirty=false;
+ try{localStorage.setItem(cacheKey,JSON.stringify([...cache]));}catch{/* Public-media cache is optional. */}
+}
+function saveVisualCache(){
+ dirty=true;
+ if(!isInstalledPwa()||document.hidden){flushVisualCache();return;}
+ if(saveTimer!==undefined||idleSave!==undefined)return;
+ window.addEventListener('pagehide',flushVisualCache);document.addEventListener('visibilitychange',flushHidden);
+ saveTimer=setTimeout(()=>{saveTimer=undefined;if(typeof window.requestIdleCallback==='function')idleSave=window.requestIdleCallback(()=>{idleSave=undefined;flushVisualCache();},{timeout:1000});else flushVisualCache();},250);
 }
 export function writeVisualCache(url:string,result:RecommendationVisual):void{
- result={...result,classifierVersion:3};cache.set(recommendationImageIdentity(url),result);if(cache.size>150)cache.delete(cache.keys().next().value!);
- try{localStorage.setItem(cacheKey,JSON.stringify([...cache]));}catch{/* No private preferences depend on this cache. */}
+ restoreVisualCache();
+ const key=recommendationImageIdentity(url);result={...result,classifierVersion:3};cache.set(key,result);unclassified.delete(key);
+ if(cache.size>150){const oldest=cache.keys().next().value!;cache.delete(oldest);unclassified.delete(oldest);}
+ saveVisualCache();
 }
 /** Synchronous, small and model-free: never delay the first feed for inference. */
 export function applyCachedRecommendationVisuals(posts:PostWithAuthor[],upgrade=false):PostWithAuthor[]{

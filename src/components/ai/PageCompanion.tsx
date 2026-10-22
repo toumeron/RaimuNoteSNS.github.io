@@ -14,12 +14,12 @@ import { useQuery } from "@tanstack/react-query";
 import { getPostById } from "@/api/posts";
 import { useAuth } from "@/hooks/useAuth";
 import { findChatPostLink } from "@/lib/aiFriends";
-import { openMediaViewer } from "@/components/media/openMediaViewer";
+import { openMediaViewer } from "@/lib/mediaThumbnail";
 import { DropdownMenuContent } from "@/components/ui/button";
 import { type GemmaState } from "@/lib/localGemma";
 
 // PageCompanion
-const Stage=lazy(()=>import("@/components/ai/CompanionStage"));
+const Stage=lazy(()=>import("@/components/ai/AvatarStage"));
 class StageBoundary extends Component<{children:ReactNode;onError:()=>void},{failed:boolean}>{
  state={failed:false};static getDerivedStateFromError(){return{failed:true};}componentDidCatch(){this.props.onError();}render(){return this.state.failed?null:this.props.children;}
 }

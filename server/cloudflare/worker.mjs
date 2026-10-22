@@ -1,8 +1,8 @@
 import {DurableObject} from 'cloudflare:workers';
 import {createClient} from '@supabase/supabase-js';
 import {startExternalNotificationListener} from '../external-notification-listener.mjs';
-import {connectStream} from '../external-notification-events.mjs';
-import {cloudflareSocketClass} from './socket.mjs';
+import {connectStream} from "../external-notification-listener.mjs";
+import {cloudflareSocketClass} from "../external-notification-listener.mjs";
 export class ExternalNotificationListener extends DurableObject {
  constructor(ctx,env){super(ctx,env);this.ctx=ctx;this.env=env;this.started=null;this.stopListener=null;}
  async fetch(request){

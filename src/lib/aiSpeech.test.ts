@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-vi.mock('./supabase', () => ({ supabase: { auth: { getSession: vi.fn() } } }));
+vi.mock("./supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("./supabase")>(),
+  supabase: { auth: { getSession: vi.fn() } }
+}));
 import { JAPANESE_MALE_VOICE_ID } from "./../../supabase/functions/_shared/chatContext.ts";
 import { supabase } from './supabase';
 import { Speaker, splitForSpeech, synthesizeSpeech, CALM_FEMALE_VOICE_ID } from "@/lib/callRecorder";

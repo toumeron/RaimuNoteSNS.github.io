@@ -8,7 +8,10 @@ import {beforeEach,expect,it,vi} from 'vitest';
 const mocks=vi.hoisted(()=>({rpc:vi.fn(),from:vi.fn(),upload:vi.fn()}));
 vi.mock('@/lib/currentUser',()=>({getCurrentUserId:async()=> 'viewer'}));
 
-vi.mock('@/lib/supabase',()=>({supabase:{rpc:mocks.rpc,from:mocks.from}}));
+vi.mock("@/lib/supabase", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/supabase")>(),
+  supabase:{rpc:mocks.rpc,from:mocks.from}
+}));
 import {createPost} from './posts';
 beforeEach(()=>{vi.clearAllMocks();mocks.rpc.mockResolvedValue({data:null,error:null});mocks.upload.mockImplementation(async(_images,owner,id)=>[`storage://post-media/${owner}/${id}/photo.png`]);mocks.from.mockReturnValue({select:()=>({eq:()=>({single:async()=>({data:{is_private:false},error:null})})})});});
 it('stores scheduled content privately instead of inserting a public post, and keeps its image private until publication',async()=>{

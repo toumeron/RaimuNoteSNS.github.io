@@ -6,7 +6,7 @@ const mocks=vi.hoisted(()=>({twitter:vi.fn(),native:vi.fn(),blue:vi.fn(),misskey
 vi.mock('./posts',()=>({searchPosts:mocks.native}));
 vi.mock('@/lib/bluesky',()=>({fetchBlueskyTopicPosts:mocks.blue,discoverBlueskyTopicFeeds:mocks.discover,fetchBlueskyTopicFeed:mocks.feed}));
 vi.mock('@/lib/misskey',()=>({fetchMisskeyTopicPosts:mocks.misskey}));
-vi.mock('@/lib/timelinePaging',async importOriginal=>({...await importOriginal<typeof import('@/lib/timelinePaging')>(),normalizeTimelineBlueskyPost:(post:PostWithAuthor)=>post}));
+vi.mock("@/lib/utils",async importOriginal=>({...await importOriginal<typeof import("@/lib/utils")>(),normalizeTimelineBlueskyPost:(post:PostWithAuthor)=>post}));
 
 vi.mock('@/lib/recommendationVisual',()=>({applyCachedRecommendationVisuals:(posts:PostWithAuthor[])=>posts}));
 import { createTopicCursor, getTopicPage } from "@/api/topics";
