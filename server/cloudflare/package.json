@@ -10,7 +10,7 @@
     "deploy": "node deploy-free.mjs"
   },
   "dependencies": {
-    "@supabase/supabase-js": "2.104.1"
+    "@supabase/supabase-js": "2.118.0"
   },
   "devDependencies": {
     "wrangler": "4.149.0"
