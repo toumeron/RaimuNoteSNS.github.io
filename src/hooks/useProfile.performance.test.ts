@@ -21,6 +21,7 @@ vi.mock("@/lib/supabase", async importOriginal => ({
     const builder = {
       select: (columns: string) => { call.select = columns; return builder; },
       eq: (column: string, value: unknown) => { call.filters[column] = value; return builder; },
+      is: (column: string, value: unknown) => { call.filters[column] = value; return builder; },
       in: (column: string, value: unknown[]) => { call.filters[column] = value; return builder; },
       or: () => builder, order: () => builder, range: () => builder,
       maybeSingle: () => { call.filters.single = true; return builder; },

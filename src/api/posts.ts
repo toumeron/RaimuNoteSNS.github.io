@@ -48,6 +48,7 @@ function rowToUser(profile: any): User {
 function rowToPost(row: any, likedIds: Set<string>, repostedIds: Set<string>): PostWithAuthor {
   return {
     ...row,
+    communityId: row.community_id ?? undefined,
     id:            row.id,
     mapLocation: row.map_latitude != null && row.map_longitude != null ? {latitude: row.map_latitude, longitude: row.map_longitude} : null,
     userId:        row.user_id,
@@ -65,7 +66,7 @@ function rowToPost(row: any, likedIds: Set<string>, repostedIds: Set<string>): P
     isQuote:       row.is_quote,
     visibility:    row.visibility,
     isBot:         row.is_bot ?? false, // AIフラグをマッピングに追加
-    parentPost: row.parent_post ? rowToPost(row.parent_post, likedIds, repostedIds) : row.parent_reply ? replyToPost(row.parent_reply) : row.quoted_external_post ?? null,
+    parentPost: row.parent_post ? (!row.parent_post.community_id||row.parent_post.community_id===row.community_id?rowToPost(row.parent_post,likedIds,repostedIds):null) : row.parent_reply ? (!row.parent_reply.post?.community_id||row.parent_reply.post.community_id===row.community_id?replyToPost(row.parent_reply):null) : row.quoted_external_post ?? null,
   };
 }
 
@@ -154,7 +155,7 @@ export async function getFeed(page: number = 0, limit: number = 10, before?: Fee
 
   const postsRes = await readWithSignal(supabase
       .from('posts')
-      .select(postSelectQuery()).or('parent_id.is.null,is_quote.eq.true')
+      .select(postSelectQuery()).is('community_id',null).or('parent_id.is.null,is_quote.eq.true')
       .or(before
         ? `and(or(${conditions.join(',')}),or(created_at.lt.${before.createdAt},and(created_at.eq.${before.createdAt},id.lt.${before.id})))`
         : conditions.join(','))
@@ -172,7 +173,7 @@ export async function getVideoFeed(before?:FeedCursor,signal?:AbortSignal,scope?
  const userId=await getCurrentUserId();
  if(scope&&!scope.authorIds.length)return {posts:[],nextCursor:null};
  const limit=scope?.limit??8;
- let query=supabase.from('posts').select(postSelectQuery()).not('video','is',null)
+ let query=supabase.from('posts').select(postSelectQuery()).is('community_id',null).not('video','is',null)
   .order('created_at',{ascending:false}).order('id',{ascending:false}).limit(limit);
  if(scope)query=query.in('user_id',scope.authorIds);
  if(before)query=query.or(`created_at.lt.${before.createdAt},and(created_at.eq.${before.createdAt},id.lt.${before.id})`);
@@ -224,7 +225,7 @@ export async function getFollowingFeed(page: number = 0, limit: number = 10, bef
 
   const postsRes = await readWithSignal(supabase
       .from('posts')
-      .select(postSelectQuery()).or('parent_id.is.null,is_quote.eq.true')
+      .select(postSelectQuery()).is('community_id',null).or('parent_id.is.null,is_quote.eq.true')
       .or(before
         ? `and(or(${filterConditions}),or(created_at.lt.${before.createdAt},and(created_at.eq.${before.createdAt},id.lt.${before.id})))`
         : filterConditions)
@@ -265,7 +266,7 @@ export async function getPostsByUser(targetUserId: string, page: number = 0, lim
 
   let query = supabase
     .from('posts')
-    .select(postSelectQuery())
+    .select(postSelectQuery()).is('community_id',null)
     .eq('user_id', targetUserId);
 
   // 本人以外の場合は、条件を満たす visibility のみに絞り込む
@@ -301,7 +302,7 @@ export async function getLikedPostsByUser(targetUserId: string, page: number = 0
       created_at,
       posts!inner (${postSelectQuery()})
     `)
-    .eq('user_id', targetUserId)
+    .eq('user_id', targetUserId).is('posts.community_id',null)
     .order('created_at', { ascending: false })
     .range(from, to);
 
@@ -357,7 +358,7 @@ export async function searchPosts(query: string, page: number = 0, limit: number
 
   const postsRes = await readWithSignal(supabase
       .from('posts')
-      .select(postSelectQuery())
+      .select(postSelectQuery()).is('community_id',null)
       .ilike('content', `%${query}%`)
       .or(conditions.join(','))
       .order('created_at', { ascending: false })
@@ -371,7 +372,7 @@ export async function searchPosts(query: string, page: number = 0, limit: number
 export async function getHighlightedPosts(userId: string, page = 0, limit = 10): Promise<PostWithAuthor[]> {
   const viewerId = await getCurrentUserId();
   const { data, error } = await supabase.from('profile_highlights')
-    .select(`post_id, posts!inner (${postSelectQuery()})`)
+    .select(`post_id, posts!inner (${postSelectQuery()})`).is('posts.community_id',null)
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .order('post_id', { ascending: false })
@@ -382,8 +383,8 @@ export async function getHighlightedPosts(userId: string, page = 0, limit = 10):
   return rows.map(row => rowToPost(row, likedIds, repostedIds));
 }
 
-export async function getPostById(id: string, context?: AccountReadContext): Promise<PostWithAuthor | null> {
-  if (isReplyPostId(id)) return getReplyPost(id, context);
+export async function getPostById(id: string, context?: AccountReadContext, communityId?:string): Promise<PostWithAuthor | null> {
+  if (isReplyPostId(id)) {const reply=await getReplyPost(id,context);return reply&&(!reply.communityId||reply.communityId===communityId)?reply:null;}
   if (isExternalPostId(id)) return getExternalPost(id);
   const userId = context?.userId ?? await getCurrentUserId();
   const client = context?.client ?? supabase;
@@ -392,6 +393,7 @@ export async function getPostById(id: string, context?: AccountReadContext): Pro
   const postRes = await client.from('posts').select(postSelectQuery()).eq('id', id).single();
 
   if (postRes.error || !postRes.data) return null;
+  if(postRes.data.community_id&&postRes.data.community_id!==communityId)return null;
 
   // visibilityが'following'の場合、投稿主があなたをフォローしているかチェックする
   if (postRes.data.visibility === 'following' && postRes.data.user_id !== userId) {
@@ -424,6 +426,7 @@ export async function getPostById(id: string, context?: AccountReadContext): Pro
 }
 
 export async function createPost(input: {
+  communityId?:string;
   video?:PreparedVideo;
   scheduledAt?:string;
   poll?:PollDraft;
@@ -436,6 +439,7 @@ export async function createPost(input: {
   isBot?: boolean; // 追加
 }): Promise<PostWithAuthor> {
   const userId = await getCurrentUserId();
+  if(input.communityId&&(!/^[0-9a-f-]{36}$/i.test(input.communityId)||input.visibility&&input.visibility!=='public'))throw new Error('コミュニティの投稿先を確認してください');
   if (input.mapLocation && !validMapLocation(input.mapLocation)) throw new Error('場所が無効です');
   if(input.poll){const message=validatePollDraft(input.poll);if(message)throw new Error(message);}
   if(input.scheduledAt&&!validSchedule(input.scheduledAt))throw new Error('予約日時は1分後から1年以内で指定してください');
@@ -445,17 +449,21 @@ export async function createPost(input: {
   const detectedUrls = input.content.match(IMAGE_URL_PATTERN) || [];
 
   const clientSource = getClientName();
+  if(input.parentId&&!isExternalPostId(input.parentId)&&!isReplyPostId(input.parentId)){const source=await getPostById(input.parentId,undefined,input.communityId)??(input.communityId?await getPostById(input.parentId):null);if(!source)throw new Error('引用元のポストをこの投稿先では共有できません');}
   const externalParent = input.parentId && isExternalPostId(input.parentId)
     ? await getExternalPost(input.parentId) : null;
   if (input.parentId && isExternalPostId(input.parentId) && !externalParent) throw new Error('引用元の投稿が見つかりません');
   const replyParent = input.parentId && isReplyPostId(input.parentId) ? await getReplyPost(input.parentId) : null;
+  if(replyParent?.communityId&&replyParent.communityId!==input.communityId)throw new Error('コミュニティの返信はコミュニティ内で引用してください');
   if (input.parentId && isReplyPostId(input.parentId) && !replyParent) throw new Error('引用元の返信を閲覧できません');
 
   if (!userId) throw new Error('ログインしてください');
   const { data: privacy, error: privacyError } = await supabase.from('profiles').select('is_private').eq('id', userId).single();
   if (privacyError) throw privacyError;
   if(input.video&&(input.imageUrls.length||input.poll))throw new Error('動画は画像・投票と同時に添付できません');
-  const finalImageUrls = await uploadPostMedia(input.imageUrls, userId, newId, !!input.scheduledAt || privacy?.is_private === true || input.visibility === 'following');
+  const finalImageUrls = input.communityId
+    ? await (await import('@/api/communities')).uploadCommunityImages(input.imageUrls,userId)
+    : await uploadPostMedia(input.imageUrls,userId,newId,!!input.scheduledAt||privacy?.is_private===true||input.visibility==='following');
 
   const savedVideo=input.video?await uploadPostVideo(input.video,newId):undefined;
   const preparedPoll=input.poll?await preparePoll(input.poll,newId):undefined;
@@ -464,6 +472,7 @@ export async function createPost(input: {
 
   const payload = {
     id:          newId,
+    ...(input.communityId?{community_id:input.communityId}:{}),
     user_id:     userId,
     content:     input.content,
     image_urls:  finalImageUrls,
@@ -484,7 +493,7 @@ export async function createPost(input: {
 
   if(error){if(savedVideo)await discardPostVideo(savedVideo);if(preparedPoll)await discardPollImages(preparedPoll.options.flatMap(option=>option.image?[option.image]:[]));throw error;}
 
-  if(input.scheduledAt) return {...payload,poll:undefined,scheduledAt:input.scheduledAt,userId,content:input.content,imageUrls:finalImageUrls,createdAt:new Date().toISOString(),likesCount:0,commentsCount:0,repostsCount:0,likedByMe:false,repostedByMe:false,author:{id:userId,username:'',displayName:'',avatarUrl:'',bio:'',coverUrl:'',createdAt:''}};
+  if(input.scheduledAt) return {...payload,communityId:input.communityId,poll:undefined,scheduledAt:input.scheduledAt,userId,content:input.content,imageUrls:finalImageUrls,createdAt:new Date().toISOString(),likesCount:0,commentsCount:0,repostsCount:0,likedByMe:false,repostedByMe:false,author:{id:userId,username:'',displayName:'',avatarUrl:'',bio:'',coverUrl:'',createdAt:''}};
 
   if (mentionedUsernames.length > 0) {
     const { data: mentionedUsers } = await supabase
@@ -502,7 +511,7 @@ export async function createPost(input: {
   }
 
 
-  const post = await getPostById(newId);
+  const post = await getPostById(newId,undefined,input.communityId);
   if (!post) throw new Error('投稿の取得に失敗しました');
   void import("@/api/topics").then(({recordAnimePost})=>recordAnimePost(userId,newId)).catch(()=>{});
   return post;
@@ -576,7 +585,7 @@ export async function getProfilePosts(userId: string, page = 0, limit = 10): Pro
     const visible: any[] = [];
     let offset = 0;
     while (visible.length < end) {
-      const result = await supabase.from('reposts').select(`created_at, posts!inner (${postSelectQuery()})`)
+      const result = await supabase.from('reposts').select(`created_at, posts!inner (${postSelectQuery()})`).is('posts.community_id',null)
         .eq('user_id', userId).order('created_at', { ascending: false }).order('post_id', { ascending: false }).range(offset, offset + end - 1);
       if (result.error) throw result.error;
       const entries = result.data ?? [];
@@ -622,7 +631,7 @@ export async function getProfilePopularityPosts(userId: string, signal?: AbortSi
   const own = collect(page => getPostsByUser(userId, page, size, signal));
   const shared = collectProfilePages<PostWithAuthor, number>(async cursor => {
     const offset = cursor ?? 0;
-    const result = await readWithSignal(supabase.from('reposts').select(`created_at, posts!inner (${postSelectQuery()})`)
+    const result = await readWithSignal(supabase.from('reposts').select(`created_at, posts!inner (${postSelectQuery()})`).is('posts.community_id',null)
       .eq('user_id', userId).order('created_at', { ascending: false }).order('post_id', { ascending: false }).range(offset, offset + size - 1), signal);
     if (result.error) throw result.error;
     const raw = result.data ?? [];
@@ -638,7 +647,7 @@ export async function getProfilePopularityPosts(userId: string, signal?: AbortSi
 
 
 export async function getMapPosts(bounds: MapBounds, before?: FeedCursor, signal?: AbortSignal, search = ''): Promise<MapPostPin[]> {
-  let query = supabase.from('posts').select('id,created_at,map_latitude,map_longitude,profiles:user_id(display_name,avatar_url)').eq('visibility', 'public')
+  let query = supabase.from('posts').select('id,created_at,map_latitude,map_longitude,profiles:user_id(display_name,avatar_url)').is('community_id',null).eq('visibility', 'public')
     .not('map_latitude', 'is', null).gte('map_latitude', bounds.south).lte('map_latitude', bounds.north);
   if (bounds.west <= bounds.east) query = query.gte('map_longitude', bounds.west).lte('map_longitude', bounds.east);
   if (search.trim()) query = query.ilike('content', `%${search.trim().replace(/[\\%_]/g, '\\$&')}%`);
@@ -664,9 +673,10 @@ export async function getPostQuoteCount(postId:string,signal?:AbortSignal):Promi
  return count??0;
 }
 
-export async function getPostQuotes(postId:string,replyId:string|null=null,sort:'top'|'latest'='top',page=0):Promise<PostWithAuthor[]> {
+export async function getPostQuotes(postId:string,replyId:string|null=null,sort:'top'|'latest'='top',page=0,communityId?:string):Promise<PostWithAuthor[]> {
  const viewer=await getCurrentUserId();
  let query=supabase.from('posts').select(postSelectQuery()).eq('is_quote',true);
+ query=communityId?query.eq('community_id',communityId):query.is('community_id',null);
  query=replyId?query.eq('quoted_reply_id',replyId):isExternalPostId(postId)?query.eq('quoted_external_post->>id',postId):query.eq('parent_id',postId);
  if(sort==='top')query=query.order('likes_count',{ascending:false}).order('reposts_count',{ascending:false});
  const {data,error}=await query.order('created_at',{ascending:false}).order('id',{ascending:false}).range(page*20,page*20+19);
@@ -686,8 +696,20 @@ export async function getPostReposters(postId:string,replyId:string|null=null,pa
 export async function getListNativePosts(authorIds:string[],page=0,limit=10,before?:FeedCursor,signal?:AbortSignal):Promise<PostWithAuthor[]> {
  if(!authorIds.length)return [];
  const userId=await getCurrentUserId();
- let query=supabase.from('posts').select(postSelectQuery()).or('parent_id.is.null,is_quote.eq.true').in('user_id',authorIds);
+ let query=supabase.from('posts').select(postSelectQuery()).is('community_id',null).or('parent_id.is.null,is_quote.eq.true').in('user_id',authorIds);
  if(before)query=query.or(`created_at.lt.${before.createdAt},and(created_at.eq.${before.createdAt},id.lt.${before.id})`);
  const {data,error}=await readWithSignal(query.order('created_at',{ascending:false}).order('id',{ascending:false}).range(before?0:page*limit,(before?0:page*limit)+limit-1),signal);
  if(error)throw error;const rows=data??[];const {likedIds,repostedIds}=await getViewerReactions(userId,rows,signal);return rows.map(row=>rowToPost(row,likedIds,repostedIds));
+}
+
+/** One bounded batch reuses native author, reaction and visibility mapping. */
+export async function getCommunityPosts(scope:{ids?:string[];sort?:'top'|'latest';media?:boolean;search?:string},page=0,signal?:AbortSignal):Promise<PostWithAuthor[]>{
+ if(scope.ids?.length===0)return [];
+ const uid=await getCurrentUserId();let query=supabase.from('posts').select(postSelectQuery()).not('community_id','is',null).or('parent_id.is.null,is_quote.eq.true');
+ if(scope.ids)query=query.in('community_id',scope.ids);if(scope.media)query=query.or('image_urls.neq.{},video.not.is.null');
+ if(scope.search?.trim())query=query.ilike('content',`%${scope.search.trim().replace(/[%_\\]/g,'\\$&')}%`);
+ if(scope.sort==='top')query=query.order('likes_count',{ascending:false});
+ const {data,error}=await readWithSignal(query.order('created_at',{ascending:false}).order('id',{ascending:false}).range(page*25,page*25+24),signal);if(error)throw error;
+ const rows=await filterVisibleRows(data??[],uid,signal);const {likedIds,repostedIds}=await getViewerReactions(uid,rows,signal);
+ return rows.map(row=>rowToPost(row,likedIds,repostedIds));
 }

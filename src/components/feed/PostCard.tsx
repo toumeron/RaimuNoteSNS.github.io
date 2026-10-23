@@ -1,3 +1,5 @@
+import {postPath,postActivityPath} from '@/lib/postPath';
+import {CommunityIcon} from '@/components/communities/CommunityIcon';
 import { initialImageFrame, initialMediaSize } from "@/lib/mediaThumbnail";
 import { ContentLink } from "@/components/ui/button";
 import { useMinuteTick, useTimelinePortalTheme, useViewportWidth, usePageVisible, observeElementVisibility } from "@/hooks/useViewportWidth";
@@ -101,11 +103,11 @@ const YouTubeEmbed = ({ videoId }: YouTubeEmbedProps) => {
   const soundState = useRef({ state: -1, muted: null as boolean | null, volume: null as number | null });
   const playbackPosition = useRef<number | null>(null);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const notify = useCallback((active: boolean) => {
-    if (playingRef.current === active) return;
+  const notify = useCallback((active: boolean, soundChanged = false) => {
+    if (playingRef.current === active && !soundChanged) return;
     playingRef.current = active;
     const event = new CustomEvent(active ? LIME_BACKGROUND_MEDIA_PLAY_EVENT : LIME_BACKGROUND_MEDIA_STOP_EVENT, {
-      bubbles: true, detail: { key: mediaKey, kind: 'youtube', title: 'YouTube video player', element: iframeRef.current },
+      bubbles: true, detail: { key: mediaKey, kind: 'youtube', audible: soundState.current.muted !== true && soundState.current.volume !== 0, title: 'YouTube video player', element: iframeRef.current },
     });
     if (iframeRef.current?.isConnected) iframeRef.current.dispatchEvent(event);
     else window.dispatchEvent(event);
@@ -163,7 +165,7 @@ const YouTubeEmbed = ({ videoId }: YouTubeEmbedProps) => {
       if (state === 1) {
         blocked = false;
         if (previous.state !== 1) playingSince = Date.now();
-        notify(true);
+        notify(true, previous.muted !== next.muted || previous.volume !== next.volume);
       } else if (state === 0 || state === 2 || data.event === 'onError') {
         notify(false);
         playingSince = null;
@@ -180,8 +182,8 @@ const YouTubeEmbed = ({ videoId }: YouTubeEmbedProps) => {
       recover();
     };
     const otherPlayback = (event: Event) => {
-      const detail = (event as CustomEvent<{ key?: string; kind?: string }>).detail;
-      if (detail?.kind === 'youtube' && detail.key !== mediaKey && playingRef.current) iframeRef.current?.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'pauseVideo', args: [] }), 'https://www.youtube.com');
+      const detail = (event as CustomEvent<{ key?: string; kind?: string; audible?:boolean }>).detail;
+      if (detail?.audible !== false && (detail?.kind === 'youtube' || detail?.kind === 'html-media') && detail.key !== mediaKey && playingRef.current) iframeRef.current?.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'pauseVideo', args: [] }), 'https://www.youtube.com');
     };
     window.addEventListener(LIME_BACKGROUND_MEDIA_PLAY_EVENT, otherPlayback);
     window.addEventListener('message', message);
@@ -1080,7 +1082,7 @@ function observeCardIntersection(element:Element,callback:(visible:boolean)=>voi
   return observeElementVisibility(element,callback,'420px 0px 520px 0px');
 }
 
-function PostCardComponent({ post, timelineGlass = false, thread = false, embedded = false, repostedByLabel = post.externalRepostedBy?.displayName, pinned = false, mediaPresentation, onMediaReply, onMediaLikeChange, mediaDownload,onNotInterested }: { post: PostWithAuthor; timelineGlass?: boolean; thread?: boolean; embedded?: boolean; repostedByLabel?: string; pinned?:boolean; mediaPresentation?: 'actions' | 'menu'; onMediaReply?: () => void; onMediaLikeChange?: (state:{liked:boolean;count:number})=>void; mediaDownload?:()=>void;onNotInterested?:(post:PostWithAuthor)=>Promise<void> }) {
+function PostCardComponent({ post, timelineGlass = false, thread = false, embedded = false, showCommunityLabel=true, repostedByLabel = post.externalRepostedBy?.displayName, pinned = false, mediaPresentation, onMediaReply, onMediaLikeChange, mediaDownload,onNotInterested,onCommunityRemove }: { post: PostWithAuthor; showCommunityLabel?:boolean; timelineGlass?: boolean; thread?: boolean; embedded?: boolean; repostedByLabel?: string; pinned?:boolean; mediaPresentation?: 'actions' | 'menu'; onMediaReply?: () => void; onMediaLikeChange?: (state:{liked:boolean;count:number})=>void; mediaDownload?:()=>void;onCommunityRemove?:()=>void;onNotInterested?:(post:PostWithAuthor)=>Promise<void> }) {
   const [editLocationOpen,setEditLocationOpen] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [moreMenuPosition, setMoreMenuPosition] = useState<{ top: number; right: number } | null>(null);
@@ -1773,7 +1775,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
       setShowMenu(false);
       return;
     }
-    navigate(`/post/${encodeURIComponent(post.id)}/activity`);
+    navigate(postActivityPath(post));
     setShowMenu(false);
   };
 
@@ -1838,11 +1840,11 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
     }
 
     if (isBlueskyPost) {
-      navigate(`/post/${encodeURIComponent(post.id)}`);
+      navigate(postPath(post));
       return;
     }
 
-    navigate(`/post/${post.id}`);
+    navigate(postPath(post));
   };
 
   const getPostShareUrl = () => {
@@ -1851,12 +1853,12 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
     }
 
     if (typeof window === 'undefined') {
-      return `/post/${post.id}`;
+      return postPath(post);
     }
 
     const baseUrl = import.meta.env.BASE_URL || '/';
     const normalizedBaseUrl = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
-    return new URL(`post/${post.id}`, new URL(normalizedBaseUrl, window.location.origin)).toString();
+    return new URL(postPath(post).replace(/^\//,''), new URL(normalizedBaseUrl, window.location.origin)).toString();
   };
 
   const getPostShareText = () => {
@@ -2284,7 +2286,8 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                         }}
                         onClick={(e) => e.stopPropagation()}
                       >
-                        {mediaPresentation && <button onClick={event => { event.stopPropagation(); setShowMenu(false); navigate(`/post/${encodeURIComponent(post.id)}`); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold hover:bg-muted"><LinkIcon className="h-4 w-4" />ポストに移動</button>}
+                        {onCommunityRemove && !isMyPost && <button className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-destructive hover:bg-muted" onClick={event=>{event.stopPropagation();setShowMenu(false);if(window.confirm('コミュニティからこのポストを削除しますか？'))onCommunityRemove();}}><Trash2 className="h-4 w-4"/>コミュニティからポストを削除</button>}
+                        {mediaPresentation && <button onClick={event => { event.stopPropagation(); setShowMenu(false); navigate(postPath(post)); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold hover:bg-muted"><LinkIcon className="h-4 w-4" />ポストに移動</button>}
                         {mediaDownload && <button onClick={(event)=>{event.stopPropagation();setShowMenu(false);mediaDownload();}} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold hover:bg-muted"><Download className="h-4 w-4" />画像を保存</button>}
                         <button
                           onClick={handleActivityClick}
@@ -2296,9 +2299,9 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
 
                         {onNotInterested&&<button onClick={async event=>{event.stopPropagation();try{await onNotInterested(post);setShowMenu(false);}catch{toast.error('興味なしを保存できませんでした');}}} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold hover:bg-muted"><EyeOff className="h-4 w-4" />興味なし</button>}
                         {isMyPost && !isBlueskyPost && !post.replyId && <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted" onClick={e=>{e.stopPropagation();setShowMenu(false);setEditLocationOpen(true);}}><Pencil className="h-4 w-4"/>編集</button>}
-                        {isMyPost && !isBlueskyPost && !post.replyId && <PinPostMenuButton userId={post.userId} postId={post.id} onClose={()=>setShowMenu(false)}/>}
-                        {isMyPost && !isBlueskyPost && !post.replyId && <HighlightPostMenuButton userId={post.userId} postId={post.id} onClose={()=>setShowMenu(false)}/>}
-                        {isMyPost && currentVisibility !== 'public' && (
+                        {isMyPost && !post.communityId && !isBlueskyPost && !post.replyId && <PinPostMenuButton userId={post.userId} postId={post.id} onClose={()=>setShowMenu(false)}/>}
+                        {isMyPost && !post.communityId && !isBlueskyPost && !post.replyId && <HighlightPostMenuButton userId={post.userId} postId={post.id} onClose={()=>setShowMenu(false)}/>}
+                        {isMyPost && !post.communityId && currentVisibility !== 'public' && (
                           <button
                             onClick={(e) => handleToggleVisibility(e, 'public')}
                             className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
@@ -2308,7 +2311,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                           </button>
                         )}
 
-                        {isMyPost && currentVisibility !== 'following' && (
+                        {isMyPost && !post.communityId && currentVisibility !== 'following' && (
                           <button
                             onClick={(e) => handleToggleVisibility(e, 'following')}
                             className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
@@ -2318,7 +2321,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                           </button>
                         )}
 
-                        {isMyPost && canUseMembershipPosts && currentVisibility !== 'members' && (
+                        {isMyPost && !post.communityId && canUseMembershipPosts && currentVisibility !== 'members' && (
                           <button
                             onClick={(e) => handleToggleVisibility(e, 'members')}
                             className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
@@ -2421,7 +2424,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (onMediaReply) onMediaReply(); else navigate(`/post/${encodeURIComponent(post.id)}`);
+                    if (onMediaReply) onMediaReply(); else navigate(postPath(post));
                   }}
                   className={useMobilePresentation ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
                 >
@@ -2430,7 +2433,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                 </button>
               ) : (
                 <Link
-                  to={`/post/${post.id}`}
+                  to={postPath(post)}
                   aria-label="返信"
                   onClick={(e) => { e.stopPropagation(); if(onMediaReply){e.preventDefault();onMediaReply();} }}
                   className={useMobilePresentation ? "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:text-accent h-full" : "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm transition-colors hover:text-accent h-full"}
@@ -2673,13 +2676,13 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                       onPointerDown={(e) => e.stopPropagation()}
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <button
+                      {!post.communityId&&<button
                         onClick={handleOpenLimeDropPanel}
                         className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
                       >
                         <Send className="h-4 w-4 shrink-0" />
                         <span>LimeDropで送信</span>
-                      </button>
+                      </button>}
 
                       <button
                         onClick={handleCopyPostLink}
@@ -2769,6 +2772,7 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
           <div data-lime-post-divider className="pointer-events-none absolute bottom-0 left-1/2 w-screen -translate-x-1/2 border-b border-border/60" />
         )}
 
+        {showCommunityLabel && post.communityId && !embedded && <Link to={`/communities/${post.communityId}`} className="mb-1 ml-14 block text-sm font-semibold text-muted-foreground" onClick={event=>event.stopPropagation()}><CommunityIcon className="mr-2 inline h-4 w-4"/>{post.community?.name??'コミュニティ'}</Link>}
         {pinned && !embedded && <div data-lime-pinned-label className="mb-1 flex items-center gap-3 text-sm font-semibold text-muted-foreground"><span className="inline-flex w-11 shrink-0 justify-end"><Pin className="h-4 w-4" fill="currentColor"/></span><span>固定</span></div>}
         {repostedByLabel && !embedded && (
           <div data-lime-repost-label className="mb-1 flex items-center gap-3 text-sm font-semibold text-muted-foreground">
@@ -2865,9 +2869,9 @@ function PostCardComponent({ post, timelineGlass = false, thread = false, embedd
                   if (shouldSuppressCardNavigation()) return;
                   if (isMembersOnlyPost && !canViewMembersOnlyPost) return;
                   if (isBlueskyPost) {
-                    navigate(`/post/${encodeURIComponent(post.id)}`);
+                    navigate(postPath(post));
                   } else {
-                    navigate(`/post/${post.id}`);
+                    navigate(postPath(post));
                   }
                 }}
               >

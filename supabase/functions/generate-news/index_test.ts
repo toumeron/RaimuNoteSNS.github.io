@@ -9,7 +9,7 @@ async function fixture(options:{empty?:boolean;upstreamFailure?:boolean;relevant
  const db={rpc:()=>Promise.resolve({data:'lease',error:null}),from:(table:string)=>{
   const result={data:table==='posts'&&!options.empty?Array.from({length:options.many?10:1},(_,i)=>({id:options.many?'native'+i:'native',content:'公開発表',created_at:recent})):[],error:null};
   const q:any={then:(resolve:any)=>Promise.resolve(result).then(resolve)};
-  for(const method of ['select','eq','gte','lte','ilike','in','order','limit'])q[method]=()=>q;
+  for(const method of ['select','is','eq','gte','lte','ilike','in','order','limit'])q[method]=()=>q;
   if(options.many)q.ilike=()=>{result.data=[];return q;};
   q.insert=()=>{writes.push(table);return q;};q.update=(value:Record<string,unknown>)=>{releases.push(value);return q;};return q;
  }};

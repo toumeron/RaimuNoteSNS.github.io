@@ -1,3 +1,4 @@
+import {postPath,postActivityPath} from '@/lib/postPath';
 import { initialImageFrame, initialMediaSize, openMediaViewer } from "@/lib/mediaThumbnail";
 import { displayUsername, randomUUID, splitMentionText, mentionProfileHandle, hasStickers, formatDate, formatRelative, getYouTubeId, nextTwitterReplyCursor, canShowPostLinkPreview, hasAttachedPostVideo, spaceLinkIn, getCommentAncestors } from "@/lib/utils";
 import { PostSourceLabel, ExternalPostDetails, LinkPreviewCard, useLinkPreview, QuotedPost, PostImages } from "@/components/feed/QuotedPost";
@@ -247,11 +248,11 @@ function PostDetail() {
 }
 
 function RootPostDetail({ replyId }: { replyId: string | null }) {
-  const { id = '' } = useParams();
+  const { id = '',communityId } = useParams();
   const isBlueskyPost = isBlueskyPostLike({ id });
   const isTwitterPost=/^x:\d+$/.test(id);
   const twitterThread=useInfiniteQuery({queryKey:['twitter-conversation',id,'pagination-v2'],initialPageParam:null as string|null,queryFn:({pageParam,signal})=>xConversationPage(id,pageParam,signal),getNextPageParam:(page,pages,pageParam,pageParams)=>nextTwitterReplyCursor(page,pages,pageParam,pageParams),enabled:isTwitterPost,staleTime:60000,retry:false,refetchOnWindowFocus:false});
-  const { data: limeData, isLoading: isLimeLoading, isError: isLimeError } = usePost(isBlueskyPost ? '' : id);
+  const { data: limeData, isLoading: isLimeLoading, isError: isLimeError } = usePost(isBlueskyPost ? '' : id,communityId);
   const { data: otherThread, isLoading: otherLoading, isError: otherError, isSuccess: otherSuccess } = useQuery({
     queryKey: ['bluesky-post', id],
     queryFn: ({ signal }) => fetchBlueskyPostThread(id, signal),
@@ -861,7 +862,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
       setShowMenu(false);
       return;
     }
-    navigate(`/post/${encodeURIComponent(data.id)}/activity`);
+    navigate(postActivityPath(data));
     setShowMenu(false);
   };
 
@@ -917,12 +918,12 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
     }
 
     if (typeof window === 'undefined') {
-      return `/post/${data.id}`;
+      return postPath(data);
     }
 
     const baseUrl = import.meta.env.BASE_URL || '/';
     const normalizedBaseUrl = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
-    return new URL(`post/${data.id}`, new URL(normalizedBaseUrl, window.location.origin)).toString();
+    return new URL(postPath(data).replace(/^\//,''), new URL(normalizedBaseUrl, window.location.origin)).toString();
   };
 
   const getPostShareText = () => {
@@ -2106,13 +2107,13 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
                     onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <button
+                    {!('communityId' in data&&data.communityId)&&<button
                       onClick={handleOpenLimeDropPanel}
                       className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-foreground hover:bg-muted transition-colors"
                     >
                       <Send className="h-4 w-4 shrink-0" />
                       <span>LimeDropで送信</span>
-                    </button>
+                    </button>}
 
                     <button
                       onClick={handleCopyPostLink}
@@ -2275,7 +2276,7 @@ function RootPostDetail({ replyId }: { replyId: string | null }) {
 // PostActivity
 const tabs=[{id:'quotes',label:'引用'},{id:'reposts',label:'リポスト'},{id:'likes',label:'いいね'}] as const;
 function PostActivity(){
- const {postId=''}=useParams<{postId:string}>();const [params,setParams]=useSearchParams();const replyId=params.get('reply');
+ const {postId='',communityId}=useParams<{postId:string;communityId?:string}>();const [params,setParams]=useSearchParams();const replyId=params.get('reply');
  const external=hasExternalActivity(postId),twitter=postId.startsWith('x:');
  const visibleTabs=twitter?[]:tabs;
  const requestedTab=params.get('tab')==='reposts'?'reposts':params.get('tab')==='likes'||(!params.get('tab')&&replyId)?'likes':'quotes';
@@ -2295,7 +2296,7 @@ function PostActivity(){
      const result=await getExternalPostActivity(postId,tab,sort,pages===1?undefined:activityCursor.current,controller.signal);
      if(!cancelled&&request===revision){activityCursor.current=result.next;setQuotes(previous=>[...new Map((pages===1?result.posts:[...previous,...result.posts]).map(post=>[post.id,post])).values()]);setUsers(previous=>[...new Map((pages===1?result.users:[...previous,...result.users]).map(user=>[user.id,user])).values()]);setHasMore(!!result.next&&(result.posts.length>0||result.users.length>0));}
     }else if(tab==='quotes'){
-     const result=await getPostQuotes(postId,replyId,sort,pages-1);
+     const result=await getPostQuotes(postId,replyId,sort,pages-1,communityId);
      if(!cancelled&&request===revision){setQuotes(previous=>pages===1?result:[...previous,...result]);setHasMore(result.length===20);}
     }else if(tab==='reposts'){
      const result=await getPostReposters(postId,replyId,pages-1);
@@ -2443,6 +2444,6 @@ export function PostActivitySummary({post,mobile}:{post:PostWithAuthor;mobile:bo
  const entries=[{tab:'reposts',label:'件のリポスト',count:post.repostsCount},{tab:'quotes',label:'件の引用リポスト',count:quotes.data},{tab:'likes',label:'件のいいね',count:post.likesCount}].filter(entry=>Number.isFinite(entry.count)&&(entry.count??0)>0);
  if(!entries.length)return null;
  return <nav aria-label="ポストアクティビティ" className="mt-3 flex flex-wrap gap-x-4 gap-y-2 border-y border-border/60 py-3 text-sm">
-  {entries.map(entry=><Link key={entry.tab} to={`/post/${encodeURIComponent(post.id)}/activity?tab=${entry.tab}`} className="inline-flex items-baseline gap-1 hover:underline"><strong className="font-bold tabular-nums text-foreground">{entry.count!.toLocaleString('ja-JP')}</strong><span className="text-muted-foreground">{entry.label}</span></Link>)}
+  {entries.map(entry=><Link key={entry.tab} to={`${postActivityPath(post)}?tab=${entry.tab}`} className="inline-flex items-baseline gap-1 hover:underline"><strong className="font-bold tabular-nums text-foreground">{entry.count!.toLocaleString('ja-JP')}</strong><span className="text-muted-foreground">{entry.label}</span></Link>)}
  </nav>;
 }

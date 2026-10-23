@@ -1,3 +1,5 @@
+import {usePostDraft} from '@/hooks/usePostDraft';
+import {createDraftMediaUrl,revokeDraftMediaUrl,postDraftKey} from '@/lib/postDrafts';
 import { displayUsername } from "@/lib/utils";
 import { PrivateMediaImage } from "@/components/ui/avatar";
 import { ComposerIcon } from "@/components/feed/PostPoll";
@@ -10,7 +12,7 @@ import { PostCard } from '@/components/feed/PostCard';
 import { ReplyChain } from '@/components/post/CommentList';
 import { Link } from 'react-router-dom';
 import { Input } from "@/components/ui/button";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react';
 import { ArrowLeft, Loader2, X } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -49,7 +51,7 @@ export function CommentForm({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const compactMobile = variant === 'mobileDock' || variant === 'bottomNav';
   const expanded = editing || text.length > 0 || images.length > 0;
-  const changeText=(value:string)=>{setText(sticker && value.trim()?value+draftEmojiCharacter(sticker):value);if(sticker && value.trim())setSticker(null);};
+
   useLayoutEffect(() => {
     const input = textareaRef.current;
     if (!input) return;
@@ -58,24 +60,30 @@ export function CommentForm({
   }, [text, mediaReplyOpen]);
   useLayoutEffect(() => { if (mediaReplyOpen) textareaRef.current?.focus({ preventScroll: true }); }, [mediaReplyOpen]);
   const releaseImages = useCallback(() => {
-    new Set([...imageRefs.current, ...originals.current.values()]).forEach(url => URL.revokeObjectURL(url));
+    new Set([...imageRefs.current, ...originals.current.values()]).forEach(url => revokeDraftMediaUrl(url));
     imageRefs.current = []; originals.current.clear();
   }, []);
   const fileRef = useRef<HTMLInputElement>(null);
   const imageRefs = useRef<string[]>([]);
   const submitting = useRef(false);
+  const originalImages=useMemo(()=>images.map(image=>originals.current.get(image)??image),[images]);
+  const draftKey=user?.id?postDraftKey(user.id,`reply:${variant}:${postId}:${parentCommentId??''}`):null;
+  const {ready:draftReady,readyRef:draftReadyRef,markEdited,beginSubmission,completeSubmission}=usePostDraft(draftKey,{content:text,previews:images,originals:originalImages,sticker,poll:null,video:null,scheduledAt:null,visibility:'public',quotedPost:null},value=>{
+    setText(value.content);setSticker(value.sticker);setImages(value.previews);imageRefs.current=value.previews;
+    originals.current=new Map(value.previews.map((image,index)=>[image,value.originals[index]??image]));
+  });
+  const changeText=(value:string)=>{markEdited();setText(sticker && value.trim()?value+draftEmojiCharacter(sticker):value);if(sticker && value.trim())setSticker(null);};
+
   useEffect(() => () => { releaseImages(); }, [releaseImages]);
   useEffect(() => {
-    setText(''); setSticker(null);
-    releaseImages();
-    setImages([]); setEditing(false); setEditingImage(null);
+    setEditing(false); setEditingImage(null);
   }, [postId, parentCommentId, releaseImages]);
 
   const addImages = (files: File[]) => {
-    if (isPending || submitting.current) return;
+    if (isPending || submitting.current || !draftReadyRef.current) return;
     const valid = files.filter(file => file.type.startsWith('image/'));
     if (valid.length > 4 - imageRefs.current.length) toast.error('画像は4枚まで添付できます');
-    const added = valid.slice(0, 4 - imageRefs.current.length).map(file => URL.createObjectURL(file));
+    const added = valid.slice(0, 4 - imageRefs.current.length).map(file => createDraftMediaUrl(file));
     added.forEach(url => originals.current.set(url, url));
     setEditing(true);
     imageRefs.current = [...imageRefs.current, ...added];
@@ -83,7 +91,7 @@ export function CommentForm({
   };
 
   const removeImage = (url: string) => {
-    new Set([url, originals.current.get(url) ?? url]).forEach(url => URL.revokeObjectURL(url));
+    new Set([url, originals.current.get(url) ?? url]).forEach(url => revokeDraftMediaUrl(url));
     originals.current.delete(url);
     imageRefs.current = imageRefs.current.filter(image => image !== url);
     setImages(imageRefs.current);
@@ -93,14 +101,16 @@ export function CommentForm({
 
   const submit = async () => {
     const t = appendSticker(text,sticker);
-    if (submitting.current || isPending || (!t && images.length === 0)) return;
+    if (!draftReady || submitting.current || isPending || (!t && images.length === 0)) return;
     if (t.length > MAX) {
       toast.error(`コメントは${MAX}文字以内で入力してください`);
       return;
     }
+    const draftSubmission=beginSubmission();
     try {
       submitting.current = true;
       await mutateAsync({ content: t, imageUrls: images, parentCommentId });
+      if(!await completeSubmission(draftSubmission))return;
       setText(''); setSticker(null);
       releaseImages();
       setImages([]); setEditing(false); setMediaReplyOpen(false); setEditingImage(null);
@@ -187,8 +197,8 @@ export function CommentForm({
 )}
         </div>
         <div className={`reply-attachment-tools flex shrink-0 items-center ${editing?"":"invisible pointer-events-none"}`} aria-hidden={!editing}>
-        {<button type="button" onPointerDown={event=>event.preventDefault()} onClick={() => fileRef.current?.click()} disabled={isPending || !editing || images.length >= 4} data-lime-composer-tool data-lime-attachment-tool aria-label="返信に画像を添付" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-transparent hover:text-foreground disabled:opacity-50"><ComposerIcon kind="image"/></button>}
-        <StickerPicker iconOnly simple disabled={isPending || !editing} onSelect={name=>{if(text.trim())insertDraftEmoji(compactMobile?compactInputRef.current:textareaRef.current,text,name,setText);else setSticker(name);setEditing(true);}} />
+        {<button type="button" onPointerDown={event=>event.preventDefault()} onClick={() => fileRef.current?.click()} disabled={!draftReady || isPending || !editing || images.length >= 4} data-lime-composer-tool data-lime-attachment-tool aria-label="返信に画像を添付" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-transparent hover:text-foreground disabled:opacity-50"><ComposerIcon kind="image"/></button>}
+        <StickerPicker iconOnly simple disabled={!draftReady || isPending || !editing} onSelect={name=>{if(text.trim())insertDraftEmoji(compactMobile?compactInputRef.current:textareaRef.current,text,name,setText);else setSticker(name);setEditing(true);}} />
         </div>
         <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addImages(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
         </div>
@@ -203,7 +213,7 @@ export function CommentForm({
 
         <Button
           onClick={submit}
-          disabled={isPending || (!appendSticker(text,sticker) && images.length === 0)}
+          disabled={!draftReady || isPending || (!appendSticker(text,sticker) && images.length === 0)}
           size="icon"
           className={`reply-submit h-9 w-9 shrink-0 rounded-full bg-gradient-primary shadow-soft ${
             isMobileDock ? 'comment-form-mobile-dock-submit' : ''
@@ -218,7 +228,7 @@ export function CommentForm({
     <>
       {editingImage && <PostComposer key={editingImage} imageEditor={{ src: originals.current.get(editingImage) ?? editingImage, onClose: () => setEditingImage(null), onApply: url => {
         const original = originals.current.get(editingImage) ?? editingImage;
-        if (editingImage !== original && editingImage !== url) URL.revokeObjectURL(editingImage);
+        if (editingImage !== original && editingImage !== url) revokeDraftMediaUrl(editingImage);
         originals.current.delete(editingImage); originals.current.set(url, original);
         imageRefs.current = imageRefs.current.map(image => image === editingImage ? url : image);
         setImages(imageRefs.current);
@@ -341,7 +351,7 @@ export function CommentForm({
       {variant === 'mediaViewerMobile' ? <>
         <button type="button" className="lime-media-reply-launcher" aria-label="返信を入力" onClick={() => { setMediaReplyOpen(true); setEditing(true); }}>{text || '返信をポスト'}</button>
         {mediaReplyOpen && createPortal(<div className="lime-media-reply-dialog dark" role="dialog" aria-modal="true" aria-label="返信を作成" data-lime-media-reply-dialog onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); setMediaReplyOpen(false); } }}>
-          <header><button type="button" aria-label="返信入力を閉じる" onClick={() => setMediaReplyOpen(false)}><ArrowLeft /></button><button type="button" className="lime-media-reply-send" aria-label="コメントを送信" disabled={isPending || (!appendSticker(text, sticker) && images.length === 0)} onClick={submit}>{isPending ? <Loader2 className="animate-spin h-5 w-5" /> : '返信'}</button></header>
+          <header><button type="button" aria-label="返信入力を閉じる" onClick={() => setMediaReplyOpen(false)}><ArrowLeft /></button><button type="button" className="lime-media-reply-send" aria-label="コメントを送信" disabled={!draftReady || isPending || (!appendSticker(text, sticker) && images.length === 0)} onClick={submit}>{isPending ? <Loader2 className="animate-spin h-5 w-5" /> : '返信'}</button></header>
           <main>
             <ReplyChain>
               {replyTo && <div className="lime-media-reply-source"><PostCard post={replyTo} embedded thread /><p className="lime-media-reply-recipient">返信先: <Link to={`/u/${replyTo.author.username}`} className="text-primary">@{displayUsername(replyTo.author.username)}</Link>さん</p></div>}

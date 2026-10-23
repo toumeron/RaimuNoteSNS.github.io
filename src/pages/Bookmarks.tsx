@@ -49,7 +49,7 @@ function Bookmarks() {
   const onlinePosts = sharing ? sharedQuery.data?.pages.flatMap(page => page.items.map(entry => entry.post)) ?? [] : ownQuery.data?.pages.flatMap(page => page.posts) ?? [];
   // Search every saved page, including bookmarks beyond the initially loaded page.
   useEffect(() => { if (!local && searchTerm && query.hasNextPage && !query.isFetching && !query.isFetchNextPageError) void query.fetchNextPage(); }, [local, searchTerm, query.hasNextPage, query.isFetching, query.isFetchNextPageError, query.fetchNextPage]);
-  const posts = [...new Map((local ? localPosts : onlinePosts).map(post => [post.id, post])).values()].filter(post => !searchTerm || [post.content, post.author.displayName, post.author.username].some(text => text?.toLocaleLowerCase().includes(searchTerm)));
+  const posts = [...new Map((local ? localPosts : onlinePosts).map(post => [post.id, post])).values()].filter(post => !post.communityId&&(!searchTerm || [post.content, post.author.displayName, post.author.username].some(text => text?.toLocaleLowerCase().includes(searchTerm))));
   const unavailable = !local && !sharing && ownQuery.data?.pages.some(page => page.unavailable > 0);
   const searching = !local && !!searchTerm && (query.isFetching || query.hasNextPage);
   return <section data-lime-bookmarks-page className="w-full">

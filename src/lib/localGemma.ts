@@ -24,7 +24,7 @@ function getWorker(){
    const request=requests.get(data.id);if(!request)return;
    if(data.type==='text'){request.onText?.(data.text);return;}
    requests.delete(data.id);
-   if(data.error)request.reject(new Error(data.error));else request.resolve(data.text??'');
+   if(data.error){const error=new Error(data.error);if(import.meta.env.DEV&&typeof data.stack==='string')error.stack=data.stack;request.reject(error);}else request.resolve(data.text??'');
   };
   worker.onerror=()=>{const error=new Error('端末内モデルを実行できませんでした');for(const request of requests.values())request.reject(error);requests.clear();worker?.terminate();worker=undefined;loadJob=undefined;publish({status:'error',error:error.message});};
  }
@@ -74,7 +74,7 @@ export function downloadLocalGemma():Promise<void>{
 }
 export async function loadLocalGemma(){
  await downloadLocalGemma();
- if(!loadJob){const jobEpoch=epoch;loadJob=(async()=>{publish({status:'loading',error:undefined});await request('load');if(jobEpoch===epoch)publish({status:'ready'});})().catch(error=>{if(jobEpoch===epoch){loadJob=undefined;publish({status:'error',error:error.message});}throw error;});}
+ if(!loadJob){const jobEpoch=epoch;loadJob=(async()=>{publish({status:'loading',error:undefined});await request('load');if(jobEpoch===epoch)publish({status:'ready'});})().catch(error=>{if(jobEpoch===epoch){terminate();publish({status:'error',error:error.message});}throw error;});}
  return loadJob;
 }
 export async function deleteLocalGemma(){

@@ -13,6 +13,7 @@ it('batches cloud reads and overlays the hat without replacing or wrapping the o
  expect(state.read).toHaveBeenCalledWith('id',expect.arrayContaining([a,b]));
  const decorated=container.firstElementChild!;
  expect(decorated.className).toContain('overflow-visible');
+ expect(decorated.className).toContain('isolate');
  expect(decorated.querySelector('img[src$="santa-hat.svg"]')?.getAttribute('aria-hidden')).toBe('true');
  act(()=>setAvatarSantaSnapshot(a,'https://example.com/a.png',false));
  expect(container.querySelector('img[src$="santa-hat.svg"]')).toBeNull();

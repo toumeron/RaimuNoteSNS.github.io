@@ -13,6 +13,7 @@ vi.mock("@/lib/supabase", async importOriginal => ({
       const call = { table, filters: {} as Record<string, unknown>, select: '',signal:undefined as AbortSignal|undefined };
       const builder = {
         select: (columns: string) => { call.select = columns; return builder; },
+        is: (column: string,value:unknown)=>{call.filters[column]=value;return builder;},
         eq: (column: string, value: unknown) => { call.filters[column] = value; return builder; },
         in: (column: string, values: unknown[]) => { call.filters[column] = values; return builder; },
         or: (value: string) => { call.filters.or = value; return builder; },
@@ -29,7 +30,7 @@ vi.mock("@/lib/supabase", async importOriginal => ({
           let rows = (db.rows[table] ?? []).filter(row => Object.entries(call.filters).every(([key, value]) => {
             if (key === 'notNull') return row[String(value)] != null;
             if (['or', 'range', 'single'].includes(key)) return true;
-            return Array.isArray(value) ? value.includes(row[key]) : row[key] === value;
+            return Array.isArray(value) ? value.includes(row[key]) : (row[key]??null) === value;
           }));
           if (Array.isArray(call.filters.range)) rows = rows.slice(Number(call.filters.range[0]), Number(call.filters.range[1]) + 1);
           return Promise.resolve({ data: db.errors[table] ? null : call.filters.single ? rows[0] ?? null : rows, error: db.errors[table] ?? null }).then(resolve);
@@ -41,7 +42,7 @@ vi.mock("@/lib/supabase", async importOriginal => ({
 }));
 
 import { getUserByUsername } from './users';
-import { getFeed, getVideoFeed, getFollowingFeed, getPostsByUser, getLikedPostsByUser, searchPosts, getProfilePosts, getProfilePopularityPosts, getPostById, getHighlightedPosts } from './posts';
+import { getFeed, getVideoFeed, getFollowingFeed, getPostsByUser, getLikedPostsByUser, searchPosts, getProfilePosts, getProfilePopularityPosts, getPostById, getHighlightedPosts, getCommunityPosts } from './posts';
 
 const post = (id: string, parent?: string) => ({
   id, user_id: 'author', content: 'post', image_urls: ['https://example.com/image.png'],
@@ -293,7 +294,7 @@ describe('profile highlights feed', () => {
   it('pages highlighted records and skips reactions for an empty page', async () => {
     db.rows.profile_highlights = [{ user_id: 'author', posts: post('one') }];
     expect(await getHighlightedPosts('author', 1, 10)).toEqual([]);
-    expect(db.calls.find(call => call.table === 'profile_highlights')?.filters).toEqual({ user_id: 'author', range: [10, 19] });
+    expect(db.calls.find(call => call.table === 'profile_highlights')?.filters).toEqual({ user_id: 'author', range: [10, 19], 'posts.community_id':null });
     expect(db.calls.some(call => ['likes', 'reposts'].includes(call.table))).toBe(false);
   });
   it('propagates feed errors instead of treating them as an empty profile', async () => {
@@ -337,4 +338,19 @@ it('scopes video candidates to requested authors and excludes inaccessible video
 it('does not query global videos when the scoped author list is empty', async () => {
  expect(await getVideoFeed(undefined,undefined,{authorIds:[]})).toEqual({posts:[],nextCursor:null});
  expect(db.calls).toHaveLength(0);
+});
+
+it('keeps community posts out of ordinary feeds, author lists and search but permits their scoped detail',async()=>{
+ const communityId='11111111-1111-4111-8111-111111111111';db.rows.posts=[post('ordinary'),{...post('community'),community_id:communityId}];
+ for(const load of [()=>getFeed(),()=>getFollowingFeed(),()=>getPostsByUser('author'),()=>searchPosts('post')])expect((await load()).map(row=>row.id)).toEqual(['ordinary']);
+ expect(await getPostById('community')).toBeNull();expect((await getPostById('community',undefined,communityId))?.communityId).toBe(communityId);
+});
+
+
+it('includes video-only posts in the community media query and keeps its destination scoped',async()=>{
+ const communityId='11111111-1111-4111-8111-111111111111';
+ db.rows.posts=[{...post('community-video'),image_urls:[],community_id:communityId,video:{duration:8,width:1280,height:720}}];
+ const result=await getCommunityPosts({ids:[communityId],media:true});
+ expect(result.map(p=>p.id)).toEqual(['community-video']);
+ expect(db.calls.find(call=>call.table==='posts')?.filters).toMatchObject({community_id:[communityId],notNull:'community_id',or:'image_urls.neq.{},video.not.is.null'});
 });

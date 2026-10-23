@@ -7,7 +7,7 @@ import { fetchExternalEvents } from "../../supabase/functions/check-external-not
 describe("registerPwa", () => {
 describe("registerPwa", () => {
 describe('PWA startup and automatic updates',()=>{
- beforeEach(()=>{vi.stubEnv('DEV',false);vi.useFakeTimers();vi.spyOn(document,'readyState','get').mockReturnValue('complete');vi.stubGlobal('requestIdleCallback',undefined);vi.spyOn(document,'visibilityState','get').mockReturnValue('visible');});
+ beforeEach(()=>{vi.stubEnv('VITE_PWA_BUILD_ID','');vi.stubEnv('DEV',false);vi.useFakeTimers();vi.spyOn(document,'readyState','get').mockReturnValue('complete');vi.stubGlobal('requestIdleCallback',undefined);vi.spyOn(document,'visibilityState','get').mockReturnValue('visible');});
  afterEach(()=>{vi.useRealTimers();vi.restoreAllMocks();vi.unstubAllGlobals();vi.unstubAllEnvs();});
  function fixture(controlled=true){
   const sw=Object.assign(new EventTarget(),{controller:controlled?{}:null,register:vi.fn()});

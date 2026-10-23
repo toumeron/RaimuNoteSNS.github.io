@@ -1014,7 +1014,7 @@ export function SearchResults({
 
       let q: any = supabase
         .from('posts')
-        .select('id, content, image_urls, video, created_at, user_id, likes_count, reposts_count, visibility, is_quote, parent_id, quoted_external_post');
+        .select('id, content, image_urls, video, created_at, user_id, likes_count, reposts_count, visibility, is_quote, parent_id, quoted_external_post').is('community_id',null);
 
       const clauses: string[][] = [];
 

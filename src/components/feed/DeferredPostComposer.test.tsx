@@ -3,7 +3,7 @@ import {afterEach,expect,it,vi} from 'vitest';
 const fixture=vi.hoisted(()=>({loaded:0,finish:undefined as (()=>void)|undefined}));
 vi.mock('./OverlayPostComposer',async()=>{
  fixture.loaded++;await new Promise<void>(resolve=>{fixture.finish=resolve;});
- return {PostOverlay:({onClose,initialQuotedPost}:any)=><section data-testid="loaded-composer"><span>{initialQuotedPost?.content}</span><button onClick={onClose}>投稿画面を閉じる</button></section>,PostComposer:({initialContent}:any)=><span>{initialContent}</span>};
+ return {PostOverlay:({onClose,initialQuotedPost}:any)=><section data-testid="loaded-composer"><span>{initialQuotedPost?.content}</span><button onClick={onClose}>投稿画面を閉じる</button></section>,PostComposer:({initialContent,initialQuotedPost,onCancel}:any)=><section data-testid="loaded-composer"><span>{initialContent??initialQuotedPost?.content}</span><button onClick={onCancel}>投稿画面を閉じる</button></section>};
 });
 import {PostOverlay,PostComposer} from "@/components/layout/AppLayout";
 afterEach(cleanup);

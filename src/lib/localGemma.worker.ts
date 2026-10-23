@@ -14,7 +14,9 @@ async function load(){
  env.customCache={match:async key=>getGemmaResource(cache,key),put:async()=>{throw new Error('読み取り専用モデルキャッシュ');}};
  const mjs=await getGemmaResource(cache,GEMMA_RUNTIME+'ort-wasm-simd-threaded.jsep.mjs'),wasm=await getGemmaResource(cache,GEMMA_RUNTIME+'ort-wasm-simd-threaded.jsep.wasm');
  if(!mjs||!wasm)throw new Error('モデルをダウンロードしてください');
- env.backends.onnx.wasm.wasmPaths={mjs:URL.createObjectURL(await mjs.blob()),wasm:URL.createObjectURL(await wasm.blob())};
+ // Pass cached WASM bytes directly: no second fetch or Blob URL lifetime is required.
+ env.backends.onnx.wasm.wasmBinary=await wasm.arrayBuffer();
+ env.backends.onnx.wasm.wasmPaths={mjs:URL.createObjectURL(await mjs.blob())};
  // Even a missing model file must not turn a conversation into a network read.
  const nativeFetch=self.fetch.bind(self);
  self.fetch=async(input,init)=>{const url=typeof input==='string'?input:input instanceof URL?input.href:input.url;if(url.startsWith('blob:'))return nativeFetch(input,init);throw new Error('端末内モデルのファイルが不足しています。再ダウンロードしてください');};
@@ -37,5 +39,5 @@ self.onmessage=async({data}:{data:{id:number;type:'load'|'generate';messages?:Lo
   if(!text.trim()&&Array.isArray(generated))text=String(generated.at(-1)?.content??'');
   if(!text.trim())throw new Error('返答を生成できませんでした');
   self.postMessage({id:data.id,text});
- }catch(error){self.postMessage({id:data.id,error:error instanceof Error?error.message:String(error)});}finally{busy=false;}
+ }catch(error){self.postMessage({id:data.id,error:error instanceof Error?error.message:String(error),stack:import.meta.env.DEV&&error instanceof Error?error.stack:undefined});}finally{busy=false;}
 };

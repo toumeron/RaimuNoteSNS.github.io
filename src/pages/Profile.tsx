@@ -1,3 +1,4 @@
+import { isPagePullBlocked } from '@/lib/pagePullGesture';
 import { PostSourceLabelVisibility, PostLinkPreview, PostImages } from "@/components/feed/QuotedPost";
 import { PostVideoPlayer } from "@/components/video/PostVideoPlayer";
 import { displayUsername, splitMentionText, mentionProfileHandle, hasStickers, formatRelative, getYouTubeId } from "@/lib/utils";
@@ -392,7 +393,14 @@ const usePullToRefresh = (onRefresh: () => Promise<void> | void, enabled: boolea
 
     const getScrollTop = () => Math.max(0, window.scrollY || document.documentElement.scrollTop || 0);
 
+    const cancelPagePull = () => {
+      draggingRef.current = false;
+      startYRef.current = null;
+      setIsPulling(false);
+      applyPullDistance(0, true);
+    };
     const beginDrag = (clientY: number) => {
+      if (isPagePullBlocked()) {cancelPagePull();return;}
       if (getScrollTop() > 0 || isRefreshingRef.current) {
         startYRef.current = null;
         draggingRef.current = false;
@@ -404,6 +412,7 @@ const usePullToRefresh = (onRefresh: () => Promise<void> | void, enabled: boolea
     };
 
     const updateDrag = (clientY: number, event: { preventDefault: () => void; cancelable?: boolean }) => {
+      if (isPagePullBlocked()) {cancelPagePull();return;}
       if (!draggingRef.current || startYRef.current === null) return;
 
       if (getScrollTop() > 0) {
@@ -432,6 +441,7 @@ const usePullToRefresh = (onRefresh: () => Promise<void> | void, enabled: boolea
     };
 
     const endDrag = async () => {
+      if (isPagePullBlocked()) {cancelPagePull();return;}
       if (!draggingRef.current) return;
 
       draggingRef.current = false;
@@ -2639,7 +2649,7 @@ async function fetchNativeProfileReplies(user: User, limit?: number, signal?: Ab
         if (postIds.length > 0) {
           const { data: postMetadata, error: metadataError } = await supabase
             .from('posts')
-            .select('id, user_id, visibility')
+            .select('id, user_id, visibility').is('community_id',null)
             .in('id', postIds);
 
           if (metadataError) throw metadataError;
@@ -2864,11 +2874,11 @@ function Profile() {
   const { data: blueskyProfile, isLoading: isBlueskyProfileLoading, isError: isBlueskyProfileError } = useQuery({
     queryKey: ['bluesky-profile', username],
     queryFn: ({ signal }) => fetchBlueskyProfile(username, signal),
-    enabled: Boolean(username) && !isLimeUserLoading && !limeUser,
+    enabled: Boolean(username) && !isLimeUserLoading && !isLimeUserError && limeUser === null,
     staleTime: 1000 * 60,
   });
-  const isBlueskyProfile = !limeUser && Boolean(blueskyProfile);
-  const user = limeUser ?? blueskyProfile;
+  const isBlueskyProfile = limeUser === null && !isLimeUserError && Boolean(blueskyProfile);
+  const user = limeUser ?? (isBlueskyProfile ? blueskyProfile : undefined);
   const popularityQuery = useQuery<ProfileFeedItem[]>({
     queryKey: ['profile-popularity', user?.id, username, viewer?.id],
     enabled: popularActive && !!user?.id,

@@ -1,3 +1,4 @@
+import { FeedPullRefreshRegion } from '@/components/feed/FeedPullRefreshRegion';
 import { isIosPwa } from "@/lib/utils";
 import { useTrendViews } from "@/hooks/useTopics";
 import { readTrendViews, recordTrendDeliveries } from "@/hooks/useTopics";
@@ -8,8 +9,8 @@ import {isTimelinePost,isLimeNoteTimelinePost,showTimelineEmpty} from "@/lib/uti
 import { useListFeed } from "@/hooks/useTopics";
 import { useTopicFeed } from "@/hooks/useTopics";
 import { isFeedTabValue, feedTabTopic, useTimelineTabs, type FeedTabValue } from "@/components/feed/TimelineTabBar";
-import { RefreshCw, Sparkles, Loader2, ArrowUp } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { Sparkles, Loader2, ArrowUp } from 'lucide-react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { useInView } from 'react-intersection-observer';
@@ -22,6 +23,8 @@ import { PostCard } from '@/components/feed/PostCard';
 import { PostCardSkeleton } from "@/components/feed/PostPoll";
 import { useTimelineContinuation } from "@/hooks/useRecommendedFeed";
 import { useTimelineFeed } from "@/hooks/useFeed";
+import {useJoinedCommunities} from '@/hooks/useCommunities';
+const CommunityTimeline=lazy(()=>import('./Communities').then(m=>({default:m.CommunityPostFeed})));
 import { useIsPWA, TIMELINE_PAGINATION_MARGIN } from "@/hooks/useViewportWidth";
 import { supabase } from '@/lib/supabase';
 import { getPostById } from '@/api/posts';
@@ -309,9 +312,6 @@ export default function Feed() {
   const [shouldPlayInitialFloatAnimation, setShouldPlayInitialFloatAnimation] = useState(
     () => !feedInitialFloatAnimationHasPlayed
   );
-  const touchStartYRef = useRef(0);
-  const isPullingRef = useRef(false);
-  const pullDistanceRef = useRef(0);
   const realtimeHandledPostIdsRef = useRef<Set<string>>(new Set());
   const currentUserIdRef = useRef<string | null>(null);
   const noticeViewerRef = useRef(user?.id ?? null);
@@ -319,9 +319,6 @@ export default function Feed() {
   const [newPostsByTab, setNewPostsByTab] = useState<Partial<Record<FeedTab, PostWithAuthor[]>>>({});
   useEffect(() => { setNewPostsByTab({}); realtimeHandledPostIdsRef.current.clear(); }, [user?.id]);
   const followedUserIdsRef = useRef<Set<string>>(new Set());
-  const [pullDistance, setPullDistance] = useState(0);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [showRefreshDone, setShowRefreshDone] = useState(false);
   const [virtualViewport, setVirtualViewport] = useState(() => ({
     scrollY: typeof window === 'undefined' ? 0 : window.scrollY,
     height: typeof window === 'undefined' ? 800 : window.innerHeight,
@@ -363,6 +360,8 @@ export default function Feed() {
   const clearTrendingReserve=()=>{trendingReserve.current?.controller.abort();trendingReserve.current=null;};
   useEffect(()=>()=>{trendingRequestIdRef.current++;trendingControllerRef.current?.abort();clearTrendingReserve();trendingLoadingRef.current=false;},[user?.id]);
 
+  const selectedCommunity=activeTab.startsWith('community:')?activeTab.slice(10):undefined;
+  const joinedCommunities=useJoinedCommunities(user?.id);
   const selectedList=activeTab.startsWith('list:')?activeTab.slice(5):undefined;
   const listFeed=useListFeed(selectedList);
   const selectedTopic=feedTabTopic(activeTab);
@@ -965,124 +964,15 @@ export default function Feed() {
   }, []);
 
 
-  useEffect(() => {
-    if (!isMobile) {
-      document.documentElement.style.overscrollBehaviorY = '';
-      document.body.style.overscrollBehaviorY = '';
-      return;
-    }
-
-    document.documentElement.style.overscrollBehaviorY = 'contain';
-    document.body.style.overscrollBehaviorY = 'contain';
-
-    const handleTouchStart = (e: TouchEvent) => {
-      if (isRefreshing) return;
-      if (window.scrollY > 2) return;
-      if (e.touches.length !== 1) return;
-
-      touchStartYRef.current = e.touches[0].clientY;
-      isPullingRef.current = true;
-      pullDistanceRef.current = 0;
-      setPullDistance(0);
-      setShowRefreshDone(false);
-    };
-
-    const handleTouchMove = (e: TouchEvent) => {
-      if (!isPullingRef.current) return;
-      if (isRefreshing) return;
-      if (e.touches.length !== 1) return;
-
-      if (window.scrollY > 2) {
-        isPullingRef.current = false;
-        pullDistanceRef.current = 0;
-        setPullDistance(0);
-        return;
-      }
-
-      const currentY = e.touches[0].clientY;
-      const diff = currentY - touchStartYRef.current;
-
-      if (diff <= 0) {
-        pullDistanceRef.current = 0;
-        setPullDistance(0);
-        return;
-      }
-
-      e.preventDefault();
-
-      const distance = Math.min(diff * 0.45, 86);
-      pullDistanceRef.current = distance;
-      setPullDistance(distance);
-    };
-
-    const handleTouchEnd = async () => {
-      if (!isPullingRef.current) return;
-
-      const shouldRefresh = pullDistanceRef.current >= 58;
-
-      isPullingRef.current = false;
-
-      if (!shouldRefresh) {
-        pullDistanceRef.current = 0;
-        setPullDistance(0);
-        return;
-      }
-
-      setIsRefreshing(true);
-      setShowRefreshDone(false);
-      pullDistanceRef.current = 58;
-      setPullDistance(58);
-
-      try {
-        if (activeTab === 'trending') {
-          await loadTrendingPosts(true);
-        } else if(isRankedTab){
-          await queryClient.resetQueries({queryKey:['feed','topic',user?.id??null,selectedTopic]});
-        } else {
-          await Promise.all([
-            queryClient.invalidateQueries({ queryKey: ['posts'] }),
-            queryClient.invalidateQueries({ queryKey: ['feed'] }),
-          ]);
-        }
-      } finally {
-        setIsRefreshing(false);
-        setShowRefreshDone(true);
-        pullDistanceRef.current = 58;
-        setPullDistance(58);
-
-        setTimeout(() => {
-          setShowRefreshDone(false);
-          pullDistanceRef.current = 0;
-          setPullDistance(0);
-        }, 650);
-      }
-    };
-
-    const handleTouchCancel = () => {
-      isPullingRef.current = false;
-
-      if (!isRefreshing) {
-        pullDistanceRef.current = 0;
-        setPullDistance(0);
-        setShowRefreshDone(false);
-      }
-    };
-
-    window.addEventListener('touchstart', handleTouchStart, { passive: true });
-    window.addEventListener('touchmove', handleTouchMove, { passive: false });
-    window.addEventListener('touchend', handleTouchEnd);
-    window.addEventListener('touchcancel', handleTouchCancel);
-
-    return () => {
-      document.documentElement.style.overscrollBehaviorY = '';
-      document.body.style.overscrollBehaviorY = '';
-
-      window.removeEventListener('touchstart', handleTouchStart);
-      window.removeEventListener('touchmove', handleTouchMove);
-      window.removeEventListener('touchend', handleTouchEnd);
-      window.removeEventListener('touchcancel', handleTouchCancel);
-    };
-  }, [isMobile, isRefreshing, queryClient, activeTab, loadTrendingPosts]);
+  const refreshVisibleFeed = async () => {
+    if(activeTab === 'trending')await loadTrendingPosts(true);
+    else if(selectedCommunity)await queryClient.invalidateQueries({queryKey:['community-posts']});
+    else if(isRankedTab)await queryClient.resetQueries({queryKey:['feed','topic',user?.id??null,selectedTopic]});
+    else await Promise.all([
+      queryClient.invalidateQueries({queryKey:['posts']}),
+      queryClient.invalidateQueries({queryKey:['feed']}),
+    ]);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -1111,7 +1001,7 @@ export default function Feed() {
 
   const fetchNextTrendingPage=useCallback(()=>loadTrendingPosts(false),[loadTrendingPosts]);
   useTimelineContinuation({enabled:activeTab==='trending',inView,hasNextPage:trendingHasMore,isFetching:trendingLoading,isFetchNextPageError:trendingError,automaticPaused:false,scrollIntent:recommendationScrollIntent,pageCount:trendingPageCount,fetchNextPage:fetchNextTrendingPage});
-  useTimelineContinuation({enabled:activeTab!=='trending',inView,hasNextPage:!!hasNextPage,isFetching,isFetchNextPageError,automaticPaused:isRankedTab&&rankedFeed.automaticPaused,scrollIntent:recommendationScrollIntent,pageCount:data?.pages.length??0,fetchNextPage});
+  useTimelineContinuation({enabled:!selectedCommunity&&activeTab!=='trending',inView,hasNextPage:!!hasNextPage,isFetching,isFetchNextPageError,automaticPaused:isRankedTab&&rankedFeed.automaticPaused,scrollIntent:recommendationScrollIntent,pageCount:data?.pages.length??0,fetchNextPage});
 
   useLayoutEffect(() => {
     const postContent = feedTabAnimationContentRef.current;
@@ -1546,7 +1436,6 @@ export default function Feed() {
     postIdsByElementRef.current.clear();
   }, []);
 
-  const canReleaseToRefresh = pullDistance >= 58;
   const hasTimelineBackground = Boolean(timelineBackgroundUrl);
   const shouldVirtualizePosts = allPosts.length > MIN_VIRTUALIZED_POSTS;
   const postOffsets=useMemo(()=>{
@@ -1633,7 +1522,7 @@ export default function Feed() {
     <div
       data-lime-feed-root
       ref={feedRootRef}
-      className={`space-y-5 ${
+      className={`${
         hasTimelineBackground
           ? timelineTheme === 'dark'
             ? 'pt-4 sm:pt-6 timeline-theme-scope timeline-theme-dark'
@@ -1641,11 +1530,6 @@ export default function Feed() {
           : ''
       }`}
     >
-      {isFeedScrolled && !isInitialLoading && (newPostsByTab[activeTab]?.length ?? 0) > 0 && <TimelineNewPostsNotice posts={newPostsByTab[activeTab]!} anchor={feedRootRef} onShow={() => {
-        revealNewPosts(activeTab, newPostsByTab[activeTab] ?? []);
-        window.dispatchEvent(new Event('lime-feed-scroll-top'));
-        window.scrollTo({top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});
-      }} />}
       {hasTimelineBackground && isMobile && timelineBackgroundUrl && (
         <div
           className="pointer-events-none fixed left-0 top-0 z-0 bg-background"
@@ -1760,36 +1644,12 @@ export default function Feed() {
           }
         `}</style>
       )}
-      {isMobile && (
-        <div
-          className="pointer-events-none fixed left-0 right-0 top-0 z-[80] flex justify-center transition-all duration-150"
-          style={{
-            transform: `translateY(${pullDistance > 0 || isRefreshing || showRefreshDone ? pullDistance : -56}px)`,
-            opacity: pullDistance > 0 || isRefreshing || showRefreshDone ? 1 : 0,
-          }}
-        >
-          <div className="mt-3 inline-flex h-10 items-center gap-2 rounded-full border border-border/60 bg-card/95 px-4 text-sm font-bold text-muted-foreground shadow-lg backdrop-blur">
-            <RefreshCw
-              className={`h-4 w-4 ${
-                isRefreshing
-                  ? 'animate-spin'
-                  : canReleaseToRefresh || showRefreshDone
-                    ? 'rotate-180'
-                    : ''
-              } ${isRefreshing ? "" : "transition-transform duration-150"}`}
-            />
-            <span>
-              {isRefreshing
-                ? '更新中...'
-                : showRefreshDone
-                  ? '更新しました'
-                  : canReleaseToRefresh
-                    ? '離して更新'
-                    : '引っ張って更新'}
-            </span>
-          </div>
-        </div>
-      )}
+      <FeedPullRefreshRegion enabled={isMobile} onRefresh={refreshVisibleFeed}>
+      {isFeedScrolled && !isInitialLoading && (newPostsByTab[activeTab]?.length ?? 0) > 0 && <TimelineNewPostsNotice posts={newPostsByTab[activeTab]!} anchor={feedRootRef} onShow={() => {
+        revealNewPosts(activeTab, newPostsByTab[activeTab] ?? []);
+        window.dispatchEvent(new Event('lime-feed-scroll-top'));
+        window.scrollTo({top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});
+      }} />}
 
       {/*
         コンテナの gap はPC表示時に影響を与えないよう sm:gap-0 にリセットしています。
@@ -1849,8 +1709,8 @@ export default function Feed() {
         </span>
       </div>
 
-      <div className="relative z-[1]">
-        <fieldset disabled={user?.isSuspended} className={user?.isSuspended ? "opacity-50" : undefined}><PostComposer homeInline timelineGlass={hasTimelineBackground} /></fieldset>
+      <div data-lime-feed-composer-row className="relative z-[1]">
+        <fieldset disabled={user?.isSuspended} className={user?.isSuspended ? "min-w-0 opacity-50" : "min-w-0"}><PostComposer key={selectedCommunity??'global'} communityId={selectedCommunity} homeInline timelineInline timelineGlass={hasTimelineBackground} /></fieldset>
         {user?.isSuspended && <SuspensionNotice />}
       </div>
 
@@ -1863,6 +1723,7 @@ export default function Feed() {
         className={hasTimelineBackground ? "relative z-[1] space-y-0 pt-2 sm:space-y-4" : "relative z-[1] space-y-4 pt-2"}
         style={{ viewTransitionName: 'lime-feed-tab-content' }}
       >
+        {selectedCommunity?<Suspense fallback={<PostCardSkeleton/>}><CommunityTimeline ids={[selectedCommunity]} showCommunityLabel={false} names={Object.fromEntries(joinedCommunities.communities.map(c=>[c.id,c.name]))}/></Suspense>:<>
         {isInitialLoading && (
           <div className="space-y-4">
             <PostCardSkeleton />
@@ -1893,7 +1754,9 @@ export default function Feed() {
             <p className="text-xs text-muted-foreground/60">すべての投稿を読み込みました</p>
           ) : null}
         </div>
+        </>}
       </div>
+      </FeedPullRefreshRegion>
     </div>
   );
 }

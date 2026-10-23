@@ -14,7 +14,7 @@ export function xPostId(value:string){
  try{const url=new URL(value);if(!['x.com','www.x.com','twitter.com','www.twitter.com','fxtwitter.com','fixupx.com'].includes(url.hostname))return null;const match=url.pathname.match(/^\/(?:[\w]{1,15}|i)\/status\/(\d{2,20})(?:\/.*)?$/);return match?`x:${match[1]}`:null;}catch{return null;}
 }
 type FxUser={id:string;screen_name:string;name?:string;avatar_url?:string;banner_url?:string;description?:string;joined?:string;followers?:number;following?:number;statuses?:number;protected?:boolean;verification?:{verified:boolean;type?:'individual'|'organization'|'government'|null};location?:string};
-type FxMedia={url:string;type?:string;width?:number;height?:number;thumbnail_url?:string;duration?:number;format?:string;formats?:{url:string;container?:string;codec?:string}[];altText?:string};
+type FxMedia={url:string;type?:string;width?:number;height?:number;thumbnail_url?:string;duration?:number;format?:string;formats?:{url:string;container?:string;codec?:string;bitrate?:number;width?:number;height?:number}[];altText?:string};
 export type FxPost={id:string;type?:string;statuses?:FxPost[];text:string;created_at?:string;created_timestamp?:number;author:FxUser;likes?:number;replies?:number;reposts?:number;retweets?:number;lang?:string;possibly_sensitive?:boolean;replying_to?:string|{screen_name:string;status:string}|null;replying_to_status?:string|null;quote?:FxPost;media?:{photos?:FxMedia[];videos?:FxMedia[]};views?:number;bookmarks?:number;quotes?:number;is_pinned?:boolean;pinned?:boolean;reposted_by?:{id:string;name:string;screen_name:string}|null;community_note?:{text:string}|null;poll?:{choices:{label:string;count:number}[];total_votes:number;ends_at:string};card?:{url:string;title?:string;description?:string;domain?:string;image?:{url:string}};source?:string;raw_text?:{facets?:{type:string;original?:string;replacement?:string}[]}};
 const date=(value:string|number|undefined)=>{const parsed=new Date(value??0);return Number.isFinite(parsed.getTime())?parsed.toISOString():new Date(0).toISOString();};
 const https=(value?:string)=>{try{return value&&new URL(value).protocol==='https:'?value:undefined;}catch{return undefined;}};
@@ -28,7 +28,13 @@ export function mapXPost(post:FxPost,depth=0):BlueskyMappedPost|null{
  const replyName=reply?.screen_name??(typeof post.replying_to==='string'?post.replying_to:undefined);
  const author=mapXUser(post.author),video=post.media?.videos?.find(item=>https(item.url));
  const variants=video?.formats?.filter(format=>https(format.url))??[];
- const mp4=variants.find(format=>format.container==='mp4'&&/h264|avc/i.test(format.codec??''))??variants.find(format=>format.container==='mp4'&&!/hevc|h265|av1|vp9/i.test(format.codec??''));
+ // Provider ordering is not a quality ranking; it commonly starts with a small rendition.
+ const renditionSize=(format:typeof variants[number])=>{
+  const match=format.url.match(/\/(\d{2,5})x(\d{2,5})(?:\/|\.)/);
+  return (format.width||Number(match?.[1])||0)*(format.height||Number(match?.[2])||0);
+ };
+ const mp4=variants.filter(format=>format.container==='mp4'&&!/hevc|h265|av1|vp9/i.test(format.codec??''))
+  .sort((a,b)=>renditionSize(b)-renditionSize(a)||(b.bitrate??0)-(a.bitrate??0)||Number(/h264|avc/i.test(b.codec??''))-Number(/h264|avc/i.test(a.codec??'')))[0];
  const stream=variants.find(format=>format.container==='m3u8');
  const directMp4=video&&(/\.mp4(?:[?#]|$)/i.test(video.url)||video.format==='video/mp4')?video.url:undefined;
  const primaryMp4=mp4?.url??directMp4;
@@ -70,20 +76,20 @@ export async function xThread(id:string,signal?:AbortSignal):Promise<BlueskyPost
  const data=await request(`status/${parsed.slice(2)}`,signal,12000,'interactive');return {post:data.status||data.tweet?mapXPost((data.status||data.tweet)!):null,replies:[]};
 }
 let searchUnavailableUntil=0;
-async function alternativeSearch(query:string,options:{cursor?:string|null;feed?:'latest'|'top'|'media'|'media-top';signal?:AbortSignal;limit?:number}){
+async function alternativeSearch(query:string,options:{cursor?:string|null;feed?:'latest'|'top'|'media'|'media-top';signal?:AbortSignal;limit?:number;onPost?:(post:BlueskyMappedPost)=>void}){
  const offset=options.cursor?.startsWith('yahoo:')?Number(options.cursor.slice(6)):0;
  if(!Number.isInteger(offset)||offset<0||offset>1000)throw new Error('検索カーソルが無効です');
  const limit=Math.max(1,Math.min(20,Math.floor(options.limit??6)||6));
  const page=await relayTwitterSearch(query,options.feed??'latest',offset,options.signal,limit);
  const ids=page.ids.slice(0,limit);
  const results:BlueskyMappedPost[]=[];let index=0;
- await Promise.all(Array.from({length:Math.min(limit>6?3:2,ids.length)},async()=>{while(index<ids.length){const id=ids[index++];try{const item=await xThread(`x:${id}`,options.signal);if(item.post)results.push(item.post);}catch(error){if(options.signal?.aborted)throw error;}}}));
+ await Promise.all(Array.from({length:Math.min(limit>6?3:2,ids.length)},async()=>{while(index<ids.length){const id=ids[index++];try{const item=await xThread(`x:${id}`,options.signal);if(item.post){results.push(item.post);options.onPost?.(item.post);}}catch(error){if(options.signal?.aborted)throw error;}}}));
  if(page.ids.length&&!results.length)throw new Error('twitterの投稿情報を取得できませんでした');
  const byId=new Map(results.map(post=>[post.id,post]));
  const next=ids.length<page.ids.length?offset+ids.length:page.cursor;
  return {posts:ids.flatMap(id=>byId.has(`x:${id}`)?[byId.get(`x:${id}`)!]:[]),cursor:next!==null?`yahoo:${next}`:null};
 }
-export async function searchXPage(query:string,options:{cursor?:string|null;feed?:'latest'|'top'|'media'|'media-top';signal?:AbortSignal;preferAlternative?:boolean;limit?:number}={}){
+export async function searchXPage(query:string,options:{cursor?:string|null;feed?:'latest'|'top'|'media'|'media-top';signal?:AbortSignal;preferAlternative?:boolean;limit?:number;onPost?:(post:BlueskyMappedPost)=>void}={}){
  const id=xPostId(query);if(id){const data=await xThread(id,options.signal);return {posts:data.post?[data.post]:[],cursor:null};}
  const q=query.replace(/(?:^|\s)source:(?:x|twitter)(?=\s|$)/gi,' ').replace(/(from:|to:)([\w]{1,15})@(?:x|twitter)\.com/gi,'$1$2').trim();
  if(!q)return {posts:[],cursor:null};

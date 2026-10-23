@@ -1,3 +1,4 @@
+import { PostComposerFrame } from '@/components/feed/PostComposerFrame';
 import { DesktopLayoutContext } from "@/components/layout/DesktopLayoutContext";
 import React from "react";
 import { useEffect, useState, useCallback, useRef, type ReactElement, forwardRef, lazy, Suspense, Component, type ComponentProps, type ReactNode, createContext, useContext } from "react";
@@ -869,7 +870,7 @@ function AppLayout() {
   if (isLimeProPage) {
     // LimeProページの場合は最大幅制限を解除し、パディングもゼロにする（フルスクリーン対応）
     mainClassName = 'w-full max-w-none px-0 py-0';
-  } else if (location.pathname === '/bookmarks' || location.pathname === '/search') {
+  } else if (location.pathname === '/bookmarks' || location.pathname === '/search' || location.pathname.startsWith('/communities')) {
     mainClassName = 'mx-auto max-w-2xl px-0 py-0';
   } else if (isPostDetailPage) {
     mainClassName = 'mx-auto max-w-2xl px-4 pb-6 pt-0';
@@ -881,7 +882,7 @@ function AppLayout() {
     const isWorkspacePage = isDirectMessagesPage || location.pathname === '/chat' || location.pathname.startsWith('/media');
     const hideHeader = isDirectMessagesPage || location.pathname === '/maps' || (location.pathname.startsWith('/u/') && !isAccountAboutPage) || ['/search', '/settings', '/chat', '/bookmarks'].includes(location.pathname) || location.pathname.startsWith('/media') || isPostDetailPage;
     const showRightSidebar = !isDirectMessagesPage && !['/chat', '/settings', '/maps'].includes(location.pathname);
-    const isEdgePage = isPostActivityPage || location.pathname === '/maps' || location.pathname.startsWith('/news') || location.pathname === '/settings' || location.pathname === '/notifications' || (location.pathname === '/topics' || location.pathname === '/lists' || location.pathname.startsWith('/lists/')) || isWorkspacePage || location.pathname === '/bookmarks' || location.pathname === '/' || location.pathname.startsWith('/u/') || isPostDetailPage;
+    const isEdgePage = isPostActivityPage || location.pathname === '/maps' || location.pathname.startsWith('/news') || location.pathname === '/settings' || location.pathname === '/notifications' || (location.pathname === '/topics' || location.pathname === '/lists' || location.pathname.startsWith('/lists/')) || isWorkspacePage || location.pathname.startsWith('/communities') || location.pathname === '/bookmarks' || location.pathname === '/' || location.pathname.startsWith('/u/') || isPostDetailPage;
     return (
       <CallSessionProvider>
         {!isDirectMessagesPage && <PageCompanion userId={user.id} />}
@@ -986,7 +987,6 @@ export function PageCompanion({userId}:{userId:string}){
 
 
 // DeferredPostComposer
-const LazyOverlay=lazy(()=>import("@/components/feed/OverlayPostComposer").then(module=>({default:module.PostOverlay})));
 const LazyComposer=lazy(()=>import("@/components/feed/OverlayPostComposer").then(module=>({default:module.PostComposer})));
 function Pending({onClose,failed=false}:{onClose?:()=>void;failed?:boolean}){
  return <div role="status" className="flex items-center gap-4 bg-background p-6 text-foreground"><span>{failed?'投稿画面を読み込めませんでした':'読み込み中…'}</span>{onClose&&<button type="button" onClick={onClose} className="underline">閉じる</button>}</div>;
@@ -996,9 +996,7 @@ class Boundary extends Component<{children:ReactNode;onClose?:()=>void},{failed:
  render(){return this.state.failed?<Pending failed onClose={this.props.onClose}/>:this.props.children;}
 }
 export function PostOverlay(props:ComponentProps<typeof Overlay>){
- if(!props.isOpen)return null;
- const fallback=createPortal(<div className="fixed inset-0 z-[2147483000] flex items-start justify-center bg-black/20 pt-[max(16px,env(safe-area-inset-top))]"><Pending onClose={props.onClose}/></div>,document.body);
- return <Boundary onClose={props.onClose}><Suspense fallback={fallback}><LazyOverlay {...props}/></Suspense></Boundary>;
+ return <PostComposerFrame {...props}>{fullScreen => <Boundary onClose={props.onClose}><Suspense fallback={<Pending onClose={props.onClose}/>}><LazyComposer fullScreen={fullScreen} mapLocation={props.mapLocation} initialQuotedPost={props.initialQuotedPost} onSuccess={props.onClose} onCancel={props.onClose}/></Suspense></Boundary>}</PostComposerFrame>;
 }
 export function PostComposer(props:ComponentProps<typeof Composer>){
  return <Boundary onClose={props.onCancel}><Suspense fallback={<Pending onClose={props.onCancel}/>}><LazyComposer {...props}/></Suspense></Boundary>;

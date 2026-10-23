@@ -3,7 +3,7 @@ vi.mock("@/lib/externalAccounts", async importOriginal => ({...await importOrigi
 vi.mock("@/hooks/useAuth", async importOriginal => {
  const actual = await importOriginal<typeof import("@/hooks/useAuth")>();
  const overrides = [
-  await (()=>({useAuth:()=>({user:{id:'lime-owner'}})}))(),
+  await (()=>({useAuth:()=>({user:state.auth.userId?{id:state.auth.userId}:null,session:state.auth.sessionId?{user:{id:state.auth.sessionId}}:null,loading:state.auth.loading,switching:state.auth.switching})}))(),
   await (()=>({useBlueskySession:()=>null}))()
  ];
  return Object.assign({}, actual, ...overrides.map(values => Object.fromEntries(Object.entries(values).filter(([key, value]) => value !== actual[key]))));
@@ -11,14 +11,14 @@ vi.mock("@/hooks/useAuth", async importOriginal => {
 import {cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
-const state=vi.hoisted(()=>({handles:[] as string[],save:vi.fn(),fail:false}));
+const state=vi.hoisted(()=>({handles:[] as string[],save:vi.fn(),fail:false,auth:{userId:'lime-owner' as string|null,sessionId:'lime-owner' as string|null,loading:false,switching:false}}));
 
 
 
 vi.mock('@/lib/bluesky',()=>({isBlueskyProfileId:(id:string)=>id.startsWith('did:')||id.startsWith('misskey-user:')||id.startsWith('x-user:')}));
 
 import { FollowButton } from "@/components/profile/ProfileHeader";
-beforeEach(()=>{state.handles=[];state.save.mockClear();state.fail=false;});
+beforeEach(()=>{Object.assign(state.auth,{userId:'lime-owner',sessionId:'lime-owner',loading:false,switching:false});state.handles=[];state.save.mockClear();state.fail=false;});
 afterEach(cleanup);
 function show(id:string,username:string){return render(<QueryClientProvider client={new QueryClient()}><FollowButton userId={id} externalProfile={{id,username,displayName:'作者',avatarUrl:''} as any}/></QueryClientProvider>);}
 it.each([['did:plc:artist','artist.bsky.social','bluesky'],['misskey-user:artist','artist@misskey.io','misskey'],['x-user:123','artist@twitter.com','x']])('follows %s in Lime without provider login and can unfollow',async(id,username,provider)=>{
@@ -31,4 +31,10 @@ it.each([['did:plc:artist','artist.bsky.social','bluesky'],['misskey-user:artist
 it('does not show a failed cloud save as followed',async()=>{
  state.fail=true;show('did:plc:artist','artist.bsky.social');fireEvent.click(screen.getByRole('button',{name:'フォロー'}));
  await waitFor(()=>expect(state.save).toHaveBeenCalled());await waitFor(()=>expect(screen.getByRole('button',{name:'フォロー'})).not.toBeDisabled());expect(state.handles).toEqual([]);
+});
+
+it('never shows a follow action for the session owner during periodic metadata refresh',()=>{
+ state.auth.userId=null;const view=show('lime-owner','owner');expect(screen.queryByRole('button',{name:'フォロー'})).not.toBeInTheDocument();
+ state.auth.userId='stale-user';view.rerender(<QueryClientProvider client={new QueryClient()}><FollowButton userId="lime-owner"/></QueryClientProvider>);expect(screen.queryByRole('button',{name:'フォロー'})).not.toBeInTheDocument();
+ state.auth.userId='lime-owner';view.rerender(<QueryClientProvider client={new QueryClient()}><FollowButton userId="lime-owner"/></QueryClientProvider>);expect(screen.queryByRole('button',{name:'フォロー'})).not.toBeInTheDocument();
 });

@@ -41,7 +41,9 @@ const partUrl=(url:string,index:number)=>`${url}${url.includes('?')?'&':'?'}lime
 /** Large streaming Cache.put() entries fail in some mobile/Chromium versions.
  * Keep each durable part small; commit the file marker only after every part. */
 async function putGemmaResource(cache:Pick<Cache,'put'>,url:string,response:Response,partSize=GEMMA_PART_BYTES){
- const total=Number(response.headers.get('content-length'));
+ // Fetch exposes decoded bytes, while CDN headers still describe Brotli/gzip bytes.
+ const encoded=!!response.headers.get('content-encoding')&&response.headers.get('content-encoding')!=='identity';
+ const total=encoded?0:Number(response.headers.get('content-length'));
  if(total>0&&total<=partSize){await cache.put(url,response);return;}
  if(!response.body)throw new Error('モデルファイルが空です');
  const reader=response.body.getReader();let part=new Uint8Array(partSize),used=0,count=0,bytes=0;
@@ -52,7 +54,7 @@ async function putGemmaResource(cache:Pick<Cache,'put'>,url:string,response:Resp
   }
   await write();
   if(total&&bytes!==total)throw new Error('モデルファイルのダウンロードが完了していません');
-  const headers=new Headers(response.headers);headers.set(PART_HEADER,String(count));headers.set('content-length',String(bytes));
+  const headers=new Headers(response.headers);headers.delete('content-encoding');headers.set(PART_HEADER,String(count));headers.set('content-length',String(bytes));
   // Marker content-length describes the reconstructed file, not this response.
   const markerHeaders=new Headers(headers);markerHeaders.delete('content-length');
   await cache.put(url,new Response(JSON.stringify({bytes}),{headers:markerHeaders}));

@@ -1,3 +1,5 @@
+import {useJoinedCommunities} from '@/hooks/useCommunities';
+import {CommunityIcon} from '@/components/communities/CommunityIcon';
 import { useSearchFollowing, useSearchTermSuggestions, useFollowStats } from "@/hooks/useFeed";
 import { recentSearchAccounts, rememberSearchAccount, clearRecentSearchAccounts, RECENT_SEARCH_ACCOUNTS_EVENT, rankAccountSearch, searchPageUrl, displayUsername, MOBILE_DRAWER_EDGE_ZONE, isMobileDrawerBlocked, cn } from "@/lib/utils";
 import { observeDocumentHeight } from "@/hooks/useViewportWidth";
@@ -11,7 +13,7 @@ import { FollowButton } from "@/components/profile/ProfileHeader";
 import { MobileAccountShortcuts, DesktopAccountFooter, Logo } from "@/components/layout/AppLayout";
 import { usePostOverlay } from "@/components/layout/DesktopLayoutContext";
 import { useSpaces } from "@/components/spaces/SpaceProvider";
-import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { Link, useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import { SETTINGS_GROUPS, SETTINGS_SECTIONS, settingsGroupForSection, Button, Tabs, TabsList, TabsTrigger, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/button";
@@ -20,7 +22,9 @@ import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { searchExternalUsers } from "@/lib/bluesky";
 import { type User } from "@/types/index";
-import { ArrowLeft, ArrowUpDown, Check, MoreHorizontal, LogOut, Settings as SettingsIcon, User as UserIcon, Search, Bell, MessageSquare, Images, CircleEllipsis, Bookmark, UserRound, X, Clock, Home, PenSquare, Mic, Hash, MapPin, List, ArrowUpLeft } from "lucide-react";
+import { ArrowLeft, ArrowUpDown, Check, MoreHorizontal, LogOut, Settings as SettingsIcon, User as UserIcon, Search, Bell, MessageSquare, Images, CircleEllipsis, Bookmark, UserRound, X, Clock, Home, PenSquare, Mic, Hash, MapPin, List, ArrowUpLeft, UsersRound } from "lucide-react";
+
+const CommunityHeaderActions=lazy(()=>import('@/pages/Communities').then(module=>({default:module.CommunityHeaderActions})));
 
 // Header
 type TimelineChromeTheme = 'light' | 'dark';
@@ -1443,6 +1447,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   const spaces = useSpaces();
   const { user, logout } = useAuth();
   const visibleFeedTabs = useTimelineTabs(user?.id);
+  const communityTabsQuery=useJoinedCommunities(user?.id);
   const openPostOverlay = usePostOverlay();
   const navigate = useNavigate();
   const location = useLocation();
@@ -1452,7 +1457,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
     activeFeedTab,
     changeActiveFeedTab,
   );
-  useEffect(() => { if (!visibleFeedTabs.some(tab => tab.value === activeFeedTab)) changeActiveFeedTab(visibleFeedTabs[0].value); }, [activeFeedTab, visibleFeedTabs.map(tab => tab.value).join(',')]);
+  useEffect(() => { if(activeFeedTab.startsWith('community:')&&communityTabsQuery.isPending)return;if (!visibleFeedTabs.some(tab => tab.value === activeFeedTab)) changeActiveFeedTab(visibleFeedTabs[0].value); }, [activeFeedTab,communityTabsQuery.isPending, visibleFeedTabs.map(tab => tab.value).join(',')]);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const {data: sidebarFollowStats} = useFollowStats(isMobileSidebarOpen && !desktopLayout ? user?.id : undefined);
   useEffect(() => {
@@ -2055,6 +2060,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   const isChatPage = normalizeAppPath(location.pathname) === '/chat' || /^\/messages(?:\/|$)/.test(normalizeAppPath(location.pathname));
   const isNotificationsPage = normalizeAppPath(location.pathname) === '/notifications';
   const isPostActivityPage = /^\/post\/[^/]+\/activity\/?$/.test(normalizeAppPath(location.pathname));
+  const isCommunitiesPage = normalizeAppPath(location.pathname).startsWith('/communities');
   const isMapsPage = normalizeAppPath(location.pathname) === '/maps';
   const isNewsHistoryPage = normalizeAppPath(location.pathname) === '/news/history';
   const isNewsPage = normalizeAppPath(location.pathname) === '/news' || isNewsHistoryPage;
@@ -2069,6 +2075,8 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   const profileUtilityMatch = accountAboutMatch ?? watchHistoryMatch;
   const mobileProfileViewport = useMobilePostMenu();
   const hideHeaderOnMobileProfile = mobileProfileViewport && isProfilePath(location.pathname);
+  const communityProfileHeader=mobileProfileViewport&&/^\/communities\/[^/]+\/?$/.test(normalizeAppPath(location.pathname));
+  const profileLikeHeader=hideHeaderOnMobileProfile||communityProfileHeader;
   const [profileListsOpen,setProfileListsOpen]=useState(false);
   const [mobileProfileInfo, setMobileProfileInfo] = useState<{user: User; posts: number; following: boolean} | null>(null);
   const [profileTitleVisible, setProfileTitleVisible] = useState(false);
@@ -2085,7 +2093,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
   }, [hideHeaderOnMobileProfile, mobileProfileInfo?.user.coverUrl]);
   useLayoutEffect(() => {
     setMobileProfileInfo(null);
-    if (!hideHeaderOnMobileProfile) return;
+    if (!profileLikeHeader) return;
     let frame = 0;
     let elements:{bar:HTMLElement|null;cover:Element|null;name:Element|null;summary:Element|null;background:HTMLElement|null}|undefined;
     let previousTitle=-1,previousCover=-1,layoutDirty=true;
@@ -2095,7 +2103,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
       if(!elements||!elements.bar?.isConnected||!elements.summary?.isConnected||(elements.name&&!elements.name.isConnected)||(elements.cover&&!elements.cover.isConnected)){
         previousTitle=-1;previousCover=-1;layoutDirty=true;
         const bar=document.querySelector<HTMLElement>('header[data-lime-mobile-profile-header-hidden="true"] [data-lime-header-row]');
-        elements={bar,cover:document.querySelector('.profile-header-cover-avatar-gap'),name:document.querySelector('[data-lime-profile-name]'),summary:document.querySelector('[data-lime-profile-header]'),background:bar?.querySelector<HTMLElement>('.lime-profile-bar-background')??null};
+        elements={bar,cover:document.querySelector(communityProfileHeader?'.community-cover':'.profile-header-cover-avatar-gap'),name:document.querySelector(communityProfileHeader?'.community-summary h2':'[data-lime-profile-name]'),summary:document.querySelector(communityProfileHeader?'.community-summary':'[data-lime-profile-header]'),background:bar?.querySelector<HTMLElement>('.lime-profile-bar-background')??null};
       }
       const {bar,cover,name,summary,background}=elements;
       // Document positions are stable during scrolling. Measure only when layout changes.
@@ -2131,11 +2139,12 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
     resize.observe(document.body);
     window.addEventListener('lime-profile-header-info', info);
     window.dispatchEvent(new CustomEvent('lime-profile-header-request'));
+    window.addEventListener('lime-community-header-ready',layout);
     window.addEventListener('pageshow', layout);
     window.addEventListener('resize', layout);
     window.addEventListener('scroll', scroll, {passive: true, capture: true});
-    return () => {cancelAnimationFrame(frame);resize.disconnect();window.removeEventListener('pageshow', layout);window.removeEventListener('resize', layout);window.removeEventListener('lime-profile-header-info', info);window.removeEventListener('scroll', scroll, true);};
-  }, [hideHeaderOnMobileProfile, location.pathname]);
+    return () => {window.removeEventListener('lime-community-header-ready',layout);cancelAnimationFrame(frame);resize.disconnect();window.removeEventListener('pageshow', layout);window.removeEventListener('resize', layout);window.removeEventListener('lime-profile-header-info', info);window.removeEventListener('scroll', scroll, true);};
+  }, [profileLikeHeader,communityProfileHeader, location.pathname]);
   // ポスト詳細ページはモバイルで専用ヘッダー(戻る・タイトル・もっと見る)を
   // PostDetail.tsx側が表示するため、共通のHeaderはモバイルでのみ非表示にする。
   const hidePostDetailHeaderOnMobile = isPostDetailPath(location.pathname);
@@ -2761,6 +2770,8 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
         }, {
           label: 'LimeMaps', path: '/maps', icon: MapPin, onClick: () => navigate('/maps'),
         }, {
+          label: 'コミュニティ', path: '/communities', icon: CommunityIcon, onClick: () => navigate('/communities'),
+        }, {
           label: 'リスト',path: '/lists',icon:List,onClick:()=>navigate('/lists'),
         }, {
           label: 'トピック',
@@ -2941,6 +2952,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
                       <Bookmark className="h-6 w-6 shrink-0 stroke-[2]" />ブックマーク
                     </DropdownMenuItem>
                     <DropdownMenuItem className="gap-3 rounded-xl px-4 py-4 text-base font-bold" onClick={() => navigate('/maps')}><MapPin className="h-6 w-6 shrink-0 stroke-[2]" />LimeMaps</DropdownMenuItem>
+                    <DropdownMenuItem className="gap-3 rounded-xl px-4 py-4 text-base font-bold" onClick={() => navigate('/communities')}><CommunityIcon className="h-6 w-6 shrink-0" />コミュニティ</DropdownMenuItem>
                     <DropdownMenuItem className="gap-3 rounded-xl px-4 py-4 text-base font-bold" onClick={() => navigate('/lists')}><List className="h-6 w-6 shrink-0 stroke-[2]"/>リスト</DropdownMenuItem>
                     <DropdownMenuItem className="gap-3 rounded-xl px-4 py-4 text-base font-bold" onClick={() => navigate('/topics')}>
                       <Hash className="h-6 w-6 shrink-0 stroke-[2]" />トピック
@@ -2977,14 +2989,16 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
       data-lime-app-header="true"
       data-lime-follow-list-header={/^\/u\/[^/]+\/followers_following\/?$/.test(normalizeAppPath(location.pathname)) || undefined}
       data-lime-news-header={isNewsPage || undefined}
-      data-lime-profile-scrolled={hideHeaderOnMobileProfile && profileCoverHidden || undefined}
+      data-lime-community-header={isCommunitiesPage || undefined}
+      data-lime-community-detail-header={/^\/communities\/[^/]+\/?$/.test(normalizeAppPath(location.pathname))||undefined}
+      data-lime-profile-scrolled={profileLikeHeader && profileCoverHidden || undefined}
       data-lime-profile-no-cover={hideHeaderOnMobileProfile && mobileProfileInfo && !mobileProfileInfo.user.coverUrl || undefined}
-      data-lime-profile-title-visible={hideHeaderOnMobileProfile && profileTitleVisible || undefined}
+      data-lime-profile-title-visible={profileLikeHeader && profileTitleVisible || undefined}
       data-lime-post-activity-header={isPostActivityPage || undefined}
-      data-lime-mobile-profile-header-hidden={hideHeaderOnMobileProfile ? 'true' : undefined}
+      data-lime-mobile-profile-header-hidden={profileLikeHeader ? 'true' : undefined}
       data-lime-mobile-post-detail-header-hidden={hidePostDetailHeaderOnMobile ? 'true' : undefined}
       data-lime-chat-header-hidden-mobile={isChatPage ? 'true' : undefined}
-      className={hideHeaderOnMobileProfile && !desktopLayout ? 'lime-profile-controls-host' : cn(
+      className={profileLikeHeader && !desktopLayout ? 'lime-profile-controls-host' : cn(
         isChatPage
           ? 'fixed left-0 right-0 top-0 z-[500] border-b backdrop-blur-md'
           : hideHeaderOnMobileProfile && !desktopLayout
@@ -3505,7 +3519,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
             <Button variant="ghost" size="icon" className="shrink-0 rounded-full" aria-label="戻る" onClick={()=>window.history.state?.idx>0?navigate(-1):navigate('/')}><ArrowLeft className="h-5 w-5"/></Button>
             <h1 className="min-w-0 flex-1 truncate text-center text-lg font-bold sm:text-left sm:text-xl">ポストアクティビティ</h1>
             {(settingsParams.get('tab')==='quotes'||!settingsParams.get('tab')&&!settingsParams.get('reply'))?<DropdownMenu modal={false}><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="shrink-0 rounded-full" aria-label="エンゲージメントを並べ替え"><ArrowUpDown className="h-5 w-5"/></Button></DropdownMenuTrigger><DropdownMenuContent data-lime-activity-sort align="end" className="z-[600] w-64 rounded-2xl border-0 p-0 shadow-lg"><div className="border-b border-border px-4 py-3 text-sm text-muted-foreground">エンゲージメントを並べ替え</div>{[{id:'top',label:'話題のポスト'},{id:'latest',label:'最新'}].map(option=><DropdownMenuItem key={option.id} className="flex justify-between px-4 py-3 text-base focus:bg-muted/40 focus:text-foreground" onClick={()=>setSettingsParams(previous=>{const next=new URLSearchParams(previous);next.set('sort',option.id);return next;})}>{option.label}{(settingsParams.get('sort')==='latest'?'latest':'top')===option.id&&<Check className="h-5 w-5 text-primary"/>}</DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu>:<span className="w-10 shrink-0"/>}
-          </> : isMapsPage ? <>
+          </> : isCommunitiesPage ? <Suspense fallback={<h1 className="text-xl font-bold">コミュニティ</h1>}><CommunityHeaderActions/></Suspense> : isMapsPage ? <>
             <Button variant="ghost" size="icon" className="shrink-0 rounded-full" aria-label="戻る" onClick={() => window.history.state?.idx > 0 ? navigate(-1) : navigate('/')}><ArrowLeft className="h-5 w-5" /></Button><h1 className="ml-2 flex-1 text-xl font-bold">LimeMaps</h1>
           </> : isNewsPage ? <>
             <Button variant="ghost" size="icon" className="shrink-0 rounded-full" aria-label={isNewsHistoryPage ? 'ニュースに戻る' : '検索に戻る'} onClick={() => window.history.state?.idx > 0 ? navigate(-1) : navigate(isNewsHistoryPage ? `/news${settingsParams.get('story') ? `?story=${encodeURIComponent(settingsParams.get('story')!)}` : ''}` : '/search')}><ArrowLeft className="h-5 w-5" /></Button>
@@ -3594,7 +3608,7 @@ export const Header = ({ desktopLayout = false, desktopSidebarContainer = null }
     </>
   );
   return <>
-    {hideHeaderOnMobileProfile && !desktopLayout ? createPortal(headerContent, document.body) : headerContent}
+    {profileLikeHeader && !desktopLayout ? createPortal(headerContent, document.body) : headerContent}
     {renderMobileSidebar()}
   </>;
 };

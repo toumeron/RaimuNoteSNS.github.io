@@ -24,6 +24,8 @@ type CustomUser = SupabaseUser & {
   isPrivate?: boolean;
   bio?: string;
   location?: string;
+  websiteUrl?: string;
+  birthDate?: string;
   coverUrl?: string;
   emojiEffect?: string; // 追加: 絵文字エフェクト用
   bot_enabled?: boolean; // 追加: Bot設定用
@@ -133,7 +135,7 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
         const { data: profile, error } = await supabase
           .from('profiles')
           // 公開プロフィールの取得を非公開Bot設定の取得から独立させる。
-          .select('username, display_name, avatar_url, is_official, is_private, bio, location, cover_url, emoji_effect, bot_enabled, Account_suspension')
+          .select('username, display_name, avatar_url, is_official, is_private, bio, location, website_url, birth_date, cover_url, emoji_effect, bot_enabled, Account_suspension')
           .eq('id', supabaseUser.id)
           .single();
 
@@ -159,6 +161,8 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
               isSuspended: profile.Account_suspension === true,
               bio: profile.bio ?? current.bio,
               location: profile.location ?? '',
+              websiteUrl: profile.website_url ?? '',
+              birthDate: profile.birth_date ?? '',
               coverUrl: profile.cover_url ?? current.coverUrl,
               emojiEffect: profile.emoji_effect ?? current.emojiEffect,
               bot_enabled: profile.bot_enabled ?? false, // DBから取得した値を反映

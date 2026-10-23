@@ -4,7 +4,7 @@ import { LocalGemmaModelRow, ChatPostPreview, ChatMenuContent } from "@/componen
 import { PostPoll } from "@/components/feed/PostPoll";
 import { allowAccountWrite, supabase } from "@/lib/supabase";
 import { TypingPixelCat, MessagePixelCat, useMessagePixelCat, LIME_AI_CAT_ICON, FriendProfile, FriendPhoto } from "@/components/chat/FriendProfile";
-import { streamChatWithFallback, GROUP_CALL_INSTRUCTION, runGroupFriendTurn, type FriendCallUtterance, AI_CHAT_DELETED, AI_CHAT_HISTORY_CHANGED, AI_FRIENDS_CHANGED, avatarOf, loadAvatars, saveAvatars, defaultAvatarUrl, listAssistants, findAssistant, saveCustomAssistant, deleteCustomAssistant, type AssistantItem, type AssistantDraft, type AvatarMap } from "@/lib/aiFriends";
+import { writeFriendSetting, syncFriends, streamChatWithFallback, GROUP_CALL_INSTRUCTION, runGroupFriendTurn, type FriendCallUtterance, AI_CHAT_DELETED, AI_CHAT_HISTORY_CHANGED, AI_FRIENDS_CHANGED, avatarOf, loadAvatars, saveAvatars, defaultAvatarUrl, listAssistants, findAssistant, saveCustomAssistant, deleteCustomAssistant, type AssistantItem, type AssistantDraft, type AvatarMap } from "@/lib/aiFriends";
 import { playIncomingRingtone, unlockIncomingRingtone, CallRecorder, preferRecordedCallSpeech, requestCallTranscription, Speaker, ttsSupported, unlockAiAudio, CALM_FEMALE_VOICE_ID, CALM_FEMALE_VOICE_NAME, microphoneErrorMessage, requestMicrophonePermission } from "@/lib/callRecorder";
 import { randomUUID, formatRelative } from "@/lib/utils";
 import { useIncomingFriendCalls, IncomingFriendCall, useCallSession } from "@/components/layout/AppLayout";
@@ -93,15 +93,10 @@ const MODE_META: Record<
    ================================================================== */
 
 /* ==================================================================
-   LimeAI 拡張: ローカル保存 (設定 / メモリ / ピン留め / カスタムアシスタント)
+   LimeAI 拡張: クラウド同期 (設定 / メモリ / ピン留め / カスタムアシスタント)
    ================================================================== */
 
-/**
- * ChatPage 拡張機能の設定保存 (ブラウザの localStorage / ユーザーIDごと)。
- * 元アプリではサーバーのDB(Postgres)に保存していた設定・メモリ・アシスタント・ピン留めなどを、
- * Supabase のテーブル定義を変えずに済むよう localStorage に保存しています。
- */
-
+// ユーザーごとのキャッシュ。変更は既存の非公開設定へ同期します。
 const key = (uid: string | null | undefined, name: string) => `limeai:${uid || 'guest'}:${name}`
 
 function read<T>(uid: string | null | undefined, name: string, fallback: T): T {
@@ -124,7 +119,7 @@ function readList<T>(uid: string | null | undefined, name: string): T[] {
 
 function write(uid: string | null | undefined, name: string, value: unknown) {
   try {
-    localStorage.setItem(key(uid, name), JSON.stringify(value))
+    writeFriendSetting(uid, name, value)
   } catch {
     /* 容量超過などは無視 */
   }
@@ -1886,6 +1881,8 @@ function AssistantsView({
   const [draftAvatarInitial, setDraftAvatarInitial] = useState<string | null>(()=>initialFriend ? avatars[initialFriend.id]??null : null);
   const [err, setErr] = useState("");
   const [avatarMenuId, setAvatarMenuId] = useState<string | null>(null);
+  const [savingFriend,setSavingFriend]=useState(false);
+  useEffect(()=>{const refresh=()=>setItems(listAssistants(uid));window.addEventListener(AI_FRIENDS_CHANGED,refresh);return()=>window.removeEventListener(AI_FRIENDS_CHANGED,refresh)},[uid]);
   const iconInput = useRef<HTMLInputElement>(null);
   const cropPortalRef=useRef<HTMLDivElement>(null);
   const [cropSrc,setCropSrc]=useState<string|null>(null);
@@ -1951,20 +1948,23 @@ function AssistantsView({
     setErr("");
   };
 
-  const save = () => {
-    if (!draft) return;
+  const save = async () => {
+    if (!draft || savingFriend) return;
+    setSavingFriend(true);
     setErr("");
     try {
       const list = saveCustomAssistant(uid, draft);
       const savedId = draft.id ?? list[list.length - 1]?.id;
+      if(savedId)setDraft(current=>current?{...current,id:savedId}:current);
       if (savedId && draftAvatar !== draftAvatarInitial) onAvatarChange(savedId, draftAvatar);
+      if(uid)await syncFriends(uid);
       setDraft(null);
       load();
       const saved = list.find(friend => friend.id === savedId);
       if (saved) onSaved?.(saved);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    }
+      setErr("フレンドを保存できませんでした。接続を確認して、もう一度お試しください。");
+    } finally {setSavingFriend(false)}
   };
 
   const field = simple ? "dm-friend-input" : "w-full rounded-xl border border-[#dfe3e8] dark:border-[#252b33] bg-white dark:bg-[#12161b] px-3 text-sm outline-none focus:border-[#4fb3e8]";
@@ -2173,9 +2173,9 @@ function AssistantsView({
               </button>
               <button
                 type="button"
-                disabled={!draft.name.trim() || !draft.systemPrompt.trim()}
+                disabled={savingFriend || !draft.name.trim() || !draft.systemPrompt.trim()}
                 onClick={save}
-                className="rounded-xl bg-[#3aa5e0] px-5 py-2 text-sm font-semibold text-white disabled:opacity-40"
+                className="rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-40"
               >
                 保存
               </button>
@@ -4800,7 +4800,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
   const messageSpeaker = useRef(new Speaker())
   // アシスタント専用の通話モード(PC・タブレット・モバイル対応)
   const callSession = useCallSession()
-  // キャラクターのアイコン画像(ブラウザ内保存)
+  // キャラクターのアイコン画像(Cloudinary URLのキャッシュ)
   const [avatars, setAvatars] = useState<AvatarMap>(()=>loadAvatars(uid))
 
   // モバイルでソフトキーボードが開いたときのレイアウト崩れ対策
@@ -5009,7 +5009,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
     if(uid&&sessionMetaOwner===uid)saveSessionMeta(uid,sessionMeta)
   },[uid,sessionMetaOwner,sessionMeta])
 
-  useEffect(()=>{const refresh=()=>{setAvatars(loadAvatars(uid));setAssistant(previous=>previous ? findAssistant(uid,previous.id) ?? previous : null)};window.addEventListener(AI_FRIENDS_CHANGED,refresh);window.addEventListener('storage',refresh);return()=>{window.removeEventListener(AI_FRIENDS_CHANGED,refresh);window.removeEventListener('storage',refresh)}},[uid])
+  useEffect(()=>{const refresh=()=>{setChatSettings(loadChatSettings(uid));setMemories(loadMemories(uid));setSessionMeta(previous=>{const next=loadSessionMeta(uid);return JSON.stringify(previous)===JSON.stringify(next)?previous:next});setAvatars(loadAvatars(uid));setAssistant(previous=>previous ? findAssistant(uid,previous.id) ?? previous : null)};window.addEventListener(AI_FRIENDS_CHANGED,refresh);window.addEventListener('storage',refresh);return()=>{window.removeEventListener(AI_FRIENDS_CHANGED,refresh);window.removeEventListener('storage',refresh)}},[uid])
 
   // ユーザー情報が取得できた段階でSupabaseからチャット履歴を取得
   useEffect(() => {
@@ -5020,6 +5020,8 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
       const localSessions=await listLocalGemmaSessions(user.id).catch(()=>[]);
       if(disposed)return;
       try {
+        await syncFriends(user.id);
+        if(disposed)return;
         const { data, error } = await supabase
           .from('chat_sessions')
           .select('*')
@@ -5165,7 +5167,7 @@ export default function ChatPage({ embedded = false, initialAction, friendId, on
     if (dataUrl) next[id] = dataUrl
     else delete next[id]
     setAvatars(next)
-    if (!saveAvatars(uid, next)) toast.error('アイコンを保存できませんでした(ブラウザの保存容量が不足しています)')
+    if (!saveAvatars(uid, next)) toast.error('アイコンを保存できませんでした。もう一度お試しください。')
   }
 
   /** キャラクターを編集したとき、選択中のキャラクターにも反映する */

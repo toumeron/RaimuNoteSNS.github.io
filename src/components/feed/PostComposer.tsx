@@ -1,3 +1,9 @@
+import { PostAudiencePicker } from './PostAudiencePicker';
+import {usePostDraft} from '@/hooks/usePostDraft';
+import {createDraftMediaUrl,revokeDraftMediaUrl,postDraftKey,type PostDraft} from '@/lib/postDrafts';
+import {usePostCommunityDestination} from '@/hooks/useCommunities';
+import {CommunityAudienceItems} from '@/components/communities/CommunityAudienceItems';
+import {CommunityIcon} from '@/components/communities/CommunityIcon';
 import { displayUsername } from "@/lib/utils";
 import { PrivateMediaImage } from "@/components/ui/avatar";
 import { composerMediaDrop, isVideoAttachment } from "@/components/feed/PostPoll";
@@ -5,7 +11,7 @@ import { preparePostVideo, type PreparedVideo } from "@/lib/mediaThumbnail";
 import {PostVideoPlayer} from '@/components/video/PostVideoPlayer';
 import { ScheduleControl, ScheduledPostNotice } from "@/components/feed/PostPoll";
 import { allowAccountWrite } from "@/lib/supabase";
-import { useAutoTextarea } from "@/hooks/useViewportWidth";
+import { useAutoTextarea, useIsMobile } from "@/hooks/useViewportWidth";
 import { ComposerIcon } from "@/components/feed/PostPoll";
 import { PollIcon } from "@/components/feed/PostPoll";
 import { PollEditor, newPollDraft } from "@/components/feed/PostPoll";
@@ -70,11 +76,12 @@ const getLimitedCache = <K, V>(map: Map<K, V>, key: K) => {
 
 // Share only simultaneous requests for the same viewer. Reopening the composer
 // rechecks visibility so a removed follow or account switch cannot expose a cache.
-const getQuotedPostCached = async (postId: string, viewerId?: string) => {
-  const key = `${viewerId ?? ''}:${postId}`;
+const getQuotedPostCached = async (postId: string, viewerId?: string,communityId?:string) => {
+  const key = `${viewerId ?? ''}:${communityId??''}:${postId}`;
   const pending = quotedPostFetches.get(key);
   if (pending) return pending;
-  const request = getPostById(postId)
+  const request = getPostById(postId,undefined,communityId)
+    .then(post=>post??(communityId?getPostById(postId):null))
     .catch((error) => {
       console.error('Fetch quoted post failed:', error);
       return null;
@@ -85,8 +92,10 @@ const getQuotedPostCached = async (postId: string, viewerId?: string) => {
 };
 
 interface PostComposerProps {
+  communityId?: string;
   mapLocation?: import("@/lib/mapLocation").MapLocation;
   homeInline?:boolean;
+  timelineInline?:boolean;
   imageEditor?: { src: string; onApply: (url: string) => void; onClose: () => void };
   initialQuotedPost?: PostWithAuthor | null;
   initialContent?: string;
@@ -172,8 +181,9 @@ function getCaretCoordinates(element: HTMLTextAreaElement, position: number) {
   return coordinates;
 }
 
-function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent = '', onSuccess, timelineGlass = false, homeInline = false, imageEditor }: PostComposerProps) {
+function PostComposerComponent({ communityId:defaultCommunityId, mapLocation, initialQuotedPost, initialContent = '', onSuccess, timelineGlass = false, timelineInline = false, imageEditor }: PostComposerProps) {
   const { user } = useAuth();
+  const isMobileTimeline = useIsMobile() && timelineInline;
   const [searchParams, setSearchParams] = useSearchParams();
   const quoteId = imageEditor ? null : searchParams.get('quote');
 
@@ -187,15 +197,15 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
   const [scheduledAt,setScheduledAt]=useState<string|null>(null);
   const [poll,setPoll]=useState<PollDraft|null>(null);
   const pollRef=useRef(poll);pollRef.current=poll;
-  const removePoll=()=>{pollRef.current?.options.forEach(option=>{if(option.image)URL.revokeObjectURL(option.image);});setPoll(null);};
-  useEffect(()=>()=>{pollRef.current?.options.forEach(option=>{if(option.image)URL.revokeObjectURL(option.image);});},[]);
+  const removePoll=()=>{pollRef.current?.options.forEach(option=>{if(option.image)revokeDraftMediaUrl(option.image);});setPoll(null);};
+  useEffect(()=>()=>{pollRef.current?.options.forEach(option=>{if(option.image)revokeDraftMediaUrl(option.image);});},[]);
   const [sticker,setSticker]=useState<string|null>(null);
   const [video,setVideo]=useState<PreparedVideo|null>(null);
   const [videoProgress,setVideoProgress]=useState<number|null>(null);
   const videoRef=useRef<PreparedVideo|null>(null);videoRef.current=video;
   const videoAbort=useRef<AbortController|null>(null);
-  const removeVideo=()=>{videoAbort.current?.abort();if(videoRef.current)URL.revokeObjectURL(videoRef.current.url);setVideo(null);setVideoProgress(null);};
-  useEffect(()=>()=>{videoAbort.current?.abort();if(videoRef.current)URL.revokeObjectURL(videoRef.current.url);},[]);
+  const removeVideo=()=>{videoAbort.current?.abort();if(videoRef.current)revokeDraftMediaUrl(videoRef.current.url);setVideo(null);setVideoProgress(null);};
+  useEffect(()=>()=>{videoAbort.current?.abort();if(videoRef.current)revokeDraftMediaUrl(videoRef.current.url);},[]);
   const [previews, setPreviews] = useState<string[]>([]);
   const [previewOriginals, setPreviewOriginals] = useState<string[]>([]);
   const [editingImageIndex, setEditingImageIndex] = useState<number | null>(null);
@@ -206,6 +216,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
   const [cropBoxSize, setCropBoxSize] = useState({ width: 0, height: 0 });
   const [cropStageSize, setCropStageSize] = useState({ width: 0, height: 0 });
   const [quotedPost, setQuotedPost] = useState<PostWithAuthor | null>(initialQuotedPost || null);
+  const {communityId,setCommunityId,communities,communityName,resetCommunity}=usePostCommunityDestination(imageEditor?undefined:user?.id,defaultCommunityId,quotedPost?.communityId);
   const fileRef = useRef<HTMLInputElement>(null);
   const previewsRef = useRef<string[]>([]);
   const previewOriginalsRef = useRef<string[]>([]);
@@ -260,6 +271,14 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
   const [popupPos, setPopupPos] = useState({ top: 0, left: 0 }); // 汎用的な名に変更
   const [scrollTop, setScrollTop] = useState(0);
 
+  const draftKey=user?.id&&!imageEditor?postDraftKey(user.id,'inline',defaultCommunityId,mapLocation):null;
+  const draftState:PostDraft={content,previews,originals:previewOriginals,sticker,poll,video,scheduledAt,visibility,communityId,quotedPost};
+  const {ready:draftReady,readyRef:draftReadyRef,beginSubmission,completeSubmission,markEdited}=usePostDraft(draftKey,draftState,value=>{
+    setContent(value.content);setPreviews(value.previews);setPreviewOriginals(value.originals);
+    previewsRef.current=value.previews;previewOriginalsRef.current=value.originals;
+    setSticker(value.sticker);setPoll(value.poll);setScheduledAt(value.scheduledAt);setVideo(value.video);
+    setVisibility(value.visibility);setCommunityId(value.communityId);setQuotedPost(value.quotedPost);
+  },{content:initialContent,communityId:defaultCommunityId,quotedPost:initialQuotedPost??null});
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -278,11 +297,11 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
   }, [initialContent]);
 
   useEffect(() => {
-    if (!quoteId || initialQuotedPost) return;
+    if (!quoteId || initialQuotedPost || quotedPost?.id===quoteId) return;
 
     let cancelled = false;
 
-    getQuotedPostCached(quoteId, user?.id).then((post) => {
+    getQuotedPostCached(quoteId, user?.id,defaultCommunityId).then((post) => {
       if (cancelled) return;
 
       if (post) {
@@ -297,7 +316,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
     return () => {
       cancelled = true;
     };
-  }, [quoteId, initialQuotedPost, setSearchParams, user?.id]);
+  }, [quoteId, initialQuotedPost, setSearchParams, user?.id,defaultCommunityId,quotedPost?.id]);
 
   useEffect(() => {
     if (initialQuotedPost) {
@@ -412,11 +431,12 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
     return () => {
       if (imageEditor) return; // The reply composer owns these URLs.
       const urls = new Set([...previewsRef.current, ...previewOriginalsRef.current]);
-      urls.forEach((url) => URL.revokeObjectURL(url));
+      urls.forEach((url) => revokeDraftMediaUrl(url));
     };
   }, []);
 
   const addImageFiles = useCallback((incomingFiles: File[]) => {
+    if(!draftReadyRef.current){toast.info('下書きを復元しています');return true;}
     if(videoRef.current||videoAbort.current){toast.error('動画は画像と同時に添付できません');return true;}
     const imageFiles = incomingFiles.filter((file) => file.type.startsWith('image/'));
     if (imageFiles.length === 0) return false;
@@ -431,7 +451,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
       toast.error(`画像は最大${MAX_IMAGES}枚までです`);
     }
 
-    const next = imageFiles.slice(0, slots).map((file) => URL.createObjectURL(file));
+    const next = imageFiles.slice(0, slots).map((file) => createDraftMediaUrl(file));
     setPreviews((current) => [...current, ...next]);
     setPreviewOriginals((current) => [...current, ...next]);
     return true;
@@ -1097,7 +1117,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
       const previousUrl = previewsRef.current[editingImageIndex];
       const originalUrl = previewOriginalsRef.current[editingImageIndex] ?? editingImageSrc;
       setPreviews((current) => current.map((src, index) => (index === editingImageIndex ? originalUrl : src)));
-      if (previousUrl && previousUrl !== originalUrl) URL.revokeObjectURL(previousUrl);
+      if (previousUrl && previousUrl !== originalUrl) revokeDraftMediaUrl(previousUrl);
       closeImageEditor();
       return;
     }
@@ -1131,19 +1151,20 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
     }
 
     if (imageEditor && !editorModeAlive.current) return;
-    const nextUrl = URL.createObjectURL(blob);
+    const nextUrl = createDraftMediaUrl(blob);
     if (imageEditor) { imageEditor.onApply(nextUrl); closeImageEditor(); return; }
     const previousUrl = previewsRef.current[editingImageIndex];
     const originalUrl = previewOriginalsRef.current[editingImageIndex];
 
     setPreviews((current) => current.map((src, index) => (index === editingImageIndex ? nextUrl : src)));
-    if (previousUrl && previousUrl !== originalUrl) URL.revokeObjectURL(previousUrl);
+    if (previousUrl && previousUrl !== originalUrl) revokeDraftMediaUrl(previousUrl);
     closeImageEditor();
   }, [imageEditor, closeImageEditor, cropImageSize.height, cropImageSize.width, cropOffset.x, cropOffset.y, cropZoom, editingImageIndex, editingImageSrc, getCropBoxSize, cropAspectId, selectedCropAspect.outputHeight, selectedCropAspect.outputWidth]);
 
   const resizeTextarea = useAutoTextarea(textareaRef,content,TEXTAREA_MAX_HEIGHT);
 
   const handleContentChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
+    markEdited();
     const val = e.target.value;
     const pos = e.target.selectionStart;
     setContent(sticker && val.trim() ? val+draftEmojiCharacter(sticker) : val);
@@ -1225,7 +1246,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
     if(files.length!==1||previews.length||video||poll){toast.error('動画は1本だけ添付できます。画像・投票とは同時に添付できません');return;}
     if(videoAbort.current)return;
     const controller=new AbortController();videoAbort.current=controller;setVideoProgress(0);
-    try{const result=await preparePostVideo(selected[0],setVideoProgress,controller.signal);if(!controller.signal.aborted)setVideo(result);else URL.revokeObjectURL(result.url);}
+    try{const result=await preparePostVideo(selected[0],setVideoProgress,controller.signal);if(!controller.signal.aborted)setVideo(result);else revokeDraftMediaUrl(result.url);}
     catch(error){if(!controller.signal.aborted)toast.error((error as Error).message||'動画を処理できませんでした');}
     finally{if(videoAbort.current===controller){videoAbort.current=null;setVideoProgress(null);}}
   };
@@ -1236,8 +1257,8 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
   const removePreview = useCallback((i: number) => {
     const previewUrl = previewsRef.current[i];
     const originalUrl = previewOriginalsRef.current[i];
-    if (previewUrl && previewUrl !== originalUrl) URL.revokeObjectURL(previewUrl);
-    if (originalUrl) URL.revokeObjectURL(originalUrl);
+    if (previewUrl && previewUrl !== originalUrl) revokeDraftMediaUrl(previewUrl);
+    if (originalUrl) revokeDraftMediaUrl(originalUrl);
 
     setPreviews((p) => p.filter((_, idx) => idx !== i));
     setPreviewOriginals((p) => p.filter((_, idx) => idx !== i));
@@ -1249,16 +1270,16 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
   }, []);
 
   const cancelQuote = useCallback(() => {
-    setSearchParams({});
+    setSearchParams(previous=>{if(!communityId)return {};const next=new URLSearchParams(previous);next.delete('quote');return next;});
     setQuotedPost(null);
-  }, [setSearchParams]);
+  }, [setSearchParams,communityId]);
 
   const submit = async () => {
     if (!allowAccountWrite()) return;
     if (!user) return;
 
     const trimmed = appendSticker(content,sticker);
-    if(videoProgress!==null)return;
+    if(videoProgress!==null||!draftReady)return;
     if (!trimmed && ((previews.length===0&&!video) || !!poll)) {
       toast.error(poll?'投票の質問を入力してください':'本文・画像・動画のいずれかを追加してください');
       return;
@@ -1268,19 +1289,21 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
       return;
     }
     if(poll){const message=validatePollDraft(poll);if(message){toast.error(message);return;}}
+    const draftSubmission=beginSubmission();
     try {
       // 投稿処理を先に実行し、確実に完了を待つ (visibilityを追加)
       const savedPost = await mutateAsync({
         ...(mapLocation ? {mapLocation} : {}),
         ...(poll?{poll}:{}),
         ...(scheduledAt?{scheduledAt}:{}),
+        ...(communityId?{communityId}:{}),
         content: trimmed,
         imageUrls: previews,
         ...(video?{video}:{}),
         parentId: quotedPost?.id,
         isQuote: !!quotedPost,
         user_id: user.id,
-        visibility: visibility // 追加
+        visibility: communityId ? 'public' : visibility
       } as any);
 
       // ハッシュタグの抽出と統計更新 (投稿後に非同期で実行)
@@ -1298,14 +1321,15 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
         });
       }
 
+      if(!await completeSubmission(draftSubmission)){if(onSuccess)onSuccess();return;}
       removeVideo();
       setContent(''); setSticker(null); setScheduledAt(null);
       const urls = new Set([...previewsRef.current, ...previewOriginalsRef.current]);
-      urls.forEach((url) => URL.revokeObjectURL(url));
+      urls.forEach((url) => revokeDraftMediaUrl(url));
       setPreviews([]);
       setPreviewOriginals([]);
       removePoll();
-      setVisibility('public'); // リセット
+      setVisibility('public'); resetCommunity(); // リセット
       cancelQuote();
       requestAnimationFrame(resizeTextarea);
       if (onSuccess) onSuccess();
@@ -1328,6 +1352,34 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
   };
 
   const remaining = MAX_LEN - appendSticker(content,sticker).length;
+  const audienceButton = (
+<Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    disabled={!draftReady} data-lime-composer-audience="true" aria-label="公開範囲を選択" title={communityId?communityName:undefined} className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
+                  >
+                    {communityId&&<CommunityIcon className="h-5 w-5"/>}
+                    {!communityId&&visibility === 'public' && (
+                      <>
+                        <ComposerIcon kind="globe"/>
+
+                      </>
+                    )}
+                    {!communityId&&visibility === 'following' && (
+                      <>
+                        <ComposerIcon kind="users"/>
+
+                      </>
+                    )}
+                    {!communityId&&visibility === 'members' && (
+                      <>
+                        <ComposerIcon kind="members"/>
+
+                      </>
+                    )}
+                  </Button>
+  );
   const overLimit = remaining < 0;
 
   const imageEditorDialog = editingImageSrc && typeof document !== 'undefined' && createPortal(
@@ -1459,10 +1511,84 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
 
   if (!user) return null;
 
+  const composerActions = (
+          <div data-lime-composer-actions className="flex items-center justify-between gap-2 pt-3">
+            <div data-lime-composer-tools className="flex min-w-0 items-center gap-2">
+              <input ref={fileRef} type="file" accept="image/*,video/mp4,video/webm,video/quicktime" multiple hidden onChange={onFile} />
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                aria-label="画像を追加" className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
+                data-lime-composer-tool data-lime-attachment-tool onClick={() => fileRef.current?.click()}
+                disabled={!draftReady || isPending || !!video || videoProgress!==null || previews.length >= MAX_IMAGES}
+              >
+                <ComposerIcon kind="image"/>
+
+              </Button>
+
+<Button type="button" size="sm" variant="ghost" data-lime-composer-tool aria-label="投票を追加" aria-pressed={!!poll} disabled={!draftReady||isPending||!!poll||!!video||videoProgress!==null} className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={()=>setPoll(newPollDraft())}><PollIcon className="h-5 w-5"/></Button>
+                <ScheduleControl value={scheduledAt} onChange={setScheduledAt} disabled={isPending||!draftReady}/>
+
+              {/* 公開範囲選択 */}
+              <PostAudiencePicker trigger={audienceButton} visibility={visibility} communityId={communityId} communities={communities} quotedCommunityId={quotedPost?.communityId}
+                canPostMembersOnly={canPostMembersOnly} disabled={!draftReady} onSelect={(value, id) => {setCommunityId(id);setVisibility(value);}}>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>{audienceButton}</DropdownMenuTrigger>
+                <DropdownMenuContent
+                  align="start"
+                  sideOffset={8}
+                  className="z-[2147483647] rounded-xl"
+                  style={{ zIndex: 2147483647 }}
+                >
+                  <DropdownMenuItem className="gap-2 focus:bg-muted/40 focus:text-foreground" disabled={!!quotedPost?.communityId} onClick={() => {setCommunityId(undefined);setVisibility('public')}}>
+                    <ComposerIcon kind="globe" className="mr-2 shrink-0"/>
+                    全員
+                  </DropdownMenuItem>
+                  <DropdownMenuItem className="gap-2 focus:bg-muted/40 focus:text-foreground" disabled={!!quotedPost?.communityId} onClick={() => {setCommunityId(undefined);setVisibility('following')}}>
+                    <ComposerIcon kind="users" className="mr-2 shrink-0"/>
+                    フォロー中
+                  </DropdownMenuItem>
+                  {canPostMembersOnly && (
+                    <DropdownMenuItem className="gap-2 focus:bg-muted/40 focus:text-foreground" disabled={!!quotedPost?.communityId} onClick={() => {setCommunityId(undefined);setVisibility('members')}}>
+                      <Crown className="mr-2 h-4 w-4" />
+                      メンバー限定
+                    </DropdownMenuItem>
+                  )}
+                  <CommunityAudienceItems communities={communities} onSelect={setCommunityId} quotedCommunityId={quotedPost?.communityId}/>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              </PostAudiencePicker>
+              <StickerPicker iconOnly simple disabled={isPending||!draftReady} onSelect={name=>{if(content.trim()){insertDraftEmoji(textareaRef.current,content,name,setContent);}else setSticker(name);}} />
+
+              <span className={cn('text-xs tabular-nums', overLimit ? 'font-bold text-destructive' : 'text-muted-foreground')}>
+                {remaining}
+              </span>
+            </div>
+            <Button
+              type="button"
+              onClick={submit}
+              disabled={!draftReady || isPending || videoProgress!==null || overLimit || (!appendSticker(content,sticker) && ((previews.length===0&&!video) || !!poll)) || !!(poll&&validatePollDraft(poll))}
+              aria-label={quotedPost?'引用ポスト':'ポスト'}
+              data-lime-post-submit
+              className="h-10 shrink-0 rounded-full bg-primary px-5 font-bold text-primary-foreground shadow-none transition-colors hover:bg-primary/90 hover:shadow-none"
+            >
+              {isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <>
+                  <span>{scheduledAt ? '予約する' : quotedPost ? '引用ポスト' : 'ポスト'}</span>
+                </>
+              )}
+            </Button>
+          </div>
+  );
   return (
     <>
       <div {...mediaDrop}
+        data-lime-community-composer={defaultCommunityId && !timelineInline ? true : undefined}
         data-lime-post-composer
+        data-lime-timeline-composer={timelineInline || undefined}
         className={cn(
         "rounded-3xl bg-card p-5 shadow-[0_3px_14px_rgb(0_0_0/0.07)] transition-all duration-300",
         timelineGlass &&
@@ -1486,13 +1612,13 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
           {scheduledAt&&<ScheduledPostNotice value={scheduledAt}/>}
           <div className="relative w-full overflow-hidden">
             {!content && (
-              <div className="absolute inset-0 pointer-events-none px-0 py-2 text-[20px] leading-relaxed text-muted-foreground z-0">
+              <div data-lime-composer-text className="absolute inset-0 pointer-events-none px-0 py-2 text-[20px] leading-relaxed text-muted-foreground z-0">
                 {quotedPost ? "コメントを添えてリポスト" : poll ? "質問する" : "いまどうしてる？"}
               </div>
             )}
 
             <div
-              aria-hidden="true"
+              aria-hidden="true" data-lime-composer-text
               className="absolute inset-0 pointer-events-none whitespace-pre-wrap break-words px-0 py-2 text-[20px] leading-relaxed text-foreground z-0"
               style={{ transform: `translateY(-${scrollTop}px)` }}
             >
@@ -1502,6 +1628,7 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
 
             <Textarea
               ref={textareaRef}
+              data-lime-composer-text
               rows={1}
               aria-label={poll?"投票の質問":"ポスト本文"}
               value={content}
@@ -1614,101 +1741,11 @@ function PostComposerComponent({ mapLocation, initialQuotedPost, initialContent 
 
 
           {poll&&<PollEditor value={poll} onChange={setPoll} onRemove={removePoll} disabled={isPending}/>}
-
-          <div className="flex items-center justify-between pt-3">
-            <div className="flex items-center gap-2">
-              <input ref={fileRef} type="file" accept="image/*,video/mp4,video/webm,video/quicktime" multiple hidden onChange={onFile} />
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                aria-label="画像を追加" className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
-                data-lime-composer-tool data-lime-attachment-tool onClick={() => fileRef.current?.click()}
-                disabled={isPending || !!video || videoProgress!==null || previews.length >= MAX_IMAGES}
-              >
-                <ComposerIcon kind="image"/>
-
-              </Button>
-
-<Button type="button" size="sm" variant="ghost" data-lime-composer-tool aria-label="投票を追加" aria-pressed={!!poll} disabled={isPending||!!poll||!!video||videoProgress!==null} className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={()=>setPoll(newPollDraft())}><PollIcon className="h-5 w-5"/></Button>
-                <ScheduleControl value={scheduledAt} onChange={setScheduledAt} disabled={isPending}/>
-
-              {/* 公開範囲選択 (追加) */}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    data-lime-composer-audience="true" aria-label="公開範囲を選択" className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
-                  >
-                    {visibility === 'public' && (
-                      <>
-                        <ComposerIcon kind="globe"/>
-
-                      </>
-                    )}
-                    {visibility === 'following' && (
-                      <>
-                        <ComposerIcon kind="users"/>
-
-                      </>
-                    )}
-                    {visibility === 'members' && (
-                      <>
-                        <ComposerIcon kind="members"/>
-
-                      </>
-                    )}
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  align="start"
-                  sideOffset={8}
-                  className="z-[2147483647] rounded-xl"
-                  style={{ zIndex: 2147483647 }}
-                >
-                  <DropdownMenuItem className="gap-2 focus:bg-muted/40 focus:text-foreground" onClick={() => setVisibility('public')}>
-                    <ComposerIcon kind="globe" className="mr-2 shrink-0"/>
-                    全員
-                  </DropdownMenuItem>
-                  <DropdownMenuItem className="gap-2 focus:bg-muted/40 focus:text-foreground" onClick={() => setVisibility('following')}>
-                    <ComposerIcon kind="users" className="mr-2 shrink-0"/>
-                    フォロー中
-                  </DropdownMenuItem>
-                  {canPostMembersOnly && (
-                    <DropdownMenuItem className="gap-2 focus:bg-muted/40 focus:text-foreground" onClick={() => setVisibility('members')}>
-                      <Crown className="mr-2 h-4 w-4" />
-                      メンバー限定
-                    </DropdownMenuItem>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <StickerPicker iconOnly simple disabled={isPending} onSelect={name=>{if(content.trim()){insertDraftEmoji(textareaRef.current,content,name,setContent);}else setSticker(name);}} />
-
-              <span className={cn('text-xs tabular-nums', overLimit ? 'font-bold text-destructive' : 'text-muted-foreground')}>
-                {remaining}
-              </span>
-            </div>
-            <Button
-              type="button"
-              onClick={submit}
-              disabled={isPending || videoProgress!==null || overLimit || (!appendSticker(content,sticker) && ((previews.length===0&&!video) || !!poll)) || !!(poll&&validatePollDraft(poll))}
-              aria-label={quotedPost?'引用ポスト':'ポスト'}
-              className={cn("shrink-0 rounded-full bg-gradient-primary font-bold shadow-soft transition hover:shadow-pop",homeInline?"h-9 w-9 p-0 sm:h-10 sm:w-auto sm:px-5":"px-5")}
-            >
-              {isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <>
-                  <ComposerIcon kind="send" className={cn("h-4 w-4",homeInline?"sm:mr-1.5":"mr-1.5")} />
-                  <span className={homeInline?"hidden sm:inline":undefined}>{scheduledAt ? '予約する' : quotedPost ? '引用ポスト' : 'ポスト'}</span>
-                </>
-              )}
-            </Button>
-          </div>
+          {!isMobileTimeline && composerActions}
         </div>
       </div>
+      {isMobileTimeline && composerActions}
+
       </div>
       {imageEditorDialog}
     </>

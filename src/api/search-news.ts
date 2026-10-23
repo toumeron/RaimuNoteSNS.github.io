@@ -101,7 +101,7 @@ async function getTwitterTrendPage(previous:TwitterTrendCursor,signal?:AbortSign
  const state:TwitterTrendCursor={...previous,positions:previous.positions.map(position=>({...position})),fallbackPositions:(previous.fallbackPositions??[]).map(position=>({...position})),remaining:[...(previous.remaining??[])],seen:[...previous.seen]};
  const controller=new AbortController(),abort=()=>controller.abort(signal?.reason??new DOMException('Aborted','AbortError'));
  signal?.addEventListener('abort',abort,{once:true});
- const timer=setTimeout(()=>controller.abort(new DOMException('Trend fetch deadline','TimeoutError')),8000);
+ const timer=setTimeout(()=>controller.abort(new DOMException('Trend fetch deadline','TimeoutError')),25000);
  const cancelled=new Promise<never>((_,reject)=>controller.signal.addEventListener('abort',()=>reject(controller.signal.reason),{once:true}));
  // A buffered page needs no race consumer, but cleanup still aborts the job.
  void cancelled.catch(()=>{});
@@ -116,15 +116,25 @@ async function getTwitterTrendPage(previous:TwitterTrendCursor,signal?:AbortSign
   if(fallback)state.fallbackRound=round+selected.length;else state.round+=selected.length;
   const results:PromiseSettledResult<PostWithAuthor[]>[]=selected.map(()=>({status:'rejected',reason:undefined}));
   let publishReady!:()=>void;const ready=new Promise<void>(resolve=>{publishReady=resolve;});
+  const publishBatch=()=>{
+   const ids=new Set(results.flatMap(result=>result.status==='fulfilled'?result.value.filter(eligible).map(post=>post.id):[]));
+   if(ids.size>=6)publishReady();
+  };
   const reads=selected.map(async(position,index)=>{
    try{
-    const page=await searchXPage(position.query,{cursor:position.cursor,feed:'top',preferAlternative:true,limit:6,signal:controller.signal});
+    const partial:PostWithAuthor[]=[];
+    const page=await searchXPage(position.query,{cursor:position.cursor,feed:'top',preferAlternative:true,limit:6,signal:controller.signal,onPost:row=>{
+     if(controller.signal.aborted)return;
+     const post=normalizeTimelineBlueskyPost(row);partial.push(post);
+     results[index]={status:'fulfilled',value:partial};
+     publishBatch();
+    }});
     // A reader finishing after the deadline must not mutate a returned cursor.
     if(controller.signal.aborted)return;
     position.done=!page.cursor||page.cursor===position.cursor;position.cursor=page.cursor;
     results[index]={status:'fulfilled',value:page.posts.map(normalizeTimelineBlueskyPost)};
-    if(results[index].status==='fulfilled'&&results[index].value.some(eligible))publishReady();
-   }catch(error){results[index]={status:'rejected',reason:error};}
+    publishBatch();
+   }catch(error){if(results[index].status!=='fulfilled')results[index]={status:'rejected',reason:error};}
   });
   try{await Promise.race([Promise.all(reads),ready,cancelled]);}
   catch(error){if(signal?.aborted)throw signal.reason;lastError=error;}

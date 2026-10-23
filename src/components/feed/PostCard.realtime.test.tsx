@@ -113,3 +113,13 @@ it('reserves the timeline image frame before decoding without resizing on load',
  Object.defineProperties(image,{naturalWidth:{value:100},naturalHeight:{value:600}});fireEvent.load(image);
  expect(frame.style.cssText).toBe(initial);expect(image.style.opacity).toBe('');
 });
+
+it('shows the community link and requires confirmation before moderator removal',async()=>{
+ const remove=vi.fn(),confirm=vi.spyOn(window,'confirm').mockReturnValue(false);
+ const post={id:'community-post',userId:'author',content:'Community post',imageUrls:[],createdAt:'2026-10-23T00:00:00Z',likesCount:0,commentsCount:0,repostsCount:0,likedByMe:false,repostedByMe:false,communityId:'community',community:{id:'community',name:'旅行の会'},author:{id:'author',username:'author',displayName:'Author',avatarUrl:''}} as PostWithAuthor;
+ const view=render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><PostCard post={post} onCommunityRemove={remove}/></MemoryRouter></QueryClientProvider>);
+ expect(view.getByRole('link',{name:'旅行の会'})).toHaveAttribute('href','/communities/community');
+ fireEvent.click(view.getByRole('button',{name:'ポストのメニュー'}));fireEvent.click(view.getByRole('button',{name:'コミュニティからポストを削除'}));expect(remove).not.toHaveBeenCalled();
+ confirm.mockReturnValue(true);fireEvent.click(view.getByRole('button',{name:'ポストのメニュー'}));fireEvent.click(view.getByRole('button',{name:'コミュニティからポストを削除'}));expect(remove).toHaveBeenCalledOnce();confirm.mockRestore();
+ view.rerender(<QueryClientProvider client={new QueryClient()}><MemoryRouter><PostCard post={post} showCommunityLabel={false}/></MemoryRouter></QueryClientProvider>);expect(view.queryByRole('link',{name:'旅行の会'})).toBeNull();expect(view.getByText('Community post')).toBeInTheDocument();
+});

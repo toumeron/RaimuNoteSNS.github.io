@@ -114,3 +114,37 @@ it('places late twitter videos before unwatched native slides while preserving t
  expect(initialMediaSize(undefined,'lime-private-media:owner/post/id--1200x800.webp')).toEqual({width:1200,height:800});
  for(const size of [undefined,{width:0,height:0},{width:NaN,height:50},{width:10,height:Infinity}])expect(initialMediaSize(size)).toEqual({width:16,height:9});
  });
+
+it('uses the duration budget for video quality and retains higher bitrate audio',async()=>{
+ const {postVideoEncodingBudget}=await import('./mediaThumbnail');
+ const short=postVideoEncodingBudget(15),long=postVideoEncodingBudget(90);
+ expect(short.videoBitrate).toBeGreaterThan(6_000_000);
+ expect(short.audioBitrate).toBe(256_000);
+ expect(long.videoBitrate).toBeGreaterThan(2_000_000);
+ expect((long.videoBitrate+long.audioBitrate)*90/8).toBeLessThan(36*1024*1024);
+});
+
+const encoding=vi.hoisted(()=>({options:[] as any[],codec:'avc',audioCodec:'aac'}));
+vi.mock('mediabunny',()=>({
+ ALL_FORMATS:[],BlobSource:class{},BufferTarget:class{buffer:ArrayBuffer|null=null},Mp4OutputFormat:class{},Quality:class{constructor(readonly options:any){}},
+ Input:class{dispose(){}async computeDuration(){return 20}async getPrimaryVideoTrack(){return {displayWidth:1920,displayHeight:1080,getCodec:async()=>encoding.codec}}async getPrimaryAudioTrack(){return {getCodec:async()=>encoding.audioCodec}}},
+ Output:class{target:any;constructor(options:any){this.target=options.target}},CanvasSink:class{async getCanvas(){return null}},
+ Conversion:{init:async(options:any)=>{encoding.options.push(options);return {isValid:true,discardedTracks:[],cancel:async()=>{},execute:async()=>{options.output.target.buffer=new ArrayBuffer(10)}}}}
+}));
+it('remuxes compatible picture and audio without reducing frame rate or encoding quality',async()=>{
+ encoding.options=[];encoding.codec='avc';encoding.audioCodec='aac';
+ const {preparePostVideo}=await import('./mediaThumbnail');
+ const result=await preparePostVideo(new File(['video'],'original.mp4',{type:'video/mp4'}),vi.fn());
+ expect(encoding.options[0].video).toEqual({codec:'avc'});
+ expect(encoding.options[0].audio).toEqual({codec:'aac'});
+ expect(encoding.options[0].trim).toBeUndefined();
+ expect(result).toMatchObject({width:1920,height:1080,duration:20});URL.revokeObjectURL(result.url);
+});
+it('converts incompatible codecs at higher quality while preserving frame cadence and audio layout',async()=>{
+ encoding.options=[];encoding.codec='vp9';encoding.audioCodec='opus';
+ const {preparePostVideo}=await import('./mediaThumbnail');
+ const result=await preparePostVideo(new File(['video'],'original.webm',{type:'video/webm'}),vi.fn());
+ const options=encoding.options[0];expect(options.video.quality.options.bitrate).toBeGreaterThan(6_000_000);
+ expect(options.video.frameRate).toBeUndefined();expect(options.audio.quality.options.bitrate).toBe(256_000);
+ expect(options.audio.numberOfChannels).toBeUndefined();expect(options.audio.sampleRate).toBeUndefined();URL.revokeObjectURL(result.url);
+});

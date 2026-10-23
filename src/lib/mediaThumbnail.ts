@@ -174,7 +174,15 @@ function validateVideoDuration(duration:number) {
   if(!Number.isFinite(duration)||duration<=0)throw new Error('動画の長さを読み取れませんでした');
   if(duration>MAX_VIDEO_SECONDS)throw new Error('動画は90秒以内にしてください');
 }
-/** Transcode before upload; never send the original to a remote service. */
+/** Allocate the existing size budget by duration; keep resolution and source frame cadence. */
+export function postVideoEncodingBudget(duration:number){
+ validateVideoDuration(duration);
+ const audioBitrate=256_000;
+ const videoBitrate=Math.max(128_000,Math.min(12_000_000,Math.floor(MAX_VIDEO_BYTES*8*.92/duration-audioBitrate)));
+ return {videoBitrate,audioBitrate};
+}
+/** Keep compatible tracks intact when they fit; convert incompatible or oversized files locally. */
+
 async function preparePostVideo(file:File,onProgress:(progress:number)=>void,signal?:AbortSignal):Promise<PreparedVideo> {
   if(file.size>512*1024*1024)throw new Error('元の動画は512MB以内にしてください');
   const {Input,BlobSource,ALL_FORMATS,Output,Mp4OutputFormat,BufferTarget,Conversion,Quality,CanvasSink}=await import('mediabunny');
@@ -185,12 +193,19 @@ async function preparePostVideo(file:File,onProgress:(progress:number)=>void,sig
   try{
     const duration=await input.computeDuration();validateVideoDuration(duration);
     const track=await input.getPrimaryVideoTrack();if(!track)throw new Error('映像のある動画を選択してください');
-    const candidates=[[1920,1080],[1280,720],[854,480]].map(([long,short])=>videoDimensions(track.displayWidth,track.displayHeight,long,short)).filter((size,index,all)=>all.findIndex(other=>other.width===size.width&&other.height===size.height)===index);
+    const dimensions=videoDimensions(track.displayWidth,track.displayHeight);
+    const audio=await input.getPrimaryAudioTrack();
+    const copyVideo=await track.getCodec()==='avc'&&track.displayWidth===dimensions.width&&track.displayHeight===dimensions.height&&file.size<=MAX_VIDEO_BYTES;
+    const copyAudio=!audio||await audio.getCodec()==='aac';
+    const budget=postVideoEncodingBudget(duration);
     let prepared:{file:File;width:number;height:number}|undefined,progress=0;
-    for(const dimensions of candidates){
+    for(const factor of [1,.85,.7]){
       const output=new Output({format:new Mp4OutputFormat({fastStart:'in-memory'}),target:new BufferTarget()});
-      // Explicit bitrate, not a qualitative Quality number. Keep the encoded file within the storage limit.
-      conversion=await Conversion.init({input,output,tracks:'primary',trim:{end:Math.min(duration,89.75)},video:{...dimensions,fit:'contain',codec:'avc',quality:new Quality({bitrate:2_000_000,bitrateMode:'constant'}),frameRate:30,forceTranscode:true,allowTransformationMetadata:false},audio:{codec:'aac',quality:new Quality({bitrate:96_000})}});
+      // Remux compatible media on the first attempt. No forced 30 fps or 96 kbps audio.
+      conversion=await Conversion.init({input,output,tracks:'primary',
+       ...(duration>89.75&&(!copyVideo||!copyAudio||factor!==1)?{trim:{end:89.75}}:{}),
+       video:copyVideo&&factor===1?{codec:'avc'}:{...dimensions,fit:'contain',codec:'avc',quality:new Quality({bitrate:Math.floor(budget.videoBitrate*factor),bitrateMode:'variable'}),allowTransformationMetadata:false},
+       audio:copyAudio?{codec:'aac'}:{codec:'aac',quality:new Quality({bitrate:budget.audioBitrate})}});
       signal?.throwIfAborted();
       if(!conversion.isValid||conversion.discardedTracks.some(t=>t.track.type==='video'||t.track.type==='audio'))throw new Error('このブラウザーでは動画を変換できません。MP4形式の動画を対応するブラウザーで選択してください');
       conversion.onProgress=value=>{progress=Math.max(progress,value*.9);onProgress(progress);};
@@ -200,15 +215,15 @@ async function preparePostVideo(file:File,onProgress:(progress:number)=>void,sig
       prepared={file:new File([buffer],file.name.replace(/\.[^.]+$/,'')+'.mp4',{type:'video/mp4'}),...dimensions};break;
     }
     if(!prepared)throw new Error('圧縮した動画が保存できるサイズを超えました');
-    const {file:result,...dimensions}=prepared;
-    const frame=await new CanvasSink(track,{width:Math.min(480,dimensions.width)}).getCanvas(0);
+    const {file:result,...encodedDimensions}=prepared;
+    const frame=await new CanvasSink(track,{width:Math.min(480,encodedDimensions.width)}).getCanvas(0);
     let poster:Blob|undefined;
     if(frame){const canvas=frame.canvas;poster='convertToBlob' in canvas?await canvas.convertToBlob({type:'image/jpeg',quality:.7}):await new Promise<Blob>(resolve=>canvas.toBlob(blob=>resolve(blob!), 'image/jpeg',.7));}
     signal?.throwIfAborted();
     // AAC and frame boundaries may add padding: validate the actual encoded file too.
     const encoded=new Input({source:new BlobSource(result),formats:ALL_FORMATS});
     let encodedDuration:number;try{encodedDuration=await encoded.computeDuration();validateVideoDuration(encodedDuration);}finally{encoded.dispose();}
-    onProgress(1);return {poster,file:result,url:URL.createObjectURL(result),duration:encodedDuration,...dimensions};
+    onProgress(1);return {poster,file:result,url:URL.createObjectURL(result),duration:encodedDuration,...encodedDimensions};
   }finally{signal?.removeEventListener('abort',cancel);input.dispose();}
 }
 
@@ -388,8 +403,8 @@ async function uploadPostMedia(urls: string[], ownerId: string, resourceId: stri
   }
 }
 
-async function uploadProfileMedia(file: File,kind:'timeline-background'|'emoji'):Promise<{secure_url:string;public_id:string;format:string}> {
- const body=new FormData();body.set('file',file);body.set('kind',kind);
+async function uploadProfileMedia(file: File,kind:'timeline-background'|'emoji'|'friend-avatar'|'friend-cover'|'chat-background'|'community-cover'|'community-post',expectedOwner?:string):Promise<{secure_url:string;public_id:string;format:string}> {
+ const body=new FormData();body.set('file',file);body.set('kind',kind);if(expectedOwner)body.set('owner',expectedOwner);
  const {data,error}=await supabase.functions.invoke('upload-profile-media',{body});
  if(error||!data?.secure_url||!data?.public_id)throw new Error(data?.error||'画像のアップロードに失敗しました');
  return data;

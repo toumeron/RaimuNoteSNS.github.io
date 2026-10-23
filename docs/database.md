@@ -2,7 +2,30 @@
 
 公開プロフィールは `profiles`、本人専用設定は `profile_private_settings` に集約します。1アカウントに複数件あるポスト・関係・操作履歴は関連テーブルとして管理します。
 
+## 2026-10-23の本番整理状況
+
+アプリ用の `public` 実テーブルは39個から33個へ削減済み。目標の10個への統合は未完了。Supabase管理スキーマはこの数に含めない。
+
+| 旧保存先 | 現在の保存先・状態 |
+| --- | --- |
+| `account_exports` | `profile_private_settings.export_attempts` / `export_attempt_window`。旧APIはサービス専用ビュー |
+| `reactions` | 未使用・0件を確認し、依存・データがあれば中止する移行で撤去 |
+| `user_entitlements` | `profile_private_settings.limepro_purchased_at`。公開中アプリの有効化・解除・取得は所有者限定の互換ビューで維持 |
+| `post_hashtags` | `posts.hashtag_links`。タグIDと関連付け日時を保持。旧読取・挿入・削除APIは互換ビュー。タグ辞書 `hashtags` は維持 |
+| `poll_votes` | `profile_private_settings.poll_votes`。投票先は本人のみ取得可能。公開ポストには集計数だけを保持し、重複・期限・失敗時のロールバック・削除連動を維持 |
+| `mentions` | `posts.post_mentions`。ID・宛先・日時を保持。旧API・通知・予約投稿・エクスポートを維持。直接のメタデータ書換えや他人の投稿からの偽装通知を拒否 |
+
+本番適用した移行は `20261023043000`、`20261023043500`、`20261023060000`、`20261023061000`、`20261023070000`、`20261023071000`。LimePro情報10件、ハッシュタグ関連239件、投票履歴6件、メンション12件の保持を照合済み。元データをローカルへ持ち出さず、トランザクション内でコピー元と統合先を照合する。未知の依存関係は `DROP` 時に移行全体を中止し、`CASCADE` は使用しない。
+
+`20261023062000` と後続統合はエクスポート対象に上記互換ビューを明示的に含め、ページ順序をLimeProは `user_id,feature`、投票は `post_id,user_id`、メンションは `id` で固定する。任意のビューを列挙したり、利用者のエクスポート権限を拡張したりしない。
+
+検証: `node supabase/tests/limepro-consolidation.test.mjs`、`node supabase/tests/hashtag-consolidation.test.mjs`、`node supabase/tests/poll-vote-consolidation.test.mjs`、`node supabase/tests/mention-consolidation.test.mjs`。所有者制限・非公開投稿・凍結・編集・削除・既存RPC・エクスポートを確認。GitHub Pagesへの公開・pushは行っていない。
+
 ## プロフィール・アカウント
+
+URLの表記は日本語と大文字を保持する。`20261023121500_profile_website_unicode.sql` で日本語ドメインも許可し、スキーム・ドメイン・認証情報の検証は引き続き行う。
+
+`20261023113000_profile_birthday_and_website.sql` は本番適用済み。既存 `profiles` に任意の公開項目 `website_url`（HTTP/HTTPS）と `birth_date`（日付）を追加。本人編集制限を維持し、削除時はNULL。新規テーブルなし（実テーブル33個のまま）。検証: `node supabase/tests/profile-details.test.mjs`、プロフィール項目のVitest 12件、TypeScript、ビルド。フロントエンドはGitHub Pages未公開。
 
 | 保存先 | 内容 | 参照・更新コード |
 | --- | --- | --- |
@@ -24,18 +47,18 @@
 | 投稿・返信 | `posts`, `comments` | `src/api/posts.ts`、`src/api/comments.ts` |
 | リポスト | `reposts`, `reply_reposts`, `external_reposts` | `src/api/posts.ts`、対応する `supabase/migrations/` |
 | いいね | `likes`, `comment_likes` | `src/api/posts.ts`、`src/api/comments.ts` |
-| リアクション | `post_reactions`, `comment_reactions`, `reactions` | `src/lib/accountExport.ts`、対応するAPI。`reactions` は旧形式の参照も残るため撤去対象にしない |
+| リアクション | `post_reactions`, `comment_reactions` | `src/lib/accountExport.ts`、対応するAPI。旧 `reactions` は0件を確認して撤去済み |
 | カスタム絵文字 | `custom_emojis` | `src/pages/Settings.tsx` |
-| 保存・メンション | `bookmarks`, `mentions` | `src/api/bookmarks.ts`、投稿関連API |
-| ハッシュタグ | `hashtags`, `post_hashtags` | 投稿・検索処理 |
+| 保存・メンション | `bookmarks`, `posts.post_mentions`（旧 `mentions` は互換ビュー） | `src/api/bookmarks.ts`、投稿関連API |
+| ハッシュタグ | `hashtags`, `posts.hashtag_links` | `post_hashtags` は互換ビュー |
 | フォロー | `follows` | `src/api/follows.ts` |
-| メンバーシップ・機能権限 | `memberships`, `user_entitlements` | プロフィールのメンバーシップ処理、`src/pages/Settings.tsx` |
+| メンバーシップ・機能権限 | `memberships`, `profile_private_settings.limepro_purchased_at` | プロフィールのメンバーシップ処理、`src/pages/Settings.tsx` |
 | 通知 | `notifications`, `post_notification_subscriptions`, `push_subscriptions` | 通知API、通知用フック、Push関連関数 |
 | LimeAI | `chat_sessions` | チャット画面、アカウントエクスポート |
 | スペース | `spaces`, `space_members`, `space_reactions` | `src/components/spaces/`、関連マイグレーション |
 | スタイルアプリ | `style_apps`, `style_app_preferences` | `20261003210000_style_apps.sql`、関連画面 |
 | ニュース | `news_summaries`, `news_generation_state` | ニュース画面・生成関数、`20261007143000_external_sources_and_news_cadence.sql` |
-| エクスポート管理 | `account_exports` | `supabase/functions/account-export/`、`src/lib/accountExport.ts` |
+| エクスポート管理 | `profile_private_settings`（旧 `account_exports` は互換ビュー） | `supabase/functions/account-export/`、`src/lib/accountExport.ts` |
 | 既存・用途要確認 | `lime_drops` | クライアントコードからの直接参照は未確認。データ・DB側関数の調査なしに削除しない |
 
 `limenote_security.request_limits` はサーバー専用スキーマの利用回数管理です。プロフィール設定とは分けて管理します。Supabase管理用の `auth` / `storage` / `realtime` / `supabase_migrations` はアプリの整理対象ではありません。

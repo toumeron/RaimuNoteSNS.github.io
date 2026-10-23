@@ -46,6 +46,12 @@ it('reconstructs large files byte-for-byte from small durable parts and detects 
  rows.delete(url+'?lime-gemma-part=4');
  await expect((await getGemmaResource(cache,url))!.arrayBuffer()).rejects.toThrow('保存データが不足');
 });
+it('stores decoded Brotli resources using their actual byte length, not the compressed CDN length',async()=>{
+ const rows=new Map<string,Response>();const cache={put:async(key:string,response:Response)=>{rows.set(key,new Response(await response.arrayBuffer(),{headers:response.headers}));},match:async(key:RequestInfo|URL)=>rows.get(String(key))?.clone()} as Pick<Cache,'put'|'match'>;
+ const bytes=Uint8Array.from({length:48},(_,i)=>i),url='https://example.test/runtime.wasm';
+ await putGemmaResource(cache,url,new Response(bytes,{headers:{'content-length':'8','content-encoding':'br','content-type':'application/wasm'}}),16);
+ const restored=(await getGemmaResource(cache,url))!;expect(restored.headers.has('content-encoding')).toBe(false);expect(restored.headers.get('content-length')).toBe('48');expect(new Uint8Array(await restored.arrayBuffer())).toEqual(bytes);
+});
 it('never marks an incomplete download as a complete model file',async()=>{
  const rows=new Map<string,Response>();const cache={put:async(key:string,response:Response)=>{rows.set(key,response);}} as any;
  await expect(putGemmaResource(cache,'https://example.test/file',new Response(new Uint8Array(18),{headers:{'content-length':'30'}}),16)).rejects.toThrow('ダウンロードが完了していません');
@@ -95,4 +101,14 @@ it('updates an older downloaded runtime without redownloading model weights',asy
  expect(await (await cache.match(GEMMA_FILES.at(-1)!))!.text()).toBe('existing-model');
  expect(local.getLocalGemmaState().downloaded).toBe(true);
 });
+});
+
+it('recreates a failed runtime before retrying, retaining the downloaded model',async()=>{
+ const records=new Map<string,Response>();const cache={put:async(key:string,response:Response)=>{records.set(key,new Response(await response.arrayBuffer(),{headers:response.headers}))},match:async(key:string)=>records.get(key)?.clone()};for(const url of GEMMA_RESOURCES)await cache.put(url,new Response('cached'));
+ await cache.put(GEMMA_READY_URL,new Response('ready'));vi.stubGlobal('caches',{open:vi.fn(async()=>cache)});const fetch=vi.fn();vi.stubGlobal('fetch',fetch);
+ let attempts=0;const terminate=vi.fn();
+ vi.stubGlobal('Worker',class{onmessage:(event:any)=>void;onerror:()=>void;terminate=terminate;constructor(){attempts++}postMessage(data:any){queueMicrotask(()=>this.onmessage({data:{id:data.id,...(attempts===1?{error:'runtime failed'}:data.type==='generate'?{text:'再開できました'}:{})}}))}});
+ const local=await import('@/lib/localGemma');await local.checkLocalGemmaDownload();
+ await expect(local.generateLocalGemma([{role:'user',content:'最初'}],'',new AbortController().signal,()=>{})).rejects.toThrow('runtime failed');
+ expect(terminate).toHaveBeenCalled();expect(await local.generateLocalGemma([{role:'user',content:'もう一度'}],'',new AbortController().signal,()=>{})).toBe('再開できました');expect(attempts).toBe(2);expect(fetch).not.toHaveBeenCalled();
 });

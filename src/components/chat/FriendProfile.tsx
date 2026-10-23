@@ -2,7 +2,7 @@ import { ContentLink } from "@/components/ui/button";
 import { useEffect, useRef, useState, type RefObject, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Cake, ImagePlus, MessageCircle, MoreVertical, Phone, Star, X, Copy, Heart, Reply, MoreHorizontal, Trash2, Link2, ArrowLeft, Bell, BellOff, Check, LogOut, Pencil, Shield, UserPlus, Users } from "lucide-react";
-import { avatarOf, saveCustomAssistant, type AssistantItem, type AvatarMap, prepareChatBackground, useCachedChatImage, listAssistants, loadAvatars } from "@/lib/aiFriends";
+import { syncFriends, avatarOf, saveCustomAssistant, type AssistantItem, type AvatarMap, prepareChatBackground, useCachedChatImage, listAssistants, loadAvatars } from "@/lib/aiFriends";
 
 import { Dialog, DialogContent, DialogTitle, DialogDescription, Popover, PopoverTrigger, PopoverContent, DropdownMenu, DropdownMenuTrigger, DropdownMenuItem } from "@/components/ui/button";
 
@@ -47,12 +47,14 @@ function FriendProfile({ friend, uid, avatars, onClose, onTalk, onCall, onChange
     document.addEventListener('keydown', escape);
     return () => { document.body.style.overflow = overflow; document.removeEventListener('keydown', escape); previous?.focus(); };
   }, []);
-  const save = (patch: Partial<AssistantItem>) => {
+  const save = async (patch: Partial<AssistantItem>) => {
     try {
       const updated = { ...item, ...patch };
       saveCustomAssistant(uid, { ...updated, gender: updated.gender ?? 'female' });
-      setItem(updated); setError(''); onChanged?.();
-    } catch { setError('プロフィールを保存できませんでした。画像のサイズを小さくしてお試しください。'); }
+      setItem(updated);
+      if(uid)await syncFriends(uid);
+      setError(''); onChanged?.();
+    } catch { setError('プロフィールを同期できませんでした。接続を確認してお試しください。'); }
   };
   const upload = async (image?: File) => {
     if (!image) return;
@@ -64,7 +66,7 @@ function FriendProfile({ friend, uid, avatars, onClose, onTalk, onCall, onChange
       canvas.width = Math.round(bitmap.width * scale); canvas.height = Math.round(bitmap.height * scale);
       const ctx = canvas.getContext('2d'); if (!ctx) throw Error('Canvas unavailable');
       ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height); bitmap.close();
-      save({ coverUrl: canvas.toDataURL('image/jpeg', .8) });
+      await save({ coverUrl: canvas.toDataURL('image/jpeg', .8) });
     } catch { setError('画像を読み込めませんでした'); }
   };
   return createPortal(<div className="lime-friend-profile-overlay">
@@ -104,9 +106,9 @@ function ChatBackgroundDialog({open,onOpenChange,url,onSave,loadError}:{open:boo
  useEffect(()=>{selection.current++;setDraft(undefined);setError('');},[open]);
  useEffect(()=>{const next=draft?URL.createObjectURL(draft):'';setPreview(next);return()=>{if(next)URL.revokeObjectURL(next)}},[draft]);
  const choose=async(chosen:File)=>{const token=++selection.current;setBusy(true);setError('');try{const blob=await prepareChatBackground(chosen);if(mounted.current&&token===selection.current)setDraft(blob);}catch(e){if(mounted.current&&token===selection.current)setError(e instanceof Error?e.message:'画像を読み込めませんでした');}finally{if(mounted.current)setBusy(false)}};
- const save=async()=>{if(draft===undefined)return;setBusy(true);setError('');try{await onSave(draft);if(mounted.current)onOpenChange(false);}catch{if(mounted.current)setError('背景を保存できませんでした。端末の空き容量などを確認してください。');}finally{if(mounted.current)setBusy(false)}};
+ const save=async()=>{if(draft===undefined)return;setBusy(true);setError('');try{await onSave(draft);if(mounted.current)onOpenChange(false);}catch{if(mounted.current)setError('背景を保存できませんでした。接続を確認してお試しください。');}finally{if(mounted.current)setBusy(false)}};
  const shown=draft===undefined?url:preview;
- return <Dialog open={open} onOpenChange={next=>{if(!busy)onOpenChange(next)}}><DialogContent className="dm-dialog dm-background-dialog"><DialogTitle>チャットの背景</DialogTitle><DialogDescription>この会話の背景を設定します。自分のこの端末にだけ保存され、相手には表示されません。</DialogDescription><div className="dm-background-preview" style={shown?{backgroundImage:`url(${JSON.stringify(shown)})`}:undefined}>{!shown&&<span>背景なし</span>}</div><input ref={file} hidden type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" onChange={e=>{const selected=e.target.files?.[0];e.target.value='';if(selected)void choose(selected)}}/><button className="dm-secondary" type="button" disabled={busy} onClick={()=>file.current?.click()}>画像を選択</button><button className="dm-secondary" type="button" disabled={busy||(!url&&!draft)} onClick={()=>setDraft(null)}>背景を解除</button>{(error||loadError)&&<p className="dm-error" role="alert">{error||loadError}</p>}<div className="dm-delete-controls"><button className="dm-secondary" type="button" disabled={busy} onClick={()=>onOpenChange(false)}>キャンセル</button><button className="dm-primary" type="button" disabled={busy||draft===undefined} onClick={()=>void save()}>{busy?'処理中…':'保存'}</button></div></DialogContent></Dialog>;
+ return <Dialog open={open} onOpenChange={next=>{if(!busy)onOpenChange(next)}}><DialogContent className="dm-dialog dm-background-dialog"><DialogTitle>チャットの背景</DialogTitle><DialogDescription>この会話の背景を設定します。自分のアカウントで同期され、相手には表示されません。</DialogDescription><div className="dm-background-preview" style={shown?{backgroundImage:`url(${JSON.stringify(shown)})`}:undefined}>{!shown&&<span>背景なし</span>}</div><input ref={file} hidden type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" onChange={e=>{const selected=e.target.files?.[0];e.target.value='';if(selected)void choose(selected)}}/><button className="dm-secondary" type="button" disabled={busy} onClick={()=>file.current?.click()}>画像を選択</button><button className="dm-secondary" type="button" disabled={busy||(!url&&!draft)} onClick={()=>setDraft(null)}>背景を解除</button>{(error||loadError)&&<p className="dm-error" role="alert">{error||loadError}</p>}<div className="dm-delete-controls"><button className="dm-secondary" type="button" disabled={busy} onClick={()=>onOpenChange(false)}>キャンセル</button><button className="dm-primary" type="button" disabled={busy||draft===undefined} onClick={()=>void save()}>{busy?'処理中…':'保存'}</button></div></DialogContent></Dialog>;
 }
 
 // PixelCat

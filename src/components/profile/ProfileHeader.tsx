@@ -1,3 +1,6 @@
+import { profileIdentity } from '@/lib/profileIdentity';
+import { ProfileDetails } from "@/components/profile/ProfileDetails";
+import {CommunitySpotlight} from '@/components/communities/CommunityLinks';
 import { ContentLink } from "@/components/ui/button";
 import { displayUsername, splitMentionText, mentionProfileHandle, cn } from "@/lib/utils";
 import { ProviderVerificationBadge, twitterAvatarUrl, PrivateAccountBadge, Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -237,6 +240,9 @@ function ExternalLimeFollowButton({profile}:{profile:User}){
  return <Button type="button" className={followButtonClassName(followed)} disabled={busy} aria-busy={busy} onClick={async()=>{if(busy)return;setBusy(true);try{await setExternalAccountAdded(provider,handle,!followed,{id:profile.id,username:profile.username,displayName:profile.displayName,avatarUrl:profile.avatarUrl,bio:profile.bio,providerVerification:profile.providerVerification});await qc.invalidateQueries({queryKey:['follow-stats']});await qc.invalidateQueries({queryKey:['feed','following']});await qc.invalidateQueries({queryKey:['follow-list']});}catch{toast.error('フォロー操作に失敗しました');}finally{setBusy(false);}}}><FollowButtonLabel followed={followed} isPending={busy}/></Button>;
 }
 function FollowButton({ userId,externalProfile }: { userId: string;externalProfile?:User }) {
+ const auth=useAuth();
+ const identity=profileIdentity(userId,{userId:auth.user?.id,sessionId:auth.session?.user.id,loading:auth.loading,switching:auth.switching});
+ if(!identity.canInteract)return null;
  if(externalProfile&&isBlueskyProfileId(userId))return <ExternalLimeFollowButton profile={externalProfile}/>;
  if (isBlueskyProfileId(userId))return <BlueskyFollowButton did={userId} />;
  return <LimeFollowButton userId={userId} />;
@@ -309,7 +315,7 @@ function ProfileHeader({
   isBlueskyProfile?: boolean;
   onOpenReviews?: () => void;
 }) {
-  const { user: me } = useAuth();
+  const { user: me, session: authSession, loading: authLoading, switching: authSwitching } = useAuth();
   const { data: stats } = useFollowStats(isBlueskyProfile ? undefined : user.id);
   const { data: activityCount } = useQuery({
     queryKey: ['posts', 'user', user.id, 'activity-count', me?.id ?? null],
@@ -323,11 +329,11 @@ function ProfileHeader({
     enabled: !isBlueskyProfile && user.review === true,
   });
 
-  const isMe = me?.id === user.id;
+  const {isMe,canInteract} = profileIdentity(user.id,{userId:me?.id,sessionId:authSession?.user.id,loading:authLoading,switching:authSwitching});
   const {data: knownFollowers} = useQuery({
     queryKey: ['follow-stats', 'known-followers', me?.id, user.id],
     queryFn: () => getKnownFollowers(me!.id, user.id),
-    enabled: !!me?.id && !isMe && !isBlueskyProfile && (!user.isPrivate || stats?.canView === true),
+    enabled: canInteract && !!me?.id && !isBlueskyProfile && (!user.isPrivate || stats?.canView === true),
     staleTime: 60_000,
   });
   // 自分がこのユーザーをフォローしているか（通知ベルボタンの表示条件に使用）
@@ -343,7 +349,7 @@ function ProfileHeader({
     return()=>{window.removeEventListener('lime-bluesky-handles-changed',update);window.removeEventListener('lime-misskey-changed',update);};
   },[me?.id,isBlueskyProfile,user.id,user.username]);
   const isFollowing = isBlueskyProfile?externalFollowing:stats?.followedByMe ?? false;
-  const {data:canMessage} = useQuery({queryKey:['direct-permission',me?.id,user.id,isFollowing],queryFn:()=>canDirectMessage(user.id),enabled:!!me?.id&&!isMe&&!isBlueskyProfile,staleTime:0});
+  const {data:canMessage} = useQuery({queryKey:['direct-permission',me?.id,user.id,isFollowing],queryFn:()=>canDirectMessage(user.id),enabled:canInteract&&!!me?.id&&!isBlueskyProfile,staleTime:0});
   const [openingDirect,setOpeningDirect]=useState(false);
   const navigate = useNavigate();
   const handleOpenDirect=async()=>{if(openingDirect||!canMessage)return;setOpeningDirect(true);try{const id=await openDirectConversation(user.id);navigate(`/messages/${id}`);}catch(error){toast.error(error instanceof Error?error.message:'チャットを開けませんでした');}finally{setOpeningDirect(false);}};
@@ -356,12 +362,12 @@ function ProfileHeader({
   }, [user, activityCount, blueskyStats?.posts, isFollowing, location.pathname]);
   const liftCoverToMobileTop = isGithubPagesProfilePath(location.pathname);
   const normalizedUsername = user.username.trim().replace(/^@+/, '').toLowerCase();
-  const showSubscriptionButton = !isMe && (normalizedUsername === 'cat' || normalizedUsername === 'limenote');
+  const showSubscriptionButton = canInteract && !isBlueskyProfile && (normalizedUsername === 'cat' || normalizedUsername === 'limenote');
   const { data: isMember } = useMembershipStatus(showSubscriptionButton ? user.id : undefined);
   const joinMembership = useJoinMembership(user.id);
   const leaveMembership = useLeaveMembership(user.id);
   // 「新しい投稿を通知する」ベルボタン（LimeNoteはフォロー中、外部ユーザーはプロフィールで設定）
-  const showPostNotificationButton = !isMe && isFollowing && !user.id.startsWith('x-user:');
+  const showPostNotificationButton = canInteract && isFollowing && !user.id.startsWith('x-user:');
   const {
     enabled: isPostNotificationEnabled,
     isPending: isPostNotificationPending,
@@ -697,7 +703,7 @@ function ProfileHeader({
               </AvatarFallback>
             </Avatar>
           </button>
-          <div data-lime-profile-actions data-lime-profile-dm-actions={canMessage&&!isMe&&!isBlueskyProfile || undefined} data-lime-profile-membership-actions={showSubscriptionButton || undefined} className={`mt-3 flex shrink-0 items-center ${showSubscriptionButton ? 'max-sm:[&>button]:h-9 max-sm:[&>button]:px-1.5 max-sm:[&>button]:text-[13px] min-[360px]:max-sm:[&>button]:px-3 min-[360px]:max-sm:[&>button]:text-sm max-sm:[&>button]:mr-1 max-sm:[&>button:last-child]:mr-0 max-sm:[&>button[data-profile-icon-action]]:w-9 max-sm:[&>button[data-profile-icon-action]]:p-0' : ''}`}>
+          <div data-lime-profile-actions data-lime-profile-dm-actions={canMessage&&canInteract&&!isBlueskyProfile || undefined} data-lime-profile-membership-actions={showSubscriptionButton || undefined} className={`mt-3 flex shrink-0 items-center ${showSubscriptionButton ? 'max-sm:[&>button]:h-9 max-sm:[&>button]:px-1.5 max-sm:[&>button]:text-[13px] min-[360px]:max-sm:[&>button]:px-3 min-[360px]:max-sm:[&>button]:text-sm max-sm:[&>button]:mr-1 max-sm:[&>button:last-child]:mr-0 max-sm:[&>button[data-profile-icon-action]]:w-9 max-sm:[&>button[data-profile-icon-action]]:p-0' : ''}`}>
             {showSubscriptionButton && (
               <Button
                 type="button"
@@ -711,7 +717,7 @@ function ProfileHeader({
                 {isMember ? '登録済み' : 'メンバー'}
               </Button>
             )}
-            {!isMe&&!isBlueskyProfile&&canMessage&&<Button type="button" variant="ghost" data-profile-icon-action onClick={handleOpenDirect} disabled={openingDirect} aria-label="ダイレクトメッセージを送る" className="mr-2 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-solid border-[#d9d9d9] bg-transparent p-0 text-[#111111] shadow-none hover:bg-black/5 hover:text-[#111111] focus-visible:ring-2 focus-visible:ring-black/20 disabled:opacity-60 dark:border-[#555555] dark:text-white dark:hover:bg-white/10 dark:hover:text-white dark:focus-visible:ring-white/20"><MessageCircle style={bellIconStyle}/></Button>}
+            {canInteract&&!isBlueskyProfile&&canMessage&&<Button type="button" variant="ghost" data-profile-icon-action onClick={handleOpenDirect} disabled={openingDirect} aria-label="ダイレクトメッセージを送る" className="mr-2 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-solid border-[#d9d9d9] bg-transparent p-0 text-[#111111] shadow-none hover:bg-black/5 hover:text-[#111111] focus-visible:ring-2 focus-visible:ring-black/20 disabled:opacity-60 dark:border-[#555555] dark:text-white dark:hover:bg-white/10 dark:hover:text-white dark:focus-visible:ring-white/20"><MessageCircle style={bellIconStyle}/></Button>}
             {showPostNotificationButton && (
               // FollowButton と同じ高さ(40px)・枠線色・文字色・フォーカス表現に揃えている。背景は透明。
               // フォロー中のときのみ表示される。
@@ -743,7 +749,7 @@ function ProfileHeader({
                 プロフィールを編集
               </Button>
             ) : (
-              <FollowButton userId={user.id} />
+              canInteract && <FollowButton userId={user.id} />
             )}
             {isMe && <Dialog open={isProfileEditorOpen} onOpenChange={setIsProfileEditorOpen}>
               {isProfileEditorOpen && <Suspense fallback={null}><ProfileEditor onSaved={() => setIsProfileEditorOpen(false)} /></Suspense>}
@@ -777,7 +783,8 @@ function ProfileHeader({
             {renderContentWithMentions(user.bio)}
           </p>
         )}
-        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] leading-5 text-muted-foreground">
+        <div data-lime-profile-metadata className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] leading-5 text-muted-foreground">
+          <ProfileDetails websiteUrl={user.websiteUrl} birthDate={user.birthDate} />
           {isBlueskyProfile ? <span className="inline-flex items-center gap-1.5">
             <CalendarDays className="h-4 w-4 shrink-0" />
             <span>{dayjs(user.createdAt).format('YYYY年M月')} から参加</span>
@@ -832,6 +839,7 @@ function ProfileHeader({
             フォローしている{knownFollowers.users.slice(0,2).map(follower=>`${follower.displayName}さん`).join('、')}{knownFollowers.total>2?`、他${knownFollowers.total-2}人`:''}にフォローされています
           </span>
         </Link>}
+        <CommunitySpotlight userId={user.id}/>
       </div>
       </section>
       {isCoverOpen && typeof document !== 'undefined' && createPortal(

@@ -1,3 +1,4 @@
+import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
 vi.mock("@/hooks/useFeed", async importOriginal => {
  const actual = await importOriginal<typeof import("@/hooks/useFeed")>();
  return {...actual, ...await (async importOriginal => ({...await importOriginal<typeof import("@/hooks/useFeed")>(), useCreatePost: () => ({ mutateAsync: vi.fn(), isPending: false })}))(importOriginal)};
@@ -28,7 +29,7 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 async function mount() {
-  const view = render(<MemoryRouter><PostComposer imageEditor={{ src: 'blob:reply-original', onApply: apply, onClose: close }} /></MemoryRouter>);
+  const view = render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><PostComposer imageEditor={{ src: 'blob:reply-original', onApply: apply, onClose: close }} /></MemoryRouter></QueryClientProvider>);
   await act(async () => {}); return view;
 }
 describe('shared post and reply image editor', () => {

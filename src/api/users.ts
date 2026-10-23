@@ -1,3 +1,4 @@
+import { normalizeProfileWebsite, isValidBirthDate } from "@/lib/profileDetails";
 import { AVATAR_DECORATION_KINDS } from "@/types/index";
 import {rankAccountSearch} from "@/lib/utils";
 import { getPrivateBotPrompt, isAccountReadOnly } from "@/lib/supabase";
@@ -16,7 +17,7 @@ import { externalLikeSnapshot, completeSavedPosts, isExternalPostId } from "@/ap
 // users
 // users
 // Keep the fields returned by toUser; exclude unrelated profile settings.
-const USER_SELECT_COLUMNS = 'id, username, display_name, bio, location, avatar_url, cover_url, created_at, is_official, is_private, emoji_effect, bot_enabled, review, Account_suspension';
+const USER_SELECT_COLUMNS = 'id, username, display_name, bio, location, website_url, birth_date, avatar_url, cover_url, created_at, is_official, is_private, emoji_effect, bot_enabled, review, Account_suspension';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function toUser(row: any): User {
@@ -29,6 +30,8 @@ function toUser(row: any): User {
     displayName: (row.display_name ?? '') as string,
     bio: (row.bio ?? '') as string,
     location: (row.location ?? '') as string,
+    websiteUrl: (row.website_url ?? '') as string,
+    birthDate: (row.birth_date ?? '') as string,
     avatarUrl: (row.avatar_url ?? '') as string,
     coverUrl: (row.cover_url ?? '') as string,
     createdAt: (row.created_at ?? '') as string,
@@ -47,7 +50,8 @@ async function getUserByUsername(username: string): Promise<User | null> {
     .eq('username', username)
     .maybeSingle();
 
-  if (error || !data) return null;
+  if (error) throw error;
+  if (!data) return null;
   return toUser(data);
 }
 
@@ -67,13 +71,18 @@ async function getUserById(id: string): Promise<User | null> {
  */
 async function updateProfile(
   id: string,
-  patch: Partial<Pick<User, 'displayName' | 'bio' | 'location' | 'avatarUrl' | 'coverUrl' | 'avatarDecoration' | 'santaHat' | 'emojiEffect' | 'bot_enabled' | 'bot_prompt' | 'isPrivate'>>,
+  patch: Partial<Pick<User, 'displayName' | 'bio' | 'location' | 'websiteUrl' | 'birthDate' | 'avatarUrl' | 'coverUrl' | 'avatarDecoration' | 'santaHat' | 'emojiEffect' | 'bot_enabled' | 'bot_prompt' | 'isPrivate'>>,
 ): Promise<User> {
   const dbPatch: Record<string, unknown> = {};
   if (patch.isPrivate !== undefined) dbPatch.is_private = patch.isPrivate;
   if (patch.displayName !== undefined) dbPatch.display_name = patch.displayName;
   if (patch.bio !== undefined) dbPatch.bio = patch.bio;
   if (patch.location !== undefined) dbPatch.location = patch.location.trim();
+  if (patch.websiteUrl !== undefined) dbPatch.website_url = normalizeProfileWebsite(patch.websiteUrl) || null;
+  if (patch.birthDate !== undefined) {
+    if (!isValidBirthDate(patch.birthDate)) throw new Error('誕生日を確認してください');
+    dbPatch.birth_date = patch.birthDate || null;
+  }
   if (patch.emojiEffect !== undefined) dbPatch.emoji_effect = patch.emojiEffect;
   // bot関連の値をDBのカラム名（スネークケース）にマッピングして追加
   if (patch.bot_enabled !== undefined) dbPatch.bot_enabled = patch.bot_enabled;
@@ -692,7 +701,7 @@ async function getBookmarkPage(userId: string, offset = 0, limit = 20, context?:
   const byId=new Map(completed.map(post=>[post.id,post]));
   posts.forEach((post,index)=>{if(post)posts[index]=byId.get(post.id)??post;});
   const entries = posts.flatMap((post, index) => post ? [{ post, savedAt: rows[index].created_at, bookmarkId: rows[index].id }] : []);
-  return { entries, posts: posts.filter((post): post is PostWithAuthor => !!post), unavailable: posts.filter(post => !post).length, next: rows.length === limit ? offset + limit : undefined };
+  return { entries, posts: posts.filter((post): post is PostWithAuthor => !!post&&!post.communityId), unavailable: posts.filter(post => !post).length, next: rows.length === limit ? offset + limit : undefined };
 }
 
 export { getUserByUsername };

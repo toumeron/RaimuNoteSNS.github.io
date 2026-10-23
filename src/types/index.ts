@@ -9,6 +9,8 @@ export type User = {
   displayName: string;
   bio: string;
   location?: string;
+  websiteUrl?: string;
+  birthDate?: string;
   avatarUrl: string;
   coverUrl: string;
   createdAt: string;
@@ -31,6 +33,8 @@ export type ExternalVideo = { fallback?: {playlist: string; format: 'hls' | 'mp4
 export type ExternalPostDetails = { views?:number; bookmarks?:number; reposts?:number; quotes?:number; poll?:import("@/lib/utils").Poll; communityNote?:string };
 
 export type Post = {
+  communityId?: string;
+  community?: {id:string;name:string};
   externalDetails?: ExternalPostDetails;
   externalPinned?: boolean;
   externalRepostedBy?: {id:string;displayName:string;username:string};

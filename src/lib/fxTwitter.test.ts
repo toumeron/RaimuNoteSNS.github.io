@@ -31,6 +31,20 @@ it('prefers compatible Twitter MP4 variants and retains an HLS fallback',()=>{
  ]}]}})!;
  expect(mapped.externalVideo).toMatchObject({playlist:'https://video.twimg.com/compatible.mp4',format:'mp4',fallback:{playlist:'https://video.twimg.com/stream.m3u8',format:'hls'}});
 });
+it('chooses the highest compatible rendition regardless of provider order',()=>{
+ const source=post();
+ const formats=[
+  {url:'https://video.twimg.com/vid/320x180/low.mp4',container:'mp4',codec:'h264',bitrate:256000},
+  {url:'https://video.twimg.com/vid/1920x1080/high.mp4',container:'mp4',codec:'h264',bitrate:8000000},
+  {url:'https://video.twimg.com/vid/1280x720/middle.mp4',container:'mp4',codec:'h264',bitrate:2000000},
+  {url:'https://video.twimg.com/vid/3840x2160/incompatible.mp4',container:'mp4',codec:'hevc',bitrate:16000000},
+ ];
+ for(const list of [formats,[...formats].reverse()])expect(mapXPost({...source,media:{videos:[{...source.media.videos[0],formats:list}]}})?.externalVideo?.playlist).toBe(formats[1].url);
+});
+it('uses reported bitrate when variant dimensions are absent',()=>{
+ const source=post();
+ expect(mapXPost({...source,media:{videos:[{...source.media.videos[0],formats:[{url:'https://video.twimg.com/low.mp4',container:'mp4',bitrate:256000},{url:'https://video.twimg.com/high.mp4',container:'mp4',bitrate:8000000}]}]}})?.externalVideo?.playlist).toBe('https://video.twimg.com/high.mp4');
+});
 it('does not expose protected posts or unsafe media',()=>{expect(mapXPost({...post(),author:{...post().author,protected:true}})).toBeNull();expect(mapXPost({...post(),media:{videos:[{url:'javascript:alert(1)'}]}})?.externalVideo).toBeUndefined();});
 it('keeps X pagination and uses only the selected provider',async()=>{
  const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({code:200,results:[post()],cursor:{bottom:'next-page'}})));vi.stubGlobal('fetch',fetcher);

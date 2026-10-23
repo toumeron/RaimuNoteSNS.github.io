@@ -1,3 +1,10 @@
+import { PostAudiencePicker } from './PostAudiencePicker';
+import { PostComposerFrame } from './PostComposerFrame';
+import {usePostDraft} from '@/hooks/usePostDraft';
+import {createDraftMediaUrl,revokeDraftMediaUrl,postDraftKey,type PostDraft} from '@/lib/postDrafts';
+import {usePostCommunityDestination} from '@/hooks/useCommunities';
+import {CommunityAudienceItems} from '@/components/communities/CommunityAudienceItems';
+import {CommunityIcon} from '@/components/communities/CommunityIcon';
 import {composerMediaDrop,isVideoAttachment,ScheduleControl,ScheduledPostNotice,ComposerIcon,PollIcon,PollEditor,newPollDraft} from '@/components/feed/PostPoll';
 import {preparePostVideo,type PreparedVideo} from '@/lib/mediaThumbnail';
 import {PostVideoPlayer} from '@/components/video/PostVideoPlayer';
@@ -18,35 +25,6 @@ import {getPostById} from '@/api/posts';
 import {toast} from 'sonner';
 import {supabase} from '@/lib/supabase';
 import type {PostWithAuthor} from '@/types';
-
-const MOBILE_BREAKPOINT_QUERY = '(max-width: 767px)';
-
-const useIsMobileViewport = () => {
-  const [isMobile, setIsMobile] = useState(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
-    return window.matchMedia(MOBILE_BREAKPOINT_QUERY).matches;
-  });
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
-
-    const mql = window.matchMedia(MOBILE_BREAKPOINT_QUERY);
-    const handleChange = (event: MediaQueryListEvent) => setIsMobile(event.matches);
-
-    setIsMobile(mql.matches);
-
-    if (typeof mql.addEventListener === 'function') {
-      mql.addEventListener('change', handleChange);
-      return () => mql.removeEventListener('change', handleChange);
-    }
-
-    // Safari 13 等の古い実装向けフォールバック
-    mql.addListener(handleChange);
-    return () => mql.removeListener(handleChange);
-  }, []);
-
-  return isMobile;
-};
 
 const MAX_LEN = 500;
 const MAX_IMAGES = 4;
@@ -197,15 +175,15 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
   const [scheduledAt,setScheduledAt]=useState<string|null>(null);
   const [poll,setPoll]=useState<PollDraft|null>(null);
   const pollRef=useRef(poll);pollRef.current=poll;
-  const removePoll=()=>{pollRef.current?.options.forEach(option=>{if(option.image)URL.revokeObjectURL(option.image);});setPoll(null);};
-  useEffect(()=>()=>{pollRef.current?.options.forEach(option=>{if(option.image)URL.revokeObjectURL(option.image);});},[]);
+  const removePoll=()=>{pollRef.current?.options.forEach(option=>{if(option.image)revokeDraftMediaUrl(option.image);});setPoll(null);};
+  useEffect(()=>()=>{pollRef.current?.options.forEach(option=>{if(option.image)revokeDraftMediaUrl(option.image);});},[]);
   const [sticker,setSticker]=useState<string|null>(null);
   const [video,setVideo]=useState<PreparedVideo|null>(null);
   const [videoProgress,setVideoProgress]=useState<number|null>(null);
   const videoRef=useRef<PreparedVideo|null>(null);videoRef.current=video;
   const videoAbort=useRef<AbortController|null>(null);
-  const removeVideo=()=>{videoAbort.current?.abort();if(videoRef.current)URL.revokeObjectURL(videoRef.current.url);setVideo(null);setVideoProgress(null);};
-  useEffect(()=>()=>{videoAbort.current?.abort();if(videoRef.current)URL.revokeObjectURL(videoRef.current.url);},[]);
+  const removeVideo=()=>{videoAbort.current?.abort();if(videoRef.current)revokeDraftMediaUrl(videoRef.current.url);setVideo(null);setVideoProgress(null);};
+  useEffect(()=>()=>{videoAbort.current?.abort();if(videoRef.current)revokeDraftMediaUrl(videoRef.current.url);},[]);
   const [previews, setPreviews] = useState<string[]>([]);
   const [previewOriginals, setPreviewOriginals] = useState<string[]>([]);
   const [editingImageIndex, setEditingImageIndex] = useState<number | null>(null);
@@ -216,6 +194,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
   const [cropBoxSize, setCropBoxSize] = useState({ width: 0, height: 0 });
   const [cropStageSize, setCropStageSize] = useState({ width: 0, height: 0 });
   const [quotedPost, setQuotedPost] = useState<PostWithAuthor | null>(initialQuotedPost || null);
+  const {communityId,setCommunityId,communities,communityName,resetCommunity}=usePostCommunityDestination(user?.id,undefined,quotedPost?.communityId);
   const fileRef = useRef<HTMLInputElement>(null);
   const previewsRef = useRef<string[]>([]);
   const previewOriginalsRef = useRef<string[]>([]);
@@ -265,6 +244,14 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
   const [popupPos, setPopupPos] = useState({ top: 0, left: 0 }); // 汎用的な名に変更
   const [scrollTop, setScrollTop] = useState(0);
 
+  const draftKey=user?.id?postDraftKey(user.id,'overlay',undefined,mapLocation):null;
+  const draftState:PostDraft={content,previews,originals:previewOriginals,sticker,poll,video,scheduledAt,visibility,communityId,quotedPost};
+  const {ready:draftReady,readyRef:draftReadyRef,beginSubmission,completeSubmission,markEdited}=usePostDraft(draftKey,draftState,value=>{
+    setContent(value.content);setPreviews(value.previews);setPreviewOriginals(value.originals);
+    previewsRef.current=value.previews;previewOriginalsRef.current=value.originals;
+    setSticker(value.sticker);setPoll(value.poll);setScheduledAt(value.scheduledAt);setVideo(value.video);
+    setVisibility(value.visibility==='members'?'following':value.visibility);setCommunityId(value.communityId);setQuotedPost(value.quotedPost);
+  },{content:initialContent,communityId:undefined,quotedPost:initialQuotedPost??null});
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   useAutoTextarea(textareaRef,content);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -417,11 +404,12 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
   useEffect(() => {
     return () => {
       const urls = new Set([...previewsRef.current, ...previewOriginalsRef.current]);
-      urls.forEach((url) => URL.revokeObjectURL(url));
+      urls.forEach((url) => revokeDraftMediaUrl(url));
     };
   }, []);
 
   const addImageFiles = useCallback((incomingFiles: File[]) => {
+    if(!draftReadyRef.current){toast.info('下書きを復元しています');return true;}
     if(videoRef.current||videoAbort.current){toast.error('動画は画像と同時に添付できません');return true;}
     const imageFiles = incomingFiles.filter((file) => file.type.startsWith('image/'));
     if (imageFiles.length === 0) return false;
@@ -436,7 +424,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
       toast.error(`画像は最大${MAX_IMAGES}枚までです`);
     }
 
-    const next = imageFiles.slice(0, slots).map((file) => URL.createObjectURL(file));
+    const next = imageFiles.slice(0, slots).map((file) => createDraftMediaUrl(file));
     setPreviews((current) => [...current, ...next]);
     setPreviewOriginals((current) => [...current, ...next]);
     return true;
@@ -1092,7 +1080,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
       const previousUrl = previewsRef.current[editingImageIndex];
       const originalUrl = previewOriginalsRef.current[editingImageIndex] ?? editingImageSrc;
       setPreviews((current) => current.map((src, index) => (index === editingImageIndex ? originalUrl : src)));
-      if (previousUrl && previousUrl !== originalUrl) URL.revokeObjectURL(previousUrl);
+      if (previousUrl && previousUrl !== originalUrl) revokeDraftMediaUrl(previousUrl);
       closeImageEditor();
       return;
     }
@@ -1125,16 +1113,17 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
       return;
     }
 
-    const nextUrl = URL.createObjectURL(blob);
+    const nextUrl = createDraftMediaUrl(blob);
     const previousUrl = previewsRef.current[editingImageIndex];
     const originalUrl = previewOriginalsRef.current[editingImageIndex];
 
     setPreviews((current) => current.map((src, index) => (index === editingImageIndex ? nextUrl : src)));
-    if (previousUrl && previousUrl !== originalUrl) URL.revokeObjectURL(previousUrl);
+    if (previousUrl && previousUrl !== originalUrl) revokeDraftMediaUrl(previousUrl);
     closeImageEditor();
   }, [closeImageEditor, cropImageSize.height, cropImageSize.width, cropOffset.x, cropOffset.y, cropZoom, editingImageIndex, editingImageSrc, getCropBoxSize, cropAspectId, selectedCropAspect.outputHeight, selectedCropAspect.outputWidth]);
 
   const handleContentChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
+    markEdited();
     const val = e.target.value;
     const pos = e.target.selectionStart;
     setContent(sticker && val.trim() ? val+draftEmojiCharacter(sticker) : val);
@@ -1213,7 +1202,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
     if(files.length!==1||previews.length||video||poll){toast.error('動画は1本だけ添付できます。画像・投票とは同時に添付できません');return;}
     if(videoAbort.current)return;
     const controller=new AbortController();videoAbort.current=controller;setVideoProgress(0);
-    try{const result=await preparePostVideo(selected[0],setVideoProgress,controller.signal);if(!controller.signal.aborted)setVideo(result);else URL.revokeObjectURL(result.url);}
+    try{const result=await preparePostVideo(selected[0],setVideoProgress,controller.signal);if(!controller.signal.aborted)setVideo(result);else revokeDraftMediaUrl(result.url);}
     catch(error){if(!controller.signal.aborted)toast.error((error as Error).message||'動画を処理できませんでした');}
     finally{if(videoAbort.current===controller){videoAbort.current=null;setVideoProgress(null);}}
   };
@@ -1224,8 +1213,8 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
   const removePreview = useCallback((i: number) => {
     const previewUrl = previewsRef.current[i];
     const originalUrl = previewOriginalsRef.current[i];
-    if (previewUrl && previewUrl !== originalUrl) URL.revokeObjectURL(previewUrl);
-    if (originalUrl) URL.revokeObjectURL(originalUrl);
+    if (previewUrl && previewUrl !== originalUrl) revokeDraftMediaUrl(previewUrl);
+    if (originalUrl) revokeDraftMediaUrl(originalUrl);
 
     setPreviews((p) => p.filter((_, idx) => idx !== i));
     setPreviewOriginals((p) => p.filter((_, idx) => idx !== i));
@@ -1246,7 +1235,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
     if (!user) return;
 
     const trimmed = appendSticker(content,sticker);
-    if(videoProgress!==null)return;
+    if(videoProgress!==null||!draftReady)return;
     if (!trimmed && ((previews.length===0&&!video) || !!poll)) {
       toast.error(poll?'投票の質問を入力してください':'本文・画像・動画のいずれかを追加してください');
       return;
@@ -1256,6 +1245,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
       return;
     }
     if(poll){const message=validatePollDraft(poll);if(message){toast.error(message);return;}}
+    const draftSubmission=beginSubmission();
     try {
       // 投稿処理を先に実行し、確実に完了を待つ (visibilityを追加)
       const savedPost = await mutateAsync({
@@ -1267,7 +1257,8 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
         parentId: quotedPost?.id,
         isQuote: !!quotedPost,
         user_id: user.id,
-        visibility: visibility,
+        visibility: communityId?'public':visibility,
+        ...(communityId?{communityId}:{}),
         ...(mapLocation ? { mapLocation } : {})
       } as any);
 
@@ -1286,13 +1277,14 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
         });
       }
 
+      if(!await completeSubmission(draftSubmission)){if(onSuccess)onSuccess();return;}
       removeVideo();
       setContent(''); setSticker(null); setScheduledAt(null); removePoll();
       const urls = new Set([...previewsRef.current, ...previewOriginalsRef.current]);
-      urls.forEach((url) => URL.revokeObjectURL(url));
+      urls.forEach((url) => revokeDraftMediaUrl(url));
       setPreviews([]);
       setPreviewOriginals([]);
-      setVisibility('public'); // リセット
+      setVisibility('public');resetCommunity(); // リセット
       cancelQuote();
       if (onSuccess) onSuccess();
     } catch (err) {
@@ -1314,26 +1306,19 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
   };
 
   const remaining = MAX_LEN - appendSticker(content,sticker).length;
-  const overLimit = remaining < 0;
-
-  if (!user) return null;
-
-  // 公開範囲の選択メニュー(コンパクト版・全画面版で共有)
-  const visibilityMenu = (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
+  const audienceButton = (
+<Button
           type="button"
           size="sm"
           variant="ghost"
-          data-lime-composer-audience={!fullScreen || undefined} aria-label="公開範囲を選択"
+          disabled={!draftReady} data-lime-composer-audience={!fullScreen || undefined} aria-label="公開範囲を選択" title={communityId?communityName:undefined}
           className={cn(
             'h-9 rounded-full text-muted-foreground hover:bg-transparent hover:text-foreground',
             !fullScreen && 'w-9 p-0',
             fullScreen && 'border border-border/70 px-3 hover:bg-muted/60'
           )}
         >
-          {visibility === 'public' ? (
+          {communityId?<><CommunityIcon className="h-5 w-5 shrink-0"/>{fullScreen&&<span className="max-w-40 truncate">{communityName}</span>}</>:visibility === 'public' ? (
             <>
               <ComposerIcon kind="globe"/>
               {fullScreen&&<span>全員</span>}
@@ -1346,23 +1331,35 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
           )}
           {fullScreen && <ChevronDown className="ml-1 h-3.5 w-3.5" />}
         </Button>
-      </DropdownMenuTrigger>
+  );
+  const overLimit = remaining < 0;
+
+  if (!user) return null;
+
+  // 公開範囲の選択メニュー(コンパクト版・全画面版で共有)
+  const visibilityMenu = (
+    <PostAudiencePicker trigger={audienceButton} visibility={visibility} communityId={communityId} communities={communities} quotedCommunityId={quotedPost?.communityId}
+      disabled={!draftReady} onSelect={(value, id) => {if(value === 'members')return;setCommunityId(id);setVisibility(value);}}>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>{audienceButton}</DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
         sideOffset={8}
         className="z-[2147483647] rounded-xl"
         style={{ zIndex: 2147483647 }}
       >
-        <DropdownMenuItem className="gap-2 focus:bg-muted/40 focus:text-foreground" onClick={() => setVisibility('public')}>
+        <DropdownMenuItem className="gap-2 focus:bg-muted/40 focus:text-foreground" disabled={!!quotedPost?.communityId} onClick={() => {setCommunityId(undefined);setVisibility('public')}}>
           <ComposerIcon kind="globe" className="mr-2 shrink-0"/>
           全員
         </DropdownMenuItem>
-        <DropdownMenuItem className="gap-2 focus:bg-muted/40 focus:text-foreground" onClick={() => setVisibility('following')}>
+        <DropdownMenuItem className="gap-2 focus:bg-muted/40 focus:text-foreground" disabled={!!quotedPost?.communityId} onClick={() => {setCommunityId(undefined);setVisibility('following')}}>
           <ComposerIcon kind="users" className="mr-2 shrink-0"/>
           フォロー中
         </DropdownMenuItem>
+        <CommunityAudienceItems communities={communities} onSelect={setCommunityId} quotedCommunityId={quotedPost?.communityId}/>
       </DropdownMenuContent>
     </DropdownMenu>
+    </PostAudiencePicker>
   );
 
   // 本文入力欄(下線・ハイライト付き)。コンパクト版・全画面版で共有。
@@ -1655,8 +1652,9 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
             <Button
               type="button"
               onClick={submit}
-              disabled={isPending || videoProgress!==null || overLimit || (!appendSticker(content,sticker) && ((previews.length===0&&!video) || !!poll)) || !!(poll&&validatePollDraft(poll))}
-              className="rounded-full bg-gradient-primary px-5 font-bold shadow-soft transition hover:shadow-pop"
+              disabled={!draftReady || isPending || videoProgress!==null || overLimit || (!appendSticker(content,sticker) && ((previews.length===0&&!video) || !!poll)) || !!(poll&&validatePollDraft(poll))}
+              data-lime-post-submit
+              className="rounded-full bg-primary px-5 font-bold text-primary-foreground shadow-none transition-colors hover:bg-primary/90 hover:shadow-none"
             >
               {isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -1684,6 +1682,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
           {quotedBlock}
             {videoProgress!==null&&<div className="my-3 rounded-xl bg-muted p-4 text-sm" role="status">動画を圧縮中… {Math.round(videoProgress*100)}%<progress className="mt-2 w-full" value={videoProgress} max={1}/><button type="button" onClick={removeVideo}>キャンセル</button></div>}
           {video&&<div className="relative"><PostVideoPlayer video={video} previewUrl={video.url}/><button type="button" className="absolute right-2 top-2 rounded-full bg-black/70 p-2 text-white" aria-label="添付動画を削除" disabled={isPending} onClick={removeVideo}><X size={18}/></button></div>}
+
           {imagesGrid}
 
           {poll&&<PollEditor value={poll} onChange={setPoll} onRemove={removePoll} disabled={isPending}/>}
@@ -1692,7 +1691,7 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
           {/* フッター: 返信可否の表示 + 画像添付 + 文字数 */}
           <div className="shrink-0 px-4 py-3">
             <div className="mb-3 flex items-center gap-1.5 text-sm font-bold text-accent">
-              {visibility === 'public' ? (
+              {communityId?<><CommunityIcon className="h-4 w-4"/><span>コミュニティ内に投稿します</span></>:visibility === 'public' ? (
                 <>
                   <Globe className="h-4 w-4" />
                   <span>全員が返信できます</span>
@@ -1713,14 +1712,14 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
                   variant="ghost"
                   className="h-10 w-10 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
                   data-lime-composer-tool data-lime-attachment-tool onClick={() => fileRef.current?.click()}
-                  disabled={isPending || !!video || videoProgress!==null || previews.length >= MAX_IMAGES}
+                  disabled={!draftReady || isPending || !!video || videoProgress!==null || previews.length >= MAX_IMAGES}
                   aria-label="画像を追加"
                 >
                   <ComposerIcon kind="image"/>
                 </Button>
-                <Button type="button" variant="ghost" size="sm" data-lime-composer-tool aria-label="投票を追加" aria-pressed={!!poll} disabled={isPending||!!poll||!!video||videoProgress!==null} className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={()=>setPoll(newPollDraft())}><PollIcon className="h-5 w-5"/></Button>
-                <ScheduleControl value={scheduledAt} onChange={setScheduledAt} disabled={isPending}/>
-                <StickerPicker iconOnly simple disabled={isPending} onSelect={name=>{if(content.trim()){insertDraftEmoji(textareaRef.current,content,name,setContent);}else setSticker(name);}}/>
+                <Button type="button" variant="ghost" size="sm" data-lime-composer-tool aria-label="投票を追加" aria-pressed={!!poll} disabled={!draftReady||isPending||!!poll||!!video||videoProgress!==null} className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={()=>setPoll(newPollDraft())}><PollIcon className="h-5 w-5"/></Button>
+                <ScheduleControl value={scheduledAt} onChange={setScheduledAt} disabled={isPending||!draftReady}/>
+                <StickerPicker iconOnly simple disabled={isPending||!draftReady} onSelect={name=>{if(content.trim()){insertDraftEmoji(textareaRef.current,content,name,setContent);}else setSticker(name);}}/>
               </div>
               <div className="flex items-center gap-2">
                 <span className={cn('text-xs tabular-nums', overLimit ? 'font-bold text-destructive' : 'text-muted-foreground')}>
@@ -1787,16 +1786,16 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
                 variant="ghost"
                 aria-label="画像を追加" className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
                 data-lime-composer-tool data-lime-attachment-tool onClick={() => fileRef.current?.click()}
-                disabled={isPending || !!video || videoProgress!==null || previews.length >= MAX_IMAGES}
+                disabled={!draftReady || isPending || !!video || videoProgress!==null || previews.length >= MAX_IMAGES}
               >
                 <ComposerIcon kind="image"/>
 
               </Button>
 
-              <Button type="button" variant="ghost" size="sm" data-lime-composer-tool aria-label="投票を追加" aria-pressed={!!poll} disabled={isPending||!!poll||!!video||videoProgress!==null} className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={()=>setPoll(newPollDraft())}><PollIcon className="h-5 w-5"/></Button>
-                <ScheduleControl value={scheduledAt} onChange={setScheduledAt} disabled={isPending}/>
+              <Button type="button" variant="ghost" size="sm" data-lime-composer-tool aria-label="投票を追加" aria-pressed={!!poll} disabled={!draftReady||isPending||!!poll||!!video||videoProgress!==null} className="h-9 w-9 rounded-full p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={()=>setPoll(newPollDraft())}><PollIcon className="h-5 w-5"/></Button>
+                <ScheduleControl value={scheduledAt} onChange={setScheduledAt} disabled={isPending||!draftReady}/>
               {visibilityMenu}
-              <StickerPicker iconOnly simple disabled={isPending} onSelect={name=>{if(content.trim()){insertDraftEmoji(textareaRef.current,content,name,setContent);}else setSticker(name);}} />
+              <StickerPicker iconOnly simple disabled={isPending||!draftReady} onSelect={name=>{if(content.trim()){insertDraftEmoji(textareaRef.current,content,name,setContent);}else setSticker(name);}} />
 
               <span className={cn('text-xs tabular-nums', overLimit ? 'font-bold text-destructive' : 'text-muted-foreground')}>
                 {remaining}
@@ -1805,14 +1804,14 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
             <Button
               type="button"
               onClick={submit}
-              disabled={isPending || videoProgress!==null || overLimit || (!appendSticker(content,sticker) && ((previews.length===0&&!video) || !!poll)) || !!(poll&&validatePollDraft(poll))}
-              className="rounded-full bg-gradient-primary px-5 font-bold shadow-soft transition hover:shadow-pop"
+              disabled={!draftReady || isPending || videoProgress!==null || overLimit || (!appendSticker(content,sticker) && ((previews.length===0&&!video) || !!poll)) || !!(poll&&validatePollDraft(poll))}
+              data-lime-post-submit
+              className="rounded-full bg-primary px-5 font-bold text-primary-foreground shadow-none transition-colors hover:bg-primary/90 hover:shadow-none"
             >
               {isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <>
-                  <ComposerIcon kind="send" className="mr-1.5 h-4 w-4" />
                   {scheduledAt ? '予約する' : quotedPost ? '引用ポスト' : 'ポスト'}
                 </>
               )}
@@ -1829,96 +1828,4 @@ export function PostComposer({ mapLocation, initialQuotedPost, initialContent = 
 // 新規投稿モーダル/全画面コンポーズ。
 // document.body へポータル描画することで、祖先(Provider群)のCSSに影響されず
 // 常に画面全体を基準に固定表示できるようにしている(iPhone PWAやモバイル幅Chromeでの表示崩れ対策)。
-export const PostOverlay = ({ isOpen, onClose, initialQuotedPost, mapLocation }: { isOpen: boolean; onClose: () => void; initialQuotedPost?: PostWithAuthor; mapLocation?: import("@/lib/mapLocation").MapLocation }) => {
-  const isMobile = useIsMobileViewport();
-
-  useEffect(() => {
-    if (!isOpen || typeof document === 'undefined') return;
-
-    const html = document.documentElement;
-    const body = document.body;
-
-    const previous = {
-      htmlOverflow: html.style.overflow,
-      htmlOverscrollBehavior: html.style.overscrollBehavior,
-      bodyOverflow: body.style.overflow,
-      bodyOverscrollBehavior: body.style.overscrollBehavior,
-      bodyPosition: body.style.position,
-      bodyTop: body.style.top,
-      bodyLeft: body.style.left,
-      bodyRight: body.style.right,
-      bodyWidth: body.style.width,
-    };
-
-    const lockedScrollY = window.scrollY;
-
-    if (isMobile) {
-      // iOS Safari / モバイルChromeでは body の overflow:hidden だけでは
-      // 背面ページのスクロールが残る場合があるため、ページ自体を固定する。
-      // スクロール位置を保持して閉じた後に元の位置へ正確に戻す。
-      html.style.overflow = 'hidden';
-      html.style.overscrollBehavior = 'none';
-      body.style.overflow = 'hidden';
-      body.style.overscrollBehavior = 'none';
-      body.style.position = 'fixed';
-      body.style.top = `-${lockedScrollY}px`;
-      body.style.left = '0';
-      body.style.right = '0';
-      body.style.width = '100%';
-    } else {
-      // デスクトップの既存モーダル挙動はそのまま維持する。
-      body.style.overflow = 'hidden';
-    }
-
-    return () => {
-      html.style.overflow = previous.htmlOverflow;
-      html.style.overscrollBehavior = previous.htmlOverscrollBehavior;
-      body.style.overflow = previous.bodyOverflow;
-      body.style.overscrollBehavior = previous.bodyOverscrollBehavior;
-      body.style.position = previous.bodyPosition;
-      body.style.top = previous.bodyTop;
-      body.style.left = previous.bodyLeft;
-      body.style.right = previous.bodyRight;
-      body.style.width = previous.bodyWidth;
-
-      if (isMobile) {
-        window.scrollTo(0, lockedScrollY);
-      }
-    };
-  }, [isOpen, isMobile]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !document.querySelector('[data-limenote-crop-editor-lock]')) onClose();
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [isOpen, onClose]);
-
-  if (!isOpen || typeof document === 'undefined') return null;
-
-  if (isMobile) {
-    // モバイルはオーバーレイではなく全画面で表示する
-    return createPortal(
-      <div role="dialog" aria-modal="true" aria-label={initialQuotedPost ? "引用リポスト" : "新規ポスト"} onClick={event => event.stopPropagation()} className="fixed inset-0 z-[2147483000] flex h-[100dvh] max-h-[100dvh] flex-col overflow-hidden overscroll-none bg-background">
-        <PostComposer fullScreen mapLocation={mapLocation} initialQuotedPost={initialQuotedPost} onSuccess={onClose} onCancel={onClose} />
-      </div>,
-      document.body
-    );
-  }
-
-  return createPortal(
-    <div role="dialog" aria-modal="true" aria-label={initialQuotedPost ? "引用リポスト" : "新規ポスト"} onClick={event => event.stopPropagation()} className="fixed inset-0 z-[2147483000] flex items-start justify-center bg-black/20 p-4 pt-16 sm:items-center sm:pt-4 overflow-y-auto">
-      <div
-        className="fixed inset-0"
-        onClick={onClose}
-      />
-      <div className="relative w-full max-w-xl animate-in fade-in zoom-in-95 duration-200">
-        <PostComposer mapLocation={mapLocation} initialQuotedPost={initialQuotedPost} onSuccess={onClose} onCancel={onClose} />
-      </div>
-    </div>,
-    document.body
-  );
-};
-
+export const PostOverlay = (props: { isOpen: boolean; onClose: () => void; initialQuotedPost?: PostWithAuthor; mapLocation?: import("@/lib/mapLocation").MapLocation }) => <PostComposerFrame {...props}>{fullScreen => <PostComposer fullScreen={fullScreen} mapLocation={props.mapLocation} initialQuotedPost={props.initialQuotedPost} onSuccess={props.onClose} onCancel={props.onClose} />}</PostComposerFrame>;

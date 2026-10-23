@@ -190,12 +190,13 @@ async function getNativeRepostState(postId:string) {
 
 // reply-reposts
 const isReplyPostId = (id: string) => id.startsWith('reply:');
-const REPLY_REPOST_SELECT = `*, profiles:user_id(*), post:post_id(user_id, profiles:user_id(username)), replying_to:parent_comment_id(profiles:user_id(username))`;
+const REPLY_REPOST_SELECT = `*, profiles:user_id(*), post:post_id!inner(user_id,community_id, profiles:user_id(username)), replying_to:parent_comment_id(profiles:user_id(username))`;
 
 /** The source post's RLS determines visibility before converting a reply. */
 function replyToPost(reply: any): PostWithAuthor {
   const author = reply.author ?? reply.profiles ?? {};
   return {
+    communityId:reply.post?.community_id??undefined,
     id: `reply:${reply.id}`, replyId: reply.id, replyPostId: reply.postId ?? reply.post_id,
     replyToUsername: reply.replying_to?.profiles?.username ?? reply.post?.profiles?.username ?? reply.replyToUsername,
     userId: reply.userId ?? reply.user_id ?? author.id,
@@ -251,7 +252,7 @@ async function toggleReplyRepost(id: string) {
 
 async function getProfileReplyReposts(userId:string,limit:number,offset=0):Promise<PostWithAuthor[]> {
   const result=await supabase.from('reply_reposts').select(`created_at, comments!inner(${REPLY_REPOST_SELECT})`)
-    .eq('user_id',userId).order('created_at',{ascending:false}).order('comment_id',{ascending:false}).range(offset,offset+limit-1);
+    .eq('user_id',userId).is('comments.post.community_id',null).order('created_at',{ascending:false}).order('comment_id',{ascending:false}).range(offset,offset+limit-1);
   if(result.error) throw result.error;
   return (result.data ?? []).map((row:any)=>({...replyToPost(row.comments),profileRepostedBy:userId,profileRepostedAt:row.created_at}));
 }
@@ -338,9 +339,9 @@ async function createComment(postId: string, input: string | CommentInput): Prom
   const content = payload.content.trim();
   if ((!content && !payload.imageUrls?.length) || content.length > 280) throw new Error('返信は280文字以内、または画像を添付してください');
   const id = randomUUID();
-  const { data: parent, error: parentError } = await supabase.from('posts').select('visibility').eq('id', postId).single();
+  const { data: parent, error: parentError } = await supabase.from('posts').select('visibility,community_id').eq('id', postId).single();
   if (parentError || !parent) throw new Error('返信先の投稿を閲覧できません');
-  const imageUrls = await uploadPostMedia(payload.imageUrls ?? [], userId, id, parent.visibility !== 'public');
+  const imageUrls = parent.community_id ? await (await import('@/api/communities')).uploadCommunityImages(payload.imageUrls ?? [],userId) : await uploadPostMedia(payload.imageUrls ?? [], userId, id, parent.visibility !== 'public');
 
   // INSERT直後に profiles(*) を含む select を連鎖させると環境によっては
   // PostgREST エラーが発生するため、INSERT では id のみ取得して別途 SELECT する。

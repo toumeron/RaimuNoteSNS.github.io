@@ -1,7 +1,7 @@
 import { randomUUID } from "@/lib/utils";
 import { useSyncExternalStore, useCallback, useEffect, useState } from "react";
-import { notifySuspendedAction } from "@/lib/supabase";
-import { readChatImage, writeChatImage } from "@/lib/mediaThumbnail";
+import { supabase, notifySuspendedAction } from "@/lib/supabase";
+import { uploadProfileMedia, readChatImage, writeChatImage } from "@/lib/mediaThumbnail";
 import { boundedResponseBlob } from "@/lib/privateMediaFetch";
 
 // aiFriends
@@ -71,7 +71,112 @@ const AI_FRIENDS_CHANGED = 'lime-ai-friends-changed';
 const key = (uid: string | null | undefined, name: string) => `limeai:${uid || 'guest'}:${name}`;
 function read<T>(uid: string | null | undefined, name: string, fallback: T): T { try { return JSON.parse(localStorage.getItem(key(uid,name)) || 'null') ?? fallback } catch { return fallback } }
 function readList<T>(uid: string | null | undefined, name: string): T[] { const data=read<unknown>(uid,name,[]);return Array.isArray(data)?data:[] }
-function write(uid: string | null | undefined, name: string, value: unknown) { localStorage.setItem(key(uid,name),JSON.stringify(value));window.dispatchEvent(new Event(AI_FRIENDS_CHANGED)); }
+// Local values are a cache and durable outbox; authenticated state lives in private settings.
+type FriendEntries = Record<string, unknown>;
+const friendFields = ['assistants','avatars','settings','memories','session-meta','backgrounds','companion'];
+const arrayFields = new Set(['assistants','memories']);
+const syncJobs = new Map<string, Promise<void>>();
+const pendingKey = (uid:string) => key(uid,'cloud-pending');
+function entriesFor(name:string,value:any):FriendEntries {
+ if(arrayFields.has(name)) return Object.fromEntries((Array.isArray(value)?value:[]).map(item=>[`${name}/${item.id}`,item]));
+ return Object.fromEntries(Object.entries(value??{}).map(([id,item])=>[`${name}/${id}`,item]));
+}
+function cachedEntries(uid:string):FriendEntries {
+ return Object.assign({},...friendFields.map(name=>entriesFor(name,name==='companion'?readCompanion(uid):read(uid,name,arrayFields.has(name)?[]:{}))));
+}
+function applyEntries(uid:string,entries:FriendEntries){
+ for(const name of friendFields){
+  const pairs=Object.entries(entries).filter(([id,value])=>id.startsWith(name+'/')&&value!==null).map(([id,value])=>[id.slice(name.length+1),value]);
+  const value=arrayFields.has(name)?pairs.map(([,value])=>value):Object.fromEntries(pairs);
+  localStorage.setItem(name==='companion'?companionKey(uid):key(uid,name),JSON.stringify(value));
+ }
+ window.dispatchEvent(new Event(AI_FRIENDS_CHANGED));
+ window.dispatchEvent(new Event('lime-companion-change'));
+ window.dispatchEvent(new Event(AI_CHAT_HISTORY_CHANGED));
+}
+export async function uploadFriendImage(blob:Blob,kind:'friend-avatar'|'friend-cover'|'chat-background',owner?:string){
+ const result=await uploadProfileMedia(new File([blob],'image.'+(blob.type==='image/png'?'png':'webp'),{type:blob.type}),kind,owner);
+ return result.secure_url;
+}
+async function cloudImages(entries:FriendEntries,uid:string):Promise<FriendEntries>{
+ const result={...entries};
+ for(const [id,value] of Object.entries(result)){
+  const field=id.startsWith('assistants/')?'coverUrl':null;
+  const url=field?(value as AssistantItem|null)?.coverUrl:value;
+  if((field||id.startsWith('avatars/')||id.startsWith('backgrounds/'))&&typeof url==='string'&&url&&!url.startsWith('https://res.cloudinary.com/')){
+   const response=await fetch(url,{credentials:'omit',signal:AbortSignal.timeout(30000)});
+   if(!response.ok)throw new Error('画像を同期できませんでした');
+   const blob=await boundedResponseBlob(response,8*1024*1024);
+   const uploaded=await uploadFriendImage(blob,id.startsWith('avatars/')?'friend-avatar':id.startsWith('backgrounds/')?'chat-background':'friend-cover',uid);
+   result[id]=field?{...(value as AssistantItem),coverUrl:uploaded}:uploaded;
+  }
+ }
+ return result;
+}
+export function writeFriendSetting(uid:string|null|undefined,name:string,value:unknown){
+ let changed=false;
+ if(uid&&friendFields.includes(name)){
+  const before=entriesFor(name,name==='companion'?readCompanion(uid):read(uid,name,arrayFields.has(name)?[]:{}));
+  const after=entriesFor(name,value);const changes:FriendEntries={};
+  for(const id of new Set([...Object.keys(before),...Object.keys(after)]))if(JSON.stringify(before[id])!==JSON.stringify(after[id]))changes[id]=after[id]??null;
+  changed=Object.keys(changes).length>0;
+  if(changed)localStorage.setItem(pendingKey(uid),JSON.stringify({...read<FriendEntries>(uid,'cloud-pending',{}),...changes}));
+ }
+ localStorage.setItem(name==='companion'&&uid?companionKey(uid):key(uid,name),JSON.stringify(value));
+ window.dispatchEvent(new Event(AI_FRIENDS_CHANGED));
+ if(uid&&changed)void syncFriends(uid).catch(()=>window.dispatchEvent(new CustomEvent('lime-friend-sync-error')));
+}
+function write(uid:string|null|undefined,name:string,value:unknown){writeFriendSetting(uid,name,value)}
+export function syncFriends(uid:string):Promise<void>{
+ const running=syncJobs.get(uid);if(running)return running;
+ let completed=false;
+ const job=(async()=>{
+  const {data:auth}=await supabase.auth.getUser();if(auth.user?.id!==uid)throw new Error('フレンド情報を同期できませんでした');
+  const {data,error}=await supabase.rpc('sync_private_friends',{p_owner:uid,p_patch:{}});if(error)throw error;
+  let remote=(data??{}) as FriendEntries;
+  if(!localStorage.getItem(key(uid,'cloud-migrated'))){
+   // Remote tombstones win over old caches from another device.
+   const legacy=Object.fromEntries(Object.entries(cachedEntries(uid)).filter(([id])=>!Object.hasOwn(remote,id)));
+   localStorage.setItem(pendingKey(uid),JSON.stringify({...legacy,...read<FriendEntries>(uid,'cloud-pending',{})}));
+   localStorage.setItem(key(uid,'cloud-migrated'),'1');
+  }
+  if(typeof indexedDB!=='undefined'&&!localStorage.getItem(key(uid,'backgrounds-migrated'))){
+  try{
+   const keys=await store<IDBValidKey[]>('readonly',s=>s.getAllKeys());
+   for(const savedKey of keys){
+    let pair:unknown;try{pair=JSON.parse(String(savedKey))}catch{continue}
+    if(!Array.isArray(pair)||pair[0]!==uid||typeof pair[1]!=='string')continue;
+    const id=`backgrounds/${pair[1]}`;
+    if(Object.hasOwn(remote,id)||Object.hasOwn(read<FriendEntries>(uid,'cloud-pending',{}),id))continue;
+    const saved=await store<StoredBackground|undefined>('readonly',s=>s.get(savedKey));
+    if(!saved?.bytes)continue;
+    const url=await uploadFriendImage(new Blob([saved.bytes],{type:saved.type}),'chat-background',uid);
+    localStorage.setItem(pendingKey(uid),JSON.stringify({...read<FriendEntries>(uid,'cloud-pending',{}),[id]:url}));
+   }
+   localStorage.setItem(key(uid,'backgrounds-migrated'),'1');
+  }catch{window.dispatchEvent(new CustomEvent('lime-friend-sync-error'))}
+  }
+  while(true){
+   const pending=read<FriendEntries>(uid,'cloud-pending',{});if(!Object.keys(pending).length)break;
+   const patch=await cloudImages(pending,uid);
+   const response=await supabase.rpc('sync_private_friends',{p_owner:uid,p_patch:patch});if(response.error)throw response.error;
+   remote=(response.data??{}) as FriendEntries;
+   const remaining=read<FriendEntries>(uid,'cloud-pending',{});
+   for(const [id,value] of Object.entries(pending))if(JSON.stringify(remaining[id])===JSON.stringify(value))delete remaining[id];
+   localStorage.setItem(pendingKey(uid),JSON.stringify(remaining));
+  }
+  const {data:current}=await supabase.auth.getUser();if(current.user?.id!==uid)return;
+  applyEntries(uid,{...remote,...read<FriendEntries>(uid,'cloud-pending',{})});completed=true;
+ })().finally(()=>{syncJobs.delete(uid);if(completed&&Object.keys(read<FriendEntries>(uid,'cloud-pending',{})).length)void syncFriends(uid).catch(()=>window.dispatchEvent(new CustomEvent('lime-friend-sync-error')))});syncJobs.set(uid,job);return job;
+}
+export function startFriendCloudSync(uid:string){
+ let stopped=false,reported=false,queued=false;
+ const refresh=()=>{if(stopped)return;if(syncJobs.has(uid)){if(!queued){queued=true;void syncJobs.get(uid)!.then(()=>{queued=false;refresh()},()=>{queued=false})}return;}void syncFriends(uid).then(()=>{reported=false;if(queued){queued=false;refresh()}}).catch(()=>{if(!reported){reported=true;window.dispatchEvent(new CustomEvent('lime-friend-sync-error'))}})};
+ const visible=()=>{if(document.visibilityState==='visible')refresh()};
+ window.addEventListener('online',refresh);window.addEventListener('focus',refresh);document.addEventListener('visibilitychange',visible);
+ const channel=supabase.channel(`private-friends:${uid}`).on('postgres_changes',{event:'*',schema:'public',table:'profile_private_settings',filter:`user_id=eq.${uid}`},refresh).subscribe();
+ refresh();return()=>{stopped=true;window.removeEventListener('online',refresh);window.removeEventListener('focus',refresh);document.removeEventListener('visibilitychange',visible);void supabase.removeChannel(channel)};
+}
 type AssistantDraft = {
   id?: string
   coverUrl?: string
@@ -125,7 +230,7 @@ function deleteCustomAssistant(uid: string | null | undefined, id: string): Assi
   return next
 }
 
-/* ---------- キャラクターのアイコン画像 (ブラウザ内に保存) ---------- */
+/* ---------- キャラクターのアイコン画像 (Cloudinary URL) ---------- */
 type AvatarMap = Record<string, string>
 
 const loadAvatars = (uid?: string | null) => read<AvatarMap>(uid, 'avatars', {})
@@ -133,8 +238,7 @@ const loadAvatars = (uid?: string | null) => read<AvatarMap>(uid, 'avatars', {})
 /** 保存に成功したら true(容量超過などで失敗したら false) */
 function saveAvatars(uid: string | null | undefined, map: AvatarMap): boolean {
   try {
-    localStorage.setItem(key(uid, 'avatars'), JSON.stringify(map))
-    window.dispatchEvent(new Event(AI_FRIENDS_CHANGED))
+    write(uid, 'avatars', map)
     return true
   } catch {
     return false
@@ -231,7 +335,7 @@ function readCompanion(userId:string):CompanionPreferences{
  }catch{return DEFAULT_COMPANION;}
 }
 function updateCompanion(userId:string,patch:Partial<CompanionPreferences>){
- localStorage.setItem(companionKey(userId),JSON.stringify({...readCompanion(userId),...patch}));window.dispatchEvent(new Event(event));
+ writeFriendSetting(userId,'companion',{...readCompanion(userId),...patch});window.dispatchEvent(new Event(event));
 }
 function subscribe(callback:()=>void){window.addEventListener(event,callback);window.addEventListener('storage',callback);return()=>{window.removeEventListener(event,callback);window.removeEventListener('storage',callback);};}
 function snapshot(userId:string){try{return localStorage.getItem(companionKey(userId));}catch{return null;}}
@@ -246,13 +350,30 @@ async function store<T>(mode:IDBTransactionMode,operation:(store:IDBObjectStore)
  return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,mode),r=operation(tx.objectStore(STORE));let result:T;r.onsuccess=()=>{result=r.result;};tx.oncomplete=()=>{db.close();resolve(result)};tx.onabort=()=>{db.close();reject(tx.error??r.error??new Error('背景を保存できませんでした'))};tx.onerror=()=>{db.close();reject(tx.error??r.error)}});
 }
 function useChatBackground(userId?:string,chatId?:string){
- const key=userId&&chatId?keyFor(userId,chatId):'';const [revision,setRevision]=useState(0);const [state,setState]=useState({key:'',url:''});const [error,setError]=useState('');
- useEffect(()=>{let cancelled=false,url='';setError('');if(!key){setState({key:'',url:''});return;}
- void store<StoredBackground|undefined>('readonly',s=>s.get(key)).then(value=>{if(cancelled)return;if(value?.bytes instanceof ArrayBuffer)url=URL.createObjectURL(new Blob([value.bytes],{type:value.type}));setState({key,url});}).catch(()=>{if(!cancelled)setError('保存した背景を読み込めませんでした。');});
- return()=>{cancelled=true;if(url)URL.revokeObjectURL(url)};
- },[key,revision]);
- const save=useCallback(async(blob:Blob|null)=>{if(!key)throw new Error('会話を選択してください');const value=blob?{bytes:await blob.arrayBuffer(),type:blob.type}:null;await store('readwrite',s=>value?s.put(value,key):s.delete(key));setRevision(value=>value+1);},[key]);
- return {url:state.key===key?state.url:'',save,error};
+ const cacheKey=userId&&chatId?keyFor(userId,chatId):'';
+ const [url,setUrl]=useState('');const [error,setError]=useState('');
+ useEffect(()=>{let cancelled=false;
+  const refresh=()=>{if(!cancelled)setUrl(userId&&chatId?read<Record<string,string>>(userId,'backgrounds',{})[chatId]??'':'')};
+  setUrl('');setError('');refresh();window.addEventListener(AI_FRIENDS_CHANGED,refresh);
+  if(userId&&chatId)void syncFriends(userId).then(async()=>{
+   if(cancelled)return;refresh();
+   if(Object.hasOwn(read<Record<string,string>>(userId,'backgrounds',{}),chatId))return;
+   const legacy=await store<StoredBackground|undefined>('readonly',s=>s.get(cacheKey));
+   if(cancelled||!legacy?.bytes)return;
+   const uploaded=await uploadFriendImage(new Blob([legacy.bytes],{type:legacy.type}),'chat-background',userId);
+   if(cancelled)return;
+   writeFriendSetting(userId,'backgrounds',{...read(userId,'backgrounds',{}),[chatId]:uploaded});
+   await syncFriends(userId);await store('readwrite',s=>s.delete(cacheKey));
+  }).catch(()=>{if(!cancelled)setError('背景を同期できませんでした。接続を確認してお試しください。')});
+  return()=>{cancelled=true;window.removeEventListener(AI_FRIENDS_CHANGED,refresh)};
+ },[userId,chatId,cacheKey]);
+ const save=useCallback(async(blob:Blob|null)=>{
+  if(!userId||!chatId)throw new Error('会話を選択してください');
+  const uploaded=blob?await uploadFriendImage(blob,'chat-background',userId):'';
+  writeFriendSetting(userId,'backgrounds',{...read(userId,'backgrounds',{}),[chatId]:uploaded});
+  await syncFriends(userId);await store('readwrite',s=>s.delete(keyFor(userId,chatId)));setUrl(uploaded);
+ },[userId,chatId]);
+ return {url,save,error};
 }
 async function prepareChatBackground(file:File):Promise<Blob>{
  if(!['image/jpeg','image/png','image/webp','image/gif','image/avif'].includes(file.type)||file.size>10485760)throw new Error('画像はPNG・JPEG・WebP・GIF・AVIF形式、10MB以内にしてください');

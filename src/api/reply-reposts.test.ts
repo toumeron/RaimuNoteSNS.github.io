@@ -6,7 +6,7 @@ vi.mock("@/lib/supabase", async importOriginal => ({
   ...await importOriginal<typeof import("@/lib/supabase")>(),
   supabase:{from(table:string){
   let action='select',counting=false,payload:any,selection='';
-  const b={select:(s:string,o?:any)=>{selection=s;counting=!!o?.count;return b;},eq:()=>b,maybeSingle:()=>b,single:()=>b,order:()=>b,range:()=>b,
+  const b={select:(s:string,o?:any)=>{selection=s;counting=!!o?.count;return b;},eq:()=>b,is:()=>b,maybeSingle:()=>b,single:()=>b,order:()=>b,range:()=>b,
     insert:(p:any)=>{action='insert';payload=p;return b;},delete:()=>{action='delete';return b;},then:(resolve:any)=>{
       if(action!=='select') db.writes.push({table,action,payload});
       const data=selection.includes('comments!inner')?[{created_at:'2026-10-03T01:00:00Z',comments:reply}]:table==='comments'?reply:db.existing?{comment_id:'comment'}:null;

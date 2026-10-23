@@ -158,3 +158,38 @@ it('streams public external MP4 directly instead of downloading a whole video in
  fireEvent.click(screen.getByRole('button',{name:'動画を再生'}));await waitFor(()=>expect(screen.getByRole('button',{name:'一時停止'})).toBeInTheDocument());
  expect(view.container.querySelector('video')).toHaveAttribute('src','https://video.twimg.com/movie.mp4');expect(fetcher).not.toHaveBeenCalled();expect(mocks.resolve).not.toHaveBeenCalled();
 });
+
+it('keeps the chosen volume across players and pauses when another audible provider starts',async()=>{
+ const {bindBackgroundPlayback}=await import('./PostVideoPlayer');
+ localStorage.setItem('lime-video-volume','.25');
+ const media=document.createElement('video');let paused=false;
+ Object.defineProperty(media,'paused',{get:()=>paused});
+ media.pause=vi.fn(()=>{paused=true;media.dispatchEvent(new Event('pause'))});
+ const dispose=bindBackgroundPlayback(media);
+ try{
+  expect(media.volume).toBe(.25);
+  media.volume=.15;media.dispatchEvent(new Event('volumechange'));
+  expect(localStorage.getItem('lime-video-volume')).toBe('0.15');
+  window.dispatchEvent(new CustomEvent('lime-background-media-play',{detail:{kind:'youtube',element:{},audible:false}}));
+  expect(media.pause).not.toHaveBeenCalled();
+  window.dispatchEvent(new CustomEvent('lime-background-media-play',{detail:{kind:'youtube',element:{},audible:true}}));
+  expect(media.pause).toHaveBeenCalledOnce();
+ }finally{dispose()}
+ const next=document.createElement('video');const release=bindBackgroundPlayback(next);
+ expect(next.volume).toBe(.15);release();
+});
+it('uses the latest volume even for an already mounted player and transfers audio focus without resetting the route',async()=>{
+ const {bindBackgroundPlayback}=await import('./PostVideoPlayer');
+ const changes:string[]=[];let mode='auto';const audio={get type(){return mode},set type(value:string){mode=value;changes.push(value)}};
+ Object.defineProperty(navigator,'audioSession',{configurable:true,value:audio});
+ const first=document.createElement('video'),second=document.createElement('video');let firstPaused=false,secondPaused=true;
+ Object.defineProperty(first,'paused',{get:()=>firstPaused});Object.defineProperty(second,'paused',{get:()=>secondPaused});
+ first.pause=vi.fn(()=>{firstPaused=true;first.dispatchEvent(new Event('pause'))});
+ const closeFirst=bindBackgroundPlayback(first),closeSecond=bindBackgroundPlayback(second);
+ try{
+  first.volume=.2;first.dispatchEvent(new Event('volumechange'));
+  secondPaused=false;second.dispatchEvent(new Event('play'));
+  expect(second.volume).toBe(.2);expect(first.pause).toHaveBeenCalledOnce();expect(changes).toEqual(['playback']);
+ }finally{closeFirst();closeSecond();delete (navigator as any).audioSession}
+ expect(changes).toEqual(['playback','auto']);
+});

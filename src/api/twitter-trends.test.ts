@@ -28,7 +28,7 @@ it('ends a repeated source cursor instead of retrying it indefinitely',async()=>
 it('bounds a nonresponsive reader instead of remaining loading forever',async()=>{
  vi.useFakeTimers();search.mockImplementation(()=>new Promise(()=>{}));
  const pending=expect(getTwitterTrendPage(cursor())).rejects.toMatchObject({name:'TimeoutError'});
- await vi.advanceTimersByTimeAsync(8001);await pending;
+ await vi.advanceTimersByTimeAsync(25001);await pending;
 });
 
 it('uses random popular-topic sources immediately when no topics are followed',async()=>{
@@ -81,7 +81,7 @@ it('retains fetched topic posts when the popular fallback times out',async()=>{
  const state=cursor();state.fallbackPositions=[{query:'popular',cursor:null,done:false}];
  search.mockResolvedValueOnce({posts:[post('x:ready',2000)],cursor:null}).mockImplementationOnce(()=>new Promise(()=>{}));
  const pending=getTwitterTrendPage(state);
- await vi.advanceTimersByTimeAsync(8001);
+ await vi.advanceTimersByTimeAsync(25001);
  const page=await pending;
  expect(page.posts.map(row=>row.id)).toEqual(['x:ready']);
  expect(page.next?.fallbackPositions?.[0].done).toBe(false);
@@ -102,7 +102,7 @@ it('delivers a successful popular source even when another source in the same ba
  vi.useFakeTimers();
  const state=cursor();state.positions=[];state.fallbackPositions=[{query:'ready',cursor:null,done:false},{query:'slow',cursor:null,done:false}];
  search.mockImplementation(async query=>query==='ready'?{posts:[post('x:ready',2000)],cursor:null}:new Promise(()=>{}));
- const pending=getTwitterTrendPage(state);await vi.advanceTimersByTimeAsync(8001);
+ const pending=getTwitterTrendPage(state);await vi.advanceTimersByTimeAsync(25001);
  const page=await pending;expect(page.posts.map(row=>row.id)).toEqual(['x:ready']);
  expect(page.next?.fallbackPositions?.find(row=>row.query==='slow')?.done).toBe(false);
 });
@@ -110,10 +110,10 @@ it('delivers a successful popular source even when another source in the same ba
 it('returns the first usable popular batch without waiting for a stalled source',async()=>{
  vi.useFakeTimers();
  const state=cursor();state.positions=[];state.fallbackPositions=[{query:'ready',cursor:null,done:false},{query:'slow',cursor:null,done:false}];
- search.mockImplementation(query=>query==='ready'?new Promise(resolve=>setTimeout(()=>resolve({posts:[post('x:fast',15)],cursor:'more'}),50)):new Promise(()=>{}));
+ search.mockImplementation(query=>query==='ready'?new Promise(resolve=>setTimeout(()=>resolve({posts:Array.from({length:6},(_,i)=>post('x:fast-'+i,15)),cursor:'more'}),50)):new Promise(()=>{}));
  let resolved=false;const pending=getTwitterTrendPage(state).then(page=>{resolved=true;return page;});
  await vi.advanceTimersByTimeAsync(50);expect(resolved).toBe(true);
- const page=await pending;expect(page.posts.map(row=>row.id)).toEqual(['x:fast']);expect(page.next?.fallbackPositions?.[1].done).toBe(false);
+ const page=await pending;expect(page.posts).toHaveLength(6);expect(page.next?.fallbackPositions?.[1].done).toBe(false);
  expect(search).toHaveBeenCalledWith('ready',expect.objectContaining({feed:'top',limit:6}));
 });
 it('serves buffered candidates immediately without starting another network read',async()=>{
@@ -138,4 +138,21 @@ it('deduplicates one load at a time across 20 scroll pages and a refreshed curso
  search.mockResolvedValue({posts:[post('x:repeat',500),post('x:fresh-0',10)],cursor:null});
  expect((await getTwitterTrendPage(cursor(),undefined,delivered)).posts).toEqual([]);
  expect(delivered.size).toBe(21);
+});
+
+it('collects a full batch before publishing and keeps unfinished source positions retryable',async()=>{
+ const state=cursor();let callback:((row:any)=>void)|undefined,resolved=false;
+ search.mockImplementation((_query,options)=>{callback=options?.onPost;return new Promise(()=>{})});
+ const pending=getTwitterTrendPage(state).then(page=>{resolved=true;return page});
+ await vi.waitFor(()=>expect(callback).toBeTypeOf('function'));
+ callback!(post('x:fast-0',200));await Promise.resolve();await Promise.resolve();
+ expect(resolved).toBe(false);
+ for(let i=1;i<6;i++)callback!(post('x:fast-'+i,200));
+ const page=await pending;expect(page.posts).toHaveLength(6);
+ expect(page.next?.positions[0].cursor).toBeNull();expect(page.next?.seen).toContain('x:fast-0');
+});
+it('allows cold search hydration beyond eight seconds while retaining a bounded deadline',async()=>{
+ vi.useFakeTimers();search.mockImplementation(()=>new Promise(resolve=>setTimeout(()=>resolve({posts:[post('x:cold',200)],cursor:null}),9000)));
+ const pending=getTwitterTrendPage(cursor());await vi.advanceTimersByTimeAsync(9001);
+ expect((await pending).posts.map(row=>row.id)).toEqual(['x:cold']);
 });

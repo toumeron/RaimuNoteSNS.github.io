@@ -4,15 +4,17 @@ import path from "path";
 import {createClient} from '@supabase/supabase-js';
 import {AnnictCatalog} from './supabase/functions/_shared/animeHistory';
 import {createAnimeHistoryHandler} from './supabase/functions/anime-history/handler';
+import {randomUUID} from 'node:crypto';
 import {existsSync} from 'node:fs';
 import { VitePWA } from "vite-plugin-pwa";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
+  const buildId = `${Date.now()}-${randomUUID().slice(0,8)}`;
   const env = loadEnv(mode, process.cwd(), 'VITE_');
   const supabaseUrl = process.env.VITE_SUPABASE_URL || env.VITE_SUPABASE_URL;
   return ({
-  define:{'import.meta.env.VITE_RECOMMENDATION_CATALOG_URL':JSON.stringify(env.VITE_RECOMMENDATION_CATALOG_URL||(existsSync('public/recommendations/catalog.json')?'/RaimuNoteSNS.github.io/recommendations/catalog.json':''))},
+  define:{'import.meta.env.VITE_PWA_BUILD_ID':JSON.stringify(buildId),'import.meta.env.VITE_RECOMMENDATION_CATALOG_URL':JSON.stringify(env.VITE_RECOMMENDATION_CATALOG_URL||(existsSync('public/recommendations/catalog.json')?'/RaimuNoteSNS.github.io/recommendations/catalog.json':''))},
   // GitHub Pages用のベースパス設定
   base: "/RaimuNoteSNS.github.io/",
   build: { target: ["es2020", "safari16"],rollupOptions:{output:{manualChunks(id){
@@ -40,6 +42,7 @@ export default defineConfig(({ mode }) => {
     },
   },
   plugins: [
+    {name:'lime-deployed-version',generateBundle(){this.emitFile({type:'asset',fileName:'version.json',source:JSON.stringify({buildId})});}},
     {
       name: 'lime-anime-history-local-api',
       configureServer(server) {

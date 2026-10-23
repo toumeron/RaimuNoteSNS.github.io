@@ -1,3 +1,6 @@
+import {useJoinedCommunities} from '@/hooks/useCommunities';
+import {communityAction,communityKeys} from '@/api/communities';
+import {useQueryClient} from '@tanstack/react-query';
 import { setSavedList } from "@/api/users";
 import { useInvalidateLists, useListCatalog } from "@/hooks/useTopics";
 import { toast } from "sonner";
@@ -7,14 +10,14 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/compone
 import { TOPICS, isTopicId, type TopicId } from "@/lib/recommendations";
 
 // timelineTabs
-type FeedTabValue = 'all'|'following'|'trending'|`topic:${TopicId}`|`list:${string}`;
+type FeedTabValue = 'all'|'following'|'trending'|`topic:${TopicId}`|`list:${string}`|`community:${string}`;
 const TIMELINE_TABS: {value:FeedTabValue;label:string}[] = [
   {value:'all',label:'最新'},{value:'following',label:'フォロー中'},{value:'trending',label:'トレンド'},
 ];
 const TOPIC_TIMELINE_TABS = TOPICS.map(topic=>({value:`topic:${topic.id}` as FeedTabValue,label:topic.name}));
 const AVAILABLE_TIMELINE_TABS=[...TIMELINE_TABS,...TOPIC_TIMELINE_TABS];
 function feedTabTopic(value:string):TopicId|undefined { const id=value.startsWith('topic:')?value.slice(6):undefined;return isTopicId(id)?id:undefined; }
-function isFeedTabValue(value:unknown):value is FeedTabValue {return typeof value==='string'&&(AVAILABLE_TIMELINE_TABS.some(tab=>tab.value===value)||/^list:[0-9a-f-]{36}$/i.test(value));}
+function isFeedTabValue(value:unknown):value is FeedTabValue {return typeof value==='string'&&(AVAILABLE_TIMELINE_TABS.some(tab=>tab.value===value)||/^(?:list|community):[0-9a-f-]{36}$/i.test(value));}
 const EVENT='lime-timeline-tabs-changed';
 const key=(owner?:string)=>`lime_timeline_tabs:${owner??'guest'}:v1`;
 function normalizeTimelineTabs(input:unknown):FeedTabValue[] {
@@ -28,13 +31,19 @@ function saveTimelineTabs(owner:string|undefined, ids:FeedTabValue[]) {
 function useAvailableTimelineTabs(owner?:string){const lists=useListCatalog(owner);return [...AVAILABLE_TIMELINE_TABS,...(lists.data??[]).map(list=>({value:`list:${list.id}` as FeedTabValue,label:list.name}))];}
 function useTimelineTabs(owner?:string) {
   const available=useAvailableTimelineTabs(owner);
+  const joined=useJoinedCommunities(owner);
   const raw=useSyncExternalStore(listener=>{
     const storage=(e:StorageEvent)=>{if(e.key===key(owner)||e.key===null)listener();};
     window.addEventListener(EVENT,listener);window.addEventListener('storage',storage);
     return()=>{window.removeEventListener(EVENT,listener);window.removeEventListener('storage',storage);};
   },()=>{try{return localStorage.getItem(key(owner));}catch{return null;}},()=>null);
   let value:unknown;try{value=JSON.parse(raw??'null');}catch{value=null;}
-  return normalizeTimelineTabs(value).map(id=>available.find(t=>t.value===id)??{value:id,label:'リスト'});
+  const communityTabs=joined.pinned.map(c=>({value:`community:${c.id}` as FeedTabValue,label:c.name}));
+  const pinnedIds=new Set(communityTabs.map(t=>t.value));
+  const order=normalizeTimelineTabs(value).filter(id=>!id.startsWith('community:')||pinnedIds.has(id));
+  const visible=[...order,...communityTabs.map(t=>t.value).filter(id=>!order.includes(id))];
+  if(!visible.length)visible.push('all');
+  return visible.map(id=>[...available,...communityTabs].find(t=>t.value===id)??{value:id,label:'リスト'});
 }
 
 // TimelineTabBar
@@ -60,6 +69,7 @@ function TimelineTabBar({ tabs, active, owner, onSelect, onDoubleClick, variant 
 }) {
   const available=useAvailableTimelineTabs(owner);
   const invalidateLists=useInvalidateLists();
+  const queryClient=useQueryClient();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [topicsOpen,setTopicsOpen]=useState(true);
@@ -179,6 +189,7 @@ function TimelineTabBar({ tabs, active, owner, onSelect, onDoubleClick, variant 
   const move = (value: FeedTabValue, to: number) => save(reorder(tabs, value, to));
   const toggle = async (value: FeedTabValue) => {
     const ids = tabs.map(tab => tab.value);
+    if(value.startsWith('community:')){try{await communityAction(value.slice(10),'pin',undefined,!ids.includes(value));await queryClient.invalidateQueries({queryKey:communityKeys.all});}catch{toast.error('コミュニティの固定を変更できませんでした');return;}}
     if(value.startsWith('list:')&&!ids.includes(value)){try{await setSavedList(value.slice(5),true);await invalidateLists();}catch{toast.error('リストを追加できませんでした');return;}}
     saveTimelineTabs(owner, ids.includes(value) ? ids.length > 1 ? ids.filter(id => id !== value) : ids : [...ids, value]);
   };
@@ -235,7 +246,7 @@ function TimelineTabBar({ tabs, active, owner, onSelect, onDoubleClick, variant 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain"><div className="mb-4 mt-10 flex items-center justify-between"><h3 className="font-bold">表示中</h3></div>
       <div className="relative">{shown.filter(matches).map(tab => <div key={tab.value} ref={element => { if (element) rows.current.set(tab.value, element); else rows.current.delete(tab.value); }} data-timeline-tab-item={tab.value} data-dragging={dragging?.value === tab.value || undefined} style={dragging?.value === tab.value ? { transform: `translateY(${dragging.delta + (dragging.startIndex - shown.filter(matches).findIndex(item => item.value === tab.value)) * dragging.height}px) scale(1.02)` } : undefined} className={`relative flex h-24 items-center gap-3 rounded-2xl px-3 transition-shadow ${dragging?.value === tab.value ? 'z-10 bg-muted shadow-lg' : ''}`}>
         <span className="min-w-0 flex-1 font-bold">{tab.label}</span>
-        {tab.value.startsWith('topic:')&&<button type="button" aria-label={`${tab.label}を外す`} className="p-2 text-muted-foreground" onClick={()=>void toggle(tab.value)}><X className="h-5 w-5"/></button>}
+        {(tab.value.startsWith('topic:')||tab.value.startsWith('community:'))&&<button type="button" aria-label={`${tab.label}を外す`} className="p-2 text-muted-foreground" onClick={()=>void toggle(tab.value)}><X className="h-5 w-5"/></button>}
         <button type="button" aria-label={`${tab.label}をドラッグして並べ替え`} className="touch-none p-2 text-muted-foreground" onKeyDown={event => {
           if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
           event.preventDefault(); move(tab.value, tabs.findIndex(item => item.value === tab.value) + (event.key === 'ArrowUp' ? -1 : 1));

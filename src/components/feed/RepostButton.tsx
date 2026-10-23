@@ -1,3 +1,4 @@
+import {useNavigate} from 'react-router-dom';
 import { recordRecommendationEngagement, recommendationIdentity, recommendationFingerprint, recordRecommendationLike, addRecommendationInterest, selectRecommendationLikeSamples } from "@/lib/recommendations";
 import { useAuth, useBlueskySession } from "@/hooks/useAuth";
 import { RepostIcon } from "@/components/feed/PostPoll";
@@ -62,6 +63,7 @@ function useMobilePostMenu() {
 
 // RepostButton
 function RepostButton({ post, mobilePresentation = false, refreshState = false, active = true }: { post: PostWithAuthor; mobilePresentation?: boolean; refreshState?: boolean; active?: boolean }) {
+  const navigate=useNavigate();
   const pageVisible = usePageVisible();
   const openPostOverlay = usePostOverlay();
   const pendingQuote = useRef(false);
@@ -82,6 +84,7 @@ function RepostButton({ post, mobilePresentation = false, refreshState = false, 
     if (!pendingQuote.current) return;
     event.preventDefault();
     pendingQuote.current = false;
+    if(post.communityId){navigate(`/communities/${post.communityId}?tab=latest&quote=${encodeURIComponent(post.id)}`);return;}
     if (isReplyPostId(post.id) && !post.replyToUsername) {
       void getReplyPost(post.id).then(source => {
         if (source) openPostOverlay(source);
@@ -108,7 +111,7 @@ function RepostButton({ post, mobilePresentation = false, refreshState = false, 
       </PostActionSheet>
     </> : <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
-      <DropdownMenuContent align="start" onClick={event => event.stopPropagation()} onCloseAutoFocus={quoteAfterClose}>
+      <DropdownMenuContent align="start" className={post.communityId?'z-[600]':undefined} onClick={event => event.stopPropagation()} onCloseAutoFocus={quoteAfterClose}>
         <DropdownMenuItem disabled={mutation.isPending} onSelect={repost}><RepostIcon className="mr-2 h-4 w-4" />{reposted ? 'リポストを取り消す' : 'リポストする'}</DropdownMenuItem>
         <DropdownMenuItem onSelect={() => {pendingQuote.current=true;}}><Quote className="mr-2 h-4 w-4" />引用リポスト</DropdownMenuItem>
       </DropdownMenuContent>

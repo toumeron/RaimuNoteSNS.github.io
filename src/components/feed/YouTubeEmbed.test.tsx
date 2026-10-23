@@ -93,3 +93,8 @@ it('pins only the playing post outside the virtual window and preserves the orig
  view.rerender(<Rows start={40} end={45}/>);expect(screen.getByTitle('YouTube video player')).toBe(frame);expect(view.container.querySelectorAll('span')).toHaveLength(5);
  view.rerender(<Rows start={0} end={5}/>);expect(screen.getByTitle('YouTube video player')).toBe(frame);
 });
+it('pauses YouTube when an audible native video starts, without forcing a volume change',()=>{
+ const {frame}=scene();message(frame,1);const send=vi.spyOn(frame.contentWindow!,'postMessage');
+ act(()=>window.dispatchEvent(new CustomEvent('lime-background-media-play',{detail:{kind:'html-media',element:document.createElement('video'),audible:true}})));
+ expect(send).toHaveBeenCalledExactlyOnceWith(JSON.stringify({event:'command',func:'pauseVideo',args:[]}),'https://www.youtube.com');
+});

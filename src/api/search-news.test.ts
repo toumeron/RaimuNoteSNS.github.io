@@ -96,10 +96,10 @@ it.each([{},{query:'新作_100%'}, {ids:['recent','old']}])('bounds LimeNote dis
  const {loadRecentLimeNewsPosts,recentNewsWindow}=await import('../../supabase/functions/generate-news/sources');
  const calls:any[]=[];
  const query:any={then:(resolve:any)=>Promise.resolve({data:[{id:'recent',content:'新作発表',created_at:new Date(now-1000).toISOString()},{id:'old',content:'昨年発表',created_at:new Date(now-365*86400000).toISOString()}],error:null}).then(resolve)};
- for(const method of ['select','eq','gte','lte','ilike','in','order','limit'])query[method]=(...args:any[])=>{calls.push([method,...args]);return query;};
+ for(const method of ['select','is','eq','gte','lte','ilike','in','order','limit'])query[method]=(...args:any[])=>{calls.push([method,...args]);return query;};
  const posts=await loadRecentLimeNewsPosts({from:()=>query},{...options,now});
  expect(posts.map(post=>post.id)).toEqual(['recent']);
- expect(calls).toContainEqual(['eq','visibility','public']);
+ expect(calls).toContainEqual(['eq','visibility','public']);expect(calls).toContainEqual(['is','community_id',null]);
  expect(calls).toContainEqual(['eq','profiles.is_private',false]);
  expect(calls).toContainEqual(['eq','profiles.Account_suspension',false]);
  expect(calls).toContainEqual(['select','id,content,created_at,profiles!posts_user_id_fkey!inner(is_private,Account_suspension)']);

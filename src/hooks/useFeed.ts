@@ -134,10 +134,10 @@ const useFeed = (tab: 'all' | 'following' = 'all') =>
 /**
  * 個別投稿取得
  */
-const usePost = (id: string) =>
+const usePost = (id: string,communityId?:string) =>
   useQuery({
-    queryKey: postKey(id),
-    queryFn: () => getPostById(id),
+    queryKey: communityId?[...postKey(id),'community',communityId]:postKey(id),
+    queryFn: () => getPostById(id,undefined,communityId),
     enabled: !!id,
     retry:false,
   });
@@ -181,6 +181,7 @@ const useCreatePost = () => {
     mutationFn: createPost,
     onSuccess: (post) => {
       if(post.scheduledAt){void qc.invalidateQueries({queryKey:['scheduled-posts']});toast.success('予約投稿を保存しました');return;}
+      if(post.communityId)void qc.invalidateQueries({queryKey:['community-posts']});
       if (post.parentId) qc.invalidateQueries({ queryKey: postKey(post.parentId) });
       if (post.parentPost?.id) qc.invalidateQueries({ queryKey: ['repost-state', post.parentPost.id] });
       // 'feed' から始まる全てのキャッシュ（最新・フォロー中両方）を無効化
@@ -966,7 +967,7 @@ const useUserMediaInfinite = (userId: string | undefined) =>
           *,
           author:user_id(${POST_AUTHOR_COLUMNS})
         `)
-        .eq('user_id', userId);
+        .eq('user_id', userId).is('community_id',null);
 
       const imagePatterns = [
         '%.jpg%',
@@ -1053,7 +1054,7 @@ const useUserReactionsInfinite = (userId: string | undefined) =>
             )
           )
         `)
-        .eq('user_id', userId)
+        .eq('user_id', userId).is('posts.community_id',null)
         .order('created_at', { ascending: false })
         .range(from, to);
 

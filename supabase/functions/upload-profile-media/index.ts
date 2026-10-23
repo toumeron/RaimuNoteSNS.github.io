@@ -8,11 +8,12 @@ Deno.serve(async request=>{
  try{
   const form=await (await boundedRequest(request,8*1024*1024+65536)).formData();
   const file=form.get('file'),kind=form.get('kind');
-  if(!(file instanceof File)||file.size===0||file.size>8*1024*1024||!['image/png','image/jpeg','image/webp','image/gif','image/avif'].includes(file.type)||!['timeline-background','emoji'].includes(String(kind)))return Response.json({error:'画像の形式またはサイズが正しくありません'},{status:400,headers});
+  if(form.has('owner')&&form.get('owner')!==actor.userId)return Response.json({error:'アカウントが切り替わりました。もう一度お試しください。'},{status:403,headers});
+  if(!(file instanceof File)||file.size===0||file.size>8*1024*1024||!['image/png','image/jpeg','image/webp','image/gif','image/avif'].includes(file.type)||!['timeline-background','emoji','friend-avatar','friend-cover','chat-background','community-cover','community-post'].includes(String(kind)))return Response.json({error:'画像の形式またはサイズが正しくありません'},{status:400,headers});
   const cloud=Deno.env.get('CLOUDINARY_CLOUD_NAME'),apiKey=Deno.env.get('CLOUDINARY_API_KEY'),secret=Deno.env.get('CLOUDINARY_API_SECRET');
   if(!cloud||!apiKey||!secret)return Response.json({error:'画像サービスが設定されていません'},{status:503,headers});
   const timestamp=String(Math.floor(Date.now()/1000));
-  const publicId=`${kind==='emoji'?'custom_emojis':'timeline_backgrounds'}/${actor.userId}/${crypto.randomUUID()}`;
+  const publicId=`${kind==='emoji'?'custom_emojis':kind==='timeline-background'?'timeline_backgrounds':String(kind).startsWith('community-')?'communities':'chat_friends'}/${actor.userId}/${crypto.randomUUID()}`;
   const sign=`overwrite=false&public_id=${publicId}&timestamp=${timestamp}${secret}`;
   const digest=await crypto.subtle.digest('SHA-1',new TextEncoder().encode(sign));
   const signature=[...new Uint8Array(digest)].map(byte=>byte.toString(16).padStart(2,'0')).join('');

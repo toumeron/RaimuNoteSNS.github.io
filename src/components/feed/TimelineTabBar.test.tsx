@@ -1,11 +1,17 @@
+import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
+import type {ReactElement} from 'react';
+const communities=vi.hoisted(()=>({pinned:[] as {id:string;name:string}[],action:vi.fn()}));
+vi.mock('@/hooks/useCommunities',()=>({useJoinedCommunities:()=>({pinned:communities.pinned})}));
+vi.mock('@/api/communities',async original=>({...await original<typeof import('@/api/communities')>(),communityAction:communities.action}));
+function render(ui:ReactElement){return rtlRender(<QueryClientProvider client={new QueryClient()}>{ui}</QueryClientProvider>)}
 vi.mock("@/hooks/useTopics", async importOriginal => ({...await importOriginal<typeof import("@/hooks/useTopics")>(), useListCatalog:()=>({data:[]}), useInvalidateLists:()=>vi.fn()}));
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render as rtlRender, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { TimelineTabBar } from './TimelineTabBar';
 import { normalizeTimelineTabs, useTimelineTabs, saveTimelineTabs } from "@/components/feed/TimelineTabBar";
-beforeEach(()=>localStorage.clear());afterEach(cleanup);
+beforeEach(()=>{localStorage.clear();communities.pinned=[];communities.action.mockReset().mockResolvedValue(undefined);});afterEach(cleanup);
 function Mount({owner='owner'}:{owner?:string}){const tabs=useTimelineTabs(owner);return <TimelineTabBar tabs={tabs} owner={owner} active="all" onSelect={vi.fn()} onDoubleClick={vi.fn()}/>;}
 it('customizes tab order and persists changes without hide buttons',()=>{
  const view=render(<Mount/>);fireEvent.click(screen.getByRole('button',{name:'タイムラインのタブをカスタマイズ'}));
@@ -154,4 +160,22 @@ it('removes only topic tabs and makes them available again',()=>{
  fireEvent.click(screen.getByRole('button',{name:'科学を追加'}));
  expect(screen.getAllByRole('tab',{hidden:true})).toHaveLength(2);
  expect(screen.getByRole('dialog')).toHaveClass('border-0','shadow-none');
+});
+
+
+it('adds cloud-pinned communities as native timeline tabs and removes unpinned ones',()=>{
+ const id='11111111-1111-4111-8111-111111111111';communities.pinned=[{id,name:'写真の会'}];
+ const view=render(<Mount/>);expect(screen.getByRole('tab',{name:'写真の会'})).toBeInTheDocument();
+ fireEvent.click(screen.getByRole('button',{name:'タイムラインのタブをカスタマイズ'}));
+ fireEvent.click(screen.getByRole('button',{name:'写真の会を外す'}));expect(communities.action).toHaveBeenCalledWith(id,'pin',undefined,false);
+ communities.pinned=[];view.rerender(<QueryClientProvider client={new QueryClient()}><Mount/></QueryClientProvider>);expect(screen.queryByRole('tab',{name:'写真の会'})).toBeNull();
+});
+it('keeps a valid tab after the only saved community is unpinned',()=>{
+ saveTimelineTabs('owner',['community:11111111-1111-4111-8111-111111111111']);render(<Mount/>);expect(screen.getByRole('tab',{name:'最新'})).toBeInTheDocument();
+});
+
+it('selects a pinned community using the existing tab callback',()=>{
+ const value='community:11111111-1111-4111-8111-111111111111' as const,onSelect=vi.fn();
+ render(<TimelineTabBar tabs={[{value:'all',label:'最新'},{value,label:'写真の会'}]} active="all" onSelect={onSelect} onDoubleClick={vi.fn()}/>);
+ fireEvent.click(screen.getByRole('tab',{name:'写真の会'}));expect(onSelect).toHaveBeenCalledWith(value);
 });

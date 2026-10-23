@@ -42,11 +42,15 @@ async function attachHls(media: HTMLVideoElement, url: string, signal: AbortSign
 }
 
 type PlaybackMetadata={title?:string;artist?:string;artwork?:string};
+const MEDIA_PLAY_EVENT='lime-background-media-play';
+const VOLUME_KEY='lime-video-volume';
+function savedVideoVolume(){try{const value=localStorage.getItem(VOLUME_KEY);const volume=value===null?1:Number(value);return Number.isFinite(volume)?Math.max(0,Math.min(1,volume)):1;}catch{return 1}}
 let activePlayback:HTMLMediaElement|null=null;
 let restoreAudioSession:(()=>void)|undefined;
 /** Keep audible MP4/HLS playback registered with the OS; never pause on page visibility changes. */
 export function bindBackgroundPlayback(media:HTMLMediaElement,metadata:PlaybackMetadata={}){
  const session=navigator.mediaSession;
+ media.volume=savedVideoVolume();
  const position=()=>{
   if(activePlayback!==media||!session||!Number.isFinite(media.duration)||media.duration<=0)return;
   try{session.setPositionState?.({duration:media.duration,playbackRate:media.playbackRate,position:Math.max(0,Math.min(media.currentTime,media.duration))});}catch{/* Older Safari may omit seeking support. */}
@@ -54,8 +58,9 @@ export function bindBackgroundPlayback(media:HTMLMediaElement,metadata:PlaybackM
  const restore=()=>{restoreAudioSession?.();restoreAudioSession=undefined;};
  const claim=()=>{
   if(media.muted||media.volume===0||media.paused)return;
+  const preferredVolume=savedVideoVolume();if(media.volume!==preferredVolume)media.volume=preferredVolume;if(media.volume===0)return;
   if(activePlayback!==media){
-   const previous=activePlayback;activePlayback=media;previous?.pause();restore();
+   const previous=activePlayback;activePlayback=media;previous?.pause();
   }
   if(!restoreAudioSession){
    const audio=(navigator as Navigator&{audioSession?:{type:string}}).audioSession;
@@ -64,6 +69,7 @@ export function bindBackgroundPlayback(media:HTMLMediaElement,metadata:PlaybackM
     try{audio.type='playback';restoreAudioSession=()=>{if(audio.type==='playback')audio.type=previousType;};}catch{/* Optional Audio Session API. */}
    }
   }
+  window.dispatchEvent(new CustomEvent(MEDIA_PLAY_EVENT,{detail:{kind:'html-media',element:media,audible:true}}));
   if(!session)return;
   try{
    if(typeof MediaMetadata!=='undefined')session.metadata=new MediaMetadata({title:metadata.title||'LimeNoteの動画',artist:metadata.artist||'LimeNote',...(metadata.artwork?{artwork:[{src:metadata.artwork}]}:{})});
@@ -74,10 +80,13 @@ export function bindBackgroundPlayback(media:HTMLMediaElement,metadata:PlaybackM
   }catch{/* Playback itself must work even without system controls. */}
  };
  const paused=()=>{if(activePlayback===media){if(session)session.playbackState='paused';restore();}};
- const volume=()=>{if(media.muted||media.volume===0)paused();else claim();};
+ const volume=()=>{try{localStorage.setItem(VOLUME_KEY,String(media.volume));}catch{}if(media.muted||media.volume===0)paused();else claim();};
+ const otherPlayback=(event:Event)=>{const detail=(event as CustomEvent<{kind?:string;element?:unknown;audible?:boolean}>).detail;if(detail?.audible!==false&&['youtube','html-media'].includes(detail?.kind??'')&&detail?.element!==media&&!media.paused&&!media.muted)media.pause()};
+ window.addEventListener(MEDIA_PLAY_EVENT,otherPlayback);
  media.addEventListener('play',claim);media.addEventListener('pause',paused);media.addEventListener('ended',paused);media.addEventListener('volumechange',volume);media.addEventListener('seeked',position);media.addEventListener('ratechange',position);
  claim();
  return()=>{
+  window.removeEventListener(MEDIA_PLAY_EVENT,otherPlayback);
   media.removeEventListener('play',claim);media.removeEventListener('pause',paused);media.removeEventListener('ended',paused);media.removeEventListener('volumechange',volume);media.removeEventListener('seeked',position);media.removeEventListener('ratechange',position);
   if(activePlayback===media){activePlayback=null;restore();if(session){session.playbackState='none';session.metadata=null;for(const action of ['play','pause','stop','seekbackward','seekforward','seekto']as MediaSessionAction[])try{session.setActionHandler(action,null);}catch{}}}
  };
